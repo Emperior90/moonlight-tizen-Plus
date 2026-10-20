@@ -745,10 +745,17 @@ void PostToJs(std::string msg) {
 }
 
 void PostToJsAsync(std::string msg) {
+  // The main thread runs this after the call returns, so hand it a copy that it frees itself
+  char* copy = strdup(msg.c_str());
+  if (copy == nullptr) {
+    return;
+  }
+
   MAIN_THREAD_ASYNC_EM_ASM({
     const msg = UTF8ToString($0);
+    _free($0);
     handleMessage(msg);
-  }, msg.c_str());
+  }, copy);
 }
 
 void PostPromiseMessage(int callbackId, const std::string& type, const std::string& response) {

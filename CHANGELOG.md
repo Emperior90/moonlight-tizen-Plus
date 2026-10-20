@@ -14,6 +14,11 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Reworked the video frame pacing to follow the usual arrival time of the frames, so that a single late frame no longer holds back every following frame by up to tens of milliseconds
+- Paused the gamepad polling of the UI while streaming, which kept the main thread busy every 5 ms even though the streaming session polls the gamepads on its own
+- Read all gamepads with a single call to the main thread per poll instead of one call per gamepad slot plus two, leaving more room for the Web Audio scheduler
+- Sent the controller state to the host only when it changes (with a refresh every 100 ms) instead of 200 times per second, reducing the Wi-Fi uplink traffic of the TV
+- Posted the performance stats without blocking the video decoder thread until the main thread handles them
+- Compiled the Wasm module with `-O2` instead of `-Os` to favor speed over size
 - Requested the Rec. 709 colorspace instead of Rec. 601 for SDR streams, which is the standard for HD and 4K video
 - Declared HEVC and AV1 level 5.2 for streams above 4K at 60 FPS, with a fallback to level 5.1 for TVs that reject it
 - Limited the bitrate presets to 75 Mbps when the TV is connected over its 100 Mbps Ethernet port

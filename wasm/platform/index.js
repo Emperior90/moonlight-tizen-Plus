@@ -465,6 +465,7 @@ function showHostsMode() {
   $('#listener').removeClass('fullscreen');
 
   Navigation.start();
+  Controller.startWatching();
   Navigation.pop();
   // Stop any existing polls before starting new ones to prevent setInterval leaks.
   // Without this, navigating back to the host view multiple times accumulates
@@ -1798,6 +1799,7 @@ function showSettingsMode() {
 
   stopPollingHosts();
   Navigation.start();
+  Controller.startWatching();
   // Register showSettingsMode to re-run every time the language changes
   if (window.i18n && typeof window.i18n.onRefresh === 'function') {
     window.i18n.onRefresh(showSettingsMode);
@@ -2535,6 +2537,8 @@ function showAppsMode() {
   // it slows down box art loading and we don't update the UI live anyway.
   stopPollingHosts();
   Navigation.start();
+  // Resume the gamepad polling of the UI that was paused during the streaming session
+  Controller.startWatching();
 }
 
 // Show the Apps grid
@@ -2881,6 +2885,12 @@ function showStreamMode() {
   fullscreenWasmModule();
   handleOnScreenOverlays();
   Navigation.stop();
+  // The Wasm module polls the gamepads on its own input thread while streaming, so pause the
+  // UI polling to keep the main thread free for the audio scheduler and the video player
+  Controller.stopWatching();
+  // Cancel a held D-Pad or stick repeat, since its release can no longer be detected
+  repeatAction = null;
+  clearTimeout(repeatTimeout);
 }
 
 // Maximize the size of the Wasm module by scaling and resizing appropriately

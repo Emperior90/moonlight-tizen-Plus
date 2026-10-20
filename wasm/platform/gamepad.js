@@ -1,5 +1,6 @@
 const Controller = (function() {
   let pollingInterval = null;
+  let listenersAdded = false;
   const gamepads = {};
 
   class Button {
@@ -85,14 +86,30 @@ const Controller = (function() {
     }
   }
 
+  // Take a fresh snapshot of every known gamepad without reporting any changes, so input that
+  // happened while polling was paused (e.g. a button combo held when the stream ended) is not replayed
+  function resetGamepads() {
+    const connectedGamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+    for (const gamepad of connectedGamepads) {
+      if (gamepad && gamepads[gamepad.index]) {
+        gamepadConnected(gamepad);
+      }
+    }
+  }
+
   function startWatching() {
-    if (!pollingInterval) {
+    // Register the connection listeners only once, since polling can be paused and resumed
+    if (!listenersAdded) {
       window.addEventListener('gamepadconnected', function(e) {
         gamepadConnected(e.gamepad);
       });
       window.addEventListener('gamepaddisconnected', function(e) {
         gamepadDisconnected(e.gamepad);
       });
+      listenersAdded = true;
+    }
+    if (!pollingInterval) {
+      resetGamepads();
       pollingInterval = setInterval(pollGamepads, 5);
     }
   }

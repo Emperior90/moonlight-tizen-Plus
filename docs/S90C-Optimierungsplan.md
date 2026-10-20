@@ -44,26 +44,13 @@ In der App erledigt der neue Button **Settings → Basic Settings → „Samsung
 
 ## A. Auswertung deines Setups (Stand 20.10.2026)
 
-Kurz gesagt: **Dein Netzwerk ist sehr gut, die PC-Einstellungen sind auf Qualität getrimmt. Die beiden größten Baustellen waren das Frame Pacing der App (bis zu ~70 ms zusätzliche Verzögerung, jetzt behoben) und das Ruckeln nach ~2 h, das sehr wahrscheinlich am PC liegt.**
+Kurz gesagt: **Dein Netzwerk ist sehr gut, die PC-Einstellungen sind auf Qualität getrimmt. Das Ruckeln nach ~2 h liegt sehr wahrscheinlich am PC. Den Hardware-Decoder des TVs kann keine App schneller machen, aber die App kann ihm unnötige Konkurrenz auf dem TV ersparen. Was diese Version dafür ändert, steht in [Abschnitt A.7](#a7-mehr-leistung-aus-dem-tv-für-4k-mit-hoher-bitrate).**
 
-### A.1 Frame Pacing hat dich ~50–70 ms Latenz gekostet (in dieser Version behoben)
+### A.1 Frame Pacing: nicht die Ursache, trotzdem robuster gemacht
 
-Deine Overlay-Werte bei 1440p (*Average decoding time* 50–72 ms, *Average frame queue delay* ~15 ms) passen zu einem Schwachpunkt im bisherigen Frame Pacing, den ich im Code gefunden und per Simulation nachgestellt habe:
+Laut deiner Erfahrung war das Frame Pacing nicht das Problem, weil die Ruckler damit seit Version 1.18 behoben sind. Die hohe *Average decoding time* im Overlay (50–72 ms bei 1440p) ist deshalb kein Fehlerzeichen: Der Wert misst nicht die Dekodierzeit, sondern die Zeit vom Empfang eines Bildes bis zur Übergabe an den Decoder, inklusive der bewussten Wartezeit des Pacers.
 
-- Die App hat sich einmal pro Sekunde an der Verspätung **des einen Bildes** orientiert, das gerade das Zeitfenster abschloss. War das zufällig ein verspätetes Bild (WLAN-Aussetzer, Encoder-Spitze, Frame Generation), hielt sie danach **alle** Bilder um diese Zeit zurück und baute das nur mit 0,5 ms pro Sekunde wieder ab.
-- Folge: Jedes Bild wartete knapp eine Frame-Dauer im Pacer (deine ~15 ms) und stand zusätzlich 2–3 Bilder lang in der Warteschlange davor. Zusammen sind das deine 50–72 ms. Das ist reine Zusatzlatenz am TV.
-- **Neu:** Der Pacer richtet sich jetzt nach dem *typischen* Ankunftszeitpunkt der Bilder im letzten Zeitfenster (Median plus dreifache Streuung, robust geschätzt, gedeckelt auf eine halbe Frame-Dauer). Einzelne verspätete Bilder verschieben ihn nicht mehr.
-- **Simulation** (10 min, 60 FPS, verschiedene Jitter- und Aussetzer-Muster):
-
-  | Szenario | Zusatzverzögerung alt → neu | Ruckler pro Minute alt → neu |
-  |---|---|---|
-  | WLAN mit Aussetzern alle 8 s | 21 ms → 2,6 ms | 79 → 31 |
-  | Starker Jitter, Aussetzer alle 3 s | 39 ms → 8 ms | 68 → 95 |
-  | Jitter ohne Aussetzer | 1,7 ms → 5,6 ms | 107 → 4 |
-  | Ähnlich wie dein Setup (wenig Jitter, seltene Aussetzer) | 3 ms (p95: 18,5 ms) → 4 ms (p95: 7 ms) | 108 → 18 |
-
-  Nur bei sehr häufigen großen Aussetzern ruckelt die neue Variante etwas mehr. Dafür gibt sie die 30+ ms Latenz zurück, die die alte dort kostet.
-- **Was du nach dem Update sehen solltest:** *Average decoding time* deutlich unter 20 ms, *Average frame queue delay* wenige Millisekunden. Bleibt die *Average decoding time* trotzdem hoch, staut sich etwas im Decoder des TVs. Dann auch auf *Average rendering time* achten.
+Unabhängig davon enthält diese Version eine Überarbeitung des Pacers: Er richtet sich nach dem *typischen* Ankunftszeitpunkt der Bilder im letzten Zeitfenster (Median plus dreifache robuste Streuung, gedeckelt auf eine halbe Frame-Dauer) statt nach dem einen Bild, das das Zeitfenster gerade abschließt. In meiner Simulation (10 min, 60 FPS) lief die Bildfolge damit bei normalem Jitter gleichmäßiger, bei sehr häufigen großen Aussetzern ruckelte sie etwas mehr. Fällt dir gegenüber 1.18 etwas auf, sag Bescheid. Frame Pacing bleibt abschaltbar (A/B-Test in Phase 3).
 
 ### A.2 Netzwerk: sehr gut, kleine Feinheiten
 
@@ -109,7 +96,7 @@ Gegen Netzwerk und TV spricht: 0 % Verlust, der Web-Audio-Scheduler fängt Uhren
 
 ### A.5 Moonlight am TV
 
-- **Update auf diese Version** (1.19.0 + S90C-Änderungen): Sie bringt das neue Frame Pacing, die Session-Zähler und die BT.709-Farben. Achtung: Der Button „Samsung S90C optimization“ stellt *Color range* auf „begrenzt“. Bewusst so, siehe nächster Punkt.
+- **Update auf diese Version** (1.19.0 + S90C-Änderungen): Sie bringt die Leistungsoptimierungen aus A.7, die Session-Zähler und die BT.709-Farben. Achtung: Der Button „Samsung S90C optimization“ stellt *Color range* auf „begrenzt“. Bewusst so, siehe nächster Punkt.
 - **Full color range:** Nur behalten, wenn ein Schwarzwert-Test das bestätigt. Erkennt der TV den vollen Bereich nicht korrekt, saufen dunkle Details ab und helle clippen. Das wirkt „knackiger“, kostet aber Zeichnung in dunklen Szenen, und davon hat Witcher 3 viele. Test: eine Near-Black-Testseite oder der HDR-Kalibrierungsbildschirm des Spiels, einmal mit „Full“, einmal mit „Limited“. Gewinner ist die Einstellung, bei der die dunkelsten Stufen gerade noch unterscheidbar sind.
 - **Bitrate 4K/95 Mbit/s** ist ein guter Wert, nahe an Samsungs Decoder-Spezifikation. Optional 4K mit 110 Mbit/s 30 Minuten lang testen und dabei auf die Session-Zähler und die *Average decoding time* achten.
 - **4K vs. 1440p bei 3 m Abstand:** Ein 4K-Pixel ist auf 55" aus 3 m nur ~0,36 Bogenminuten groß, ein 1440p-Pixel ~0,55. Das menschliche Auge löst grob 0,5–1 Bogenminute auf. Aus deinem Abstand ist 1440p also nah an der Wahrnehmungsgrenze, und 1440p mit 120 Mbit/s hat pro Pixel rund dreimal so viele Bits wie 4K mit 95 Mbit/s. In dunklen, detailreichen Szenen (Vegetation, Nebel) kann 1440p deshalb sauberer wirken, 4K punktet bei feinen Kanten. Ein direkter Vergleich aus 3 m lohnt sich.
@@ -126,6 +113,35 @@ Gegen Netzwerk und TV spricht: 0 % Verlust, der Web-Audio-Scheduler fängt Uhren
 | Farbton Warm 2, Spitzenhelligkeit Hoch, Bewegungsglättung/Clear Motion/Rauschunterdrückung aus | ✓ | passt |
 
 **Optionaler Latenz-Test:** Die **ForceGM-Variante** schaltet den TV in den Spielmodus (deutlich weniger Verarbeitungslatenz als „Film“). Laut Projekt-Wiki gibt es unter Tizen 9 je nach Modell Probleme oberhalb von 1080p. Deshalb gezielt testen, ob 4K damit sauber läuft. In der App bleibt *Game mode* dabei aus.
+
+### A.7 Mehr Leistung aus dem TV für 4K mit hoher Bitrate
+
+**Was die App beeinflussen kann und was nicht:** Das eigentliche Dekodieren übernimmt der Hardware-Decoder des TVs, und den kann keine App beschleunigen. Bei 4K60 mit ~100 Mbit/s arbeitet er nahe an Samsungs Spezifikation. Die App kann aber dafür sorgen, dass auf dem TV nichts Unnötiges mit dem Stream konkurriert. Drei Stellen sind dafür entscheidend:
+
+- der **Haupt-Thread** des Browsers: Er plant mit *Web Audio* jeden Audio-Frame ein. Ist er blockiert, gibt es Aussetzer.
+- der **Video-Thread**, der jedes Bild an den TV-Player übergibt,
+- der **WLAN-Uplink** vom TV zum PC, der sich die Funkzeit mit dem Videostrom teilt.
+
+An diesen Stellen habe ich im Code fünf unnötige Lasten gefunden. Diese Version beseitigt sie:
+
+| # | Vorher | Jetzt | Wirkung |
+|---|---|---|---|
+| 1 | Die Menü-Navigation hat das Gamepad **auch während des Streams** alle 5 ms abgefragt. Auf dem Haupt-Thread hieß das jedes Mal `navigator.getGamepads()` und ein Vergleich aller Tasten, dazu neue Objekte und bei jeder Stick-Bewegung ein Event. | Pausiert während des Streams und läuft beim Zurückkehren ins Menü wieder an. Tasten, die beim Stream-Ende noch gehalten werden, lösen dabei nichts aus. | ~200 Aufgaben pro Sekunde auf dem Haupt-Thread fallen weg, ebenso der Speichermüll daraus. |
+| 2 | Die Stream-Eingabe hat pro 5-ms-Takt **2 + 4 synchrone Aufrufe** über den Haupt-Thread gebraucht (Chromium meldet 4 Gamepad-Plätze). | **Ein** gebündelter Aufruf pro Takt, mit Rückfall auf den alten Weg. | 200 statt ~1.200 Haupt-Thread-Aufrufe pro Sekunde. Der Eingabe-Thread wartet seltener. |
+| 3 | Der Controller-Zustand ging **200-mal pro Sekunde** als verschlüsseltes, zuverlässiges Paket an den PC, auch wenn er sich nicht geändert hatte. | Wird nur bei einer Änderung gesendet, dazu alle 100 ms eine Auffrischung. Ein verworfenes Paket wird beim nächsten Takt wiederholt. | Bei ruhendem Controller 10 statt 200 Pakete pro Sekunde. Das spart Funkzeit im WLAN-Uplink, ENet-Bestätigungen und CPU. |
+| 4 | Mit eingeschaltetem Overlay hat der **Video-Thread einmal pro Sekunde auf den Haupt-Thread gewartet**, um die Statistik zu übergeben. | Wird übergeben, ohne zu warten. | Der Video-Thread stockt nicht mehr, wenn der Haupt-Thread gerade beschäftigt ist. |
+| 5 | Kompiliert mit `-Os` (auf Dateigröße optimiert). | Kompiliert mit `-O2` (auf Geschwindigkeit optimiert). | Schnellerer Code in den heißen Pfaden (Paketverarbeitung, Opus). Die Datei wird etwas größer. |
+
+Geprüft, aber unverändert gelassen: Der Video-Empfang ist bereits gut eingestellt (blockierender Socket, angeforderter Empfangspuffer ~2,9 MB, Paketgröße 1392 Byte, keine Video-Verschlüsselung). Das Host-Polling pausiert während des Streams schon. Logausgaben laufen nicht über den Haupt-Thread. Rumble-Meldungen kommen über einen eigenen Thread, der sie beim Warten zusammenfasst.
+
+**Ehrliche Einordnung:** Den Decoder macht keine dieser Änderungen schneller, und auf einem echten TV habe ich nichts gemessen. Ich erwarte vor allem weniger Spitzen, also weniger Audio-Aussetzer mit *Web Audio*, eine gleichmäßigere Übergabe der Bilder und weniger Konkurrenz im WLAN. Ob das für 4K über 95 Mbit/s reicht, zeigt erst der Test.
+
+**So testest du es** (4K60, HEVC, sonst alles wie bisher):
+
+1. Bitrate-Leiter **95 → 110 → 120 Mbit/s**, je 20 Minuten im selben anspruchsvollen Spiel, Overlay an.
+2. **Bestanden**, wenn *Session frames dropped by network* und *Session recovery keyframes* bei 0 bleiben, die *Rendering frame rate* stabil bei 60 liegt und der Ton nicht aussetzt.
+3. **Bei Audio-Aussetzern** einmal *Audio backend: EMSS* testen. EMSS übergibt den Ton direkt aus dem Audio-Thread an den TV-Player und braucht den Haupt-Thread dafür nicht.
+4. Steigt die *Average rendering time* (Übergabe eines Bildes an den TV-Player) mit der Bitrate deutlich an, ist der Decoder-Pfad des TVs am Limit. Dann eine Stufe zurückgehen.
 
 ---
 
@@ -319,7 +335,12 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
 | 6 | **Button „Samsung S90C optimization“** und S90C-Werte als Standard (Neuinstallation und „Restore Defaults“) | Ein Klick setzt 4K60, HEVC, HDR, Frame Pacing, passenden Game Mode und die Bitrate passend zur Verbindung, mit Erklärung im Dialog | `wasm/index.html`, `wasm/platform/index.js`, `wasm/platform/navigation.js`, `wasm/static/css/style.css` |
 | 7 | **Warnungen:** H.264 über 1080p, 4K über 120 FPS | Verhindert Einstellungen, die der Decoder nicht kann | `wasm/platform/index.js` |
 | 8 | **Bugfixes:** „Restore Defaults“ hat Frame Pacing und den IP-Eingabemodus ausgeschaltet, obwohl der Standard „an“ ist. Die Warnung für Auflösung/FPS hat Zeichenketten statt Zahlen verglichen | Korrekte Standardwerte und Warnungen | `wasm/platform/index.js` |
-| 9 | **Neues Frame Pacing** (Details in Abschnitt A.1): richtet sich nach dem typischen Ankunftszeitpunkt der Bilder statt nach einem einzelnen, womöglich verspäteten Bild | Bis zu mehrere Dutzend Millisekunden weniger Verzögerung am TV und gleichmäßigere Bildfolge bei normalem Jitter | `wasm/wasmplayer.cpp` |
+| 9 | **Überarbeitetes Frame Pacing** (Details in Abschnitt A.1): richtet sich nach dem typischen Ankunftszeitpunkt der Bilder statt nach einem einzelnen, womöglich verspäteten Bild | In der Simulation gleichmäßigere Bildfolge bei normalem Jitter, robuster gegen einzelne verspätete Bilder | `wasm/wasmplayer.cpp` |
+| 10 | **Menü-Gamepad-Abfrage pausiert während des Streams** (Details in Abschnitt A.7) | ~200 Aufgaben pro Sekunde weniger auf dem Haupt-Thread, der mit Web Audio den Ton einplant | `wasm/platform/gamepad.js`, `wasm/platform/index.js` |
+| 11 | **Gebündelte Gamepad-Abfrage** im Stream: ein Haupt-Thread-Aufruf statt 2 + 1 pro Gamepad-Platz | ~1.000 Haupt-Thread-Aufrufe pro Sekunde weniger | `wasm/gamepad.cpp` |
+| 12 | **Controller-Zustand nur bei Änderung senden** (plus Auffrischung alle 100 ms) | Bei ruhendem Controller 10 statt 200 Pakete pro Sekunde im WLAN-Uplink | `wasm/gamepad.cpp` |
+| 13 | **Statistik-Overlay blockiert den Video-Thread nicht mehr** | Kein Stocken der Bildübergabe, wenn der Haupt-Thread beschäftigt ist | `wasm/wasmplayer.cpp`, `wasm/main.cpp` |
+| 14 | **Build mit `-O2` statt `-Os`** | Schnellerer Code in den heißen Pfaden, etwas größere Datei | `CMakeLists.txt` |
 
 **So sieht es in der App aus** (Screenshots aus einem Browser-Test mit simulierten Tizen-APIs):
 
@@ -328,7 +349,7 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
 | ![Basic Settings](images/s90c-basic-settings.png) | ![S90C-Dialog](images/s90c-dialog.png) | ![Video Settings](images/s90c-video-settings.png) |
 
 > [!WARNING]
-> Die Änderungen sind auf Kompilierbarkeit geprüft (Syntax-Check mit Stub-Headern, JavaScript-Syntax, Locale-Sync). Die neue Einstellungslogik habe ich zusätzlich in Chromium mit simulierten Tizen-APIs automatisiert durchgespielt: 29 Prüfungen für LAN, WLAN, unbekannte Verbindung, Tizen 9 und ein Nicht-S90C-Modell, alle bestanden. Auf einem echten S90C konnte ich die Änderungen **nicht** testen: Das Tizen-SDK und der Samsung-Emscripten-Compiler ließen sich in meiner Umgebung nicht herunterladen, und ich habe keinen Zugriff auf deinen TV. Der erste Test auf dem TV ist deshalb Teil des Plans (Abschnitt 8, Phase 0–1).
+> Die Änderungen sind auf Kompilierbarkeit geprüft (Syntax-Check mit Stub-Headern, die die EM_ASM-Makros von Emscripten 1.39.4 nachbilden, JavaScript-Syntax, Locale-Sync). Alle EM_ASM-Blöcke habe ich nach dem Präprozessor als JavaScript validiert. Den gebündelten Gamepad-Block habe ich in Node gegen den Original-Code von Emscripten 1.39.4 getestet. Die neue Sende-Logik für Controller lief in einem Testprogramm mit Address- und UB-Sanitizer, über beide Abfragewege. Die Einstellungslogik und die Pause der Menü-Gamepad-Abfrage habe ich in Chromium mit simulierten Tizen-APIs automatisiert durchgespielt: 29 + 11 Prüfungen, alle bestanden. Auf einem echten S90C konnte ich die Änderungen **nicht** testen: Das Tizen-SDK und der Samsung-Emscripten-Compiler ließen sich in meiner Umgebung nicht herunterladen, und ich habe keinen Zugriff auf deinen TV. Der erste Test auf dem TV ist deshalb Teil des Plans (Abschnitt 8, Phase 0–1).
 
 ---
 
@@ -350,7 +371,7 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
    - *Session frames dropped by network* = **0** (oder < 0,01 %),
    - *Session recovery keyframes* = **0–1** (eins direkt nach dem Start kann normal sein),
    - *Rendering frame rate* stabil bei ~60 FPS,
-   - *Average decoding time* stabil und unter ~20 ms (das ist nicht die reine Dekodierzeit, sondern die Wartezeit vom Empfang bis zur Übergabe an den Decoder, inklusive Frame Pacing).
+   - *Average decoding time* stabil. Das ist nicht die reine Dekodierzeit, sondern die Wartezeit vom Empfang bis zur Übergabe an den Decoder, inklusive Frame Pacing. Ein gleichbleibend hoher Wert ist mit Frame Pacing normal, ein über die Session steigender nicht.
 
 ### Phase 2 – Bitrate-Leiter
 
@@ -387,7 +408,7 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
 | *Frames dropped by your network connection* > 0 | Netzwerk (Bursts per LAN, Funkstörung per WLAN) | Burst-Fix, Bitrate runter, WLAN-Kanal/-Position verbessern |
 | *Host processing latency* hoch oder schwankend | Encoder oder GPU am PC überlastet | Preset senken, FPS im Spiel begrenzen |
 | *Incoming frame rate* < Ziel-FPS bei 0 Drops | Das Spiel liefert nicht genug Bilder | Spiel-FPS stabilisieren, GPU-Last senken |
-| *Average decoding time* dauerhaft > ~20 ms | Bilder stauen sich vor dem TV-Decoder (der Wert misst Warteschlange + Pacing, nicht die reine Dekodierzeit) | *Average rendering time* prüfen. Bitrate, FPS oder Auflösung senken |
+| *Average decoding time* steigt im Lauf der Session an | Bilder stauen sich vor dem TV-Decoder (der Wert misst Warteschlange + Pacing, nicht die reine Dekodierzeit, ein konstant hoher Wert ist mit Frame Pacing normal) | *Average rendering time* prüfen. Bitrate, FPS oder Auflösung senken |
 | *Session recovery keyframes* steigt | Jeder Anstieg ist ein sichtbarer Aussetzer | Ursache über die Zeilen oben finden |
 | WLAN-Signalstärke < 60 % | Schlechte Funkverbindung | Router näher, anderer Kanal, LAN-Variante |
 
@@ -416,6 +437,7 @@ Deine Setup-Angaben sind in Abschnitt A eingearbeitet. Folgendes würde die Diag
 3. **HWiNFO-Log** derselben Session: VRAM-Belegung, GPU-Hotspot- und Speichertemperatur, GPU- und Speichertakt.
 4. **FRITZ!Box**: Hängt der TV im Mesh unter dem Repeater? Gab es zum Zeitpunkt des Ruckelns WLAN-Ereignisse?
 5. **Schwarzwert-Test** *Full* vs. *Limited color range*: Bei welcher Einstellung bleiben die dunkelsten Stufen unterscheidbar?
+6. **4K-Bitrate-Leiter mit dieser Version** (Abschnitt A.7): bis zu welcher Bitrate bleibt alles bei 0, und wie entwickeln sich *Average rendering time* und *Average frame queue delay*? Gab es Audio-Aussetzer?
 
 ---
 

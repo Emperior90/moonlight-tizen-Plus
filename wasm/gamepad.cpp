@@ -68,6 +68,27 @@ struct ControllerSlotState {
 
 static ControllerSlotState slotState[kMaxControllers];
 
+// Controller state last sent to the host per slot. Many polls read the same state again (buttons
+// and sticks at rest, or no new report from the controller yet), and those can skip sending
+// another reliable packet over the network.
+struct SentControllerState {
+  bool valid = false; // false until a state was sent for the current device
+  uint64_t timeMs = 0; // when the state was last sent
+  short activeGamepadMask = 0;
+  short buttonFlags = 0;
+  unsigned char leftTrigger = 0;
+  unsigned char rightTrigger = 0;
+  short leftStickX = 0;
+  short leftStickY = 0;
+  short rightStickX = 0;
+  short rightStickY = 0;
+};
+
+static SentControllerState sentState[kMaxControllers];
+
+// Interval to resend an unchanged controller state, so the host is refreshed while idle
+static constexpr uint64_t kControllerRefreshIntervalMs = 100;
+
 // Detect controller family from Gamepad.id (PS / Xbox / Nintendo / Unknown)
 static uint8_t GetControllerType(const char* id) {
   // Guard against null or empty id strings
@@ -223,6 +244,72 @@ static short GetButtonFlags(const EmscriptenGamepadEvent& gamepad) {
   return result;
 }
 
+// Check if two controller states would send the same packet to the host
+static bool IsSameControllerState(const SentControllerState& a, const SentControllerState& b) {
+  return a.activeGamepadMask == b.activeGamepadMask && a.buttonFlags == b.buttonFlags &&
+    a.leftTrigger == b.leftTrigger && a.rightTrigger == b.rightTrigger &&
+    a.leftStickX == b.leftStickX && a.leftStickY == b.leftStickY &&
+    a.rightStickX == b.rightStickX && a.rightStickY == b.rightStickY;
+}
+
+// Read every browser gamepad slot into events, marking the filled ones in slotPresent.
+// Returns the number of slots read (capped at kMaxControllers), or -1 on failure.
+static int ReadGamepadSlots(EmscriptenGamepadEvent* events, int* slotPresent) {
+  // Each Emscripten gamepad function is proxied to the main thread on its own, which costs two
+  // round trips plus one per slot on every poll. Read all slots in a single round trip instead,
+  // so the main thread stays free for the audio scheduler while streaming.
+  const int count = MAIN_THREAD_EM_ASM_INT({
+    // Use the individual Emscripten calls below if their internal helper is not available
+    if (typeof __fillGamepadEventData !== 'function') {
+      return -2;
+    }
+    var gamepads = navigator.getGamepads ? navigator.getGamepads() : (navigator.webkitGetGamepads ? navigator.webkitGetGamepads() : null);
+    if (!gamepads) {
+      return -1;
+    }
+    var count = Math.min(gamepads.length, $2);
+    for (var i = 0; i < count; ++i) {
+      if (gamepads[i]) {
+        __fillGamepadEventData($0 + i * $3, gamepads[i]);
+        HEAP32[($1 >> 2) + i] = 1;
+      }
+    }
+    return count;
+  }, events, slotPresent, kMaxControllers, (int)sizeof(EmscriptenGamepadEvent));
+
+  if (count == -1) {
+    MoonlightInstance::ClLogMessage("Failed to sample gamepad data!\n");
+    return -1;
+  } else if (count != -2) {
+    return count;
+  }
+
+  // Guard check if sampling gamepad data is not successful
+  if (emscripten_sample_gamepad_data() != EMSCRIPTEN_RESULT_SUCCESS) {
+    MoonlightInstance::ClLogMessage("Failed to sample gamepad data!\n");
+    return -1;
+  }
+
+  // Query how many gamepad slots the browser currently exposes
+  const auto numGamepads = emscripten_get_num_gamepads();
+  // Guard check if retrieving the number of gamepads is not supported
+  if (numGamepads == EMSCRIPTEN_RESULT_NOT_SUPPORTED) {
+    MoonlightInstance::ClLogMessage("Failed to get number of gamepads!\n");
+    return -1;
+  }
+
+  // Cap at the protocol maximum of 16 controllers
+  const int limit = std::min(numGamepads, kMaxControllers);
+  for (int i = 0; i < limit; ++i) {
+    // Check if the gamepad status retrieval is successful for the current slot
+    if (emscripten_get_gamepad_status(i, &events[i]) == EMSCRIPTEN_RESULT_SUCCESS) {
+      slotPresent[i] = 1;
+    }
+  }
+
+  return limit;
+}
+
 // Called when gamepad settings change; clears announced flags so arrival is re-sent with updated data
 void MoonlightInstance::HandleGamepadInputState(bool rumbleFeedback, bool mouseEmulation, bool flipABfaceButtons, bool flipXYfaceButtons) {
   // Force re-announce on next poll so the host gets the updated button map / capabilities
@@ -239,17 +326,15 @@ void MoonlightInstance::HandleGamepadInputState(bool rumbleFeedback, bool mouseE
 
 // Function to poll gamepad input
 void MoonlightInstance::PollGamepads() {
-  // Guard check if sampling gamepad data is not successful
-  if (emscripten_sample_gamepad_data() != EMSCRIPTEN_RESULT_SUCCESS) {
-    ClLogMessage("Failed to sample gamepad data!\n");
-    return;
-  }
+  // Temporary storage for this poll's gamepad events and presence flags
+  EmscriptenGamepadEvent events[kMaxControllers]{};
+  int slotPresent[kMaxControllers] = { 0 };
 
-  // Query how many gamepad slots the browser currently exposes
-  const auto numGamepads = emscripten_get_num_gamepads();
-  // Guard check if retrieving the number of gamepads is not supported
-  if (numGamepads == EMSCRIPTEN_RESULT_NOT_SUPPORTED) {
-    ClLogMessage("Failed to get number of gamepads!\n");
+  // See matching logic in "[utils.js] getConnectedGamepadMask()" – these must stay in sync!
+
+  // Read every browser slot once so later logic can work from a stable snapshot
+  const int limit = ReadGamepadSlots(events, slotPresent);
+  if (limit < 0) {
     return;
   }
 
@@ -260,23 +345,6 @@ void MoonlightInstance::PollGamepads() {
   short activeGamepadMask = 0;
   std::vector<int> removed;
   std::vector<int> arrived;
-
-  // Cap at the protocol maximum of 16 controllers
-  const int limit = std::min(numGamepads, kMaxControllers);
-
-  // Temporary storage for this poll's gamepad events and presence flags
-  EmscriptenGamepadEvent events[kMaxControllers]{};
-  bool slotPresent[kMaxControllers] = { false };
-
-  // See matching logic in "[utils.js] getConnectedGamepadMask()" – these must stay in sync!
-
-  // Read every browser slot once so later logic can work from a stable snapshot
-  for (int i = 0; i < limit; ++i) {
-    // Check if the gamepad status retrieval is successful for the current slot
-    if (emscripten_get_gamepad_status(i, &events[i]) == EMSCRIPTEN_RESULT_SUCCESS) {
-      slotPresent[i] = true;
-    }
-  }
 
   // Decide per slot: still real, removed, or newly arrived
   for (int i = 0; i < kMaxControllers; ++i) {
@@ -317,6 +385,7 @@ void MoonlightInstance::PollGamepads() {
   // Send zeroed events for removed / replaced controllers so the host cleans up
   for (int i : removed) {
     LiSendMultiControllerEvent(i, activeGamepadMask & ~(1 << i), 0, 0, 0, 0, 0, 0, 0);
+    sentState[i] = {};
   }
 
   // Announce new (or re-arrived) controllers so Sunshine can pick the right profile
@@ -345,6 +414,8 @@ void MoonlightInstance::PollGamepads() {
     // On failure leave un-announced; next poll will retry
     if (LiSendControllerArrivalEvent(i, activeGamepadMask, type, buttons, capabilities) == 0) {
       slotState[i].announced = true;
+      // Send the full state of the new controller on this poll
+      sentState[i] = {};
     }
   }
 
@@ -471,9 +542,30 @@ void MoonlightInstance::PollGamepads() {
       }
     } else {
       // If mouse emulation is inactive, then send gamepad input to the desired handler (acts as a gamepad)
-      LiSendMultiControllerEvent(
-        gamepadID, activeGamepadMask, buttonFlags, leftTrigger,
-        rightTrigger, leftStickX, leftStickY, rightStickX, rightStickY);
+      SentControllerState state;
+      state.activeGamepadMask = activeGamepadMask;
+      state.buttonFlags = buttonFlags;
+      state.leftTrigger = static_cast<unsigned char>(leftTrigger);
+      state.rightTrigger = static_cast<unsigned char>(rightTrigger);
+      state.leftStickX = static_cast<short>(leftStickX);
+      state.leftStickY = static_cast<short>(leftStickY);
+      state.rightStickX = static_cast<short>(rightStickX);
+      state.rightStickY = static_cast<short>(rightStickY);
+
+      // Skip polls that read the same state again, but refresh the host periodically
+      SentControllerState& lastState = sentState[gamepadID];
+      const uint64_t nowMs = LiGetMillis();
+      if (!lastState.valid || !IsSameControllerState(lastState, state) ||
+          nowMs - lastState.timeMs >= kControllerRefreshIntervalMs) {
+        // Remember the state only once it was queued, so a dropped event is retried on the next poll
+        if (LiSendMultiControllerEvent(
+              gamepadID, state.activeGamepadMask, state.buttonFlags, state.leftTrigger,
+              state.rightTrigger, state.leftStickX, state.leftStickY, state.rightStickX, state.rightStickY) == 0) {
+          state.valid = true;
+          state.timeMs = nowMs;
+          lastState = state;
+        }
+      }
     }
   }
 }

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 
 project(MoonlightWasm VERSION 1.0)
 
-add_compile_options(-w -s WASM=1 -fno-ident -Os -flto -DSAMSUNG_WRT -DOS_WASM -DNDEBUG)
+add_compile_options(-w -s WASM=1 -fno-ident -O2 -flto -DSAMSUNG_WRT -DOS_WASM -DNDEBUG)
 
 add_library(moonlight-rs STATIC
     moonlight-common-c/reedsolomon/rs.c)
@@ -264,7 +264,7 @@ set_target_properties(moonlight-wasm
         LINK_FLAGS
             "--bind \
              -pthread \
-             -Os \
+             -O2 \
              -flto \
              -s TOTAL_MEMORY=134217728 \
              -s TOTAL_STACK=16777216 \
