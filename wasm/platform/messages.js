@@ -8,7 +8,7 @@ const SyncFunctions = {
   /* host, httpPort, width, height, fps, bitrate, rikey, rikeyid, appversion, gfeversion, rtspurl, serverCodecModeSupport,
   framePacing, optimizeGames, rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons, audioBackend,
   audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange, gameMode,
-  disableWarnings, performanceStats */
+  disableWarnings, performanceStats, refFrameInvalidation */
   'startRequest': (...args) => Module.startStream(...args),
   // no parameters
   'stopRequest': (...args) => Module.stopStream(...args),
@@ -104,6 +104,8 @@ function replaceKnownStatsLabels(text) {
     .replace(/Average decoding time:/g, t('Average decoding time:'))
     .replace(/Average frame queue delay:/g, t('Average frame queue delay:'))
     .replace(/Average rendering time:/g, t('Average rendering time:'))
+    .replace(/Session frames dropped by network:/g, t('Session frames dropped by network:'))
+    .replace(/Session recovery keyframes:/g, t('Session recovery keyframes:'))
     .replace(/Slow connection to PC\.\nReduce your bitrate!/g, t('Slow connection to PC.\nReduce your bitrate!'));
 }
 
@@ -387,9 +389,9 @@ function handleMessage(msg) {
       savePerformanceStats();
       $('#performance-stats').css('display', 'inline-block');
     }
-    // Show the performance statistics overlay
+    // Show the performance statistics overlay, followed by the network connection of the TV if it's known
     $('#performance-stats').css('background', 'rgba(0, 0, 0, 0.5)');
-    $('#performance-stats').text(translateBackendMessage(msg.replace('StatMsg: ', '')));
+    $('#performance-stats').text(translateBackendMessage(msg.replace('StatMsg: ', '')) + (streamNetworkInfo ? '\n' + streamNetworkInfo : ''));
   } else if (msg.indexOf('controllerRumble: ') === 0) {
     const eventData = msg.split(' ')[1].split(',');
     const gamepadIdx = parseInt(eventData[0]);

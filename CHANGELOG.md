@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased (Samsung S90C optimizations)
+
+### Added
+- Added a 'Samsung S90C optimization' button that applies the optimal streaming settings for the S90C with a bitrate matching the network connection of the TV
+- Introduced a new experimental 'Reference frame invalidation' setting to recover from packet loss without a full keyframe (HEVC and AV1)
+- Added session totals of network frame drops and recovery keyframes to the performance stats, along with the network connection of the TV
+- Added detection of the Ethernet or Wi-Fi connection of the TV with a warning above 80 Mbps over the 100 Mbps Ethernet port
+- Added warnings when selecting H.264 above 1080p or 4K above 120 FPS, which exceed the video decoder of the TV
+- Added an optimization plan for the S90C covering the network, host, TV settings and test procedure (`docs/S90C-Optimierungsplan.md`)
+
+### Changed
+- Requested the Rec. 709 colorspace instead of Rec. 601 for SDR streams, which is the standard for HD and 4K video
+- Declared HEVC and AV1 level 5.2 for streams above 4K at 60 FPS, with a fallback to level 5.1 for TVs that reject it
+- Limited the bitrate presets to 75 Mbps when the TV is connected over its 100 Mbps Ethernet port
+- Changed the default video settings to the optimal streaming settings for the S90C (4K, 60 FPS, HEVC, HDR, and a bitrate for the network connection)
+
+### Fixed
+- Fixed 'Restore Defaults' turning off the 'Video frame pacing' and 'Host address field mode' settings even though they are enabled by default
+- Fixed the resolution and frame rate warning comparing the values as text instead of numbers
+
 ## v1.19.0
 
 ### Added

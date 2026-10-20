@@ -99,6 +99,22 @@
         <div id="settings-right-pane">
           <div id="basicSettings" class="settings-options">
             <div class="setting-option">
+              <label><span data-i18n="Samsung S90C optimization">Samsung S90C optimization</span>
+                <span class="badge badge-new" data-i18n="New">New</span>
+              </label>
+              <span class="mdl-list__item-text-body" data-i18n="- Applies the best image quality settings for the Samsung S90C (4K, HEVC, HDR) with a bitrate that matches the network connection of the TV.">
+                - Applies the best image quality settings for the Samsung S90C (4K, HEVC, HDR) with a bitrate that matches the network connection of the TV.
+              </span>
+              <div id="s90cProfileMenu">
+                <button type="button" id="s90cProfileBtn" class="mdl-button mdl-js-button mdl-js-ripple-effect" aria-label="Apply S90C Settings">
+                  <span data-i18n="Apply the optimal streaming settings for this TV">
+                    Apply the optimal streaming settings for this TV
+                  </span>
+                  <img src="static/res/ic_tv_white_48px.svg" id="s90cProfileIcon">
+                </button>
+              </div>
+            </div>
+            <div class="setting-option">
               <label data-i18n="Video resolution">Video resolution</label>
               <span class="mdl-list__item-text-body" data-i18n="- Increase to improve image clarity or decrease for better performance on lower-end devices and slower networks.">
                 - Increase to improve image clarity or decrease for better performance on lower-end devices and slower networks.
@@ -416,6 +432,22 @@
                   <input type="checkbox" id="gameModeSwitch" class="mdl-switch__input">
                   <span class="mdl-switch__label" data-i18n="Allow game mode for optimal latency and performance while streaming">
                     Allow game mode for optimal latency and performance while streaming
+                  </span>
+                </label>
+              </div>
+            </div>
+            <div class="setting-option">
+              <label><span data-i18n="Reference frame invalidation">Reference frame invalidation</span>
+                <span class="badge badge-experimental" data-i18n="Experimental">Experimental</span>
+              </label>
+              <span class="mdl-list__item-text-body" data-i18n="- Recovers from packet loss without a full keyframe, which avoids traffic spikes and blurry frames. Disable it if artifacts remain after a frame drop.">
+                - Recovers from packet loss without a full keyframe, which avoids traffic spikes and blurry frames. Disable it if artifacts remain after a frame drop.
+              </span>
+              <div id="refFrameInvalidationMenu">
+                <label id="refFrameInvalidationBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="refFrameInvalidationSwitch">
+                  <input type="checkbox" id="refFrameInvalidationSwitch" class="mdl-switch__input">
+                  <span class="mdl-switch__label" data-i18n="Allow the host to recover lost frames with reference frame invalidation (HEVC and AV1)">
+                    Allow the host to recover lost frames with reference frame invalidation (HEVC and AV1)
                   </span>
                 </label>
               </div>

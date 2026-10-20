@@ -9,6 +9,10 @@ Moonlight Tizen is a port of [Moonlight ChromeOS](https://github.com/moonlight-s
 
 This application allows you to stream your collection of games, programs, or your full desktop from your powerful PC to your Samsung Smart TV.
 
+> [!NOTE]
+>
+> This fork is optimized for the **Samsung S90C** (55", 2023) to stream the best possible image quality at high bitrates without frame drops. See the [S90C optimization plan](docs/S90C-Optimierungsplan.md) (German) for the network, host, and TV settings, the changes in this fork, and the test procedure.
+
 > [!IMPORTANT]
 >
 > While I am still actively maintaining the project and doing my best with my **limited time**, I want to let you all know that I am focused on pushing the remaining improvements and new features, including the integration of community contributions. This is also why the project has continued to be **actively updated and receive frequent releases** in recent months.

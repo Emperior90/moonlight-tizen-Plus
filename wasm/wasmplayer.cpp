@@ -3,6 +3,8 @@
 #include <condition_variable>
 #include <functional>
 #include <mutex>
+#include <utility>
+#include <vector>
 
 #include <h264_stream.h>
 
@@ -36,6 +38,11 @@ static constexpr uint32_t kSampleRate = 48000;
 // step well within a second, but never completes some of them when it doesn't support the stream.
 static constexpr std::chrono::milliseconds kMediaSetupTimeout{5000};
 
+// Maximum luma sample rate of HEVC and AV1 level 5.1, which covers 4K at up to 64 FPS. Faster
+// streams (e.g. 4K at 90 or 120 FPS) need level 5.2, which the TVs with a 120 Hz panel decode,
+// such as the S90C that supports HEVC and AV1 at 3840x2160 and 120 FPS.
+static constexpr uint64_t kLevel51MaxLumaSampleRate = 534773760;
+
 static uint32_t s_VideoFormat = 0;
 static uint32_t s_Width = 0;
 static uint32_t s_Height = 0;
@@ -57,6 +64,10 @@ static bool s_FramePacingEnabled = false;
 
 static uint32_t total_bytes = 0;
 static int m_LastFrameNumber = 0;
+
+// IDR frames received after the first one, which the host only sends to recover the stream
+static bool s_ReceivedFirstIdrFrame = false;
+static uint32_t s_RecoveryIdrFrames = 0;
 
 static std::string s_StatString = "";
 
@@ -215,55 +226,64 @@ int MoonlightInstance::StartupVidDecSetup(int videoFormat, int width, int height
   }
 
   {
-    const char *mimetype = "video/mp4"; // MIME-type: Video MP4 Container
+    // Streams that exceed the luma sample rate of level 5.1 (e.g. 4K at 120 FPS) offer level 5.2 first,
+    // so that the TV sets up its decoder for the actual stream, and fall back to level 5.1 for TVs that
+    // reject it. Streams up to 4K at 60 FPS keep using level 5.1 only, which all supported TVs accept.
+    const bool needsLevel52 = (uint64_t)width * height * redrawRate > kLevel51MaxLumaSampleRate;
+    std::vector<std::pair<const char*, const char*>> videoProfiles; // MIME-type and profile name, in order of preference
     if (videoFormat & VIDEO_FORMAT_H264) {
-      mimetype = "video/mp4; codecs=\"avc1.64002A\""; // Video codec: H.264 High Level Profile 4.2
-      /* NOTE: Depending on the capabilities of the TV, it may support higher-level codec profiles, such as:
-      5.1 (avc1.640033); */
-      ClLogMessage("Video codec profile selected: H.264 High Level Profile 4.2\n");
+      // NOTE: Samsung TVs generally decode H.264 only up to level 4.2 (1080p), so higher resolutions should use HEVC or AV1
+      videoProfiles.push_back({"video/mp4; codecs=\"avc1.64002A\"", "H.264 High Level Profile 4.2"});
     } else if (videoFormat & VIDEO_FORMAT_H265) {
-      mimetype = "video/mp4; codecs=\"hev1.1.6.L153.B0\""; // Video Codec: HEVC Main Level Profile 5.1
-      /* NOTE: Depending on the capabilities of the TV, it may support higher-level codec profiles, such as:
-      5.2 (hev1.1.6.L156.B0); */
-      ClLogMessage("Video codec profile selected: HEVC Main Level Profile 5.1\n");
+      if (needsLevel52) {
+        videoProfiles.push_back({"video/mp4; codecs=\"hev1.1.6.L156.B0\"", "HEVC Main Level Profile 5.2"});
+      }
+      videoProfiles.push_back({"video/mp4; codecs=\"hev1.1.6.L153.B0\"", "HEVC Main Level Profile 5.1"});
     } else if (videoFormat & VIDEO_FORMAT_H265_MAIN10) {
-      mimetype = "video/mp4; codecs=\"hev1.2.4.L153.B0\""; // Video Codec: HEVC Main10 Level Profile 5.1
-      /* NOTE: Depending on the capabilities of the TV, it may support higher-level codec profiles, such as:
-      5.2 (hev1.2.4.L156.B0); */
-      ClLogMessage("Video codec profile selected: HEVC Main10 Level Profile 5.1\n");
+      if (needsLevel52) {
+        videoProfiles.push_back({"video/mp4; codecs=\"hev1.2.4.L156.B0\"", "HEVC Main10 Level Profile 5.2"});
+      }
+      videoProfiles.push_back({"video/mp4; codecs=\"hev1.2.4.L153.B0\"", "HEVC Main10 Level Profile 5.1"});
     } else if (videoFormat & VIDEO_FORMAT_AV1_MAIN8) {
-      mimetype = "video/mp4; codecs=\"av01.0.13M.08\""; // Video Codec: AV1 Main Level Profile 5.1
-      /* NOTE: Depending on the capabilities of the TV, it may support higher-level codec profiles, such as:
-      5.2 (av01.0.14M.08); */
-      ClLogMessage("Video codec profile selected: AV1 Main Level Profile 5.1\n");
+      if (needsLevel52) {
+        videoProfiles.push_back({"video/mp4; codecs=\"av01.0.14M.08\"", "AV1 Main Level Profile 5.2"});
+      }
+      videoProfiles.push_back({"video/mp4; codecs=\"av01.0.13M.08\"", "AV1 Main Level Profile 5.1"});
     } else if (videoFormat & VIDEO_FORMAT_AV1_MAIN10) {
-      mimetype = "video/mp4; codecs=\"av01.0.13M.10\""; // Video Codec: AV1 Main10 Level Profile 5.1
-      /* NOTE: Depending on the capabilities of the TV, it may support higher-level codec profiles, such as:
-      5.2 (av01.0.14M.10); */
-      ClLogMessage("Video codec profile selected: AV1 Main10 Level Profile 5.1\n");
+      if (needsLevel52) {
+        videoProfiles.push_back({"video/mp4; codecs=\"av01.0.14M.10\"", "AV1 Main10 Level Profile 5.2"});
+      }
+      videoProfiles.push_back({"video/mp4; codecs=\"av01.0.13M.10\"", "AV1 Main10 Level Profile 5.1"});
     } else {
       ClLogMessage("Failed to select video codec profile (videoFormat=0x%x)\n", videoFormat);
       return -1;
     }
 
-    ClLogMessage("Using mimeType %s\n", mimetype);
-    auto add_track_result = g_Instance->m_Source->AddTrack(
-      samsung::wasm::ElementaryVideoTrackConfig {
-        mimetype, // MIME-type: Selected Video Format
-        {}, // Extradata: Empty
-        samsung::wasm::DecodingMode::kHardware, // Decoding mode: Hardware
-        static_cast<uint32_t>(width), // Video resolution: Width
-        static_cast<uint32_t>(height), // Video resolution: Height
-        static_cast<uint32_t>(redrawRate), // Framerate: Numerator
-        1, // Framerate: Denominator
+    bool videoTrackAdded = false;
+    for (const auto& videoProfile : videoProfiles) {
+      ClLogMessage("Video codec profile selected: %s\n", videoProfile.second);
+      ClLogMessage("Using mimeType %s\n", videoProfile.first);
+      auto add_track_result = g_Instance->m_Source->AddTrack(
+        samsung::wasm::ElementaryVideoTrackConfig {
+          videoProfile.first, // MIME-type: Selected Video Format
+          {}, // Extradata: Empty
+          samsung::wasm::DecodingMode::kHardware, // Decoding mode: Hardware
+          static_cast<uint32_t>(width), // Video resolution: Width
+          static_cast<uint32_t>(height), // Video resolution: Height
+          static_cast<uint32_t>(redrawRate), // Framerate: Numerator
+          1, // Framerate: Denominator
+        }
+      );
+      if (add_track_result) {
+        g_Instance->m_VideoTrack = std::move(*add_track_result);
+        g_Instance->m_VideoTrack.SetListener(&g_Instance->m_VideoTrackListener);
+        videoTrackAdded = true;
+        break;
       }
-    );
-    if (add_track_result) {
-      g_Instance->m_VideoTrack = std::move(*add_track_result);
-      g_Instance->m_VideoTrack.SetListener(&g_Instance->m_VideoTrackListener);
-    } else {
+      ClLogMessage("The TV rejected the video track (%s, %dx%d at %d FPS)\n", videoProfile.first, width, height, redrawRate);
+    }
+    if (!videoTrackAdded) {
       // Fail now, because a track that was never added will never open
-      ClLogMessage("The TV rejected the video track (%s, %dx%d at %d FPS)\n", mimetype, width, height, redrawRate);
       return ERROR_VIDEO_SETUP_FAILED;
     }
   }
@@ -353,6 +373,10 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
   // Reset the received byte count so the bitrate doesn't include data from a previous stream
   total_bytes = 0;
 
+  // Reset the recovery keyframe count so the session totals don't include a previous stream
+  s_ReceivedFirstIdrFrame = false;
+  s_RecoveryIdrFrames = 0;
+
   // Ensure that StartupVidDecSetup is called every time when VidDecSetup is invoked to reinitialize the media pipeline
   int initVidDec = StartupVidDecSetup(videoFormat, width, height, redrawRate, context, drFlags);
 
@@ -424,6 +448,15 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     s_firstAppend = std::chrono::steady_clock::now();
     // Update the flag to indicate that the first frame has been processed
     s_hasFirstFrame = true;
+  }
+
+  // Count the IDR frames after the first one, because the host only sends them to recover the
+  // stream (e.g. after packet loss), so each one is a visible hiccup in the session
+  if (decodeUnit->frameType == FRAME_TYPE_IDR) {
+    if (s_ReceivedFirstIdrFrame) {
+      s_RecoveryIdrFrames++;
+    }
+    s_ReceivedFirstIdrFrame = true;
   }
 
   // Calculate the start of the pacing duration in milliseconds
@@ -743,6 +776,25 @@ void MoonlightInstance::FormatVideoStats(VIDEO_STATS& stats, char* output, int l
       (float)stats.totalDecodeTime / stats.decodedFrames,
       (float)stats.totalPacerTime / stats.renderedFrames,
       (float)stats.totalRenderTime / stats.renderedFrames
+    );
+    // Abort if string formatting failed or buffer overflowed
+    if (ret < 0 || ret >= length - offset) {
+      assert(false);
+      return;
+    }
+    offset += ret;
+  }
+
+  // Show the totals of the whole session, so that brief drops between the overlay updates aren't missed
+  if (m_GlobalVideoStats.totalFrames != 0) {
+    // Print the network frame drops and the recovery keyframes since the stream started
+    ret = snprintf(
+      &output[offset], length - offset,
+      "Session frames dropped by network: %u (%.2f%%)\n"
+      "Session recovery keyframes: %u\n",
+      m_GlobalVideoStats.networkDroppedFrames,
+      (float)m_GlobalVideoStats.networkDroppedFrames / m_GlobalVideoStats.totalFrames * 100,
+      s_RecoveryIdrFrames
     );
     // Abort if string formatting failed or buffer overflowed
     if (ret < 0 || ret >= length - offset) {

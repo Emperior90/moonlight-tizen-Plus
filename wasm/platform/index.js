@@ -27,6 +27,7 @@ try {
   console.error("Error fetching panel capabilities: " + e.message);
 }
 var isHdrCapable = webapis.avinfo.isHdrTvSupport(); // Check if the device supports HDR
+var isS90cModel = /S90C/i.test(String(modelName) + ' ' + String(modelSeries)); // Check if the device is a Samsung S90C, which this build is optimized for
 var hosts = {}; // Hosts is an associative array of NvHTTP objects, keyed by server UID
 var isHostOpening = false; // Prevents concurrent hostChosen executions, initial value is false
 var isHostsLoaded = false; // Indicates if IndexedDB has finished loading hosts
@@ -45,6 +46,10 @@ var resFpsWarning = false; // Flag indicating whether the video resolution and f
 var bitrateWarning = false; // Flag indicating whether the video bitrate warning message has shown, initial value is false
 var audioWarning = false; // Flag indicating whether the audio configuration warning message has shown, initial value is false
 var codecWarning = false; // Flag indicating whether the video codec warning message has shown, initial value is false
+var ethernetBitrateWarning = false; // Flag indicating whether the Ethernet bitrate warning message has shown, initial value is false
+var ethernetPresetNotice = false; // Flag indicating whether the Ethernet bitrate preset limit message has shown, initial value is false
+var h264ResolutionWarning = false; // Flag indicating whether the H.264 resolution warning message has shown, initial value is false
+var streamNetworkInfo = ''; // Network connection summary shown in the performance statistics while streaming, initial value is empty
 var repeatAction = null; // Flag indicating whether the repeat action is set, initial value is null
 var lastInvokeTime = 0; // Flag indicating the last invoke time, initial value is 0
 var repeatTimeout = null; // Flag indicating whether the repeat timeout is set, initial value is null
@@ -65,6 +70,10 @@ const NAVIGATION_DELAY = 150; // Navigation delay set to 150ms (milliseconds)
 const UPDATE_TIMESTAMP = 'lastUpdateCheck'; // Use the update check timestamp key to determine the last update check
 const UPDATE_VERSION = 'latestUpdateVersion'; // // Use the update version key to cache the latest version found
 const UPDATE_INTERVAL = 24 * 60 * 60 * 1000; // Automatic check for updates interval is set to 24 hours
+const ETHERNET_MAX_BITRATE = 80; // Highest bitrate in Mbps that fits the 100 Mbps Ethernet port of Samsung TVs, including FEC and network overhead
+const RECOMMENDED_ETHERNET_BITRATE = 75; // Recommended 4K bitrate in Mbps over the 100 Mbps Ethernet port, leaving headroom for larger frames
+const RECOMMENDED_WIFI_BITRATE = 100; // Recommended 4K bitrate in Mbps over 5 GHz Wi-Fi, matching the 4K HEVC decoder specification of the TV
+const RECOMMENDED_DEFAULT_BITRATE = 80; // Recommended 4K bitrate in Mbps when the network connection type of the TV is unknown
 
 // Called by the common.js module
 function attachListeners() {
@@ -94,6 +103,7 @@ function attachListeners() {
   filterUnsupportedResolutions();
 
   $('#addHostContainer').on('click', addHostDialog);
+  $('#s90cProfileBtn').on('click', s90cSettingsDialog);
   $('#settingsBtn').on('click', showSettings);
   $('#supportBtn').on('click', appSupportDialog);
   $('#goBackBtn').on('click', showHosts);
@@ -122,6 +132,7 @@ function attachListeners() {
   $('#hdrModeSwitch').on('click', saveHdrMode);
   $('#fullRangeSwitch').on('click', saveFullRange);
   $('#gameModeSwitch').on('click', saveGameMode);
+  $('#refFrameInvalidationSwitch').on('click', saveRefFrameInvalidation);
   $('#unlockAllFpsSwitch').on('click', saveUnlockAllFps);
   $('#optimizeBitrateSwitch').on('click', saveOptimizeBitrate);
   $('#disableWarningsSwitch').on('click', saveDisableWarnings);
@@ -711,6 +722,89 @@ function filterUnsupportedResolutions() {
       }
     }
   });
+}
+
+// Get the active network connection type of the TV, which is either 'ethernet', 'wifi' or 'unknown'
+function getActiveConnectionType() {
+  try {
+    if (typeof webapis !== 'undefined' && webapis.network && typeof webapis.network.getActiveConnectionType === 'function') {
+      // Compare with the constants of the API, falling back to their documented values (WIFI = 1, ETHERNET = 3)
+      const connectionTypes = webapis.network.NetworkActiveConnectionType || {};
+      const ethernetType = connectionTypes.ETHERNET !== undefined ? connectionTypes.ETHERNET : 3;
+      const wifiType = connectionTypes.WIFI !== undefined ? connectionTypes.WIFI : 1;
+      const activeType = webapis.network.getActiveConnectionType();
+      if (activeType === ethernetType) {
+        return 'ethernet';
+      } else if (activeType === wifiType) {
+        return 'wifi';
+      }
+    }
+  } catch (e) {
+    console.warn('%c[index.js, getActiveConnectionType]', 'color: green;', 'Warning: Failed to get the active network connection type: ' + e);
+  }
+  return 'unknown';
+}
+
+// Get the recommended 4K bitrate in Mbps for the given network connection type of the TV. Samsung TVs have
+// a 100 Mbps Ethernet port, whose bursts of packets from the much faster host PC can cause packet loss above
+// that bitrate, while 5 GHz Wi-Fi can carry more than the HEVC decoder specification of the TV for 4K.
+function getRecommendedBitrate(connectionType) {
+  switch (connectionType) {
+    case 'ethernet':
+      return RECOMMENDED_ETHERNET_BITRATE;
+    case 'wifi':
+      return RECOMMENDED_WIFI_BITRATE;
+    default:
+      return RECOMMENDED_DEFAULT_BITRATE;
+  }
+}
+
+// Get the Wi-Fi signal strength of the TV in percent and pass it to the callback function, or null if it's unavailable
+function getWifiSignalStrength(callbackFunction) {
+  try {
+    tizen.systeminfo.getPropertyValue('WIFI_NETWORK', function(wifiNetwork) {
+      if (wifiNetwork && wifiNetwork.status === 'ON' && typeof wifiNetwork.signalStrength === 'number') {
+        callbackFunction(Math.round(wifiNetwork.signalStrength * 100));
+      } else {
+        callbackFunction(null);
+      }
+    }, function(error) {
+      console.warn('%c[index.js, getWifiSignalStrength]', 'color: green;', 'Warning: Failed to get the Wi-Fi signal strength: ' + error.message);
+      callbackFunction(null);
+    });
+  } catch (e) {
+    console.warn('%c[index.js, getWifiSignalStrength]', 'color: green;', 'Warning: Failed to get the Wi-Fi signal strength: ' + e);
+    callbackFunction(null);
+  }
+}
+
+// Update the network connection summary that is shown in the performance statistics while streaming
+function updateStreamNetworkInfo() {
+  const connectionType = getActiveConnectionType();
+  console.log('%c[index.js, updateStreamNetworkInfo]', 'color: green;', 'Active network connection type: ' + connectionType);
+  if (connectionType === 'ethernet') {
+    streamNetworkInfo = t('Network connection: Ethernet (TV port limited to 100 Mbps)');
+  } else if (connectionType === 'wifi') {
+    streamNetworkInfo = t('Network connection: Wi-Fi');
+    // Add the signal strength as soon as it's available, since it's retrieved asynchronously
+    getWifiSignalStrength(function(signalStrength) {
+      if (signalStrength !== null) {
+        streamNetworkInfo = t('Network connection: Wi-Fi (signal strength: %1$s percent)', signalStrength);
+      }
+    });
+  } else {
+    streamNetworkInfo = '';
+  }
+}
+
+// Get the highest resolution option that the TV supports, which is 4K on the S90C
+function getOptimalResolution() {
+  if (maxSupportedWidth >= 3840) {
+    return '3840:2160';
+  } else if (maxSupportedWidth >= 2560) {
+    return '2560:1440';
+  }
+  return '1920:1080';
 }
 
 function isValidPort(port) {
@@ -2917,6 +3011,10 @@ function startGame(host, appID) {
       const gameMode = $('#gameModeSwitch').parent().hasClass('is-checked') ? 1 : 0;
       const disableWarnings = $('#disableWarningsSwitch').parent().hasClass('is-checked') ? 1 : 0;
       const performanceStats = $('#performanceStatsSwitch').parent().hasClass('is-checked') ? 1 : 0;
+      const refFrameInvalidation = $('#refFrameInvalidationSwitch').parent().hasClass('is-checked') ? 1 : 0;
+
+      // Update the network connection summary for the performance statistics
+      updateStreamNetworkInfo();
 
       console.log('%c[index.js, startGame]', 'color: green;', 'startRequest:' + 
       '\n Host address: ' + host.address + ':' + host.httpPort + 
@@ -2940,7 +3038,8 @@ function startGame(host, appID) {
       '\n Full color range: ' + fullRange + 
       '\n Game Mode: ' + gameMode + 
       '\n Disable connection warnings: ' + disableWarnings + 
-      '\n Performance statistics: ' + performanceStats);
+      '\n Performance statistics: ' + performanceStats + 
+      '\n Reference frame invalidation: ' + refFrameInvalidation);
 
       // Hide on-screen overlays until the streaming session begins
       $('#connection-warnings, #performance-stats').css('background', 'transparent').text('');
@@ -2982,7 +3081,7 @@ function startGame(host, appID) {
             host.appVersion, host.gfeVersion, $root.find('sessionUrl0').text().trim(), host.serverCodecModeSupport,
             framePacing, optimizeGames, rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons,
             audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
-            gameMode, disableWarnings, performanceStats
+            gameMode, disableWarnings, performanceStats, refFrameInvalidation
           ]);
         }, function(failedResumeApp) {
           console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to resume app with id: ' + appID + '\n Returned error was: ' + failedResumeApp + '!');
@@ -3034,7 +3133,7 @@ function startGame(host, appID) {
           host.appVersion, host.gfeVersion, $root.find('sessionUrl0').text().trim(), host.serverCodecModeSupport,
           framePacing, optimizeGames, rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons,
           audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
-          gameMode, disableWarnings, performanceStats
+          gameMode, disableWarnings, performanceStats, refFrameInvalidation
         ]);
       }, function(failedLaunchApp) {
         console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to launch app with id: ' + appID + '\n Returned error was: ' + failedLaunchApp + '!');
@@ -3260,6 +3359,7 @@ function saveResolution() {
   $('#optimizeBitrateSwitch').prop('checked') ? optimizeBitratePresets() : standardBitratePresets();
   // Trigger warning check after changing video resolution
   warnResolutionFramerate();
+  warnH264Resolution();
 }
 
 function saveFramerate() {
@@ -3275,19 +3375,41 @@ function saveFramerate() {
 }
 
 function warnResolutionFramerate() {
-  var chosenResolutionWidth = $('#selectResolution').data('value').split(':')[0];
-  var chosenResolutionHeight = $('#selectResolution').data('value').split(':')[1];
-  var chosenFramerate = $('#selectFramerate').data('value');
+  // Compare as numbers, because comparing the strings would rank e.g. 854 above 1920
+  var chosenResolutionWidth = parseInt($('#selectResolution').data('value').split(':')[0], 10);
+  var chosenResolutionHeight = parseInt($('#selectResolution').data('value').split(':')[1], 10);
+  var chosenFramerate = parseInt($('#selectFramerate').data('value'), 10);
 
   // Video resolution and frame rate warning
-  if (!resFpsWarning && chosenResolutionWidth > '1920' && chosenResolutionHeight > '1080' && chosenFramerate > '60') {
+  if (!resFpsWarning && chosenResolutionWidth > 1920 && chosenResolutionHeight > 1080 && chosenFramerate > 60) {
     // Warn only if video resolution is greater than 1080p and frame rate is greater than 60 FPS
-    snackbarLogLong('Warning: This resolution and frame rate may not perform well on lower-end devices or slower connections!');
+    if (chosenResolutionWidth >= 3840 && chosenFramerate > 120) {
+      // The video decoder of the TV handles 4K up to 120 FPS, so higher frame rates exceed its specification
+      snackbarLogLong('Warning: The video decoder of the TV supports 4K up to 120 FPS, so higher frame rates at 4K may stutter or fail to start!');
+    } else {
+      snackbarLogLong('Warning: This resolution and frame rate may not perform well on lower-end devices or slower connections!');
+    }
     // Set flag for video resolution and frame rate warning
     resFpsWarning = true;
-  } else if (resFpsWarning && (chosenResolutionWidth <= '1920' || chosenResolutionHeight <= '1080' || chosenFramerate <= '60')) {
+  } else if (resFpsWarning && (chosenResolutionWidth <= 1920 || chosenResolutionHeight <= 1080 || chosenFramerate <= 60)) {
     // Reset the flag for video resolution and frame rate warning if the condition goes back to normal (1080p and 60 FPS)
     resFpsWarning = false;
+  }
+}
+
+function warnH264Resolution() {
+  var chosenResolutionWidth = parseInt($('#selectResolution').data('value').split(':')[0], 10);
+  var chosenVideoCodec = $('#selectCodec').data('value');
+
+  // H.264 resolution warning
+  if (!h264ResolutionWarning && chosenVideoCodec === 'H264' && chosenResolutionWidth > 1920) {
+    // Warn only if H.264 is selected with a resolution greater than 1080p, which Samsung TVs generally can't decode
+    snackbarLogLong('Warning: Samsung TVs generally decode H.264 only up to 1080p, so use HEVC or AV1 for higher resolutions!');
+    // Set flag for H.264 resolution warning
+    h264ResolutionWarning = true;
+  } else if (h264ResolutionWarning && (chosenVideoCodec !== 'H264' || chosenResolutionWidth <= 1920)) {
+    // Reset the flag for H.264 resolution warning if the condition goes back to normal (HEVC, AV1 or 1080p)
+    h264ResolutionWarning = false;
   }
 }
 
@@ -3303,6 +3425,20 @@ function saveBitrate() {
 
 function warnBitrate() {
   var chosenBitrate = $('#bitrateSlider').val();
+
+  // Video bitrate warning for the 100 Mbps Ethernet port of the TV
+  if (chosenBitrate > ETHERNET_MAX_BITRATE && getActiveConnectionType() === 'ethernet') {
+    if (!ethernetBitrateWarning) {
+      // Warn only if the TV is connected via Ethernet and the video bitrate exceeds what its port can carry
+      snackbarLogLong('Warning: The Ethernet port of the TV is limited to 100 Mbps, so bitrates above %1$s Mbps can cause packet loss. Use 5 GHz Wi-Fi for higher bitrates!', ETHERNET_MAX_BITRATE);
+      // Set flag for Ethernet bitrate warning
+      ethernetBitrateWarning = true;
+    }
+    return;
+  } else if (ethernetBitrateWarning) {
+    // Reset the flag for Ethernet bitrate warning if the condition goes back to normal (80 Mbps or Wi-Fi)
+    ethernetBitrateWarning = false;
+  }
 
   // Video bitrate warning
   if (!bitrateWarning && chosenBitrate > 100) {
@@ -3387,8 +3523,26 @@ function standardBitratePresets() {
     $('#bitrateSlider')[0].MaterialSlider.change('10');
   }
 
+  // Keep the bitrate within what the network connection of the TV can carry
+  limitPresetBitrate();
+
   // Update the bitrate value
   saveBitrate();
+}
+
+// Limit the bitrate of a preset to what the network connection of the TV can carry. A preset above the recommended
+// bitrate for the 100 Mbps Ethernet port (e.g. 120 Mbps for 4K at 120 FPS) would cause packet loss and frame drops.
+function limitPresetBitrate() {
+  var presetBitrate = parseFloat($('#bitrateSlider').val());
+  if (presetBitrate > RECOMMENDED_ETHERNET_BITRATE && getActiveConnectionType() === 'ethernet') {
+    console.log('%c[index.js, limitPresetBitrate]', 'color: green;', 'Limiting the preset bitrate from ' + presetBitrate + ' to ' + RECOMMENDED_ETHERNET_BITRATE + ' Mbps for Ethernet');
+    $('#bitrateSlider')[0].MaterialSlider.change(String(RECOMMENDED_ETHERNET_BITRATE));
+    // Explain the limit only once, since the presets are applied on every resolution and frame rate change
+    if (!ethernetPresetNotice) {
+      snackbarLogLong('The bitrate has been limited to %1$s Mbps, because the Ethernet port of the TV is limited to 100 Mbps.', RECOMMENDED_ETHERNET_BITRATE);
+      ethernetPresetNotice = true;
+    }
+  }
 }
 
 function optimizeBitratePresets() {
@@ -3421,6 +3575,9 @@ function optimizeBitratePresets() {
 
   // Set the bitrate slider value based on the calculated optimized bitrate
   $('#bitrateSlider')[0].MaterialSlider.change(finalBitrate / 1000);
+
+  // Keep the bitrate within what the network connection of the TV can carry
+  limitPresetBitrate();
 
   // Update the bitrate value
   saveBitrate();
@@ -3654,6 +3811,7 @@ function updateVideoCodec(chosenCodecId, chosenCodecValue) {
   }
   // Trigger warning check after changing video codec
   warnVideoCodec();
+  warnH264Resolution();
 }
 
 function warnVideoCodec() {
@@ -3821,28 +3979,122 @@ function savePerformanceStats() {
   }, 100);
 }
 
+function saveRefFrameInvalidation() {
+  setTimeout(() => {
+    const chosenRefFrameInvalidation = $('#refFrameInvalidationSwitch').parent().hasClass('is-checked');
+    console.log('%c[index.js, saveRefFrameInvalidation]', 'color: green;', 'Saving reference frame invalidation state: ' + chosenRefFrameInvalidation);
+    storeData('refFrameInvalidation', chosenRefFrameInvalidation, null);
+
+    // Warning when enabling the experimental reference frame invalidation
+    if (chosenRefFrameInvalidation) {
+      // Show a warning message, because the hardware decoder of the TV may not handle it correctly
+      snackbarLogLong('Warning: Reference frame invalidation is experimental. If artifacts remain after a frame drop, disable it again!');
+    }
+  }, 100);
+}
+
+// Apply the optimal streaming settings for the Samsung S90C, which this build uses as the defaults of the video settings.
+// The S90C decodes HEVC up to 4K at 120 FPS, but Tizen apps commonly render at around 60 FPS, so 4K at 60 FPS with HEVC
+// and HDR at the highest bitrate that the network connection of the TV can reliably carry gives the best image quality.
+function applyOptimalStreamingSettings(connectionType) {
+  console.log('%c[index.js, applyOptimalStreamingSettings]', 'color: green;', 'Applying the optimal streaming settings for the network connection: ' + connectionType);
+
+  const optimalResolution = getOptimalResolution();
+  const optimalResolutionItem = $('.videoResolutionMenu li[data-value="' + optimalResolution + '"]');
+  $('#selectResolution').text(optimalResolutionItem.text()).attr('data-value', optimalResolution).data('value', optimalResolution);
+  storeData('resolution', optimalResolution, null);
+
+  // Unlock the higher frame rates to allow experimenting with them, since the panel of the S90C supports up to 144 Hz
+  document.querySelector('#unlockAllFpsBtn').MaterialSwitch.on();
+  storeData('unlockAllFps', true, null);
+  handleUnlockAllFps();
+
+  const optimalFramerate = 60;
+  $('#selectFramerate').text('60 FPS').attr('data-value', optimalFramerate).data('value', optimalFramerate);
+  storeData('frameRate', optimalFramerate, null);
+
+  // HEVC is the most efficient codec that every host GPU with HDR support can encode
+  $('#selectCodec').text($('#hevc').text()).attr('data-value', 'HEVC').data('value', 'HEVC');
+  storeData('videoCodec', 'HEVC', null);
+
+  // Enable HDR on HDR-capable TVs, which streams HDR10 when HDR is enabled on the host and 10-bit SDR otherwise
+  if (isHdrCapable) {
+    document.querySelector('#hdrModeBtn').MaterialSwitch.on();
+  } else {
+    document.querySelector('#hdrModeBtn').MaterialSwitch.off();
+  }
+  storeData('hdrMode', !!isHdrCapable, null);
+
+  // Keep the limited color range, which is the standard for video and preserves the detail in dark and bright areas
+  document.querySelector('#fullRangeBtn').MaterialSwitch.off();
+  storeData('fullRange', false, null);
+
+  document.querySelector('#framePacingBtn').MaterialSwitch.on();
+  storeData('framePacing', true, null);
+
+  // Use the bitrate for the network connection instead of the optimized presets, which aim for a lower bitrate
+  document.querySelector('#optimizeBitrateBtn').MaterialSwitch.off();
+  storeData('optimizeBitrate', false, null);
+
+  // Set the game mode based on the Tizen platform version
+  if (parseFloat(platformVer) >= 9.0) {
+    // Turn off for Tizen 9.0 and newer to avoid compatibility issues, where the ForceGM variant enables the game mode instead
+    document.querySelector('#gameModeBtn').MaterialSwitch.off();
+    storeData('gameMode', false, null);
+  } else if (parseFloat(platformVer) !== 5.5) {
+    // Turn on for compatible Tizen versions (e.g., 6.0, 6.5, 7.0, 8.0), and keep it turned off and disabled for Tizen 5.5
+    document.querySelector('#gameModeBtn').MaterialSwitch.on();
+    storeData('gameMode', true, null);
+  }
+
+  const recommendedBitrate = getRecommendedBitrate(connectionType);
+  $('#bitrateSlider')[0].MaterialSlider.change(String(recommendedBitrate));
+  saveBitrate();
+}
+
+// Apply the optimal streaming settings for the Samsung S90C and show them along with advice for the network connection
+function s90cSettingsDialog() {
+  const connectionType = getActiveConnectionType();
+  applyOptimalStreamingSettings(connectionType);
+
+  const hdrEnabled = $('#hdrModeSwitch').parent().hasClass('is-checked');
+  let message = t('The optimal streaming settings for the Samsung S90C have been applied:') + '<br>' +
+    '&#8226; ' + t('Video resolution') + ': ' + escapeHTML($('#selectResolution').text().trim()) + ', ' + escapeHTML($('#selectFramerate').text().trim()) + '<br>' +
+    '&#8226; ' + t('Video codec') + ': ' + (hdrEnabled ? t('HEVC Main10 with HDR') : t('HEVC')) + '<br>' +
+    '&#8226; ' + t('Video bitrate') + ': ' + escapeHTML($('#bitrateSlider').val()) + ' Mbps<br><br>';
+
+  // Explain the bitrate limits of the network connection and how to stream without frame drops
+  if (connectionType === 'ethernet') {
+    message += t('The TV is connected via Ethernet, whose port is limited to 100 Mbps. To avoid packet loss from the traffic bursts of the much faster host PC, set its network adapter to 100 Mbps Full Duplex or enable flow control on your switch. Use 5 GHz Wi-Fi for higher bitrates.');
+  } else if (connectionType === 'wifi') {
+    message += t('The TV is connected via Wi-Fi. Use a 5 GHz network with a strong signal and connect the host PC by cable. If the performance statistics show no dropped frames, you can raise the bitrate up to 150 Mbps.');
+  } else {
+    message += t('The network connection type of the TV could not be detected, so a moderate bitrate has been applied.');
+  }
+
+  // Point to the ForceGM variant, because the game mode setting stays disabled on Tizen 9.0 and newer
+  if (parseFloat(platformVer) >= 9.0) {
+    message += '<br><br>' + t('Game mode stays disabled on Tizen %1$s, so install the ForceGM variant for the lowest latency.', platformVer);
+  }
+
+  // Mention that the settings target the S90C when they are applied on another TV
+  if (!isS90cModel) {
+    message += '<br><br>' + t('Note: This TV (%1$s) is not a Samsung S90C, so these settings may not be optimal.', escapeHTML(modelName));
+  }
+
+  warningDialog(t('Samsung S90C optimization'), message);
+}
+
 // Reset all settings to their default state and save the value data
 function restoreDefaultsSettingsValues() {
-  const defaultResolution = '1280:720';
-  $('#selectResolution').text('1280 x 720 (720p)').attr('data-value', defaultResolution).data('value', defaultResolution);
-  storeData('resolution', defaultResolution, null);
-
-  const defaultFramerate = '60';
-  $('#selectFramerate').text('60 FPS').attr('data-value', defaultFramerate).data('value', defaultFramerate);
-  storeData('frameRate', defaultFramerate, null);
-
-  const defaultBitrate = '10';
-  $('#selectBitrate').html(defaultBitrate + ' Mbps');
-  $('#bitrateSlider')[0].MaterialSlider.change(defaultBitrate);
-  storeData('bitrate', defaultBitrate, null);
-
-  const defaultFramePacing = true;
-  document.querySelector('#framePacingBtn').MaterialSwitch.off();
-  storeData('framePacing', defaultFramePacing, null);
+  // Restore the video settings to the optimal streaming settings for the Samsung S90C and its network connection
+  applyOptimalStreamingSettings(getActiveConnectionType());
 
   const defaultIpAddressFieldMode = true;
-  document.querySelector('#ipAddressFieldModeBtn').MaterialSwitch.off();
+  document.querySelector('#ipAddressFieldModeBtn').MaterialSwitch.on();
   storeData('ipAddressFieldMode', defaultIpAddressFieldMode, null);
+  // Show the IP address fields of the restored mode
+  handleIpAddressFieldMode();
 
   const defaultSortAppsList = false;
   document.querySelector('#sortAppsListBtn').MaterialSwitch.off();
@@ -3895,40 +4147,9 @@ function restoreDefaultsSettingsValues() {
   document.querySelector('#decryptHostAudioBtn').MaterialSwitch.off();
   storeData('decryptHostAudio', defaultDecryptHostAudio, null);
 
-  const defaultVideoCodec = 'H264';
-  $('#selectCodec').text('H.264').attr('data-value', defaultVideoCodec).data('value', defaultVideoCodec);
-  storeData('videoCodec', defaultVideoCodec, null);
-
-  const defaultHdrMode = false;
-  document.querySelector('#hdrModeBtn').MaterialSwitch.off();
-  storeData('hdrMode', defaultHdrMode, null);
-
-  const defaultFullRange = false;
-  document.querySelector('#fullRangeBtn').MaterialSwitch.off();
-  storeData('fullRange', defaultFullRange, null);
-
-  // Reset default Game Mode based on Tizen platform version
-  if (parseFloat(platformVer) >= 9.0) {
-    // Turn off for Tizen 9.0 and newer to avoid compatibility issues
-    const incompatibleGameMode = false;
-    document.querySelector('#gameModeBtn').MaterialSwitch.off();
-    storeData('gameMode', incompatibleGameMode, null);
-  } else if (parseFloat(platformVer) === 5.5) {
-    // Keep turned off and disabled for Tizen 5.5 due to lack of support
-  } else {
-    // Turn on for compatible Tizen versions (e.g., 6.0, 6.5, 7.0, 8.0)
-    const defaultGameMode = true;
-    document.querySelector('#gameModeBtn').MaterialSwitch.on();
-    storeData('gameMode', defaultGameMode, null);
-  }
-
-  const defaultUnlockAllFps = false;
-  document.querySelector('#unlockAllFpsBtn').MaterialSwitch.off();
-  storeData('unlockAllFps', defaultUnlockAllFps, null);
-
-  const defaultOptimizeBitrate = false;
-  document.querySelector('#optimizeBitrateBtn').MaterialSwitch.off();
-  storeData('optimizeBitrate', defaultOptimizeBitrate, null);
+  const defaultRefFrameInvalidation = false;
+  document.querySelector('#refFrameInvalidationBtn').MaterialSwitch.off();
+  storeData('refFrameInvalidation', defaultRefFrameInvalidation, null);
 
   const defaultDisableWarnings = false;
   document.querySelector('#disableWarningsBtn').MaterialSwitch.off();
@@ -4034,13 +4255,18 @@ function loadUserDataCb() {
           $('#selectResolution').text($(this).text()).attr('data-value', previousValue.resolution).data('value', previousValue.resolution);
         }
       });
+    } else {
+      // Set the default state to the highest supported resolution, which is 4K on the S90C
+      const optimalResolution = getOptimalResolution();
+      const optimalResolutionItem = $('.videoResolutionMenu li[data-value="' + optimalResolution + '"]');
+      $('#selectResolution').text(optimalResolutionItem.text()).attr('data-value', optimalResolution).data('value', optimalResolution);
     }
   });
 
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored unlockAllFps preferences.');
   getData('unlockAllFps', function(previousValue) {
     if (previousValue.unlockAllFps == null) {
-      document.querySelector('#unlockAllFpsBtn').MaterialSwitch.off(); // Set the default state
+      document.querySelector('#unlockAllFpsBtn').MaterialSwitch.on(); // Set the default state, since the panel of the S90C supports up to 144 Hz
     } else if (previousValue.unlockAllFps == false) {
       document.querySelector('#unlockAllFpsBtn').MaterialSwitch.off();
     } else {
@@ -4064,7 +4290,8 @@ function loadUserDataCb() {
 
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored bitrate preferences.');
   getData('bitrate', function(previousValue) {
-    $('#bitrateSlider')[0].MaterialSlider.change(previousValue.bitrate != null ? previousValue.bitrate : '10');
+    // Set the default state to the recommended 4K bitrate for the network connection of the TV
+    $('#bitrateSlider')[0].MaterialSlider.change(previousValue.bitrate != null ? previousValue.bitrate : String(getRecommendedBitrate(getActiveConnectionType())));
     // Update the video bitrate field based on the given value
     $('#selectBitrate').html($('#bitrateSlider').val() + ' Mbps');
   });
@@ -4234,6 +4461,9 @@ function loadUserDataCb() {
           $('#selectCodec').text($(this).text()).attr('data-value', previousValue.videoCodec).data('value', previousValue.videoCodec);
         }
       });
+    } else {
+      // Set the default state to HEVC, because Samsung TVs generally decode H.264 only up to 1080p
+      $('#selectCodec').text($('#hevc').text()).attr('data-value', 'HEVC').data('value', 'HEVC');
     }
   });
 
@@ -4274,6 +4504,17 @@ function loadUserDataCb() {
       document.querySelector('#gameModeBtn').MaterialSwitch.off();
     } else {
       document.querySelector('#gameModeBtn').MaterialSwitch.on();
+    }
+  });
+
+  console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored refFrameInvalidation preferences.');
+  getData('refFrameInvalidation', function(previousValue) {
+    if (previousValue.refFrameInvalidation == null) {
+      document.querySelector('#refFrameInvalidationBtn').MaterialSwitch.off(); // Set the default state
+    } else if (previousValue.refFrameInvalidation == false) {
+      document.querySelector('#refFrameInvalidationBtn').MaterialSwitch.off();
+    } else {
+      document.querySelector('#refFrameInvalidationBtn').MaterialSwitch.on();
     }
   });
 

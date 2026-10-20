@@ -263,6 +263,21 @@ void* MoonlightInstance::ConnectionThreadFunc(void* context) {
     PostToJs("Selecting the audio renderer capabilities to: CAPABILITY_DIRECT_SUBMIT");
   }
 
+  // Initialize the video decoder capabilities with the slicing value shared by all streams
+  MoonlightInstance::s_DrCallbacks.capabilities = CAPABILITY_SLICES_PER_FRAME(4);
+  // Handle setting of the reference frame invalidation capabilities based on the toggle switch state
+  if (me->m_RefFrameInvalidationEnabled) {
+    // Let the host recover from packet loss by invalidating the lost reference frames, instead of sending an IDR
+    // frame, which is either much larger than the other frames (a traffic spike on the 100 Mbps Ethernet port of
+    // the TV) or, when the encoder caps its size, visibly blurry. The recovery frame references an older frame, so
+    // it keeps the usual size and quality. This also lets the host use more reference frames. It's only enabled
+    // for HEVC and AV1, because H.264 RFI is unreliable on many hardware decoders.
+    MoonlightInstance::s_DrCallbacks.capabilities |= CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC | CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1;
+    PostToJs("Selecting the video decoder capabilities to: CAPABILITY_SLICES_PER_FRAME(4) | CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC | CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1");
+  } else {
+    PostToJs("Selecting the video decoder capabilities to: CAPABILITY_SLICES_PER_FRAME(4)");
+  }
+
   err = LiStartConnection(&serverInfo, &me->m_StreamConfig, &MoonlightInstance::s_ClCallbacks,
     &MoonlightInstance::s_DrCallbacks, &MoonlightInstance::s_ArCallbacks, NULL, 0, NULL, 0);
   if (err != 0) {
@@ -302,7 +317,8 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   std::string rikey, std::string rikeyid, std::string appversion, std::string gfeversion, std::string rtspurl, int serverCodecModeSupport,
   bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, bool flipABfaceButtons, bool flipXYfaceButtons,
   std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
-  std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, bool performanceStats) {
+  std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, bool performanceStats,
+  bool refFrameInvalidation) {
   
   if (m_StopThread != 0) {
     pthread_join(m_StopThread, NULL);
@@ -341,6 +357,7 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   PostToJs("Setting the Game mode to: " + std::to_string(gameMode));
   PostToJs("Setting the Disable connection warnings to: " + std::to_string(disableWarnings));
   PostToJs("Setting the Performance statistics to: " + std::to_string(performanceStats));
+  PostToJs("Setting the Reference frame invalidation to: " + std::to_string(refFrameInvalidation));
 
   // Populate the stream configuration
   LiInitializeStreamConfiguration(&m_StreamConfig);
@@ -431,6 +448,12 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   // Apply the desired color range ​based on the toggle switch state
   m_StreamConfig.colorRange |= fullRange ? COLOR_RANGE_FULL : COLOR_RANGE_LIMITED;
 
+  // Request the Rec. 709 colorspace, which is the standard for HD and 4K video that the TV expects, instead
+  // of the default Rec. 601 for SD video, which shifts the colors when the TV doesn't follow the stream's
+  // colorspace info. HDR streams use Rec. 2020 regardless, because the host selects it for HDR displays.
+  m_StreamConfig.colorSpace = COLORSPACE_REC_709;
+  PostToJs("Selecting the colorspace to: COLORSPACE_REC_709");
+
   // Apply encryption audio only when decrypt host audio is enabled, otherwise disable encryption
   m_StreamConfig.encryptionFlags = decryptHostAudio ? ENCFLG_AUDIO : ENCFLG_NONE;
 
@@ -475,6 +498,7 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   m_GameModeEnabled = gameMode;
   m_DisableWarningsEnabled = disableWarnings;
   m_PerformanceStatsEnabled = performanceStats;
+  m_RefFrameInvalidationEnabled = refFrameInvalidation;
 
   // Initialize the rendering surface before starting the connection
   if (InitializeRenderingSurface(m_StreamConfig.width, m_StreamConfig.height)) {
@@ -675,11 +699,13 @@ MessageResult startStream(std::string host, int httpPort, std::string width, std
   std::string rikey, std::string rikeyid, std::string appversion, std::string gfeversion, std::string rtspurl, int serverCodecModeSupport,
   bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, bool flipABfaceButtons, bool flipXYfaceButtons,
   std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
-  std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, bool performanceStats) {
+  std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, bool performanceStats,
+  bool refFrameInvalidation) {
   PostToJs("Starting the streaming session...");
   return g_Instance->StartStream(host, httpPort, width, height, fps, bitrate, rikey, rikeyid, appversion, gfeversion, rtspurl, serverCodecModeSupport,
   framePacing, optimizeGames, rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons, audioBackend, audioConfig, audioSync,
-  audioJitterMs, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange, gameMode, disableWarnings, performanceStats);
+  audioJitterMs, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange, gameMode, disableWarnings, performanceStats,
+  refFrameInvalidation);
 }
 
 MessageResult stopStream() {

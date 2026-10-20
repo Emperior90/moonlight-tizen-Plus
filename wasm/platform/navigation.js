@@ -978,6 +978,7 @@ const Views = {
   },
   BasicSettings: {
     view: new ListView(() => [
+      's90cProfileBtn',
       'selectResolution',
       'selectFramerate',
       'selectBitrate',
@@ -1414,7 +1415,8 @@ const Views = {
       'selectCodec',
       'hdrModeBtn',
       'fullRangeBtn',
-      'gameModeBtn'
+      'gameModeBtn',
+      'refFrameInvalidationBtn'
     ]),
     up: function() {
       this.view.prevOption();
