@@ -1,5 +1,7 @@
 #include "moonlight_wasm.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <condition_variable>
 #include <functional>
 #include <mutex>
@@ -55,6 +57,9 @@ static TimeStamp s_pktPts;
 
 static TimeStamp s_ptsDiff;
 static TimeStamp s_lastSec;
+
+// Arrival times of the frames in the current pacing window relative to their presentation timestamps, in seconds
+static std::vector<double> s_PacingLateness;
 
 static std::chrono::time_point<std::chrono::steady_clock> s_firstAppend;
 static std::chrono::time_point<std::chrono::steady_clock> s_lastTime;
@@ -352,6 +357,10 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
   // Initialize the timestamp difference to zero
   s_ptsDiff = 0s;
 
+  // Clear the frame arrival times of the pacing window from a previous stream
+  s_PacingLateness.clear();
+  s_PacingLateness.reserve(256);
+
   // Set the frame pacing flag based on instance configuration
   s_FramePacingEnabled = g_Instance->m_FramePacingEnabled;
 
@@ -395,6 +404,27 @@ void MoonlightInstance::VidDecCleanup(void) {
 
   // Shrink the decode buffer to fit its contents
   s_DecodeBuffer.shrink_to_fit();
+}
+
+// Calculate the time difference that the frame pacer releases the frames at, relative to their presentation
+// timestamps, from the arrival times of the frames in the last time window. It covers the usual arrival jitter
+// (the median plus three standard deviations, estimated from the median absolute deviation, so that a few
+// stalled frames can't inflate it), which releases the frames at an even pace, and it's capped at half a frame
+// above the median, so that frames skipped by the host within the window can't hold back the next window.
+// Taking the time difference of whichever frame ended the window instead latched onto the delay of a stalled
+// frame, and only recovered by the frame time margin per window, which held back every frame by up to tens of
+// milliseconds over Wi-Fi.
+static TimeStamp CalculatePacingOffset(std::vector<double>& lateness) {
+  // Find the median arrival time, which is the usual phase of the frames
+  std::nth_element(lateness.begin(), lateness.begin() + lateness.size() / 2, lateness.end());
+  const double median = lateness[lateness.size() / 2];
+  // Find the median absolute deviation, which estimates the jitter without being skewed by stalled frames
+  for (double& value : lateness) {
+    value = std::abs(value - median);
+  }
+  std::nth_element(lateness.begin(), lateness.begin() + lateness.size() / 2, lateness.end());
+  const double jitter = 3.0 * 1.4826 * lateness[lateness.size() / 2];
+  return TimeStamp(median + std::min(jitter, s_frameDuration.count() / 2));
 }
 
 int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
@@ -466,6 +496,12 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
   if (s_FramePacingEnabled) {
     // Calculate the time elapsed since the first frame
     TimeStamp fromStart = now - s_firstAppend;
+    // Record when the frame arrived relative to its presentation timestamp. This uses the time it was queued
+    // rather than the time this thread got to it, so that the delay the pacer adds to the previous frames
+    // doesn't feed back into the pace of the next ones.
+    uint64_t arrivalMs = LiGetMillis();
+    uint64_t queuedMs = arrivalMs > decodeUnit->enqueueTimeMs ? arrivalMs - decodeUnit->enqueueTimeMs : 0;
+    s_PacingLateness.push_back((fromStart - TimeStamp(queuedMs / 1000.0) - s_pktPts).count());
     // Wait until the packet timestamp is within the frame time margin
     while (s_pktPts > fromStart - s_ptsDiff + kFrameTimeMargin) {
       // Calculate the remaining wait time until the packet timestamp is within the frame time margin
@@ -481,10 +517,11 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     }
     // Synchronize packet presentation timing every time window
     if (fromStart > s_lastSec + kTimeWindow) {
-      // Update the last second to the current time plus the time window
-      s_lastSec += kTimeWindow;
-      // Update the time difference to synchronize with the packet presentation time
-      s_ptsDiff = fromStart - s_pktPts;
+      // Start the next time window from the current time
+      s_lastSec = fromStart;
+      // Update the time difference from the arrival times of the frames in the last time window
+      s_ptsDiff = CalculatePacingOffset(s_PacingLateness);
+      s_PacingLateness.clear();
     }
   }
 

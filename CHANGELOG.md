@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 - Added an optimization plan for the S90C covering the network, host, TV settings and test procedure (`docs/S90C-Optimierungsplan.md`)
 
 ### Changed
+- Reworked the video frame pacing to follow the usual arrival time of the frames, so that a single late frame no longer holds back every following frame by up to tens of milliseconds
 - Requested the Rec. 709 colorspace instead of Rec. 601 for SDR streams, which is the standard for HD and 4K video
 - Declared HEVC and AV1 level 5.2 for streams above 4K at 60 FPS, with a fallback to level 5.1 for TVs that reject it
 - Limited the bitrate presets to 75 Mbps when the TV is connected over its 100 Mbps Ethernet port

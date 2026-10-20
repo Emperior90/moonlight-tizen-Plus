@@ -12,7 +12,7 @@ Dieses Dokument beschreibt:
 6. wie man Schritt für Schritt testet, bis der Stream fehlerfrei läuft.
 
 > [!NOTE]
-> Hinweis zum Setup: Auf frühere Chats habe ich keinen Zugriff, dein Setup ist mir daher nicht bekannt. Der Plan deckt deshalb beide Varianten ab (TV per LAN oder per WLAN) und geht von einem Gaming-PC mit Sunshine (oder dem Fork Apollo) und NVIDIA-GPU aus. Die offenen Punkte stehen am Ende in [Abschnitt 10](#10-was-ich-noch-von-dir-brauche).
+> Der allgemeine Teil (Abschnitte 1–9) deckt beide Varianten ab (TV per LAN oder per WLAN). Die Auswertung deines konkreten Setups (Stand 20.10.2026: RTX 5080, Sunshine, FRITZ!Repeater als LAN-Brücke am TV, Tizen 9) steht in **[Abschnitt A](#a-auswertung-deines-setups-stand-20102026)** direkt nach der Kurzfassung.
 
 ---
 
@@ -39,6 +39,93 @@ Dieses Dokument beschreibt:
 5. **Messen statt raten:** Statistik-Overlay einschalten. Die neuen **Sitzungszähler** müssen über eine ganze Spielsession bei 0 bleiben.
 
 In der App erledigt der neue Button **Settings → Basic Settings → „Samsung S90C optimization“** das alles mit einem Klick. Die Bitrate passt er an die erkannte Verbindung (LAN/WLAN) an. (Die App-Oberfläche ist englisch, deshalb stehen die Menünamen hier im Original.)
+
+---
+
+## A. Auswertung deines Setups (Stand 20.10.2026)
+
+Kurz gesagt: **Dein Netzwerk ist sehr gut, die PC-Einstellungen sind auf Qualität getrimmt. Die beiden größten Baustellen waren das Frame Pacing der App (bis zu ~70 ms zusätzliche Verzögerung, jetzt behoben) und das Ruckeln nach ~2 h, das sehr wahrscheinlich am PC liegt.**
+
+### A.1 Frame Pacing hat dich ~50–70 ms Latenz gekostet (in dieser Version behoben)
+
+Deine Overlay-Werte bei 1440p (*Average decoding time* 50–72 ms, *Average frame queue delay* ~15 ms) passen zu einem Schwachpunkt im bisherigen Frame Pacing, den ich im Code gefunden und per Simulation nachgestellt habe:
+
+- Die App hat sich einmal pro Sekunde an der Verspätung **des einen Bildes** orientiert, das gerade das Zeitfenster abschloss. War das zufällig ein verspätetes Bild (WLAN-Aussetzer, Encoder-Spitze, Frame Generation), hielt sie danach **alle** Bilder um diese Zeit zurück und baute das nur mit 0,5 ms pro Sekunde wieder ab.
+- Folge: Jedes Bild wartete knapp eine Frame-Dauer im Pacer (deine ~15 ms) und stand zusätzlich 2–3 Bilder lang in der Warteschlange davor. Zusammen sind das deine 50–72 ms. Das ist reine Zusatzlatenz am TV.
+- **Neu:** Der Pacer richtet sich jetzt nach dem *typischen* Ankunftszeitpunkt der Bilder im letzten Zeitfenster (Median plus dreifache Streuung, robust geschätzt, gedeckelt auf eine halbe Frame-Dauer). Einzelne verspätete Bilder verschieben ihn nicht mehr.
+- **Simulation** (10 min, 60 FPS, verschiedene Jitter- und Aussetzer-Muster):
+
+  | Szenario | Zusatzverzögerung alt → neu | Ruckler pro Minute alt → neu |
+  |---|---|---|
+  | WLAN mit Aussetzern alle 8 s | 21 ms → 2,6 ms | 79 → 31 |
+  | Starker Jitter, Aussetzer alle 3 s | 39 ms → 8 ms | 68 → 95 |
+  | Jitter ohne Aussetzer | 1,7 ms → 5,6 ms | 107 → 4 |
+  | Ähnlich wie dein Setup (wenig Jitter, seltene Aussetzer) | 3 ms (p95: 18,5 ms) → 4 ms (p95: 7 ms) | 108 → 18 |
+
+  Nur bei sehr häufigen großen Aussetzern ruckelt die neue Variante etwas mehr. Dafür gibt sie die 30+ ms Latenz zurück, die die alte dort kostet.
+- **Was du nach dem Update sehen solltest:** *Average decoding time* deutlich unter 20 ms, *Average frame queue delay* wenige Millisekunden. Bleibt die *Average decoding time* trotzdem hoch, staut sich etwas im Decoder des TVs. Dann auch auf *Average rendering time* achten.
+
+### A.2 Netzwerk: sehr gut, kleine Feinheiten
+
+- **FRITZ!Repeater 1200 AX als LAN-Brücke direkt am TV** ist für den S90C die beste Lösung: Kabel-Backhaul, kurze Funkstrecke, 5 GHz. Deine 0,00 % Verlust und 1–3 ms bestätigen das.
+- **„120 Mbit/s eingestellt, 108 kommen an“ ist kein Verlust.** Die Anzeige *Incoming bitrate* zählt nur die Videodaten. Sunshine zieht von der eingestellten Bitrate deine 5 % FEC, Audio und Overhead ab (120 × 0,95 − ~1 ≈ 113 Mbit/s Encoder-Ziel), und im Durchschnitt liegt der Encoder etwas darunter.
+- **Prüfen, ob der TV wirklich am Repeater hängt:** FRITZ!Box → Heimnetz → Mesh. Der TV sollte unter dem Repeater erscheinen. Mesh Steering kann ein Gerät zwischen Box und Repeater wechseln lassen, und jeder Wechsel ist ein kurzer Aussetzer.
+- **Kanäle:** Funken FRITZ!Box und Repeater beide in 36–48, teilen sie sich die Funkzeit. Wenn möglich, die Box auf einen anderen 5-GHz-Block legen (z. B. 100+) und den Repeater auf 36–48 lassen. Außerdem einen **festen Kanal** statt Autokanal wählen, damit nicht mitten in der Session gewechselt wird.
+- **FRITZ!Box-Ereignisprotokoll** (System → Ereignisse, Filter WLAN): Direkt nach dem nächsten 2-h-Ruckeln nachsehen, ob der TV sich ab-/angemeldet hat oder der Kanal gewechselt wurde.
+- Die Priorisierung als „Echtzeitanwendung“ wirkt nur auf Internet-Verkehr, nicht auf PC → TV im Heimnetz. Sie schadet aber nicht.
+- **FEC 5 %:** in Ordnung, solange die neuen *Session*-Zähler über lange Sessions bei 0 bleiben. Tauchen dort Drops auf, auf 10 % erhöhen.
+
+### A.3 Das Ruckeln nach ~2 h: wahrscheinlich der PC
+
+Gegen Netzwerk und TV spricht: 0 % Verlust, der Web-Audio-Scheduler fängt Uhrendrift sauber ab, und in der Simulation kippt das Pacing auch nach einem einzelnen großen Aussetzer nicht dauerhaft. Für den PC sprechen mehrere Punkte, die über Stunden zusammenkommen:
+
+1. **VRAM am Limit:** 4K + Raytracing + Frame Generation + DLSS + NVENC (4K HDR, Two-Pass Full) auf 16 GB. Die Sunshine-Doku warnt ausdrücklich: Mit **HAGS + „Realtime HAGS“ + fast vollem VRAM** kann der NVIDIA-Encoder hängen. Zu Witcher 3 (Next-Gen, DX12) gibt es zudem Berichte, dass die VRAM-Belegung mit Raytracing in langen Sessions stetig wächst und es ab ~95 % Auslastung zu starken Rucklern kommt ([WCCFtech](https://wccftech.com/the-witcher-3-next-gen-new-mod-fixes-ray-tracing-memory-leak-issues-increases-performance/amp/), [Community-Mod dazu](https://www.nexusmods.com/witcher3/mods/12493)). Das passt genau zu „läuft gut, nach ~2 h Ruckeln“. Offiziell bestätigt ist es nicht, ein Neustart des Spiels hilft laut den Berichten.
+2. **Frame Generation 2x bei 60 Hz:** Damit rendert das Spiel intern nur 30 FPS. Das bedeutet mehr Eingabeverzögerung, mehr FG-Artefakte und zusätzlichen VRAM-Bedarf. Eine RTX 5080 schafft Witcher 3 mit Raytracing (ohne Path Tracing) in 4K mit DLSS Super Resolution (Balanced/Performance mit dem neuen Modell) sehr wahrscheinlich auch ohne FG mit stabilen 60 FPS.
+3. **Übertaktung:** Undervolt 950 mV bei 3000–3050 MHz und VRAM +1000 MHz sind ambitioniert. GDDR7 korrigiert Speicherfehler bei Wärme oft still, was sich erst nach längerer Zeit als Ruckeln bemerkbar macht.
+
+**Gezielter Test (je eine Änderung pro 2-h-Session):**
+
+| Test | Erwartung, wenn das die Ursache ist |
+|---|---|
+| A) **Frame Generation aus**, DLSS SR Balanced/Performance, V-Sync (60 Hz) wie bisher | Kein Ruckeln nach 2 h, dazu spürbar direkter |
+| B) **VRAM-Übertaktung auf 0** (Undervolt behalten) | Kein Ruckeln nach 2 h |
+| C) In Sunshine **„Realtime HAGS“ aus** | Kein Ruckeln nach 2 h (kostet unter Last etwas Capture-Leistung) |
+| D) Spiel nach ~90 min neu starten | Ruckeln verschwindet, also wächst der Speicher des Spiels |
+
+**Wenn es wieder ruckelt, sofort das Overlay einblenden und notieren:**
+
+| Beobachtung | Ursache |
+|---|---|
+| *Incoming frame rate* < 60, Netzwerk-Drops 0, *Host processing latency* (max) hoch | PC: Spiel/Encoder. Mit **HWiNFO** über die Session VRAM-Belegung, GPU-Hotspot, Speichertemperatur und Takt mitloggen |
+| *Session frames dropped by network* / *Session recovery keyframes* steigen | WLAN: FRITZ!Box-Ereignisprotokoll prüfen |
+| *Incoming* 60, aber *Rendering* < 60 oder *Average decoding time* steigt | TV-seitig: App neu starten, Ergebnis notieren |
+
+### A.4 Sunshine: Einstellungen passen, mit Anmerkungen
+
+- **P6 + Two-Pass Full:** sinnvoll für maximale Qualität. 11 ms bei 4K liegen unter den 16,7 ms pro Bild. Zeigt das Overlay als *Maximum* der Host processing latency regelmäßig über ~14 ms, *Two-Pass: Quarter resolution* oder *Split Frame Encoding: Enabled* testen. Die RTX 5080 hat zwei Encoder. Mit Split Frame Encoding teilen sie sich jedes Bild, was die Kodierzeit fast halbieren kann, bei minimalem Qualitätsverlust.
+- **VBV-Erhöhung 0, Spatial AQ aus:** richtig.
+- *Minimale CPU-Threads*, *QP* und *CAVLC* wirken bei NVENC-HEVC mit Bitratensteuerung nicht. Die kannst du ignorieren.
+- **Version:** v2026.914.233613 konnte ich nicht verifizieren. Öffentlich auffindbar war zuletzt v2026.724.x, und auf die GitHub-Releases hatte ich keinen Zugriff. Deine installierte Version zeigt die Sunshine-Weboberfläche. Die aktuelle stabile Version steht auf github.com/LizardByte/Sunshine/releases.
+
+### A.5 Moonlight am TV
+
+- **Update auf diese Version** (1.19.0 + S90C-Änderungen): Sie bringt das neue Frame Pacing, die Session-Zähler und die BT.709-Farben. Achtung: Der Button „Samsung S90C optimization“ stellt *Color range* auf „begrenzt“. Bewusst so, siehe nächster Punkt.
+- **Full color range:** Nur behalten, wenn ein Schwarzwert-Test das bestätigt. Erkennt der TV den vollen Bereich nicht korrekt, saufen dunkle Details ab und helle clippen. Das wirkt „knackiger“, kostet aber Zeichnung in dunklen Szenen, und davon hat Witcher 3 viele. Test: eine Near-Black-Testseite oder der HDR-Kalibrierungsbildschirm des Spiels, einmal mit „Full“, einmal mit „Limited“. Gewinner ist die Einstellung, bei der die dunkelsten Stufen gerade noch unterscheidbar sind.
+- **Bitrate 4K/95 Mbit/s** ist ein guter Wert, nahe an Samsungs Decoder-Spezifikation. Optional 4K mit 110 Mbit/s 30 Minuten lang testen und dabei auf die Session-Zähler und die *Average decoding time* achten.
+- **4K vs. 1440p bei 3 m Abstand:** Ein 4K-Pixel ist auf 55" aus 3 m nur ~0,36 Bogenminuten groß, ein 1440p-Pixel ~0,55. Das menschliche Auge löst grob 0,5–1 Bogenminute auf. Aus deinem Abstand ist 1440p also nah an der Wahrnehmungsgrenze, und 1440p mit 120 Mbit/s hat pro Pixel rund dreimal so viele Bits wie 4K mit 95 Mbit/s. In dunklen, detailreichen Szenen (Vegetation, Nebel) kann 1440p deshalb sauberer wirken, 4K punktet bei feinen Kanten. Ein direkter Vergleich aus 3 m lohnt sich.
+- **Web Audio mit 100 ms:** passt. Bei Aussetzern 150 ms.
+
+### A.6 TV-Einstellungen
+
+| Einstellung | Bei dir | Empfehlung |
+|---|---|---|
+| Kontrastverbesserung | prüfen | **Aus** (verbiegt die Tonwertkurve dynamisch) |
+| Schärfe | 5 | **0 bei 4K** (natives Bild, keine künstlichen Kanten). Bei 1440p sind 3–5 in Ordnung |
+| Bildmodus | Film | Für Genauigkeit gut. Höhere TV-interne Latenz als der Spielmodus (siehe unten) |
+| HDR-Tone-Mapping | Statisch | Gut. Dazu die **Windows-HDR-Kalibrierung über den Stream** am TV durchführen (Muster jeweils gerade verschwinden lassen), damit Spiel und TV dieselbe Spitzenhelligkeit annehmen |
+| Farbton Warm 2, Spitzenhelligkeit Hoch, Bewegungsglättung/Clear Motion/Rauschunterdrückung aus | ✓ | passt |
+
+**Optionaler Latenz-Test:** Die **ForceGM-Variante** schaltet den TV in den Spielmodus (deutlich weniger Verarbeitungslatenz als „Film“). Laut Projekt-Wiki gibt es unter Tizen 9 je nach Modell Probleme oberhalb von 1080p. Deshalb gezielt testen, ob 4K damit sauber läuft. In der App bleibt *Game mode* dabei aus.
 
 ---
 
@@ -232,6 +319,7 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
 | 6 | **Button „Samsung S90C optimization“** und S90C-Werte als Standard (Neuinstallation und „Restore Defaults“) | Ein Klick setzt 4K60, HEVC, HDR, Frame Pacing, passenden Game Mode und die Bitrate passend zur Verbindung, mit Erklärung im Dialog | `wasm/index.html`, `wasm/platform/index.js`, `wasm/platform/navigation.js`, `wasm/static/css/style.css` |
 | 7 | **Warnungen:** H.264 über 1080p, 4K über 120 FPS | Verhindert Einstellungen, die der Decoder nicht kann | `wasm/platform/index.js` |
 | 8 | **Bugfixes:** „Restore Defaults“ hat Frame Pacing und den IP-Eingabemodus ausgeschaltet, obwohl der Standard „an“ ist. Die Warnung für Auflösung/FPS hat Zeichenketten statt Zahlen verglichen | Korrekte Standardwerte und Warnungen | `wasm/platform/index.js` |
+| 9 | **Neues Frame Pacing** (Details in Abschnitt A.1): richtet sich nach dem typischen Ankunftszeitpunkt der Bilder statt nach einem einzelnen, womöglich verspäteten Bild | Bis zu mehrere Dutzend Millisekunden weniger Verzögerung am TV und gleichmäßigere Bildfolge bei normalem Jitter | `wasm/wasmplayer.cpp` |
 
 **So sieht es in der App aus** (Screenshots aus einem Browser-Test mit simulierten Tizen-APIs):
 
@@ -262,7 +350,7 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
    - *Session frames dropped by network* = **0** (oder < 0,01 %),
    - *Session recovery keyframes* = **0–1** (eins direkt nach dem Start kann normal sein),
    - *Rendering frame rate* stabil bei ~60 FPS,
-   - *Average decoding time* stabil, ohne Ausreißer.
+   - *Average decoding time* stabil und unter ~20 ms (das ist nicht die reine Dekodierzeit, sondern die Wartezeit vom Empfang bis zur Übergabe an den Decoder, inklusive Frame Pacing).
 
 ### Phase 2 – Bitrate-Leiter
 
@@ -299,7 +387,7 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
 | *Frames dropped by your network connection* > 0 | Netzwerk (Bursts per LAN, Funkstörung per WLAN) | Burst-Fix, Bitrate runter, WLAN-Kanal/-Position verbessern |
 | *Host processing latency* hoch oder schwankend | Encoder oder GPU am PC überlastet | Preset senken, FPS im Spiel begrenzen |
 | *Incoming frame rate* < Ziel-FPS bei 0 Drops | Das Spiel liefert nicht genug Bilder | Spiel-FPS stabilisieren, GPU-Last senken |
-| *Average decoding time* steigt, *Rendering* < *Decoding* | Decoder am Limit | Bitrate, FPS oder Auflösung senken |
+| *Average decoding time* dauerhaft > ~20 ms | Bilder stauen sich vor dem TV-Decoder (der Wert misst Warteschlange + Pacing, nicht die reine Dekodierzeit) | *Average rendering time* prüfen. Bitrate, FPS oder Auflösung senken |
 | *Session recovery keyframes* steigt | Jeder Anstieg ist ein sichtbarer Aussetzer | Ursache über die Zeilen oben finden |
 | WLAN-Signalstärke < 60 % | Schlechte Funkverbindung | Router näher, anderer Kanal, LAN-Variante |
 
@@ -319,16 +407,15 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
 
 ---
 
-## 10. Was ich noch von dir brauche
+## 10. Offene Punkte
 
-Damit ich die Werte genau auf dein Setup festlegen kann:
+Deine Setup-Angaben sind in Abschnitt A eingearbeitet. Folgendes würde die Diagnose noch genauer machen:
 
-1. **Grafikkarte** (Modell) und **Host-Software** (Sunshine oder Apollo, Version)?
-2. Hängt der TV per **LAN oder WLAN** am Netz? Welcher **Router/Switch** (Modell)?
-3. **Tizen-Version** des TVs (Moonlight → Settings → About → System information)?
-4. Nutzt du aktuell die **Standard- oder die ForceGM-Variante**?
-5. Welche **Spiele** und spielst du in **HDR**?
-6. Gibt es **konkrete Fehler**, die du heute siehst (Ruckler, Freezes, schwarzes Bild, Artefakte)?
+1. **Sunshine-Version** aus der Sunshine-Weboberfläche.
+2. **Werte im Overlay, wenn das 2-h-Ruckeln auftritt** (mit dieser neuen Version): *Incoming frame rate*, *Rendering frame rate*, *Host processing latency* (min/max/avg), *Session frames dropped by network*, *Session recovery keyframes*, *Average decoding time*.
+3. **HWiNFO-Log** derselben Session: VRAM-Belegung, GPU-Hotspot- und Speichertemperatur, GPU- und Speichertakt.
+4. **FRITZ!Box**: Hängt der TV im Mesh unter dem Repeater? Gab es zum Zeitpunkt des Ruckelns WLAN-Ereignisse?
+5. **Schwarzwert-Test** *Full* vs. *Limited color range*: Bei welcher Einstellung bleiben die dunkelsten Stufen unterscheidbar?
 
 ---
 
@@ -340,3 +427,4 @@ Damit ich die Werte genau auf dein Setup festlegen kann:
 - Moonlight Android: `MediaCodecDecoderRenderer.getPreferredColorSpace()` (BT.709 auf modernen Geräten)
 - S90C-Datenblätter (Händler/Reviews): Wi-Fi 5 (802.11ac), 2 × USB 2.0. Tizen-9-Rollout für 2023er-Modelle: [SamMobile](https://www.sammobile.com/opinion/samsung-talks-up-tv-updates-at-ces-2026-i-am-still-waiting-for-tizen-9/)
 - 100-Mbit-LAN bei Samsung-TVs: Projekt-Wiki (oben) und Berichte in der [Samsung Community](https://eu.community.samsung.com/t5/tv/8k-tv-ethernet-network-adapter-speed/td-p/8800467)
+- Witcher 3 (DX12, Raytracing) und wachsender VRAM-Verbrauch: [WCCFtech](https://wccftech.com/the-witcher-3-next-gen-new-mod-fixes-ray-tracing-memory-leak-issues-increases-performance/amp/), [Nexus Mods](https://www.nexusmods.com/witcher3/mods/12493), [Steam-Diskussion](https://steamcommunity.com/app/292030/discussions/0/6126615404787634687)
