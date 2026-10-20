@@ -38,6 +38,8 @@ Dieses Dokument beschreibt:
 4. **Encoder am PC** mit Qualitäts-Reserve: NVENC-Preset P4–P6 statt P1, aber nur solange der Encoder nicht ausgelastet ist.
 5. **Messen statt raten:** Statistik-Overlay einschalten. Die neuen **Sitzungszähler** müssen über eine ganze Spielsession bei 0 bleiben.
 
+**Für niedrige Latenz** kommen vier Hebel dazu: der Spielmodus des TVs (ForceGM-Variante), Frame Generation aus, *Split Frame Encoding* in Sunshine und ein kleinerer Audio-Puffer. Die ganze Kette mit deinen Werten steht in [Abschnitt A.8](#a8-dein-ziel-4k60-optional-mehr-beste-bildqualität-niedrige-latenz).
+
 In der App erledigt der neue Button **Settings → Basic Settings → „Samsung S90C optimization“** das alles mit einem Klick. Die Bitrate passt er an die erkannte Verbindung (LAN/WLAN) an. (Die App-Oberfläche ist englisch, deshalb stehen die Menünamen hier im Original.)
 
 ---
@@ -46,11 +48,15 @@ In der App erledigt der neue Button **Settings → Basic Settings → „Samsung
 
 Kurz gesagt: **Dein Netzwerk ist sehr gut, die PC-Einstellungen sind auf Qualität getrimmt. Das Ruckeln nach ~2 h liegt sehr wahrscheinlich am PC. Den Hardware-Decoder des TVs kann keine App schneller machen, aber die App kann ihm unnötige Konkurrenz auf dem TV ersparen. Was diese Version dafür ändert, steht in [Abschnitt A.7](#a7-mehr-leistung-aus-dem-tv-für-4k-mit-hoher-bitrate).**
 
-### A.1 Frame Pacing: nicht die Ursache, trotzdem robuster gemacht
+### A.1 Frame Pacing: nicht die Ursache der Ruckler, aber wichtig für die Latenz
 
-Laut deiner Erfahrung war das Frame Pacing nicht das Problem, weil die Ruckler damit seit Version 1.18 behoben sind. Die hohe *Average decoding time* im Overlay (50–72 ms bei 1440p) ist deshalb kein Fehlerzeichen: Der Wert misst nicht die Dekodierzeit, sondern die Zeit vom Empfang eines Bildes bis zur Übergabe an den Decoder, inklusive der bewussten Wartezeit des Pacers.
+Laut deiner Erfahrung war das Frame Pacing bei den Rucklern nicht das Problem, die sind seit Version 1.18 behoben. Für dein Latenz-Ziel ist aber ein Wert aus deinem Overlay wichtig: *Average decoding time* 50–72 ms bei 1440p. Das ist nicht die Dekodierzeit, sondern die Zeit vom Empfang eines Bildes bis zur Übergabe an den Decoder, also Wartezeit am TV, die direkt zur Latenz zählt. Davon entfallen ~15 ms auf das Pacing selbst (*Average frame queue delay*), den Rest warten die Bilder in der Warteschlange davor.
 
-Unabhängig davon enthält diese Version eine Überarbeitung des Pacers: Er richtet sich nach dem *typischen* Ankunftszeitpunkt der Bilder im letzten Zeitfenster (Median plus dreifache robuste Streuung, gedeckelt auf eine halbe Frame-Dauer) statt nach dem einen Bild, das das Zeitfenster gerade abschließt. In meiner Simulation (10 min, 60 FPS) lief die Bildfolge damit bei normalem Jitter gleichmäßiger, bei sehr häufigen großen Aussetzern ruckelte sie etwas mehr. Fällt dir gegenüber 1.18 etwas auf, sag Bescheid. Frame Pacing bleibt abschaltbar (A/B-Test in Phase 3).
+Die Ursache steht im Code von Version 1.18/1.19: Der Pacer hat seinen Takt einmal pro Sekunde an dem einen Bild ausgerichtet, das das Zeitfenster abschloss, und dabei die Wartezeit in der eigenen Warteschlange mitgemessen. Kam dieses Bild verspätet, hielt er danach alle Bilder um diese Zeit zurück und baute das nur um 0,5 ms pro Sekunde ab. Das erzeugt keine Ruckler, aber dauerhafte Verzögerung.
+
+Diese Version richtet den Takt am *typischen* Ankunftszeitpunkt der Bilder aus (Median plus dreifache robuste Streuung, gedeckelt auf eine halbe Frame-Dauer) und misst ab dem Eintreffen eines Bildes. In meiner Simulation (10 min, 60 FPS) sank die Zusatzverzögerung in den Szenarien mit WLAN-Aussetzern deutlich, und bei normalem Jitter lief die Bildfolge gleichmäßiger. Nur bei sehr häufigen großen Aussetzern ruckelte sie etwas mehr.
+
+**Was du nach dem Update sehen solltest:** eine *Average decoding time* deutlich unter den bisherigen 50–72 ms und eine *Average frame queue delay* von wenigen Millisekunden. Das ist der wichtigste Messwert für die Latenz am TV. Frame Pacing bleibt abschaltbar (A/B-Test in Phase 3).
 
 ### A.2 Netzwerk: sehr gut, kleine Feinheiten
 
@@ -89,8 +95,8 @@ Gegen Netzwerk und TV spricht: 0 % Verlust, der Web-Audio-Scheduler fängt Uhren
 
 ### A.4 Sunshine: Einstellungen passen, mit Anmerkungen
 
-- **P6 + Two-Pass Full:** sinnvoll für maximale Qualität. 11 ms bei 4K liegen unter den 16,7 ms pro Bild. Zeigt das Overlay als *Maximum* der Host processing latency regelmäßig über ~14 ms, *Two-Pass: Quarter resolution* oder *Split Frame Encoding: Enabled* testen. Die RTX 5080 hat zwei Encoder. Mit Split Frame Encoding teilen sie sich jedes Bild, was die Kodierzeit fast halbieren kann, bei minimalem Qualitätsverlust.
-- **VBV-Erhöhung 0, Spatial AQ aus:** richtig.
+- **P6 + Two-Pass Full:** sinnvoll für maximale Qualität. 11 ms bei 4K liegen unter den 16,7 ms pro Bild, zählen aber voll zur Latenz. Für dein Latenz-Ziel deshalb *Split Frame Encoding: Enabled* setzen: Die RTX 5080 hat zwei Encoder, die sich dann jedes Bild teilen. Laut Sunshine-Doku verkürzt das die Kodierzeit deutlich, bei minimalem Qualitätsverlust. Liegt das *Maximum* der Host processing latency danach trotzdem regelmäßig über ~14 ms, *Two-Pass: Quarter resolution* testen.
+- **VBV-Erhöhung 0:** der sichere Startwert. Für mehr Qualität in schnellen Szenen über dein WLAN 50 bzw. 100 testen (A.8). **Spatial AQ aus:** richtig bei hohen Bitraten.
 - *Minimale CPU-Threads*, *QP* und *CAVLC* wirken bei NVENC-HEVC mit Bitratensteuerung nicht. Die kannst du ignorieren.
 - **Version:** v2026.914.233613 konnte ich nicht verifizieren. Öffentlich auffindbar war zuletzt v2026.724.x, und auf die GitHub-Releases hatte ich keinen Zugriff. Deine installierte Version zeigt die Sunshine-Weboberfläche. Die aktuelle stabile Version steht auf github.com/LizardByte/Sunshine/releases.
 
@@ -100,7 +106,7 @@ Gegen Netzwerk und TV spricht: 0 % Verlust, der Web-Audio-Scheduler fängt Uhren
 - **Full color range:** Nur behalten, wenn ein Schwarzwert-Test das bestätigt. Erkennt der TV den vollen Bereich nicht korrekt, saufen dunkle Details ab und helle clippen. Das wirkt „knackiger“, kostet aber Zeichnung in dunklen Szenen, und davon hat Witcher 3 viele. Test: eine Near-Black-Testseite oder der HDR-Kalibrierungsbildschirm des Spiels, einmal mit „Full“, einmal mit „Limited“. Gewinner ist die Einstellung, bei der die dunkelsten Stufen gerade noch unterscheidbar sind.
 - **Bitrate 4K/95 Mbit/s** ist ein guter Wert, nahe an Samsungs Decoder-Spezifikation. Optional 4K mit 110 Mbit/s 30 Minuten lang testen und dabei auf die Session-Zähler und die *Average decoding time* achten.
 - **4K vs. 1440p bei 3 m Abstand:** Ein 4K-Pixel ist auf 55" aus 3 m nur ~0,36 Bogenminuten groß, ein 1440p-Pixel ~0,55. Das menschliche Auge löst grob 0,5–1 Bogenminute auf. Aus deinem Abstand ist 1440p also nah an der Wahrnehmungsgrenze, und 1440p mit 120 Mbit/s hat pro Pixel rund dreimal so viele Bits wie 4K mit 95 Mbit/s. In dunklen, detailreichen Szenen (Vegetation, Nebel) kann 1440p deshalb sauberer wirken, 4K punktet bei feinen Kanten. Ein direkter Vergleich aus 3 m lohnt sich.
-- **Web Audio mit 100 ms:** passt. Bei Aussetzern 150 ms.
+- **Web Audio mit 100 ms:** ein sicherer Wert. Für weniger Ton-Verzögerung nach diesem Update 75, dann 50 ms testen (A.8). Bei Aussetzern wieder erhöhen.
 
 ### A.6 TV-Einstellungen
 
@@ -142,6 +148,46 @@ Geprüft, aber unverändert gelassen: Der Video-Empfang ist bereits gut eingeste
 2. **Bestanden**, wenn *Session frames dropped by network* und *Session recovery keyframes* bei 0 bleiben, die *Rendering frame rate* stabil bei 60 liegt und der Ton nicht aussetzt.
 3. **Bei Audio-Aussetzern** einmal *Audio backend: EMSS* testen. EMSS übergibt den Ton direkt aus dem Audio-Thread an den TV-Player und braucht den Haupt-Thread dafür nicht.
 4. Steigt die *Average rendering time* (Übergabe eines Bildes an den TV-Player) mit der Bitrate deutlich an, ist der Decoder-Pfad des TVs am Limit. Dann eine Stufe zurückgehen.
+
+### A.8 Dein Ziel: 4K60 (optional mehr), beste Bildqualität, niedrige Latenz
+
+#### Latenz: die ganze Kette
+
+Die Verzögerung zwischen Tastendruck und Bild setzt sich aus mehreren Gliedern zusammen. Nach Größe sortiert, mit deinen aktuellen Einstellungen:
+
+| Glied | Bei dir jetzt | Hebel | Gewinn (grob) |
+|---|---|---|---|
+| Bildverarbeitung des TVs | Bildmodus „Film“, ohne Spielmodus | **ForceGM-Variante**, die den Spielmodus des TVs einschaltet. Unter Tizen 9 bei 4K gezielt testen (A.6) | Laut RTINGS-Messungen an anderen TVs (HDMI-Eingang) liegt die Verzögerung außerhalb des Spielmodus typischerweise bei 60–80 ms statt ~10 ms. Für den S90C und für die Wiedergabe in Apps habe ich keine Messwerte gefunden, die Größenordnung dürfte ähnlich sein |
+| Frame Generation 2x | Das Spiel rendert intern nur 30 FPS | **FG aus**, DLSS Super Resolution (Balanced/Performance), **Reflex an** | Grob 30–50 ms: FG hält ein internes Bild (~33 ms) zurück, und 30 FPS reagieren träger als 60 |
+| Wartezeit am TV vor dem Decoder | *Average decoding time* 50–72 ms (1440p, Version 1.18) | **Diese Version** (neues Frame Pacing, A.1). Für das absolute Minimum Frame Pacing aus (A/B-Test) | Bis zu mehrere Dutzend Millisekunden. Der Overlay-Wert zeigt es direkt |
+| Encoder am PC | ~11 ms bei 4K (P6, Two-Pass Full) | ***Split Frame Encoding: Enabled***: Beide NVENC-Einheiten der RTX 5080 teilen sich jedes Bild | Laut Sunshine-Doku deutlich kürzere Kodierzeit bei minimalem Effizienzverlust. Die *Host processing latency* im Overlay zeigt es |
+| Ton | Web Audio mit 100 ms Jitter-Puffer | **Puffer auf 50–75 ms** senken. Nach diesem Update ist der Haupt-Thread entlastet. Bei Aussetzern wieder erhöhen | Der Ton läuft etwa um den Pufferwert hinter dem Bild. Geht die Uhr des PCs etwas schneller als die des TVs, wächst der Abstand im Lauf der Session bis zum Doppelten, bei 100 ms also bis 200 ms |
+| Netzwerk | 1–3 ms | nichts zu tun | – |
+
+Im Spiel außerdem eine **Bildratenbegrenzung auf 60 FPS** setzen (Abschnitt 5.3), wenn die GPU sonst dauerhaft am Anschlag läuft. Das hält die Render-Warteschlange kurz und lässt dem Encoder GPU-Reserve.
+
+#### Bildqualität im Stand und in Bewegung
+
+**Im Stand** ist mit 4K60, HDR10 (Main10) und ~100 Mbit/s fast alles ausgereizt. Es bleiben die TV-Einstellungen aus A.6 (Schärfe 0 bei 4K, Kontrastverbesserung aus), der Schwarzwert-Test für *Color range* (A.5) und die Windows-HDR-Kalibrierung. Farbunterabtastung 4:2:0 ist fest: Ein 4:4:4-Stream (Sunshine kann ihn) würde ein HEVC-RExt-Profil brauchen, das TV-Decoder üblicherweise nicht unterstützen.
+
+**In Bewegung** entscheidet, wie viele Bits ein schwieriges Bild bekommen darf:
+
+1. **Bitrate:** 95 Mbit/s bei 60 FPS sind ~1,6 Mbit pro Bild. Mehr Bitrate hilft direkt, also die Bitrate-Leiter aus A.7 durchgehen.
+2. **VBV:** Mit `nvenc_vbv_increase = 0` darf kein Bild größer werden als Bitrate ÷ FPS. Genau schnelle Kameraschwenks, Vegetation und Partikel bräuchten mehr. Über dein WLAN, ohne den 100-Mbit-Port im Weg, lohnt ein Test mit **50, dann 100 %**. Größere Bilder brauchen über die Funkstrecke ein paar Millisekunden länger. Tauchen Session-Drops auf, zurück auf 0.
+3. **Frame Generation aus:** FG-Zwischenbilder haben bei schnellen Bewegungen eigene Artefakte, die im Stream genauso sichtbar sind.
+4. **P6 mit Two-Pass Full** ist für die Qualität richtig. Mit Split Frame Encoding bleibt die Kodierzeit trotzdem niedrig.
+5. **Bewegungsschärfe des OLEDs:** Bei 60 Hz verwischt das Auge bewegte Bilder (Sample-and-Hold). Zwischenbildberechnung würde das mildern, kostet aber Latenz. Für dein Ziel bleibt sie aus.
+
+#### 4K120 als Option
+
+Die App ist vorbereitet: Sie meldet dem TV für 4K120 das nötige Codec-Level 5.2, der Sicherheitsabstand des Frame Pacings beträgt bei 120 FPS höchstens ~4 ms, und der Bitrate-Regler geht bis 150 Mbit/s. Dagegen spricht einiges:
+
+- **Darstellung:** Laut Projekt-Wiki begrenzt Tizen die Darstellung von Apps auf vielen Modellen auf ~60 FPS, auch bei einem 120-Hz-Panel.
+- **Messbarkeit:** Das Overlay zählt die an den TV-Player übergebenen Bilder, nicht die angezeigten. Eine *Rendering frame rate* von 120 beweist also nicht, dass der TV 120 Bilder zeigt. Prüfen lässt sich das nur mit dem Auge, z. B. mit testufo.com im Browser auf dem PC: im Stream 60 und 120 FPS vergleichen.
+- **Bildqualität:** Bei 150 Mbit/s bleiben pro Bild 1,25 Mbit statt ~1,6 Mbit wie bei 4K60 mit 95 Mbit/s. Jedes Einzelbild wird schlechter.
+- **PC:** Das virtuelle Display muss auf 120 Hz laufen, und das Spiel muss ohne FG 120 FPS schaffen. Der Encoder muss in 8,3 ms fertig sein, P6 mit Two-Pass Full braucht bei 4K aber ~11 ms. Also Split Frame Encoding an oder das Preset senken.
+
+**Fazit:** 4K60 ist das Hauptprofil für dein Ziel. 4K120 einmal testen und nur behalten, wenn es sichtbar flüssiger ist.
 
 ---
 
@@ -201,7 +247,7 @@ Sunshine rechnet die in Moonlight eingestellte Bitrate als *Gesamtbudget*: Davon
 | 4K @ 60 FPS | 1,67 Mbit |
 | 4K @ 120 FPS | 0,83 Mbit |
 
-Bei gleicher Bitrate hat 4K60 pro Bild die doppelte Datenmenge. Weil Tizen-Apps auf vielen Modellen ohnehin nur ~60 FPS darstellen, ist **4K60 die beste Wahl für maximale Bildqualität**. 4K120 lohnt sich nur, wenn das Overlay wirklich ~120 FPS „Rendering frame rate“ zeigt (Test in Phase 3).
+Bei gleicher Bitrate hat 4K60 pro Bild die doppelte Datenmenge. Weil Tizen-Apps auf vielen Modellen ohnehin nur ~60 FPS darstellen, ist **4K60 die beste Wahl für maximale Bildqualität**. 4K120 lohnt sich nur, wenn der TV die 120 Bilder auch zeigt. Das Overlay kann das nicht belegen, denn es zählt die an den Player übergebenen Bilder. Wie man es prüft, steht in A.8.
 
 ### 2.4 Decoder-Spezifikation
 
@@ -220,7 +266,7 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
 |---|---|---|
 | **A – Maximale Bildqualität (WLAN)** | Bestes Bild, Hauptprofil | 4K, 60 FPS, HEVC Main10/HDR, 100 → 150 Mbit/s, Frame Pacing an |
 | **B – Maximale Stabilität (LAN)** | Fehlerfrei über Kabel | 4K, 60 FPS, HEVC Main10/HDR, 75 Mbit/s, Burst-Fix aktiv, optional RFI |
-| **C – Flüssigkeit (Experiment)** | Nur wenn der TV wirklich 120 FPS darstellt | 4K, 120 FPS, HEVC, 120–150 Mbit/s (nur WLAN); per LAN eher 1440p120 mit 75 Mbit/s |
+| **C – Flüssigkeit (Experiment)** | Nur wenn der TV wirklich 120 FPS darstellt (Sichtprüfung, A.8) | 4K, 120 FPS, HEVC, 120–150 Mbit/s (nur WLAN), virtuelles Display auf 120 Hz, Split Frame Encoding an. Per LAN eher 1440p120 mit 75 Mbit/s |
 | **AV1-Variante** | Wenn die GPU AV1 kodieren kann (NVIDIA RTX 40/50, AMD RX 7000/9000, Intel Arc) | Wie A/B, Codec AV1 (Main10). Bei gleicher Bitrate etwas effizienter als HEVC |
 
 ---
@@ -283,9 +329,10 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
 | Sunshine-Option | Standard | Empfehlung für den S90C | Warum |
 |---|---|---|---|
 | `nvenc_preset` | P1 (schnellste Stufe) | **P4**, dann P5/P6 testen | Laut Sunshine-Doku lohnt ein höheres Preset genau dann, wenn Netzwerk oder Decoder die Bitrate begrenzen. Das ist hier der Fall (100-Mbit-LAN bzw. ~100-Mbit-Decoder-Spezifikation). Höhere Presets bringen mehr Qualität pro Bit |
-| `nvenc_twopass` | quarter_res | quarter_res lassen | Verhindert Bitraten-Spitzen (und damit Paketverlust) |
+| `nvenc_twopass` | quarter_res | quarter_res lassen, per WLAN ist full_res in Ordnung | Verhindert Bitraten-Spitzen (und damit Paketverlust). Full Resolution findet mehr Bewegungsvektoren, kostet aber Kodierzeit |
 | `nvenc_spatial_aq` | aus | aus (höchstens bei niedrigen Bitraten testen) | Bringt bei 75–150 Mbit/s kaum etwas, kostet Encoder-Leistung |
-| `nvenc_vbv_increase` | 0 | **0 lassen** | Höhere Werte erlauben größere Einzelbilder, also größere Bursts. Das ist Gift für den 100-Mbit-Port |
+| `nvenc_vbv_increase` | 0 | **LAN: 0 lassen. WLAN: 50 bzw. 100 testen** | Höhere Werte erlauben größere Einzelbilder. Das verbessert schwierige Bewegungsszenen, erzeugt aber größere Bursts, und die sind Gift für den 100-Mbit-Port |
+| `nvenc_split_encode` | driver_decides | **enabled** (bei GPUs mit zwei NVENC-Einheiten) | Teilt jedes Bild auf beide Encoder auf. Laut Sunshine-Doku deutlich kürzere Kodierzeit bei minimalem Effizienzverlust. Für 4K120 praktisch Pflicht |
 | `fec_percentage` | 20 | 20 lassen | Fehlerkorrektur für vereinzelte Paketverluste (vor allem im WLAN) |
 | `hevc_mode` / `av1_mode` | 0 (nach Encoder-Fähigkeiten) | 0 | Main10 für HDR wird automatisch angeboten, wenn die GPU es kann |
 | `lan_encryption_mode` | 0 | 0 | Verschlüsselung kostet auf dem TV zusätzliche CPU-Zeit |
@@ -388,7 +435,10 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
 | Frame Pacing an ↔ aus | Mikroruckler | Gleichmäßigkeit vs. Latenz |
 | Game Mode / ForceGM ↔ Low Latency | Je nach Tizen-Version | Latenz, Stabilität, ob der TV in den Spielmodus wechselt |
 | **Reference Frame Invalidation** an ↔ aus | Nur wenn Drops auftreten | Erholt sich das Bild nach einem Drop schneller? Bleiben Artefakte stehen → wieder aus |
-| 4K120 | Neugier | Zeigt *Rendering frame rate* wirklich ~120? Wenn nicht, bei 60 FPS bleiben |
+| 4K120 | Option auf mehr Flüssigkeit | Sichtprüfung (z. B. testufo.com auf dem PC) statt Overlay, siehe A.8. Nicht sichtbar flüssiger → bei 60 FPS bleiben |
+| `nvenc_vbv_increase` 0 → 50 → 100 (nur WLAN) | Blockartefakte in schnellen Szenen | Bildqualität bei Kameraschwenks, Session-Drops müssen 0 bleiben |
+| Split Frame Encoding an ↔ Treiber entscheidet | Latenz | *Host processing latency* (Durchschnitt und Maximum) |
+| Audio-Jitter-Puffer 100 → 75 → 50 ms | Ton läuft spürbar hinterher | Aussetzer oder Knacksen → eine Stufe zurück |
 | EMSS ↔ Web Audio | Bei Knacksern oder Audio-Aussetzern | Audioqualität, ob Video-Ruckler verschwinden |
 
 ### Phase 4 – Bildqualität prüfen
@@ -437,7 +487,8 @@ Deine Setup-Angaben sind in Abschnitt A eingearbeitet. Folgendes würde die Diag
 3. **HWiNFO-Log** derselben Session: VRAM-Belegung, GPU-Hotspot- und Speichertemperatur, GPU- und Speichertakt.
 4. **FRITZ!Box**: Hängt der TV im Mesh unter dem Repeater? Gab es zum Zeitpunkt des Ruckelns WLAN-Ereignisse?
 5. **Schwarzwert-Test** *Full* vs. *Limited color range*: Bei welcher Einstellung bleiben die dunkelsten Stufen unterscheidbar?
-6. **4K-Bitrate-Leiter mit dieser Version** (Abschnitt A.7): bis zu welcher Bitrate bleibt alles bei 0, und wie entwickeln sich *Average rendering time* und *Average frame queue delay*? Gab es Audio-Aussetzer?
+6. **4K-Bitrate-Leiter mit dieser Version** (Abschnitt A.7): bis zu welcher Bitrate bleibt alles bei 0, und wie entwickeln sich *Average decoding time*, *Average frame queue delay* und *Average rendering time*? Gab es Audio-Aussetzer?
+7. **Latenz-Tests aus A.8:** Läuft 4K mit der ForceGM-Variante sauber? Wie stark sinkt die *Host processing latency* mit Split Frame Encoding?
 
 ---
 
@@ -449,4 +500,5 @@ Deine Setup-Angaben sind in Abschnitt A eingearbeitet. Folgendes würde die Diag
 - Moonlight Android: `MediaCodecDecoderRenderer.getPreferredColorSpace()` (BT.709 auf modernen Geräten)
 - S90C-Datenblätter (Händler/Reviews): Wi-Fi 5 (802.11ac), 2 × USB 2.0. Tizen-9-Rollout für 2023er-Modelle: [SamMobile](https://www.sammobile.com/opinion/samsung-talks-up-tv-updates-at-ces-2026-i-am-still-waiting-for-tizen-9/)
 - 100-Mbit-LAN bei Samsung-TVs: Projekt-Wiki (oben) und Berichte in der [Samsung Community](https://eu.community.samsung.com/t5/tv/8k-tv-ethernet-network-adapter-speed/td-p/8800467)
+- Eingabeverzögerung mit und ohne Spielmodus: [RTINGS-Testmethodik](https://www.rtings.com/tv/tests/inputs/input-lag) (Messwerte anderer Modelle aus Suchergebnissen, nicht für den S90C)
 - Witcher 3 (DX12, Raytracing) und wachsender VRAM-Verbrauch: [WCCFtech](https://wccftech.com/the-witcher-3-next-gen-new-mod-fixes-ray-tracing-memory-leak-issues-increases-performance/amp/), [Nexus Mods](https://www.nexusmods.com/witcher3/mods/12493), [Steam-Diskussion](https://steamcommunity.com/app/292030/discussions/0/6126615404787634687)
