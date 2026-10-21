@@ -76,13 +76,15 @@ void MoonlightInstance::ClLogMessage(const char* format, ...) {
 }
 
 void MoonlightInstance::ClConnectionStatusUpdate(int connectionStatus) {
+  // This runs on the video receive thread, so the message is posted without waiting for the main thread,
+  // otherwise the UDP socket would not be drained while the main thread is busy
   if (g_Instance->m_DisableWarningsEnabled == false) {
     switch (connectionStatus) {
       case CONN_STATUS_OKAY:
-        PostToJs(std::string("NoWarningMsg: ") + std::string("Connection to PC has been improved."));
+        PostToJsAsync(std::string("NoWarningMsg: ") + std::string("Connection to PC has been improved."));
         break;
       case CONN_STATUS_POOR:
-        PostToJs(std::string("WarningMsg: ") + std::string("Slow connection to PC.\nReduce your bitrate!"));
+        PostToJsAsync(std::string("WarningMsg: ") + std::string("Slow connection to PC.\nReduce your bitrate!"));
         break;
       default:
         break;
@@ -98,4 +100,5 @@ CONNECTION_LISTENER_CALLBACKS MoonlightInstance::s_ClCallbacks = {
   .logMessage = MoonlightInstance::ClLogMessage,
   .rumble = MoonlightInstance::ClControllerRumble,
   .connectionStatusUpdate = MoonlightInstance::ClConnectionStatusUpdate,
+  .setHdrMode = MoonlightInstance::ClSetHdrMode,
 };

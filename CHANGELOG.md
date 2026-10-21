@@ -13,6 +13,10 @@ All notable changes to this project will be documented in this file.
 - Added an optimization plan for the S90C covering the network, host, TV settings and test procedure (`docs/S90C-Optimierungsplan.md`)
 - Added an experimental 'HDR static metadata' setting that inserts the HDR10 metadata of the host display (mastering display colour volume, content light level) into the HEVC keyframes, which Sunshine only sends over the control channel and the TV never received
 - Added the frame receive time, the frame wait time before the video thread and the pending frame count to the performance stats, and renamed the pacer time to 'Average frame pacing delay'; the former 'Average decoding time' mixed the queue wait with the pacing
+- Added the 3200 x 1800 (1800p) resolution with bitrate presets as a step between 1440p and 4K
+- Added an experimental 'Audio clock sync' setting for the Web Audio backend that keeps the audio delay at the jitter buffer by playing a few ppm faster or slower, instead of dropping or repeating sound when the clocks of the host and the TV drift apart
+- Added a hint that 90 FPS does not divide the 60 or 120 Hz output of the TV evenly
+- Logged the UDP receive buffer size granted by the TV and the receive timeout mode at stream start
 
 ### Changed
 - Reworked the video frame pacing to follow the usual arrival time of the frames, so that a single late frame no longer holds back every following frame by up to tens of milliseconds, and to follow a later arrival time only once two consecutive windows confirm it, so that the burst of frames after a network stall cannot hold back the next second of frames
@@ -25,6 +29,9 @@ All notable changes to this project will be documented in this file.
 - Bounded the audio delay of the Web Audio backend to 1.5 times the jitter buffer instead of 2 times when the host and TV clocks drift apart, and allowed a jitter buffer of 25 ms
 - Enabled HDR by default on HDR-capable TVs on a fresh install, as the optimal streaming settings and 'Restore Defaults' already did
 - Refreshed the Wi-Fi signal strength in the performance stats every 5 seconds instead of showing the value from the start of the stream
+- Requested a keyframe when the HDR metadata of the host arrives or changes during the stream, so the 'HDR static metadata' setting takes effect
+- Posted the connection warnings and the controller rumble to the UI without blocking the video receive thread
+- Described what 'Optimize game settings' does on Sunshine (resolution only, the refresh rate follows the frame rate anyway, only offered modes)
 - Requested the Rec. 709 colorspace instead of Rec. 601 for SDR streams, which is the standard for HD and 4K video
 - Declared HEVC and AV1 level 5.2 for streams above 4K at 60 FPS, with a fallback to level 5.1 for TVs that reject it
 - Limited the bitrate presets to 75 Mbps when the TV is connected over its 100 Mbps Ethernet port

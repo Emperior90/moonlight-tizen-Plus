@@ -176,6 +176,17 @@ void MoonlightInstance::RequestIdrFrame() {
   LiRequestIdrFrame();
 }
 
+// The host sends its HDR metadata over the control channel, which can arrive after the first IDR frame was
+// submitted, or change when the host display switches HDR on mid-stream. The metadata SEI only goes into IDR
+// frames, so request one when the metadata becomes available during the stream. Before the track is open,
+// OnTrackOpen requests the IDR frame anyway.
+void MoonlightInstance::ClSetHdrMode(bool enabled) {
+  if (enabled && s_HdrMetadataEnabled && (s_VideoFormat & VIDEO_FORMAT_MASK_H265) &&
+      g_Instance != nullptr && g_Instance->m_VideoStarted) {
+    RequestIdrFrame();
+  }
+}
+
 bool MoonlightInstance::InitializeRenderingSurface(int width, int height) {
   return true;
 }
@@ -737,7 +748,8 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
   };
 
   // Track the time from the first to the last packet of this frame (its transfer over the network) and the
-  // time the complete frame waited in the decode unit queue until this thread picked it up, before any pacing
+  // time the complete frame waited in the decode unit queue until this thread picked it up (with frame pacing
+  // on, that includes the time this thread was still holding the previous frame when this one arrived early)
   m_ActiveWndVideoStats.totalReassemblyTime += (uint32_t)MAX(0, (int32_t)(decodeUnit->enqueueTimeMs - decodeUnit->receiveTimeMs));
   m_ActiveWndVideoStats.totalDecodeTime += (uint32_t)MAX(0, (int32_t)(dequeueMs - decodeUnit->enqueueTimeMs));
   m_ActiveWndVideoStats.decodedFrames++;

@@ -54,6 +54,33 @@ var _audPhase = 0.0;
 // frame interpolates from, or null while no frame has been resampled yet
 var _audTail = null;
 
+// Whether the clock sync is enabled, which keeps the schedule at the jitter buffer target by
+// steering the resampling ratio by a few hundred ppm instead of letting the schedule drift until
+// a frame has to be dropped (host clock faster than the TV) or the output runs dry (slower)
+var _audClockSync = false;
+
+// Ratio of the stream sample rate to the sample rate of the audio context, which the clock sync
+// corrects around
+var _audBaseRatio = 1.0;
+
+// Smoothed distance between the schedule and the audio hardware clock, in seconds
+var _audLeadFiltered = 0.0;
+
+// Correction of the resampling ratio that is currently applied, as a fraction (1e-6 = 1 ppm)
+var _audCorrection = 0.0;
+
+// Largest correction of the resampling ratio, which bounds the pitch change to an inaudible amount
+var AUD_SYNC_MAX_CORRECTION = 500e-6;
+
+// Correction per second of lead error: an error of 5 ms reaches the largest correction. The
+// correction settles where it cancels the drift, so a drift of 100 ppm leaves the schedule 1 ms
+// off the target, which is negligible against the jitter buffer.
+var AUD_SYNC_GAIN = 0.1;
+
+// Lead error at which the correction starts, and below which it stops again, in seconds
+var AUD_SYNC_START_SECONDS = 0.002;
+var AUD_SYNC_STOP_SECONDS = 0.0005;
+
 // Counters of the current statistics interval, described in _audLogStatistics()
 var _audStats = null;
 
@@ -143,6 +170,7 @@ function _audLogStatistics(force) {
     ' | resync=' + stats.resyncs +
     ' underrun=' + stats.underruns +
     ' gaps=' + stats.decoderGaps +
+    ' | sync=' + (_audClockSync ? (_audCorrection * 1e6).toFixed(0) + ' ppm' : 'off') +
     ' | headroom min=' + format(stats.headroomMin) +
     ' avg=' + format(average) +
     ' max=' + format(stats.headroomMax) + ' ms' +
@@ -183,6 +211,10 @@ function startAudioScheduler() {
   _audRatio = 1.0;
   _audPhase = 0.0;
   _audTail = null;
+  _audClockSync = !!window._mlAudioClockSync;
+  _audBaseRatio = 1.0;
+  _audLeadFiltered = 0.0;
+  _audCorrection = 0.0;
   _audResetStatistics();
 
   // Report the state of the audio path, which the TV may reopen at a different sample rate or
@@ -231,7 +263,9 @@ function stopAudioScheduler() {
 // Adopt the format of the stream, which is only known once the first frame has been decoded
 function _audAdoptStreamFormat(sampleRate, channels) {
   _audStreamRate = sampleRate;
-  _audRatio = sampleRate / _audContext.sampleRate;
+  _audBaseRatio = sampleRate / _audContext.sampleRate;
+  _audRatio = _audBaseRatio;
+  _audCorrection = 0.0;
   _audPhase = 0.0;
   _audTail = null;
 
@@ -243,7 +277,34 @@ function _audAdoptStreamFormat(sampleRate, channels) {
 
   console.log('%c[audio.js, _audReceiveFrame]', 'color: teal;',
     'Rendering ' + channels + ' channels of ' + sampleRate + ' Hz audio' +
-    ' with a jitter buffer of ' + (window._mlAudioTargetMs || AUD_DEFAULT_TARGET_MS) + ' ms.');
+    ' with a jitter buffer of ' + (window._mlAudioTargetMs || AUD_DEFAULT_TARGET_MS) + ' ms' +
+    (_audClockSync ? ' and the clock sync enabled.' : '.'));
+}
+
+// Steer the resampling ratio so that the schedule stays at the jitter buffer target. A schedule
+// that runs ahead of the target means the host produces audio faster than the TV plays it, so
+// the stream is consumed slightly faster (fewer output samples per frame), and the other way
+// round. The correction only starts outside a small band around the target and stops again
+// close to it, so the exact copy path is used whenever no correction is needed.
+function _audSteerClock(lead, targetSeconds) {
+  _audLeadFiltered += 0.05 * (lead - _audLeadFiltered);
+  var error = _audLeadFiltered - targetSeconds;
+
+  if (_audCorrection === 0.0 && Math.abs(error) < AUD_SYNC_START_SECONDS) {
+    return;
+  }
+  if (_audCorrection !== 0.0 && Math.abs(error) < AUD_SYNC_STOP_SECONDS) {
+    // Back at the target: return to the plain ratio and restart the resampler phase, which
+    // shifts the stream by less than one sample
+    _audCorrection = 0.0;
+    _audRatio = _audBaseRatio;
+    _audPhase = 0.0;
+    _audTail = null;
+    return;
+  }
+
+  _audCorrection = Math.max(-AUD_SYNC_MAX_CORRECTION, Math.min(AUD_SYNC_MAX_CORRECTION, AUD_SYNC_GAIN * error));
+  _audRatio = _audBaseRatio * (1.0 + _audCorrection);
 }
 
 // Copy one frame out of the WASM heap into an audio buffer, resampling it to the sample rate of
@@ -362,7 +423,12 @@ function _audReceiveFrame(heapOffset, samples, channels, sampleRate, stride, seq
     _audNextTime = now + targetSeconds;
     _audPhase = 0.0;
     _audTail = null;
+    _audLeadFiltered = targetSeconds;
+    _audCorrection = 0.0;
+    _audRatio = _audBaseRatio;
     stats.resyncs++;
+  } else if (_audClockSync) {
+    _audSteerClock(_audNextTime - now, targetSeconds);
   }
 
   // Drop the frame once the schedule ran away from the clock by one and a half times the jitter

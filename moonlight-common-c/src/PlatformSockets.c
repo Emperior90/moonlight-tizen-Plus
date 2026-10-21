@@ -393,7 +393,6 @@ SOCKET bindUdpSocket(int addressFamily, struct sockaddr_storage* localAddr, SOCK
             }
         }
 
-#if defined(LC_DEBUG)
         if (err == 0) {
             Limelog("Selected receive buffer size: %d\n", bufferSize);
         }
@@ -401,13 +400,14 @@ SOCKET bindUdpSocket(int addressFamily, struct sockaddr_storage* localAddr, SOCK
             Limelog("Unable to set receive buffer size: %d\n", LastSocketError());
         }
 
+        // Log the size the OS actually granted, because it may silently clamp the request. The buffer
+        // is the whole tolerance for stalls of the receive thread at high bitrates.
         {
             SOCKADDR_LEN len = sizeof(bufferSize);
             if (getsockopt(s, SOL_SOCKET, SO_RCVBUF, (char*)&bufferSize, &len) == 0) {
                 Limelog("Actual receive buffer size: %d\n", bufferSize);
             }
         }
-#endif
     }
 
     return s;

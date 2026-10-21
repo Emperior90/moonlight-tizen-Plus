@@ -160,6 +160,7 @@ class MoonlightInstance {
   static void ClLogMessage(const char* format, ...);
   static void ClControllerRumble(unsigned short controllerNumber, unsigned short lowFreqMotor, unsigned short highFreqMotor);
   static void ClConnectionStatusUpdate(int connectionStatus);
+  static void ClSetHdrMode(bool enabled);
 
   void DidChangeFocus(bool got_focus);
   static void RequestIdrFrame();

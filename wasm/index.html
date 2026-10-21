@@ -127,6 +127,7 @@
                 <li class="mdl-menu__item" data-value="1280:720" data-i18n="1280 x 720 (720p)">1280 x 720 (720p)</li>
                 <li class="mdl-menu__item" data-value="1920:1080" data-i18n="1920 x 1080 (1080p)">1920 x 1080 (1080p)</li>
                 <li class="mdl-menu__item" data-value="2560:1440" data-i18n="2560 x 1440 (1440p)">2560 x 1440 (1440p)</li>
+                <li class="mdl-menu__item" data-value="3200:1800" data-i18n="3200 x 1800 (1800p)">3200 x 1800 (1800p)</li>
                 <li class="mdl-menu__item" data-value="3840:2160" data-i18n="3840 x 2160 (4K)">3840 x 2160 (4K)</li>
               </ul>
             </div>
@@ -215,8 +216,8 @@
             </div>
             <div class="setting-option">
               <label data-i18n="Optimize game settings">Optimize game settings</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Adjusts the host resolution to match the client resolution when the display device is configured on Sunshine.">
-                - Adjusts the host resolution to match the client resolution when the display device is configured on Sunshine.
+              <span class="mdl-list__item-text-body" data-i18n="- Lets Sunshine switch the host display to the client resolution when its display device configuration is enabled. With the default 'automatic' refresh rate option of Sunshine the host refresh rate follows the selected frame rate even when this is off, and only modes the host display offers can be applied (e.g. a 4K 120 FPS stream needs a display with 3840 x 2160 at 120 Hz).">
+                - Lets Sunshine switch the host display to the client resolution when its display device configuration is enabled. With the default 'automatic' refresh rate option of Sunshine the host refresh rate follows the selected frame rate even when this is off, and only modes the host display offers can be applied (e.g. a 4K 120 FPS stream needs a display with 3840 x 2160 at 120 Hz).
               </span>
               <div id="optimizeGamesMenu">
                 <label id="optimizeGamesBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="optimizeGamesSwitch">
@@ -347,6 +348,22 @@
                 <span id="jitterLowestValue">25</span>
                 <input type="range" id="jitterSlider" class="mdl-slider mdl-js-slider" min="25" max="500" step="25" value="100">
                 <span id="jitterHighestValue">500</span>
+              </div>
+            </div>
+            <div id="audioClockSyncOption" class="setting-option">
+              <label><span data-i18n="Audio clock sync">Audio clock sync</span>
+                <span class="badge badge-experimental" data-i18n="Experimental">Experimental</span>
+              </label>
+              <span class="mdl-list__item-text-body" data-i18n="- Keeps the audio delay at the jitter buffer by playing the sound a few ppm faster or slower, instead of skipping or repeating a bit of sound every few minutes when the clocks of the host and the TV drift apart.">
+                - Keeps the audio delay at the jitter buffer by playing the sound a few ppm faster or slower, instead of skipping or repeating a bit of sound every few minutes when the clocks of the host and the TV drift apart.
+              </span>
+              <div id="audioClockSyncMenu">
+                <label id="audioClockSyncBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="audioClockSyncSwitch">
+                  <input type="checkbox" id="audioClockSyncSwitch" class="mdl-switch__input">
+                  <span class="mdl-switch__label" data-i18n="Keep the audio in step with the clock of the TV">
+                    Keep the audio in step with the clock of the TV
+                  </span>
+                </label>
               </div>
             </div>
             <div class="setting-option">

@@ -101,6 +101,7 @@ static void VideoReceiveThreadProc(void* context) {
 
     if (setNonFatalRecvTimeoutMs(rtpSocket, UDP_RECV_POLL_TIMEOUT_MS) < 0) {
         // SO_RCVTIMEO failed, so use select() to wait
+        Limelog("Video Receive: SO_RCVTIMEO unsupported, polling before each receive\n");
         useSelect = true;
     }
     else {

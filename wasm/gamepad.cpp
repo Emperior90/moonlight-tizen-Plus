@@ -579,6 +579,6 @@ void MoonlightInstance::ClControllerRumble(unsigned short controllerNumber, unsi
   if (rumbleFeedbackSwitch) {
     std::ostringstream ss;
     ss << controllerNumber << "," << weakMagnitude << "," << strongMagnitude;
-    PostToJs(std::string("controllerRumble: ") + ss.str());
+    PostToJsAsync(std::string("controllerRumble: ") + ss.str());
   }
 }

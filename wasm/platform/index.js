@@ -43,6 +43,7 @@ var wasPairingCanceled = false; // Flag indicating whether the current pairing p
 var isGamepadActive = false; // Flag indicating whether the gamepad input is active, initial value is false
 var isClickPrevented = false; // Flag indicating whether the click event should be prevented, initial value is false
 var resFpsWarning = false; // Flag indicating whether the video resolution and frame rate warning message has shown, initial value is false
+var fps90Warning = false; // Flag indicating whether the 90 FPS cadence hint has been shown, initial value is false
 var bitrateWarning = false; // Flag indicating whether the video bitrate warning message has shown, initial value is false
 var audioWarning = false; // Flag indicating whether the audio configuration warning message has shown, initial value is false
 var codecWarning = false; // Flag indicating whether the video codec warning message has shown, initial value is false
@@ -127,6 +128,7 @@ function attachListeners() {
   $('.audioBackendMenu li').on('click', saveAudioBackend);
   $('.audioConfigMenu li').on('click', saveAudioConfiguration);
   $('#audioSyncSwitch').on('click', saveAudioSync);
+  $('#audioClockSyncSwitch').on('click', saveAudioClockSync);
   $('#jitterSlider').on('input', saveAudioJitter);
   $('#playHostAudioSwitch').on('click', savePlayHostAudio);
   $('#decryptHostAudioSwitch').on('click', saveDecryptHostAudio);
@@ -2959,6 +2961,8 @@ function startGame(host, appID) {
   // handler of the key press that started the stream, because the audio context of a device
   // with an autoplay policy can only be created from a user gesture
   if (isWebAudioBackendSelected()) {
+    // Publish the clock sync setting to the audio scheduler in platform/audio.js
+    window._mlAudioClockSync = $('#audioClockSyncSwitch').parent().hasClass('is-checked');
     startAudioScheduler();
   }
 
@@ -3430,6 +3434,17 @@ function warnResolutionFramerate() {
     // Reset the flag for video resolution and frame rate warning if the condition goes back to normal (1080p and 60 FPS)
     resFpsWarning = false;
   }
+
+  // 90 FPS cadence hint, which has its own flag so that it also shows after a switch from 120 to 90 FPS
+  if (!fps90Warning && chosenFramerate === 90) {
+    // The TV presents at 60 or 120 Hz, neither of which 90 FPS divides evenly
+    snackbarLogLong('Warning: 90 FPS does not divide a 60 or 120 Hz output evenly, so motion may be less smooth than at 60 or 120 FPS!');
+    // Set flag for the 90 FPS cadence hint
+    fps90Warning = true;
+  } else if (fps90Warning && chosenFramerate !== 90) {
+    // Reset the flag for the 90 FPS cadence hint once another frame rate is selected
+    fps90Warning = false;
+  }
 }
 
 function warnH264Resolution() {
@@ -3540,6 +3555,19 @@ function standardBitratePresets() {
       $('#bitrateSlider')[0].MaterialSlider.change('60');
     } else if (frameRate === '144') { // 144 FPS
       $('#bitrateSlider')[0].MaterialSlider.change('70');
+    }
+  } else if (res === '3200:1800') { // 1800p
+    // Interpolated by pixel count between the 1440p and 2160p presets
+    if (frameRate === '30') { // 30 FPS
+      $('#bitrateSlider')[0].MaterialSlider.change('30');
+    } else if (frameRate === '60') { // 60 FPS
+      $('#bitrateSlider')[0].MaterialSlider.change('60');
+    } else if (frameRate === '90') { // 90 FPS
+      $('#bitrateSlider')[0].MaterialSlider.change('75');
+    } else if (frameRate === '120') { // 120 FPS
+      $('#bitrateSlider')[0].MaterialSlider.change('90');
+    } else if (frameRate === '144') { // 144 FPS
+      $('#bitrateSlider')[0].MaterialSlider.change('100');
     }
   } else if (res === '3840:2160') { // 2160p
     if (frameRate === '30') { // 30 FPS
@@ -3726,6 +3754,7 @@ function updateAudioBackendSettings() {
     $('#audioConfigOption').hide();
     $('#audioSyncOption').hide();
     $('#audioJitterOption').hide();
+    $('#audioClockSyncOption').hide();
     $('#decryptHostAudioOption').hide();
   } else {
     // These two settings apply to all active backends, so show them normally
@@ -3736,9 +3765,11 @@ function updateAudioBackendSettings() {
       // The Web Audio backend schedules the audio itself using the jitter buffer
       $('#audioSyncOption').hide();
       $('#audioJitterOption').show();
+      $('#audioClockSyncOption').show();
     } else {
       // The EMSS backend drops audio packets to stay in sync instead of buffering them
       $('#audioJitterOption').hide();
+      $('#audioClockSyncOption').hide();
       $('#audioSyncOption').show();
     }
   }
@@ -3784,6 +3815,14 @@ function saveAudioSync() {
     const chosenAudioSync = $('#audioSyncSwitch').parent().hasClass('is-checked');
     console.log('%c[index.js, saveAudioSync]', 'color: green;', 'Saving audio sync state: ' + chosenAudioSync);
     storeData('audioSync', chosenAudioSync, null);
+  }, 100);
+}
+
+function saveAudioClockSync() {
+  setTimeout(() => {
+    const chosenAudioClockSync = $('#audioClockSyncSwitch').parent().hasClass('is-checked');
+    console.log('%c[index.js, saveAudioClockSync]', 'color: green;', 'Saving audio clock sync state: ' + chosenAudioClockSync);
+    storeData('audioClockSync', chosenAudioClockSync, null);
   }, 100);
 }
 
@@ -4245,6 +4284,10 @@ function restoreDefaultsSettingsValues() {
   $('#jitterSlider')[0].MaterialSlider.change(defaultAudioJitter);
   storeData('audioJitter', defaultAudioJitter, null);
 
+  const defaultAudioClockSync = false;
+  document.querySelector('#audioClockSyncBtn').MaterialSwitch.off();
+  storeData('audioClockSync', defaultAudioClockSync, null);
+
   const defaultPlayHostAudio = false;
   document.querySelector('#playHostAudioBtn').MaterialSwitch.off();
   storeData('playHostAudio', defaultPlayHostAudio, null);
@@ -4538,6 +4581,17 @@ function loadUserDataCb() {
     $('#jitterSlider')[0].MaterialSlider.change(previousValue.audioJitter != null ? previousValue.audioJitter : '100');
     // Update the audio jitter buffer field based on the given value
     $('#selectAudioJitter').html($('#jitterSlider').val() + ' ms');
+  });
+
+  console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored audioClockSync preferences.');
+  getData('audioClockSync', function(previousValue) {
+    if (previousValue.audioClockSync == null) {
+      document.querySelector('#audioClockSyncBtn').MaterialSwitch.off(); // Set the default state
+    } else if (previousValue.audioClockSync == false) {
+      document.querySelector('#audioClockSyncBtn').MaterialSwitch.off();
+    } else {
+      document.querySelector('#audioClockSyncBtn').MaterialSwitch.on();
+    }
   });
 
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored playHostAudio preferences.');
