@@ -11,6 +11,8 @@ All notable changes to this project will be documented in this file.
 - Added detection of the Ethernet or Wi-Fi connection of the TV with a warning above 80 Mbps over the 100 Mbps Ethernet port
 - Added warnings when selecting H.264 above 1080p (also at startup when a stored H.264 codec meets the new 4K default) or 4K above 120 FPS, which exceed the video decoder of the TV
 - Added an optimization plan for the S90C covering the network, host, TV settings and test procedure (`docs/S90C-Optimierungsplan.md`)
+- Added an experimental 'HDR static metadata' setting that inserts the HDR10 metadata of the host display (mastering display colour volume, content light level) into the HEVC keyframes, which Sunshine only sends over the control channel and the TV never received
+- Added the frame receive time, the frame wait time before the video thread and the pending frame count to the performance stats, and renamed the pacer time to 'Average frame pacing delay'; the former 'Average decoding time' mixed the queue wait with the pacing
 
 ### Changed
 - Reworked the video frame pacing to follow the usual arrival time of the frames, so that a single late frame no longer holds back every following frame by up to tens of milliseconds, and to follow a later arrival time only once two consecutive windows confirm it, so that the burst of frames after a network stall cannot hold back the next second of frames
@@ -19,6 +21,10 @@ All notable changes to this project will be documented in this file.
 - Sent the controller state to the host only when it changes (with a refresh every 100 ms) instead of 200 times per second, reducing the Wi-Fi uplink traffic of the TV
 - Posted the performance stats without blocking the video decoder thread until the main thread handles them
 - Compiled the Wasm module with `-O2` instead of `-Os` to favor speed over size
+- Requested one encoder slice per frame instead of four, which improves the compression at the same bitrate since the hardware decoder of the TV gets whole frames anyway
+- Bounded the audio delay of the Web Audio backend to 1.5 times the jitter buffer instead of 2 times when the host and TV clocks drift apart, and allowed a jitter buffer of 25 ms
+- Enabled HDR by default on HDR-capable TVs on a fresh install, as the optimal streaming settings and 'Restore Defaults' already did
+- Refreshed the Wi-Fi signal strength in the performance stats every 5 seconds instead of showing the value from the start of the stream
 - Requested the Rec. 709 colorspace instead of Rec. 601 for SDR streams, which is the standard for HD and 4K video
 - Declared HEVC and AV1 level 5.2 for streams above 4K at 60 FPS, with a fallback to level 5.1 for TVs that reject it
 - Limited the bitrate presets to 75 Mbps when the TV is connected over its 100 Mbps Ethernet port

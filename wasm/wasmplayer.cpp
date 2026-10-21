@@ -23,6 +23,10 @@
 #define INITIAL_DECODE_BUFFER_LEN 1024 * 1024
 #define MAX_SPS_EXTRA_SIZE 32
 
+// Space reserved in an IDR frame for the HDR metadata SEI NAL units: two NAL units of at most
+// 6 + 2 + 24 + 1 bytes and 6 + 2 + 4 + 1 bytes, plus the emulation prevention bytes within them
+#define MAX_HDR_METADATA_SEI_SIZE 64
+
 using std::chrono_literals::operator""s;
 using std::chrono_literals::operator""ms;
 using EmssReadyState = samsung::wasm::ElementaryMediaStreamSource::ReadyState;
@@ -69,6 +73,7 @@ static std::chrono::time_point<std::chrono::steady_clock> s_lastTime;
 
 static bool s_hasFirstFrame = false;
 static bool s_FramePacingEnabled = false;
+static bool s_HdrMetadataEnabled = false;
 
 static uint32_t total_bytes = 0;
 static int m_LastFrameNumber = 0;
@@ -376,8 +381,11 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
   // Set the frame pacing flag based on instance configuration
   s_FramePacingEnabled = g_Instance->m_FramePacingEnabled;
 
+  // Set the HDR metadata flag based on instance configuration
+  s_HdrMetadataEnabled = g_Instance->m_HdrMetadataEnabled;
+
   // Preallocate space for the performance stats string
-  s_StatString.resize(1000);
+  s_StatString.resize(1500);
 
   // Clear active window video statistics to start fresh
   memset(&m_ActiveWndVideoStats, 0, sizeof(m_ActiveWndVideoStats));
@@ -419,6 +427,77 @@ void MoonlightInstance::VidDecCleanup(void) {
   s_DecodeBuffer.shrink_to_fit();
 }
 
+// Write a value of the given number of bytes in big-endian byte order
+static void WriteBigEndian(std::vector<unsigned char>& out, uint32_t value, int bytes) {
+  for (int i = bytes - 1; i >= 0; --i) {
+    out.push_back((unsigned char)((value >> (8 * i)) & 0xFF));
+  }
+}
+
+// Write an HEVC prefix SEI NAL unit with a single SEI message in Annex B byte stream format, and return its size.
+// The payload is copied with the emulation prevention bytes that keep it from forming a start code.
+static size_t WriteSeiNalUnit(unsigned char* out, unsigned char payloadType, const std::vector<unsigned char>& payload) {
+  size_t size = 0;
+
+  // Start code prefix and the NAL unit header of a prefix SEI (type 39, layer 0, temporal id 0)
+  out[size++] = 0x00;
+  out[size++] = 0x00;
+  out[size++] = 0x00;
+  out[size++] = 0x01;
+  out[size++] = 0x4E;
+  out[size++] = 0x01;
+
+  // The SEI message (payload type and size below 255 fit in one byte each) and the RBSP trailing bits
+  std::vector<unsigned char> rbsp;
+  rbsp.push_back(payloadType);
+  rbsp.push_back((unsigned char)payload.size());
+  rbsp.insert(rbsp.end(), payload.begin(), payload.end());
+  rbsp.push_back(0x80);
+
+  int zeroBytes = 0;
+  for (unsigned char byte : rbsp) {
+    // Insert an emulation prevention byte before a byte of 0x03 or less that follows two zero bytes
+    if (zeroBytes >= 2 && byte <= 0x03) {
+      out[size++] = 0x03;
+      zeroBytes = 0;
+    }
+    out[size++] = byte;
+    zeroBytes = (byte == 0x00) ? zeroBytes + 1 : 0;
+  }
+
+  return size;
+}
+
+// Write the HDR10 static metadata of the host as SEI NAL units (mastering display colour volume and, when
+// available, content light level info), so that the TV can tone map the stream for the display the host
+// renders for, and return the number of bytes written (at most MAX_HDR_METADATA_SEI_SIZE)
+static size_t WriteHdrMetadataSei(unsigned char* out, const SS_HDR_METADATA& metadata) {
+  size_t size = 0;
+
+  // Mastering display colour volume (payload type 137): the primaries in green, blue, red order, the white
+  // point, and the maximum and minimum luminance in units of 0.0001 cd/m2
+  std::vector<unsigned char> masteringDisplay;
+  for (int primary : {1, 2, 0}) {
+    WriteBigEndian(masteringDisplay, metadata.displayPrimaries[primary].x, 2);
+    WriteBigEndian(masteringDisplay, metadata.displayPrimaries[primary].y, 2);
+  }
+  WriteBigEndian(masteringDisplay, metadata.whitePoint.x, 2);
+  WriteBigEndian(masteringDisplay, metadata.whitePoint.y, 2);
+  WriteBigEndian(masteringDisplay, (uint32_t)metadata.maxDisplayLuminance * 10000, 4);
+  WriteBigEndian(masteringDisplay, metadata.minDisplayLuminance, 4);
+  size += WriteSeiNalUnit(&out[size], 137, masteringDisplay);
+
+  // Content light level info (payload type 144): the maximum content and frame average light level in cd/m2
+  if (metadata.maxContentLightLevel != 0 || metadata.maxFrameAverageLightLevel != 0) {
+    std::vector<unsigned char> contentLightLevel;
+    WriteBigEndian(contentLightLevel, metadata.maxContentLightLevel, 2);
+    WriteBigEndian(contentLightLevel, metadata.maxFrameAverageLightLevel, 2);
+    size += WriteSeiNalUnit(&out[size], 144, contentLightLevel);
+  }
+
+  return size;
+}
+
 // Calculate the time difference that the frame pacer releases the frames at, relative to their presentation
 // timestamps, from the arrival times of the frames in the last time window. It covers the usual arrival jitter
 // (the median plus three standard deviations, estimated from the median absolute deviation, so that a few
@@ -446,6 +525,9 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     return DR_OK;
   }
 
+  // Record when this thread picked up the frame, which is the end of its wait in the decode unit queue
+  const uint64_t dequeueMs = LiGetMillis();
+
   // Declare variables for entry data, offset, and total length
   PLENTRY entry;
   unsigned int offset;
@@ -454,10 +536,18 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
   // Build one packet from multiple data chunks
   totalLength = decodeUnit->fullLength;
 
+  // HDR metadata is only inserted into the IDR frames of an HEVC stream, when the host provides it
+  SS_HDR_METADATA hdrMetadata;
+  bool insertHdrMetadata = s_HdrMetadataEnabled && decodeUnit->frameType == FRAME_TYPE_IDR &&
+    (s_VideoFormat & VIDEO_FORMAT_MASK_H265) && LiGetHdrMetadata(&hdrMetadata) &&
+    hdrMetadata.maxDisplayLuminance != 0 && hdrMetadata.displayPrimaries[0].x != 0;
+
   // Check if the frame type from the decoding unit is IDR frame
   if (decodeUnit->frameType == FRAME_TYPE_IDR) {
     // Add some extra space in case we need to do an SPS fixup
     totalLength += MAX_SPS_EXTRA_SIZE;
+    // Add the space for the HDR metadata SEI NAL units
+    totalLength += MAX_HDR_METADATA_SEI_SIZE;
   }
 
   // Ensure the decode buffer is large enough to hold the full packet
@@ -474,6 +564,11 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
 
   // Iterate through the buffer list of video data entries
   while (entry != NULL) {
+    // Insert the HDR metadata SEI NAL units after the parameter sets, right before the first slice of the frame
+    if (insertHdrMetadata && entry->bufferType == BUFFER_TYPE_PICDATA) {
+      offset += WriteHdrMetadataSei(&s_DecodeBuffer[offset], hdrMetadata);
+      insertHdrMetadata = false;
+    }
     // Copy the data of the current entry to the decode buffer at the specified offset
     memcpy(&s_DecodeBuffer[offset], entry->data, entry->length);
     // Update the offset based on the length of the copied data
@@ -514,8 +609,7 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     // Record when the frame arrived relative to its presentation timestamp. This uses the time it was queued
     // rather than the time this thread got to it, so that the delay the pacer adds to the previous frames
     // doesn't feed back into the pace of the next ones.
-    uint64_t arrivalMs = LiGetMillis();
-    uint64_t queuedMs = arrivalMs > decodeUnit->enqueueTimeMs ? arrivalMs - decodeUnit->enqueueTimeMs : 0;
+    uint64_t queuedMs = dequeueMs > decodeUnit->enqueueTimeMs ? dequeueMs - decodeUnit->enqueueTimeMs : 0;
     s_PacingLateness.push_back((fromStart - TimeStamp(queuedMs / 1000.0) - s_pktPts).count());
     // Wait until the packet timestamp is within the frame time margin
     while (s_pktPts > fromStart - s_ptsDiff + kFrameTimeMargin) {
@@ -642,9 +736,10 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     g_Instance->m_VideoSessionId.load() // session identifier
   };
 
-  // Track total time spent reassembling and decoding this frame
+  // Track the time from the first to the last packet of this frame (its transfer over the network) and the
+  // time the complete frame waited in the decode unit queue until this thread picked it up, before any pacing
   m_ActiveWndVideoStats.totalReassemblyTime += (uint32_t)MAX(0, (int32_t)(decodeUnit->enqueueTimeMs - decodeUnit->receiveTimeMs));
-  m_ActiveWndVideoStats.totalDecodeTime += (uint32_t)MAX(0, (int32_t)(LiGetMillis() - decodeUnit->enqueueTimeMs));
+  m_ActiveWndVideoStats.totalDecodeTime += (uint32_t)MAX(0, (int32_t)(dequeueMs - decodeUnit->enqueueTimeMs));
   m_ActiveWndVideoStats.decodedFrames++;
 
   // Calculate time before rendering
@@ -826,19 +921,24 @@ void MoonlightInstance::FormatVideoStats(VIDEO_STATS& stats, char* output, int l
       snprintf(rttString, sizeof(rttString), "N/A");
     }
 
-    // Print detailed drop rates and timing statistics
+    // Print detailed drop rates and the time a frame spends in each stage on the TV: the transfer of its
+    // packets, the wait for the video thread, the frame pacing and the hand-over to the hardware decoder
     ret = snprintf(
       &output[offset], length - offset,
       "Frames dropped by your network connection: %.2f%%\n"
       "Average network latency: %s\n"
-      "Average decoding time: %.2f ms\n"
-      "Average frame queue delay: %.2f ms\n"
-      "Average rendering time: %.2f ms\n",
+      "Average frame receive time: %.2f ms\n"
+      "Average frame wait time: %.2f ms\n"
+      "Average frame pacing delay: %.2f ms\n"
+      "Average rendering time: %.2f ms\n"
+      "Pending frames: %d\n",
       (float)stats.networkDroppedFrames / stats.totalFrames * 100,
       rttString,
+      (float)stats.totalReassemblyTime / stats.decodedFrames,
       (float)stats.totalDecodeTime / stats.decodedFrames,
       (float)stats.totalPacerTime / stats.renderedFrames,
-      (float)stats.totalRenderTime / stats.renderedFrames
+      (float)stats.totalRenderTime / stats.renderedFrames,
+      LiGetPendingVideoFrames()
     );
     // Abort if string formatting failed or buffer overflowed
     if (ret < 0 || ret >= length - offset) {
@@ -891,5 +991,5 @@ DECODER_RENDERER_CALLBACKS MoonlightInstance::s_DrCallbacks = {
   .setup = MoonlightInstance::VidDecSetup,
   .cleanup = MoonlightInstance::VidDecCleanup,
   .submitDecodeUnit = MoonlightInstance::VidDecSubmitDecodeUnit,
-  .capabilities = CAPABILITY_SLICES_PER_FRAME(4),
+  .capabilities = 0,
 };

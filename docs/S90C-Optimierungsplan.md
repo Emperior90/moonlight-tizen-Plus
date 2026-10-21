@@ -50,13 +50,13 @@ Kurz gesagt: **Dein Netzwerk ist sehr gut, die PC-Einstellungen sind auf Qualit�
 
 ### A.1 Frame Pacing: nicht die Ursache der Ruckler, aber wichtig für die Latenz
 
-Laut deiner Erfahrung war das Frame Pacing bei den Rucklern nicht das Problem, die sind seit Version 1.18 behoben. Für dein Latenz-Ziel ist aber ein Wert aus deinem Overlay wichtig: *Average decoding time* 50–72 ms bei 1440p. Das ist nicht die Dekodierzeit, sondern die Zeit vom Empfang eines Bildes bis zur Übergabe an den Decoder, also Wartezeit am TV, die direkt zur Latenz zählt. Davon entfallen ~15 ms auf das Pacing selbst (*Average frame queue delay*), den Rest warten die Bilder in der Warteschlange davor.
+Laut deiner Erfahrung war das Frame Pacing bei den Rucklern nicht das Problem, die sind seit Version 1.18 behoben. Für dein Latenz-Ziel ist aber ein Wert aus deinem Overlay wichtig: *Average decoding time* 50–72 ms bei 1440p (Version 1.18). Das war nicht die Dekodierzeit, sondern die Zeit vom Empfang eines Bildes bis zur Übergabe an den Decoder, also Wartezeit am TV, die direkt zur Latenz zählt. Davon entfielen ~15 ms auf das Pacing selbst (*Average frame queue delay*), den Rest warteten die Bilder in der Warteschlange davor.
 
 Die Ursache steht im Code von Version 1.18/1.19: Der Pacer hat seinen Takt einmal pro Sekunde an dem einen Bild ausgerichtet, das das Zeitfenster abschloss, und dabei die Wartezeit in der eigenen Warteschlange mitgemessen. Kam dieses Bild verspätet, hielt er danach alle Bilder um diese Zeit zurück und baute das nur um 0,5 ms pro Sekunde ab. Das erzeugt keine Ruckler, aber dauerhafte Verzögerung.
 
 Diese Version richtet den Takt am *typischen* Ankunftszeitpunkt der Bilder aus (Median plus dreifache robuste Streuung, gedeckelt auf eine halbe Frame-Dauer) und misst ab dem Eintreffen eines Bildes. Einen Anstieg des Takts übernimmt sie erst, wenn zwei aufeinanderfolgende Zeitfenster ihn bestätigen: Nach einem WLAN-Stall von über einer halben Sekunde kommen die aufgestauten Bilder als Schwall an und würden sonst das nächste Zeitfenster um bis zu mehrere hundert Millisekunden zurückhalten (bei 120 FPS läuft dabei die Warteschlange über, Folge wäre ein Recovery-Keyframe). Ein Rückgang gilt sofort. In meiner Simulation (10 min, 60 und 120 FPS) sank die Zusatzverzögerung in den Szenarien mit WLAN-Aussetzern deutlich, und bei normalem Jitter lief die Bildfolge gleichmäßiger. Nur bei sehr häufigen großen Aussetzern ruckelte sie etwas mehr.
 
-**Was du nach dem Update sehen solltest:** eine *Average decoding time* deutlich unter den bisherigen 50–72 ms und eine *Average frame queue delay* von wenigen Millisekunden. Das ist der wichtigste Messwert für die Latenz am TV. Frame Pacing bleibt abschaltbar (A/B-Test in Phase 3).
+**Was du nach dem Update sehen solltest:** Das Overlay trennt die Wartezeit jetzt in ihre Stufen (siehe „So liest man das Overlay“ in Abschnitt 8): *Average frame wait time* (fertig empfangenes Bild wartet auf den Video-Thread) sollte bei wenigen Millisekunden liegen, *Average frame pacing delay* (bewusste Wartezeit des Pacers) ebenfalls, und *Pending frames* bei 0–1. Zusammen entsprechen sie der alten *Average decoding time*, die bei dir 50–72 ms betrug. Frame Pacing bleibt abschaltbar (A/B-Test in Phase 3).
 
 ### A.2 Netzwerk: sehr gut, kleine Feinheiten
 
@@ -91,7 +91,7 @@ Gegen Netzwerk und TV spricht: 0 % Verlust, der Web-Audio-Scheduler fängt Uhren
 |---|---|
 | *Incoming frame rate* < 60, Netzwerk-Drops 0, *Host processing latency* (max) hoch | PC: Spiel/Encoder. Mit **HWiNFO** über die Session VRAM-Belegung, GPU-Hotspot, Speichertemperatur und Takt mitloggen |
 | *Session frames dropped by network* / *Session recovery keyframes* steigen | WLAN: FRITZ!Box-Ereignisprotokoll prüfen |
-| *Incoming* 60, aber *Rendering* < 60 oder *Average decoding time* steigt | TV-seitig: App neu starten, Ergebnis notieren |
+| *Incoming* 60, aber *Rendering* < 60 oder *Average frame wait time* / *Pending frames* steigen | TV-seitig: App neu starten, Ergebnis notieren |
 
 ### A.4 Sunshine: Einstellungen passen, mit Anmerkungen
 
@@ -104,7 +104,7 @@ Gegen Netzwerk und TV spricht: 0 % Verlust, der Web-Audio-Scheduler fängt Uhren
 
 - **Update auf diese Version** (1.19.0 + S90C-Änderungen): Sie bringt die Leistungsoptimierungen aus A.7, die Session-Zähler und die BT.709-Farben. Achtung: Der Button „Samsung S90C optimization“ stellt *Color range* auf „begrenzt“. Bewusst so, siehe nächster Punkt.
 - **Full color range:** Nur behalten, wenn ein Schwarzwert-Test das bestätigt. Erkennt der TV den vollen Bereich nicht korrekt, saufen dunkle Details ab und helle clippen. Das wirkt „knackiger“, kostet aber Zeichnung in dunklen Szenen, und davon hat Witcher 3 viele. Test: eine Near-Black-Testseite oder der HDR-Kalibrierungsbildschirm des Spiels, einmal mit „Full“, einmal mit „Limited“. Gewinner ist die Einstellung, bei der die dunkelsten Stufen gerade noch unterscheidbar sind.
-- **Bitrate 4K/95 Mbit/s** ist ein guter Wert, nahe an Samsungs Decoder-Spezifikation. Optional 4K mit 110 Mbit/s 30 Minuten lang testen und dabei auf die Session-Zähler und die *Average decoding time* achten.
+- **Bitrate 4K/95 Mbit/s** ist ein guter Wert, nahe an Samsungs Decoder-Spezifikation. Optional 4K mit 110 Mbit/s 30 Minuten lang testen und dabei auf die Session-Zähler, *Average frame wait time* und *Average rendering time* achten.
 - **4K vs. 1440p bei 3 m Abstand:** Ein 4K-Pixel ist auf 55" aus 3 m nur ~0,36 Bogenminuten groß, ein 1440p-Pixel ~0,55. Das menschliche Auge löst grob 0,5–1 Bogenminute auf. Aus deinem Abstand ist 1440p also nah an der Wahrnehmungsgrenze, und 1440p mit 120 Mbit/s hat pro Pixel rund dreimal so viele Bits wie 4K mit 95 Mbit/s. In dunklen, detailreichen Szenen (Vegetation, Nebel) kann 1440p deshalb sauberer wirken, 4K punktet bei feinen Kanten. Ein direkter Vergleich aus 3 m lohnt sich.
 - **Web Audio mit 100 ms:** ein sicherer Wert. Für weniger Ton-Verzögerung nach diesem Update 75, dann 50 ms testen (A.8). Bei Aussetzern wieder erhöhen.
 
@@ -159,7 +159,7 @@ Die Verzögerung zwischen Tastendruck und Bild setzt sich aus mehreren Gliedern 
 |---|---|---|---|
 | Bildverarbeitung des TVs | Bildmodus „Film“, ohne Spielmodus | **ForceGM-Variante**, die den Spielmodus des TVs einschaltet. Unter Tizen 9 bei 4K gezielt testen (A.6) | Laut RTINGS-Messungen an anderen TVs (HDMI-Eingang) liegt die Verzögerung außerhalb des Spielmodus typischerweise bei 60–80 ms statt ~10 ms. Für den S90C und für die Wiedergabe in Apps habe ich keine Messwerte gefunden, die Größenordnung dürfte ähnlich sein |
 | Frame Generation 2x | Das Spiel rendert intern nur 30 FPS | **FG aus**, DLSS Super Resolution (Balanced/Performance), **Reflex an** | Grob 30–50 ms: FG hält ein internes Bild (~33 ms) zurück, und 30 FPS reagieren träger als 60 |
-| Wartezeit am TV vor dem Decoder | *Average decoding time* 50–72 ms (1440p, Version 1.18) | **Diese Version** (neues Frame Pacing, A.1). Für das absolute Minimum Frame Pacing aus (A/B-Test) | Bis zu mehrere Dutzend Millisekunden. Der Overlay-Wert zeigt es direkt |
+| Wartezeit am TV vor dem Decoder | *Average decoding time* 50–72 ms (1440p, Version 1.18) | **Diese Version** (neues Frame Pacing, A.1). Für das absolute Minimum Frame Pacing aus (A/B-Test) | Bis zu mehrere Dutzend Millisekunden. Das Overlay zeigt es jetzt getrennt als *Average frame wait time* und *Average frame pacing delay* |
 | Encoder am PC | ~11 ms bei 4K (P6, Two-Pass Full) | ***Split Frame Encoding: Enabled***: Beide NVENC-Einheiten der RTX 5080 teilen sich jedes Bild | Laut Sunshine-Doku deutlich kürzere Kodierzeit bei minimalem Effizienzverlust. Die *Host processing latency* im Overlay zeigt es |
 | Ton | Web Audio mit 100 ms Jitter-Puffer | **Puffer auf 50–75 ms** senken. Nach diesem Update ist der Haupt-Thread entlastet. Bei Aussetzern wieder erhöhen | Der Ton läuft etwa um den Pufferwert hinter dem Bild. Geht die Uhr des PCs etwas schneller als die des TVs, wächst der Abstand im Lauf der Session bis zum Doppelten, bei 100 ms also bis 200 ms |
 | Netzwerk | 1–3 ms | nichts zu tun | – |
@@ -169,6 +169,8 @@ Im Spiel außerdem eine **Bildratenbegrenzung auf 60 FPS** setzen (Abschnitt 5.3
 #### Bildqualität im Stand und in Bewegung
 
 **Im Stand** ist mit 4K60, HDR10 (Main10) und ~100 Mbit/s fast alles ausgereizt. Es bleiben die TV-Einstellungen aus A.6 (Schärfe 0 bei 4K, Kontrastverbesserung aus), der Schwarzwert-Test für *Color range* (A.5) und die Windows-HDR-Kalibrierung. Farbunterabtastung 4:2:0 ist fest: Ein 4:4:4-Stream (Sunshine kann ihn) würde ein HEVC-RExt-Profil brauchen, das TV-Decoder üblicherweise nicht unterstützen.
+
+Ein Punkt kommt neu dazu: **HDR-Metadaten.** Sunshines NVENC-Pfad schreibt keine HDR10-Metadaten (Mastering Display, MaxCLL/MaxFALL) in den Videostrom, sondern schickt sie nur über den Steuerkanal, und die App hat sie bisher verworfen. Der TV sah also nur „BT.2020/PQ“ und musste für das Tone Mapping Standardwerte annehmen. Die neue Option **Settings → Video Settings → HDR static metadata** (experimentell, Standard aus) fügt sie in jedes HEVC-Keyframe ein. Die Werte stammen vom Host-Display, bei dir also vom virtuellen Display (VDD): Dessen HDR-Angaben sollten zur Windows-HDR-Kalibrierung passen (Spitzenhelligkeit um 1.000 Nits für den S90C). Test: Option an, HDR-Stream starten; startet er oder sieht das Bild falsch aus, Option wieder aus. Läuft er, mit dem HDR-Kalibrierungsbild des Spiels prüfen, ob Lichter (Wolken, Sonne) mehr Zeichnung haben.
 
 **In Bewegung** entscheidet, wie viele Bits ein schwieriges Bild bekommen darf:
 
@@ -252,7 +254,7 @@ Bei gleicher Bitrate hat 4K60 pro Bild die doppelte Datenmenge. Weil Tizen-Apps 
 ### 2.4 Decoder-Spezifikation
 
 - Die TV-Pipeline wird mit einem Codec-String inklusive **Level** konfiguriert. Level 5.1 deckt 4K nur bis ~64 FPS ab, für 4K90/120 braucht es **Level 5.2**. Bisher hat die App immer 5.1 gemeldet. Das ist jetzt korrigiert (Abschnitt 7).
-- Deutlich über ~100 Mbit/s arbeitet der Decoder außerhalb der Spezifikation. Ein Anzeichen dafür ist eine steigende „Average decoding time“ im Overlay.
+- Deutlich über ~100 Mbit/s arbeitet der Decoder außerhalb der Spezifikation. Anzeichen dafür sind eine steigende *Average rendering time* (Übergabe an den Decoder dauert länger) und steigende *Pending frames* im Overlay.
 
 ### 2.5 Farbraum
 
@@ -388,6 +390,10 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
 | 12 | **Controller-Zustand nur bei Änderung senden** (plus Auffrischung alle 100 ms) | Bei ruhendem Controller 10 statt 200 Pakete pro Sekunde im WLAN-Uplink | `wasm/gamepad.cpp` |
 | 13 | **Statistik-Overlay blockiert den Video-Thread nicht mehr** | Kein Stocken der Bildübergabe, wenn der Haupt-Thread beschäftigt ist | `wasm/wasmplayer.cpp`, `wasm/main.cpp` |
 | 14 | **Build mit `-O2` statt `-Os`** | Schnellerer Code in den heißen Pfaden, etwas größere Datei | `CMakeLists.txt` |
+| 15 | **Overlay zeigt die Stufen am TV getrennt:** *Average frame receive time* (Übertragung des Bild-Bursts), *Average frame wait time* (Warten auf den Video-Thread, ohne Pacing), *Average frame pacing delay*, *Average rendering time*, *Pending frames* | Die alte *Average decoding time* vermischte Warteschlange und Pacing. Jetzt lässt sich ablesen, wo die Zeit am TV bleibt und ob sich Bilder stauen | `wasm/wasmplayer.cpp`, `wasm/platform/messages.js` |
+| 16 | **Ein Slice pro Bild** statt vier (Encoder-Einstellung, die der Client meldet) | Bessere Kompression bei gleicher Bitrate: Der Hardware-Decoder des TVs verarbeitet ganze Bilder, mehrere Slices helfen nur Software-Decodern und kosten Bits an den Slice-Grenzen | `wasm/main.cpp`, `wasm/wasmplayer.cpp` |
+| 17 | **Web Audio:** Der Ton darf höchstens das 1,5-Fache des Jitter-Puffers hinter dem Bild liegen (vorher das Doppelte), und der Puffer lässt sich bis 25 ms einstellen | Weniger Ton-Verzögerung bei Uhrendrift zwischen PC und TV, mehr Spielraum für Latenz-Tests | `wasm/platform/audio.js`, `wasm/index.html` |
+| 18 | **HDR static metadata** (neu, experimentell, Standard aus): Die App fügt jedem HEVC-Keyframe die HDR10-Metadaten des Host-Displays ein (Mastering Display Colour Volume, Content Light Level), die Sunshine über den Steuerkanal liefert, der TV aber bisher nie bekam | Mit *HDR Tone Mapping: Statisch* kann der TV auf die Spitzenhelligkeit und den Farbraum des (virtuellen) Host-Displays abbilden, statt einen Standardwert anzunehmen | `wasm/wasmplayer.cpp`, `wasm/main.cpp`, `wasm/index.html`, `wasm/platform/index.js`, `wasm/platform/navigation.js` |
 
 **So sieht es in der App aus** (Screenshots aus einem Browser-Test mit simulierten Tizen-APIs):
 
@@ -396,7 +402,7 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
 | ![Basic Settings](images/s90c-basic-settings.png) | ![S90C-Dialog](images/s90c-dialog.png) | ![Video Settings](images/s90c-video-settings.png) |
 
 > [!WARNING]
-> Die Änderungen sind auf Kompilierbarkeit geprüft (Syntax-Check mit Stub-Headern, die die EM_ASM-Makros von Emscripten 1.39.4 nachbilden, JavaScript-Syntax, Locale-Sync). Alle EM_ASM-Blöcke habe ich nach dem Präprozessor als JavaScript validiert. Den gebündelten Gamepad-Block habe ich in Node gegen den Original-Code von Emscripten 1.39.4 getestet. Die neue Sende-Logik für Controller lief in einem Testprogramm mit Address- und UB-Sanitizer, über beide Abfragewege. Die Einstellungslogik und die Pause der Menü-Gamepad-Abfrage habe ich in Chromium mit simulierten Tizen-APIs automatisiert durchgespielt: 29 + 11 Prüfungen, alle bestanden. Auf einem echten S90C konnte ich die Änderungen **nicht** testen: Das Tizen-SDK und der Samsung-Emscripten-Compiler ließen sich in meiner Umgebung nicht herunterladen, und ich habe keinen Zugriff auf deinen TV. Der erste Test auf dem TV ist deshalb Teil des Plans (Abschnitt 8, Phase 0–1).
+> Die Änderungen sind auf Kompilierbarkeit geprüft (Syntax-Check mit Stub-Headern, die die EM_ASM-Makros von Emscripten 1.39.4 nachbilden, JavaScript-Syntax, Locale-Sync). Alle EM_ASM-Blöcke habe ich nach dem Präprozessor als JavaScript validiert. Den gebündelten Gamepad-Block habe ich in Node gegen den Original-Code von Emscripten 1.39.4 getestet. Den HDR-Metadaten-Schreiber habe ich mit 504 Wertekombinationen gegen eine unabhängige Referenz geprüft (Bytes, Emulation-Prevention, Rück-Dekodierung). Die neue Sende-Logik für Controller lief in einem Testprogramm mit Address- und UB-Sanitizer, über beide Abfragewege. Die Einstellungslogik und die Pause der Menü-Gamepad-Abfrage habe ich in Chromium mit simulierten Tizen-APIs automatisiert durchgespielt: 29 + 11 Prüfungen, alle bestanden. Auf einem echten S90C konnte ich die Änderungen **nicht** testen: Das Tizen-SDK und der Samsung-Emscripten-Compiler ließen sich in meiner Umgebung nicht herunterladen, und ich habe keinen Zugriff auf deinen TV. Der erste Test auf dem TV ist deshalb Teil des Plans (Abschnitt 8, Phase 0–1).
 
 ---
 
@@ -418,7 +424,7 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
    - *Session frames dropped by network* = **0** (oder < 0,01 %),
    - *Session recovery keyframes* = **0–1** (eins direkt nach dem Start kann normal sein),
    - *Rendering frame rate* stabil bei ~60 FPS,
-   - *Average decoding time* stabil. Das ist nicht die reine Dekodierzeit, sondern die Wartezeit vom Empfang bis zur Übergabe an den Decoder, inklusive Frame Pacing. Ein gleichbleibend hoher Wert ist mit Frame Pacing normal, ein über die Session steigender nicht.
+   - *Average frame wait time* und *Average rendering time* stabil bei wenigen Millisekunden, *Pending frames* 0–1. Steigen sie über die Session an, staut sich etwas vor dem Decoder.
 
 ### Phase 2 – Bitrate-Leiter
 
@@ -439,6 +445,7 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
 | `nvenc_vbv_increase` 0 → 50 → 100 (nur WLAN) | Blockartefakte in schnellen Szenen | Bildqualität bei Kameraschwenks, Session-Drops müssen 0 bleiben |
 | Split Frame Encoding an ↔ Treiber entscheidet | Latenz | *Host processing latency* (Durchschnitt und Maximum) |
 | Audio-Jitter-Puffer 100 → 75 → 50 ms | Ton läuft spürbar hinterher | Aussetzer oder Knacksen → eine Stufe zurück |
+| **HDR static metadata** an ↔ aus | HDR-Lichter wirken zu flach oder clippen | Zeichnung in Lichtern und Schatten (HDR-Kalibrierungsbild des Spiels). Startet der Stream nicht → aus |
 | EMSS ↔ Web Audio | Bei Knacksern oder Audio-Aussetzern | Audioqualität, ob Video-Ruckler verschwinden |
 
 ### Phase 4 – Bildqualität prüfen
@@ -458,7 +465,10 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
 | *Frames dropped by your network connection* > 0 | Netzwerk (Bursts per LAN, Funkstörung per WLAN) | Burst-Fix, Bitrate runter, WLAN-Kanal/-Position verbessern |
 | *Host processing latency* hoch oder schwankend | Encoder oder GPU am PC überlastet | Preset senken, FPS im Spiel begrenzen |
 | *Incoming frame rate* < Ziel-FPS bei 0 Drops | Das Spiel liefert nicht genug Bilder | Spiel-FPS stabilisieren, GPU-Last senken |
-| *Average decoding time* steigt im Lauf der Session an | Bilder stauen sich vor dem TV-Decoder (der Wert misst Warteschlange + Pacing, nicht die reine Dekodierzeit, ein konstant hoher Wert ist mit Frame Pacing normal) | *Average rendering time* prüfen. Bitrate, FPS oder Auflösung senken |
+| *Average frame receive time* hoch (per LAN ~12–16 ms bei 75 Mbit/s, per WLAN deutlich weniger) | Zeit vom ersten bis zum letzten Paket eines Bildes, also die Übertragung des Bild-Bursts | Per LAN normal (100-Mbit-Port). Per WLAN hoch: Funkstrecke prüfen (Signal, Kanal) |
+| *Average frame wait time* oder *Pending frames* steigen im Lauf der Session an | Fertig empfangene Bilder warten auf den Video-Thread, der TV kommt nicht nach | *Average rendering time* prüfen. Bitrate, FPS oder Auflösung senken |
+| *Average frame pacing delay* dauerhaft hoch | Der Pacer hält die Bilder zurück (bewusst, für gleichmäßige Bildfolge) | Normal sind wenige Millisekunden. Für minimale Latenz Frame Pacing aus (A/B-Test) |
+| *Average rendering time* steigt mit der Bitrate | Die Übergabe an den Hardware-Decoder blockiert, der Decoder-Pfad des TVs ist am Limit | Bitrate eine Stufe senken |
 | *Session recovery keyframes* steigt | Jeder Anstieg ist ein sichtbarer Aussetzer | Ursache über die Zeilen oben finden |
 | WLAN-Signalstärke < 60 % | Schlechte Funkverbindung | Router näher, anderer Kanal, LAN-Variante |
 
@@ -487,7 +497,7 @@ Deine Setup-Angaben sind in Abschnitt A eingearbeitet. Folgendes würde die Diag
 3. **HWiNFO-Log** derselben Session: VRAM-Belegung, GPU-Hotspot- und Speichertemperatur, GPU- und Speichertakt.
 4. **FRITZ!Box**: Hängt der TV im Mesh unter dem Repeater? Gab es zum Zeitpunkt des Ruckelns WLAN-Ereignisse?
 5. **Schwarzwert-Test** *Full* vs. *Limited color range*: Bei welcher Einstellung bleiben die dunkelsten Stufen unterscheidbar?
-6. **4K-Bitrate-Leiter mit dieser Version** (Abschnitt A.7): bis zu welcher Bitrate bleibt alles bei 0, und wie entwickeln sich *Average decoding time*, *Average frame queue delay* und *Average rendering time*? Gab es Audio-Aussetzer?
+6. **4K-Bitrate-Leiter mit dieser Version** (Abschnitt A.7): bis zu welcher Bitrate bleibt alles bei 0, und wie entwickeln sich *Average frame wait time*, *Average frame pacing delay*, *Average rendering time* und *Pending frames*? Gab es Audio-Aussetzer?
 7. **Latenz-Tests aus A.8:** Läuft 4K mit der ForceGM-Variante sauber? Wie stark sinkt die *Host processing latency* mit Split Frame Encoding?
 
 ---

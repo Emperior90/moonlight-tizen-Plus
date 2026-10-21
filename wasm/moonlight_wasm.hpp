@@ -104,7 +104,7 @@ class MoonlightInstance {
     bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, bool flipABfaceButtons, bool flipXYfaceButtons,
     std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
     std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, bool performanceStats,
-    bool refFrameInvalidation);
+    bool refFrameInvalidation, bool hdrMetadata);
   MessageResult StopStream();
 
   MessageResult CancelRequest();
@@ -258,6 +258,7 @@ class MoonlightInstance {
   bool m_DisableWarningsEnabled;
   bool m_PerformanceStatsEnabled;
   bool m_RefFrameInvalidationEnabled;
+  bool m_HdrMetadataEnabled;
 
   STREAM_CONFIGURATION m_StreamConfig;
   bool m_Running;
@@ -320,7 +321,7 @@ MessageResult startStream(std::string host, int httpPort, std::string width, std
   bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, bool flipABfaceButtons, bool flipXYfaceButtons,
   std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
   std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, bool performanceStats,
-  bool refFrameInvalidation);
+  bool refFrameInvalidation, bool hdrMetadata);
 MessageResult stopStream();
 
 MessageResult cancelRequest();

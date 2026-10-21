@@ -8,7 +8,7 @@ const SyncFunctions = {
   /* host, httpPort, width, height, fps, bitrate, rikey, rikeyid, appversion, gfeversion, rtspurl, serverCodecModeSupport,
   framePacing, optimizeGames, rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons, audioBackend,
   audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange, gameMode,
-  disableWarnings, performanceStats, refFrameInvalidation */
+  disableWarnings, performanceStats, refFrameInvalidation, hdrMetadata */
   'startRequest': (...args) => Module.startStream(...args),
   // no parameters
   'stopRequest': (...args) => Module.stopStream(...args),
@@ -101,9 +101,11 @@ function replaceKnownStatsLabels(text) {
     .replace(/Average network latency:/g, t('Average network latency:'))
     .replace(/\bvariance:/g, t('variance:'))
     .replace(/\bN\/A\b/g, t('N/A'))
-    .replace(/Average decoding time:/g, t('Average decoding time:'))
-    .replace(/Average frame queue delay:/g, t('Average frame queue delay:'))
+    .replace(/Average frame receive time:/g, t('Average frame receive time:'))
+    .replace(/Average frame wait time:/g, t('Average frame wait time:'))
+    .replace(/Average frame pacing delay:/g, t('Average frame pacing delay:'))
     .replace(/Average rendering time:/g, t('Average rendering time:'))
+    .replace(/Pending frames:/g, t('Pending frames:'))
     .replace(/Session frames dropped by network:/g, t('Session frames dropped by network:'))
     .replace(/Session recovery keyframes:/g, t('Session recovery keyframes:'))
     .replace(/Slow connection to PC\.\nReduce your bitrate!/g, t('Slow connection to PC.\nReduce your bitrate!'));
@@ -392,6 +394,8 @@ function handleMessage(msg) {
     // Show the performance statistics overlay, followed by the network connection of the TV if it's known
     $('#performance-stats').css('background', 'rgba(0, 0, 0, 0.5)');
     $('#performance-stats').text(translateBackendMessage(msg.replace('StatMsg: ', '')) + (streamNetworkInfo ? '\n' + streamNetworkInfo : ''));
+    // Keep the Wi-Fi signal strength of the network connection current while the overlay is shown
+    refreshStreamNetworkInfo();
   } else if (msg.indexOf('controllerRumble: ') === 0) {
     const eventData = msg.split(' ')[1].split(',');
     const gamepadIdx = parseInt(eventData[0]);

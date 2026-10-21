@@ -1416,7 +1416,8 @@ const Views = {
       'hdrModeBtn',
       'fullRangeBtn',
       'gameModeBtn',
-      'refFrameInvalidationBtn'
+      'refFrameInvalidationBtn',
+      'hdrMetadataBtn'
     ]),
     up: function() {
       this.view.prevOption();

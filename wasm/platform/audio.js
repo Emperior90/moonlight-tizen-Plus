@@ -365,9 +365,11 @@ function _audReceiveFrame(heapOffset, samples, channels, sampleRate, stride, seq
     stats.resyncs++;
   }
 
-  // Drop the frame once the schedule ran away from the clock by twice the jitter buffer, which
-  // keeps the audio delay bounded when the host produces audio faster than the TV plays it
-  if (_audNextTime > now + 2.0 * targetSeconds) {
+  // Drop the frame once the schedule ran away from the clock by one and a half times the jitter
+  // buffer, which keeps the audio delay bounded when the host produces audio faster than the TV
+  // plays it. The drift decides how often a frame is dropped, this bound only decides how far
+  // the audio may trail the picture before that: at most half a jitter buffer more than the target.
+  if (_audNextTime > now + 1.5 * targetSeconds) {
     stats.droppedFull++;
     _audLogStatistics(false);
     return;

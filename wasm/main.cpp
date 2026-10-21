@@ -263,8 +263,10 @@ void* MoonlightInstance::ConnectionThreadFunc(void* context) {
     PostToJs("Selecting the audio renderer capabilities to: CAPABILITY_DIRECT_SUBMIT");
   }
 
-  // Initialize the video decoder capabilities with the slicing value shared by all streams
-  MoonlightInstance::s_DrCallbacks.capabilities = CAPABILITY_SLICES_PER_FRAME(4);
+  // Initialize the video decoder capabilities. One slice per frame (the default) gives the best compression,
+  // because the hardware decoder of the TV gets whole frames anyway. Several slices only help software decoders
+  // that decode them in parallel, and each additional slice costs bits at the same bitrate.
+  MoonlightInstance::s_DrCallbacks.capabilities = 0;
   // Handle setting of the reference frame invalidation capabilities based on the toggle switch state
   if (me->m_RefFrameInvalidationEnabled) {
     // Let the host recover from packet loss by invalidating the lost reference frames, instead of sending an IDR
@@ -273,9 +275,9 @@ void* MoonlightInstance::ConnectionThreadFunc(void* context) {
     // it keeps the usual size and quality. This also lets the host use more reference frames. It's only enabled
     // for HEVC and AV1, because H.264 RFI is unreliable on many hardware decoders.
     MoonlightInstance::s_DrCallbacks.capabilities |= CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC | CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1;
-    PostToJs("Selecting the video decoder capabilities to: CAPABILITY_SLICES_PER_FRAME(4) | CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC | CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1");
+    PostToJs("Selecting the video decoder capabilities to: CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC | CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1");
   } else {
-    PostToJs("Selecting the video decoder capabilities to: CAPABILITY_SLICES_PER_FRAME(4)");
+    PostToJs("Selecting the video decoder capabilities to: none (one slice per frame)");
   }
 
   err = LiStartConnection(&serverInfo, &me->m_StreamConfig, &MoonlightInstance::s_ClCallbacks,
@@ -318,7 +320,7 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, bool flipABfaceButtons, bool flipXYfaceButtons,
   std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
   std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, bool performanceStats,
-  bool refFrameInvalidation) {
+  bool refFrameInvalidation, bool hdrMetadata) {
   
   if (m_StopThread != 0) {
     pthread_join(m_StopThread, NULL);
@@ -358,6 +360,7 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   PostToJs("Setting the Disable connection warnings to: " + std::to_string(disableWarnings));
   PostToJs("Setting the Performance statistics to: " + std::to_string(performanceStats));
   PostToJs("Setting the Reference frame invalidation to: " + std::to_string(refFrameInvalidation));
+  PostToJs("Setting the HDR static metadata to: " + std::to_string(hdrMetadata));
 
   // Populate the stream configuration
   LiInitializeStreamConfiguration(&m_StreamConfig);
@@ -499,6 +502,7 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   m_DisableWarningsEnabled = disableWarnings;
   m_PerformanceStatsEnabled = performanceStats;
   m_RefFrameInvalidationEnabled = refFrameInvalidation;
+  m_HdrMetadataEnabled = hdrMetadata;
 
   // Initialize the rendering surface before starting the connection
   if (InitializeRenderingSurface(m_StreamConfig.width, m_StreamConfig.height)) {
@@ -700,12 +704,12 @@ MessageResult startStream(std::string host, int httpPort, std::string width, std
   bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, bool flipABfaceButtons, bool flipXYfaceButtons,
   std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
   std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, bool performanceStats,
-  bool refFrameInvalidation) {
+  bool refFrameInvalidation, bool hdrMetadata) {
   PostToJs("Starting the streaming session...");
   return g_Instance->StartStream(host, httpPort, width, height, fps, bitrate, rikey, rikeyid, appversion, gfeversion, rtspurl, serverCodecModeSupport,
   framePacing, optimizeGames, rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons, audioBackend, audioConfig, audioSync,
   audioJitterMs, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange, gameMode, disableWarnings, performanceStats,
-  refFrameInvalidation);
+  refFrameInvalidation, hdrMetadata);
 }
 
 MessageResult stopStream() {

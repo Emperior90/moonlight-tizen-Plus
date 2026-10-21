@@ -344,8 +344,8 @@
                 <button type="button" id="selectAudioJitter" class="mdl-button mdl-js-button mdl-js-ripple-effect">100 ms</button>
               </div>
               <div class="audioJitterMenu mdl-menu mdl-menu--bottom-left mdl-js-menu mdl-js-ripple-effect" for="selectAudioJitter">
-                <span id="jitterLowestValue">50</span>
-                <input type="range" id="jitterSlider" class="mdl-slider mdl-js-slider" min="50" max="500" step="25" value="100">
+                <span id="jitterLowestValue">25</span>
+                <input type="range" id="jitterSlider" class="mdl-slider mdl-js-slider" min="25" max="500" step="25" value="100">
                 <span id="jitterHighestValue">500</span>
               </div>
             </div>
@@ -448,6 +448,22 @@
                   <input type="checkbox" id="refFrameInvalidationSwitch" class="mdl-switch__input">
                   <span class="mdl-switch__label" data-i18n="Allow the host to recover lost frames with reference frame invalidation (HEVC and AV1)">
                     Allow the host to recover lost frames with reference frame invalidation (HEVC and AV1)
+                  </span>
+                </label>
+              </div>
+            </div>
+            <div class="setting-option">
+              <label><span data-i18n="HDR static metadata">HDR static metadata</span>
+                <span class="badge badge-experimental" data-i18n="Experimental">Experimental</span>
+              </label>
+              <span class="mdl-list__item-text-body" data-i18n="- Passes the HDR metadata of the host display (peak brightness, color primaries) to the TV with every HEVC keyframe, so its HDR tone mapping matches the host. Disable it if HDR streams fail to start or look wrong.">
+                - Passes the HDR metadata of the host display (peak brightness, color primaries) to the TV with every HEVC keyframe, so its HDR tone mapping matches the host. Disable it if HDR streams fail to start or look wrong.
+              </span>
+              <div id="hdrMetadataMenu">
+                <label id="hdrMetadataBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="hdrMetadataSwitch">
+                  <input type="checkbox" id="hdrMetadataSwitch" class="mdl-switch__input">
+                  <span class="mdl-switch__label" data-i18n="Send the HDR metadata of the host to the TV (HEVC)">
+                    Send the HDR metadata of the host to the TV (HEVC)
                   </span>
                 </label>
               </div>

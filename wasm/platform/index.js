@@ -50,6 +50,8 @@ var ethernetBitrateWarning = false; // Flag indicating whether the Ethernet bitr
 var ethernetPresetNotice = false; // Flag indicating whether the Ethernet bitrate preset limit message has shown, initial value is false
 var h264ResolutionWarning = false; // Flag indicating whether the H.264 resolution warning message has shown, initial value is false
 var streamNetworkInfo = ''; // Network connection summary shown in the performance statistics while streaming, initial value is empty
+var streamConnectionType = 'unknown'; // Network connection type of the current streaming session, initial value is unknown
+var lastWifiSignalRefreshMs = 0; // Time of the last Wi-Fi signal strength refresh of the network connection summary, initial value is 0
 var repeatAction = null; // Flag indicating whether the repeat action is set, initial value is null
 var lastInvokeTime = 0; // Flag indicating the last invoke time, initial value is 0
 var repeatTimeout = null; // Flag indicating whether the repeat timeout is set, initial value is null
@@ -133,6 +135,7 @@ function attachListeners() {
   $('#fullRangeSwitch').on('click', saveFullRange);
   $('#gameModeSwitch').on('click', saveGameMode);
   $('#refFrameInvalidationSwitch').on('click', saveRefFrameInvalidation);
+  $('#hdrMetadataSwitch').on('click', saveHdrMetadata);
   $('#unlockAllFpsSwitch').on('click', saveUnlockAllFps);
   $('#optimizeBitrateSwitch').on('click', saveOptimizeBitrate);
   $('#disableWarningsSwitch').on('click', saveDisableWarnings);
@@ -779,9 +782,29 @@ function getWifiSignalStrength(callbackFunction) {
   }
 }
 
+// Refresh the Wi-Fi signal strength of the network connection summary at most every 5 seconds, which is called
+// for every update of the performance statistics while streaming
+function refreshStreamNetworkInfo() {
+  if (streamConnectionType !== 'wifi') {
+    return;
+  }
+  const now = Date.now();
+  if (now - lastWifiSignalRefreshMs < 5000) {
+    return;
+  }
+  lastWifiSignalRefreshMs = now;
+  getWifiSignalStrength(function(signalStrength) {
+    if (signalStrength !== null) {
+      streamNetworkInfo = t('Network connection: Wi-Fi (signal strength: %1$s percent)', signalStrength);
+    }
+  });
+}
+
 // Update the network connection summary that is shown in the performance statistics while streaming
 function updateStreamNetworkInfo() {
   const connectionType = getActiveConnectionType();
+  streamConnectionType = connectionType;
+  lastWifiSignalRefreshMs = Date.now();
   console.log('%c[index.js, updateStreamNetworkInfo]', 'color: green;', 'Active network connection type: ' + connectionType);
   if (connectionType === 'ethernet') {
     streamNetworkInfo = t('Network connection: Ethernet (TV port limited to 100 Mbps)');
@@ -3022,6 +3045,7 @@ function startGame(host, appID) {
       const disableWarnings = $('#disableWarningsSwitch').parent().hasClass('is-checked') ? 1 : 0;
       const performanceStats = $('#performanceStatsSwitch').parent().hasClass('is-checked') ? 1 : 0;
       const refFrameInvalidation = $('#refFrameInvalidationSwitch').parent().hasClass('is-checked') ? 1 : 0;
+      const hdrMetadata = $('#hdrMetadataSwitch').parent().hasClass('is-checked') ? 1 : 0;
 
       // Update the network connection summary for the performance statistics
       updateStreamNetworkInfo();
@@ -3049,7 +3073,8 @@ function startGame(host, appID) {
       '\n Game Mode: ' + gameMode + 
       '\n Disable connection warnings: ' + disableWarnings + 
       '\n Performance statistics: ' + performanceStats + 
-      '\n Reference frame invalidation: ' + refFrameInvalidation);
+      '\n Reference frame invalidation: ' + refFrameInvalidation +
+      '\n HDR static metadata: ' + hdrMetadata);
 
       // Hide on-screen overlays until the streaming session begins
       $('#connection-warnings, #performance-stats').css('background', 'transparent').text('');
@@ -3091,7 +3116,7 @@ function startGame(host, appID) {
             host.appVersion, host.gfeVersion, $root.find('sessionUrl0').text().trim(), host.serverCodecModeSupport,
             framePacing, optimizeGames, rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons,
             audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
-            gameMode, disableWarnings, performanceStats, refFrameInvalidation
+            gameMode, disableWarnings, performanceStats, refFrameInvalidation, hdrMetadata
           ]);
         }, function(failedResumeApp) {
           console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to resume app with id: ' + appID + '\n Returned error was: ' + failedResumeApp + '!');
@@ -3143,7 +3168,7 @@ function startGame(host, appID) {
           host.appVersion, host.gfeVersion, $root.find('sessionUrl0').text().trim(), host.serverCodecModeSupport,
           framePacing, optimizeGames, rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons,
           audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
-          gameMode, disableWarnings, performanceStats, refFrameInvalidation
+          gameMode, disableWarnings, performanceStats, refFrameInvalidation, hdrMetadata
         ]);
       }, function(failedLaunchApp) {
         console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to launch app with id: ' + appID + '\n Returned error was: ' + failedLaunchApp + '!');
@@ -4003,6 +4028,20 @@ function saveRefFrameInvalidation() {
   }, 100);
 }
 
+function saveHdrMetadata() {
+  setTimeout(() => {
+    const chosenHdrMetadata = $('#hdrMetadataSwitch').parent().hasClass('is-checked');
+    console.log('%c[index.js, saveHdrMetadata]', 'color: green;', 'Saving HDR static metadata state: ' + chosenHdrMetadata);
+    storeData('hdrMetadata', chosenHdrMetadata, null);
+
+    // Warning when enabling the experimental HDR static metadata
+    if (chosenHdrMetadata) {
+      // Show a warning message, because the hardware decoder of the TV may not accept the added metadata
+      snackbarLogLong('Warning: HDR static metadata is experimental. If HDR streams fail to start or look wrong, disable it again!');
+    }
+  }, 100);
+}
+
 // Apply the optimal streaming settings for the Samsung S90C, which this build uses as the defaults of the video settings.
 // The S90C decodes HEVC up to 4K at 120 FPS, but Tizen apps commonly render at around 60 FPS, so 4K at 60 FPS with HEVC
 // and HDR at the highest bitrate that the network connection of the TV can reliably carry gives the best image quality.
@@ -4078,7 +4117,13 @@ function s90cSettingsDialog() {
   let message = t('The following streaming settings will be applied for the Samsung S90C:') + '<br>' +
     '&#8226; ' + t('Video resolution') + ': ' + escapeHTML(optimalResolutionText) + ', 60 FPS<br>' +
     '&#8226; ' + t('Video codec') + ': ' + (isHdrCapable ? t('HEVC Main10 with HDR') : t('HEVC')) + '<br>' +
-    '&#8226; ' + t('Video bitrate') + ': ' + recommendedBitrate + ' Mbps<br><br>';
+    '&#8226; ' + t('Video bitrate') + ': ' + recommendedBitrate + ' Mbps<br>' +
+    '&#8226; ' + t('Video frame pacing on, limited color range, unlock all frame rates on, optimize bitrate presets off') + '<br>';
+  // Name the game mode state, which depends on the Tizen version (the note below covers Tizen 9.0 and newer)
+  if (parseFloat(platformVer) < 9.0 && parseFloat(platformVer) !== 5.5) {
+    message += '&#8226; ' + t('Game mode on') + '<br>';
+  }
+  message += '<br>';
 
   // Explain the bitrate limits of the network connection and how to stream without frame drops
   if (connectionType === 'ethernet') {
@@ -4211,6 +4256,10 @@ function restoreDefaultsSettingsValues() {
   const defaultRefFrameInvalidation = false;
   document.querySelector('#refFrameInvalidationBtn').MaterialSwitch.off();
   storeData('refFrameInvalidation', defaultRefFrameInvalidation, null);
+
+  const defaultHdrMetadata = false;
+  document.querySelector('#hdrMetadataBtn').MaterialSwitch.off();
+  storeData('hdrMetadata', defaultHdrMetadata, null);
 
   const defaultDisableWarnings = false;
   document.querySelector('#disableWarningsBtn').MaterialSwitch.off();
@@ -4533,7 +4582,13 @@ function loadUserDataCb() {
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored hdrMode preferences.');
   getData('hdrMode', function(previousValue) {
     if (previousValue.hdrMode == null) {
-      document.querySelector('#hdrModeBtn').MaterialSwitch.off(); // Set the default state
+      // Set the default state to HDR on HDR-capable TVs, matching the optimal streaming settings, unless the stored
+      // codec is H.264, which has no HDR profile (the codec is restored before this, see the request order above)
+      if (isHdrCapable && $('#selectCodec').data('value') !== 'H264') {
+        document.querySelector('#hdrModeBtn').MaterialSwitch.on();
+      } else {
+        document.querySelector('#hdrModeBtn').MaterialSwitch.off();
+      }
     } else if (previousValue.hdrMode == false) {
       document.querySelector('#hdrModeBtn').MaterialSwitch.off();
     } else {
@@ -4578,6 +4633,17 @@ function loadUserDataCb() {
       document.querySelector('#refFrameInvalidationBtn').MaterialSwitch.off();
     } else {
       document.querySelector('#refFrameInvalidationBtn').MaterialSwitch.on();
+    }
+  });
+
+  console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored hdrMetadata preferences.');
+  getData('hdrMetadata', function(previousValue) {
+    if (previousValue.hdrMetadata == null) {
+      document.querySelector('#hdrMetadataBtn').MaterialSwitch.off(); // Set the default state
+    } else if (previousValue.hdrMetadata == false) {
+      document.querySelector('#hdrMetadataBtn').MaterialSwitch.off();
+    } else {
+      document.querySelector('#hdrMetadataBtn').MaterialSwitch.on();
     }
   });
 
