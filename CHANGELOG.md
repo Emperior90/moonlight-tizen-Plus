@@ -14,7 +14,7 @@ All notable changes to this project will be documented in this file.
 - Added an experimental 'HDR static metadata' setting that inserts the HDR10 metadata of the host display (mastering display colour volume, content light level) into the HEVC keyframes, which Sunshine only sends over the control channel and the TV never received
 - Added the frame receive time, the frame wait time before the video thread and the pending frame count to the performance stats, and renamed the pacer time to 'Average frame pacing delay'; the former 'Average decoding time' mixed the queue wait with the pacing
 - Added the 3200 x 1800 (1800p) resolution with bitrate presets as a step between 1440p and 4K
-- Added an experimental 'Audio clock sync' setting for the Web Audio backend that keeps the audio delay at the jitter buffer by playing a few ppm faster or slower, instead of dropping or repeating sound when the clocks of the host and the TV drift apart
+- Added an experimental 'Audio clock sync' setting for the Web Audio backend that keeps the audio delay at the jitter buffer by playing a few ppm faster or slower, instead of dropping or repeating sound when the clocks of the host and the TV drift apart; the resampler now interpolates with a four point cubic kernel
 - Added a hint that 90 FPS does not divide the 60 or 120 Hz output of the TV evenly
 - Logged the UDP receive buffer size granted by the TV and the receive timeout mode at stream start
 

@@ -50,8 +50,8 @@ var _audRatio = 1.0;
 // carried over from one frame to the next so that resampling never restarts mid stream.
 var _audPhase = 0.0;
 
-// Last sample of the previous frame of each channel, which the first output sample of the next
-// frame interpolates from, or null while no frame has been resampled yet
+// Last three samples of the previous frame of each channel, which the first output samples of
+// the next frame interpolate from, or null while no frame has been resampled yet
 var _audTail = null;
 
 // Whether the clock sync is enabled, which keeps the schedule at the jitter buffer target by
@@ -80,6 +80,10 @@ var AUD_SYNC_GAIN = 0.1;
 // Lead error at which the correction starts, and below which it stops again, in seconds
 var AUD_SYNC_START_SECONDS = 0.002;
 var AUD_SYNC_STOP_SECONDS = 0.0005;
+
+// Smoothing of the lead per frame (about one second at 5 ms frames), long against the arrival
+// jitter of the frames, so that the jitter does not switch the correction on and off
+var AUD_SYNC_SMOOTHING = 0.005;
 
 // Counters of the current statistics interval, described in _audLogStatistics()
 var _audStats = null;
@@ -285,21 +289,25 @@ function _audAdoptStreamFormat(sampleRate, channels) {
 // that runs ahead of the target means the host produces audio faster than the TV plays it, so
 // the stream is consumed slightly faster (fewer output samples per frame), and the other way
 // round. The correction only starts outside a small band around the target and stops again
-// close to it, so the exact copy path is used whenever no correction is needed.
+// close to it. It stops only while the resampler sits on a whole sample, so the stream is not
+// shifted; at the plain ratio the resampler then passes the samples through unchanged.
 function _audSteerClock(lead, targetSeconds) {
-  _audLeadFiltered += 0.05 * (lead - _audLeadFiltered);
+  _audLeadFiltered += AUD_SYNC_SMOOTHING * (lead - _audLeadFiltered);
   var error = _audLeadFiltered - targetSeconds;
 
   if (_audCorrection === 0.0 && Math.abs(error) < AUD_SYNC_START_SECONDS) {
     return;
   }
   if (_audCorrection !== 0.0 && Math.abs(error) < AUD_SYNC_STOP_SECONDS) {
-    // Back at the target: return to the plain ratio and restart the resampler phase, which
-    // shifts the stream by less than one sample
-    _audCorrection = 0.0;
-    _audRatio = _audBaseRatio;
-    _audPhase = 0.0;
-    _audTail = null;
+    // Back at the target: return to the plain ratio once the position of the next output sample
+    // is within 0.02 of a whole sample, which it passes at least once per sweep of the phase
+    // (within half a second at the 50 ppm the stop band implies)
+    var whole = Math.round(_audPhase);
+    if (Math.abs(_audPhase - whole) < 0.02) {
+      _audCorrection = 0.0;
+      _audRatio = _audBaseRatio;
+      _audPhase = whole;
+    }
     return;
   }
 
@@ -308,15 +316,20 @@ function _audSteerClock(lead, targetSeconds) {
 }
 
 // Copy one frame out of the WASM heap into an audio buffer, resampling it to the sample rate of
-// the audio context when the two differ. The resampler interpolates from the last sample of the
-// previous frame and carries its position over, so no discontinuity is introduced at the frame
-// boundaries. Returns the buffer to schedule, or null when the frame produced no samples.
+// the audio context when the two differ or while the clock sync corrects the ratio. The
+// resampler interpolates with a four point cubic (Catmull-Rom) kernel, which keeps the treble
+// level even while the position moves between the samples, reads the samples before the frame
+// from the tail of the previous frame and carries its position over, so no discontinuity is
+// introduced at the frame boundaries. At a ratio of exactly one and a whole-sample position it
+// passes the samples through unchanged. Returns the buffer to schedule, or null when the frame
+// produced no samples.
 function _audBuildBuffer(heapOffset, samples, channels, stride) {
   var heap = Module.HEAPF32;
   var base = heapOffset >> 2;
   var channel;
 
-  if (_audRatio === 1.0) {
+  // Copy the frame as it is until the resampler has been used for the first time
+  if (_audRatio === 1.0 && _audTail === null) {
     var direct = _audContext.createBuffer(channels, samples, _audContext.sampleRate);
     for (channel = 0; channel < channels; channel++) {
       var offset = base + channel * stride;
@@ -325,19 +338,19 @@ function _audBuildBuffer(heapOffset, samples, channels, stride) {
     return direct;
   }
 
-  // Emit one sample for every position of the schedule that still falls inside this frame. The
-  // position may start just before the frame, in which case the first sample is interpolated
-  // from the tail of the previous frame that is held in _audTail.
-  var count = Math.max(0, Math.ceil((samples - 1 - _audPhase) / _audRatio));
+  // Emit one sample for every position of the schedule up to two samples before the end of this
+  // frame, so that the kernel never reads past the frame. The position may start up to two
+  // samples before the frame, in which case the kernel reads from the tail of the previous frame.
+  var count = Math.max(0, Math.ceil((samples - 2 - _audPhase) / _audRatio));
   var buffer = count > 0 ? _audContext.createBuffer(channels, count, _audContext.sampleRate) : null;
 
-  if (!_audTail || _audTail.length !== channels) {
-    _audTail = new Float32Array(channels);
+  if (!_audTail || _audTail.length !== 3 * channels) {
+    _audTail = new Float32Array(3 * channels);
   }
 
   for (channel = 0; channel < channels; channel++) {
     var source = base + channel * stride;
-    var tail = _audTail[channel];
+    var tail = 3 * channel;
 
     if (buffer) {
       var output = buffer.getChannelData(channel);
@@ -345,16 +358,20 @@ function _audBuildBuffer(heapOffset, samples, channels, stride) {
       for (var index = 0; index < count; index++) {
         var whole = Math.floor(position);
         var fraction = position - whole;
-        // A position before the frame reads the last sample of the previous one, and the
-        // position never reaches the last sample of this frame, so whole + 1 stays in range
-        var first = whole < 0 ? tail : heap[source + whole];
-        var second = heap[source + whole + 1];
-        output[index] = first + (second - first) * fraction;
+        // The kernel reads the samples whole - 1 to whole + 2, of which the negative ones are
+        // the last samples of the previous frame (whole - 1 is at least -3)
+        var x0 = whole - 1 < 0 ? _audTail[tail + 3 + whole - 1] : heap[source + whole - 1];
+        var x1 = whole < 0 ? _audTail[tail + 3 + whole] : heap[source + whole];
+        var x2 = whole + 1 < 0 ? _audTail[tail + 3 + whole + 1] : heap[source + whole + 1];
+        var x3 = heap[source + whole + 2];
+        output[index] = x1 + 0.5 * fraction * ((x2 - x0) + fraction * ((2.0 * x0 - 5.0 * x1 + 4.0 * x2 - x3) + fraction * (3.0 * (x1 - x2) + x3 - x0)));
         position += _audRatio;
       }
     }
 
-    _audTail[channel] = heap[source + samples - 1];
+    _audTail[tail] = heap[source + samples - 3];
+    _audTail[tail + 1] = heap[source + samples - 2];
+    _audTail[tail + 2] = heap[source + samples - 1];
   }
 
   // Move the position of the next output sample into the frame that follows this one

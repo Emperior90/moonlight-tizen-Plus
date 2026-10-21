@@ -181,8 +181,11 @@ void MoonlightInstance::RequestIdrFrame() {
 // frames, so request one when the metadata becomes available during the stream. Before the track is open,
 // OnTrackOpen requests the IDR frame anyway.
 void MoonlightInstance::ClSetHdrMode(bool enabled) {
+  // Only worth a keyframe when the metadata would actually go into the SEI (same test as the submit path)
+  SS_HDR_METADATA hdrMetadata;
   if (enabled && s_HdrMetadataEnabled && (s_VideoFormat & VIDEO_FORMAT_MASK_H265) &&
-      g_Instance != nullptr && g_Instance->m_VideoStarted) {
+      g_Instance != nullptr && g_Instance->m_VideoStarted && LiGetHdrMetadata(&hdrMetadata) &&
+      hdrMetadata.maxDisplayLuminance != 0 && hdrMetadata.displayPrimaries[0].x != 0) {
     RequestIdrFrame();
   }
 }
