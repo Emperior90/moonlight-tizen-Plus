@@ -50,6 +50,8 @@ var codecWarning = false; // Flag indicating whether the video codec warning mes
 var ethernetBitrateWarning = false; // Flag indicating whether the Ethernet bitrate warning message has shown, initial value is false
 var ethernetPresetNotice = false; // Flag indicating whether the Ethernet bitrate preset limit message has shown, initial value is false
 var h264ResolutionWarning = false; // Flag indicating whether the H.264 resolution warning message has shown, initial value is false
+var autoAdjustBitrate = false; // Flag indicating whether resolution, frame rate, codec and HDR changes apply the bitrate presets, which stops once the bitrate is picked by hand, initial value is false
+var keptBitrateNotice = false; // Flag indicating whether the notice about a kept hand-picked bitrate has shown, initial value is false
 var streamNetworkInfo = ''; // Network connection summary shown in the performance statistics while streaming, initial value is empty
 var streamConnectionType = 'unknown'; // Network connection type of the current streaming session, initial value is unknown
 var lastWifiSignalRefreshMs = 0; // Time of the last Wi-Fi signal strength refresh of the network connection summary, initial value is 0
@@ -114,7 +116,11 @@ function attachListeners() {
   $('#quitRunningAppBtn').on('click', quitAppDialog);
   $('.videoResolutionMenu li:not(.unsupported-resolution)').on('click', saveResolution);
   $('.videoFramerateMenu li').on('click', saveFramerate);
-  $('#bitrateSlider').on('input', saveBitrate);
+  $('#bitrateSlider').on('input', function() {
+    // A bitrate picked by hand is kept when the resolution, frame rate, codec or HDR changes
+    setAutoAdjustBitrate(false);
+    saveBitrate();
+  });
   $('#framePacingSwitch').on('click', saveFramePacing);
   $('#ipAddressFieldModeSwitch').on('click', saveIpAddressFieldMode);
   $('#ipAddressTextInput').on('input', updateIpAddressInputValidationState);
@@ -3390,12 +3396,16 @@ function savePreviewApps() {
 
 function saveResolution() {
   var chosenResolution = $(this).data('value');
+  // Re-selecting the current resolution changes nothing, so it must not reset the bitrate either
+  if (String(chosenResolution) === String($('#selectResolution').data('value'))) {
+    return;
+  }
   $('#selectResolution').text($(this).text()).attr('data-value', chosenResolution).data('value', chosenResolution);
   console.log('%c[index.js, saveResolution]', 'color: green;', 'Saving resolution value: ' + chosenResolution);
   storeData('resolution', chosenResolution, null);
 
-  // Update the bitrate value based on the selected resolution
-  $('#optimizeBitrateSwitch').prop('checked') ? optimizeBitratePresets() : standardBitratePresets();
+  // Update the bitrate value based on the selected resolution, unless it was picked by hand
+  applyBitratePresets();
   // Trigger warning check after changing video resolution
   warnResolutionFramerate();
   warnH264Resolution();
@@ -3403,12 +3413,16 @@ function saveResolution() {
 
 function saveFramerate() {
   var chosenFramerate = $(this).data('value');
+  // Re-selecting the current frame rate changes nothing, so it must not reset the bitrate either
+  if (String(chosenFramerate) === String($('#selectFramerate').data('value'))) {
+    return;
+  }
   $('#selectFramerate').text($(this).text()).attr('data-value', chosenFramerate).data('value', chosenFramerate);
   console.log('%c[index.js, saveFramerate]', 'color: green;', 'Saving framerate value: ' + chosenFramerate);
   storeData('frameRate', chosenFramerate, null);
 
-  // Update the bitrate value based on the selected frame rate
-  $('#optimizeBitrateSwitch').prop('checked') ? optimizeBitratePresets() : standardBitratePresets();
+  // Update the bitrate value based on the selected frame rate, unless it was picked by hand
+  applyBitratePresets();
   // Trigger warning check after changing video frame rate
   warnResolutionFramerate();
 }
@@ -3471,6 +3485,35 @@ function saveBitrate() {
 
   // Trigger warning check after changing video bitrate
   warnBitrate();
+}
+
+// Store whether the bitrate presets follow the video settings, only when it changes, since every step of the
+// bitrate slider would otherwise write to the database
+function setAutoAdjustBitrate(enabled) {
+  if (autoAdjustBitrate === enabled) {
+    return;
+  }
+  autoAdjustBitrate = enabled;
+  console.log('%c[index.js, setAutoAdjustBitrate]', 'color: green;', 'Saving auto adjust bitrate state: ' + enabled);
+  storeData('autoAdjustBitrate', enabled, null);
+}
+
+// Apply the bitrate presets after the resolution, frame rate, codec or HDR changed. A bitrate that was picked by hand,
+// or set by the optimal streaming settings for the network connection, is kept instead, like moonlight-qt does, so
+// that e.g. a trip to 120 FPS and back doesn't leave 4K at 60 FPS with the lower preset of 80 Mbps unnoticed.
+function applyBitratePresets() {
+  if (!autoAdjustBitrate) {
+    console.log('%c[index.js, applyBitratePresets]', 'color: green;', 'Keeping the bitrate of ' + $('#bitrateSlider').val() + ' Mbps');
+    // Explain once how to get the presets back, since nothing else changes on screen
+    if (!keptBitrateNotice) {
+      snackbarLogLong('Keeping your bitrate of %1$s Mbps. Turn \'Optimize bitrate presets\' on or off to apply the bitrate presets again.', $('#bitrateSlider').val());
+      keptBitrateNotice = true;
+    }
+    // Re-check the bitrate warnings, e.g. for the Ethernet port of the TV
+    warnBitrate();
+    return;
+  }
+  $('#optimizeBitrateSwitch').prop('checked') ? optimizeBitratePresets() : standardBitratePresets();
 }
 
 function warnBitrate() {
@@ -3879,9 +3922,9 @@ function updateVideoCodec(chosenCodecId, chosenCodecValue) {
   console.log('%c[index.js, updateVideoCodec]', 'color: green;', 'Saving video codec value: ' + chosenCodecValue);
   storeData('videoCodec', chosenCodecValue, null);
 
-  // Update the bitrate value based on the selected codec
+  // Update the bitrate value based on the selected codec, unless it was picked by hand
   if ($('#optimizeBitrateSwitch').prop('checked')) {
-    optimizeBitratePresets();
+    applyBitratePresets();
   }
   // Trigger warning check after changing video codec
   warnVideoCodec();
@@ -3941,9 +3984,9 @@ function updateHdrMode() {
     console.log('%c[index.js, updateHdrMode]', 'color: green;', 'Saving HDR mode state: ' + chosenHdrMode);
     storeData('hdrMode', chosenHdrMode, null);
 
-    // Update the bitrate value based on the selected HDR state
+    // Update the bitrate value based on the selected HDR state, unless it was picked by hand
     if ($('#optimizeBitrateSwitch').prop('checked')) {
-      optimizeBitratePresets();
+      applyBitratePresets();
     }
   }, 100);
 }
@@ -4020,8 +4063,8 @@ function handleUnlockAllFps() {
       $('#selectFramerate').text('60 FPS').attr('data-value', '60').data('value', '60');
       console.log('%c[index.js, handleUnlockAllFps]', 'color: green;', 'Resetting framerate value to 60 FPS');
       storeData('frameRate', '60', null);
-      // Update the bitrate value based on the selected frame rate
-      $('#optimizeBitrateSwitch').prop('checked') ? optimizeBitratePresets() : standardBitratePresets();
+      // Update the bitrate value based on the selected frame rate, unless it was picked by hand
+      applyBitratePresets();
     }
   }
 }
@@ -4032,6 +4075,8 @@ function saveOptimizeBitrate() {
     console.log('%c[index.js, saveOptimizeBitrate]', 'color: green;', 'Saving optimize bitrate state: ' + chosenOptimizeBitrate);
     storeData('optimizeBitrate', chosenOptimizeBitrate, null);
 
+    // Toggling the presets asks for them explicitly, so they follow the video settings again from now on
+    setAutoAdjustBitrate(true);
     // Update the bitrate value based on the selected preset mode
     chosenOptimizeBitrate ? optimizeBitratePresets() : standardBitratePresets();
   }, 100);
@@ -4138,6 +4183,9 @@ function applyOptimalStreamingSettings(connectionType) {
   const recommendedBitrate = getRecommendedBitrate(connectionType);
   $('#bitrateSlider')[0].MaterialSlider.change(String(recommendedBitrate));
   saveBitrate();
+  // Keep the recommended bitrate for the network connection when the resolution or frame rate changes later
+  autoAdjustBitrate = false;
+  storeData('autoAdjustBitrate', false, null);
 
   // Re-run the one-shot warning checks so their flags match the applied resolution, frame rate and codec
   warnResolutionFramerate();
@@ -4710,6 +4758,14 @@ function loadUserDataCb() {
     } else {
       document.querySelector('#optimizeBitrateBtn').MaterialSwitch.on();
     }
+    const storedOptimizeBitrate = previousValue.optimizeBitrate == true;
+    // Load whether the bitrate presets follow the video settings. Without a stored value (a fresh install, or an
+    // update from a version without this setting), they only follow them when the optimized presets are on, which
+    // were chosen on purpose. Otherwise the bitrate is the recommended one for the network connection, and is kept.
+    getData('autoAdjustBitrate', function(storedValue) {
+      autoAdjustBitrate = storedValue.autoAdjustBitrate != null ? storedValue.autoAdjustBitrate == true : storedOptimizeBitrate;
+      console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Auto adjust bitrate state: ' + autoAdjustBitrate);
+    });
   });
 
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored disableWarnings preferences.');

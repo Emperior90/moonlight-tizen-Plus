@@ -96,6 +96,8 @@ function replaceKnownStatsLabels(text) {
     .replace(/Decoding frame rate:/g, t('Decoding frame rate:'))
     .replace(/Rendering frame rate:/g, t('Rendering frame rate:'))
     .replace(/Incoming bitrate from network:/g, t('Incoming bitrate from network:'))
+    .replace(/Configured bitrate:/g, t('Configured bitrate:'))
+    .replace(/Host frame rate \(30 s\):/g, t('Host frame rate (30 s):'))
     .replace(/Host processing latency min\/max\/average:/g, t('Host processing latency min/max/average:'))
     .replace(/Frames dropped by your network connection:/g, t('Frames dropped by your network connection:'))
     .replace(/Average network latency:/g, t('Average network latency:'))

@@ -145,7 +145,7 @@ Geprüft, aber unverändert gelassen: Der Video-Empfang ist bereits gut eingeste
 
 **So testest du es** (4K60, HEVC, sonst alles wie bisher):
 
-1. Bitrate-Leiter **95 → 110 → 120 Mbit/s**, je 20 Minuten im selben anspruchsvollen Spiel, Overlay an.
+1. Bitrate-Leiter **95 → 110 → 120 Mbit/s**, je 20 Minuten im selben anspruchsvollen Spiel, Overlay an. Die Zeile *Configured bitrate* im Overlay zeigt, welche Bitrate die Session wirklich angefordert hat.
 2. **Bestanden**, wenn *Session frames dropped by network* und *Session recovery keyframes* bei 0 bleiben, die *Rendering frame rate* stabil bei 60 liegt und der Ton nicht aussetzt.
 3. **Bei Audio-Aussetzern** einmal *Audio backend: EMSS* testen. EMSS übergibt den Ton direkt aus dem Audio-Thread an den TV-Player und braucht den Haupt-Thread dafür nicht.
 4. Steigt die *Average rendering time* (Übergabe eines Bildes an den TV-Player) mit der Bitrate deutlich an, ist der Decoder-Pfad des TVs am Limit. Dann eine Stufe zurückgehen.
@@ -326,6 +326,7 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
   - Sunshine über *Display Device* die Auflösung automatisch umstellen lassen. Dazu in Moonlight unter Settings → Host Settings *Optimize game settings* aktivieren.
 - **Windows-HDR einschalten** und die App **„Windows HDR Calibration“** ausführen. Spitzenhelligkeit etwa auf den Wert des TVs setzen (beim S90C grob um 1.000 Nits) und den SDR-Helligkeitsregler nach Geschmack einstellen.
 - Im Spiel HDR aktivieren. Ohne Windows-HDR liefert der Stream 10-Bit-SDR (weniger Banding, aber kein HDR).
+- **Bildwiederholrate des Host-Displays (bei dir das VDD) ganzzahlig auf die Stream-FPS stellen:** 60,000 Hz für 60 FPS bzw. 120,000 Hz für 120 FPS, nicht 59,94 bzw. 119,88 Hz. Die App meldet dem TV-Player genau 60 bzw. 120 Bilder pro Sekunde. Sunshine senkt die Aufnahmerate auf eine krumme Display-Rate ab, hebt sie aber nie an. Prüfen lässt sich das im Sunshine-Log (5.4) und im Overlay (*Host frame rate*). Das ist eine reine Host-Einstellung. Läuft das Display schon mit 60,000 Hz, ändert sich nichts.
 
 ### 5.2 Encoder (NVIDIA NVENC)
 
@@ -337,7 +338,7 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
 | `nvenc_vbv_increase` | 0 | **LAN: 0 lassen. WLAN: 50 bzw. 100 testen** | Höhere Werte erlauben größere Einzelbilder. Das verbessert schwierige Bewegungsszenen, erzeugt aber größere Bursts, und die sind Gift für den 100-Mbit-Port |
 | `nvenc_split_encode` | driver_decides | **enabled** (bei GPUs mit zwei NVENC-Einheiten) | Teilt jedes Bild auf beide Encoder auf. Laut Sunshine-Doku deutlich kürzere Kodierzeit bei minimalem Effizienzverlust. Für 4K120 praktisch Pflicht |
 | `fec_percentage` | 20 | 20 lassen | Fehlerkorrektur für vereinzelte Paketverluste (vor allem im WLAN) |
-| `hevc_mode` / `av1_mode` | 0 (nach Encoder-Fähigkeiten) | 0 | Main10 für HDR wird automatisch angeboten, wenn die GPU es kann |
+| `hevc_mode` / `av1_mode` | 0 (nach Encoder-Fähigkeiten) | 0 | Main10 für HDR wird automatisch angeboten, wenn die GPU es kann. Nicht 1 oder 2: Bei `av1_mode = 2` (nur 8 Bit) nimmt die App mit HDR HEVC Main10 und meldet das |
 | `lan_encryption_mode` | 0 | 0 | Verschlüsselung kostet auf dem TV zusätzliche CPU-Zeit |
 
 **Wichtig:** Den Encoder nie an die Grenze fahren. Steigt im Overlay die *Host processing latency* deutlich an oder kommt weniger Bitrate an als eingestellt, ist der Encoder überlastet. Dann das Preset wieder senken. Das Troubleshooting-Wiki des Projekts dokumentiert einen Fall, in dem ein überlasteter Encoder statt 63 nur 12 Mbit/s lieferte.
@@ -359,7 +360,8 @@ Das Overlay am TV zeigt nicht, mit welchen Farbeinstellungen der PC kodiert. Das
 | `Color coding: HDR (Rec. 2020 + SMPTE 2084 PQ)` | so | HDR10 ist aktiv. Steht dort `SDR (Rec. 709)` zusammen mit `Color depth: 10-bit`, hat der TV HDR angefordert, aber das Host-Display (bei dir das VDD) ist nicht im HDR-Modus. Der Stream ist dann 10-Bit-SDR ohne PQ: Windows-HDR für dieses Display einschalten |
 | `Color depth: 10-bit` | so | Main10 läuft |
 | `Color range: MPEG` | so | MPEG = Limited Range (Empfehlung), JPEG = Full Range |
-| `NvEnc: created encoder v… HEVC P6 …` | enthält `10-bit`, `two-pass`, bei Split Frame Encoding `sfe` (erzwungen) bzw. `sfe-auto` (Treiber entscheidet), bei VBV-Erhöhung `vbv+N` | Zwischen den Angaben können weitere stehen, z. B. `async`. `two-pass` sagt nicht, ob Quarter oder Full Resolution. `rfi` heißt nur, dass die GPU Reference Frame Invalidation kann; ob der TV es nutzt, folgt dem RFI-Schalter der App |
+| `NvEnc: created encoder v… HEVC P6 …` (bzw. `… AV1 P6 …`) | enthält `10-bit`, `two-pass`, bei Split Frame Encoding `sfe` (erzwungen) bzw. `sfe-auto` (Treiber entscheidet), bei VBV-Erhöhung `vbv+N` | Zwischen den Angaben können weitere stehen, z. B. `async`. `two-pass` sagt nicht, ob Quarter oder Full Resolution. `rfi` heißt nur, dass die GPU Reference Frame Invalidation kann; ob der TV es nutzt, folgt dem RFI-Schalter der App. Beim AV1-Test muss dort `AV1` und `10-bit` stehen, sonst kodiert der PC kein AV1 Main10 |
+| `Display refresh rate [60Hz]` (bzw. `[120Hz]`) | ganzzahlig, gleich den Stream-FPS | Steht dort eine krumme Rate wie `59.9401Hz` und danach `Adjusted capture rate to 59.9401fps to better match display`, läuft der Stream mit 59,94 statt 60 Bildern. Dann im VDD bzw. in Windows (*Erweiterte Anzeigeeinstellungen*) die ganzzahlige Rate wählen. Auch mit aktivierter Display-Device-Konfiguration (`dd_refresh_rate_option = auto`) ist das nicht garantiert: Sunshine fordert die FPS-Rate an, akzeptiert aber jede Rate, die weniger als 0,9 Hz davon abweicht. Die Zeilen gibt es nur bei der Standard-Aufnahme (Desktop Duplication), nicht mit `capture = wgc` |
 
 **Was der Encoder bekommt:**
 
@@ -429,6 +431,9 @@ Das größte Einzelbild liegt ungefähr bei Encoder-Bitrate ÷ FPS × (1 + `nven
 | 23 | **Audio clock sync** (neu, experimentell, Standard aus, nur Web Audio): hält die Ton-Verzögerung am Jitter-Puffer, indem der Ton um höchstens 500 ppm schneller oder langsamer abgespielt wird. Der Resampler interpoliert kubisch (vier Stützstellen) und schaltet nur auf ganzen Samples um, damit nichts klickt | Ohne Taktabgleich lässt jede Uhrendrift zwischen PC und TV den Ton alle paar Minuten ein Stück auslassen (5 ms) oder nach einem Leerlauf neu ansetzen (ein Loch von der Größe des Puffers). In der Simulation mit dem echten Scheduler-Code: 0 Aussetzer über 5 Minuten bei ±300 ppm und 3 ms WLAN-Jitter, Höhenabfall während der Korrektur 0,5 dB bei 10 kHz | `wasm/platform/audio.js`, `wasm/index.html`, `wasm/platform/index.js`, `wasm/platform/navigation.js` |
 | 24 | **Beschreibung von „Optimize game settings“** beschreibt, was Sunshine wirklich tut | Nur die Auflösung folgt dem Client, die Bildwiederholrate folgt der FPS-Einstellung ohnehin, und nur Modi, die das Host-Display anbietet, lassen sich setzen | `wasm/index.html`, Locales |
 | 25 | **Sichere Codec-Aushandlung mit AV1:** Die App nutzt die Codec-Fähigkeiten, die der PC selbst meldet, und bietet bei AV1 immer HEVC mit derselben Bittiefe als Ersatz an. Kann der PC nur Ersatz liefern (anderer Codec oder SDR statt HDR), erscheint ein Hinweis | Bei deiner RTX 5080 ändert sich nichts, AV1 wird wie bisher ausgehandelt. Ohne AV1-Encoder am PC kam bisher ein 4K-H.264-Stream ohne HDR, den der TV wahrscheinlich nicht dekodiert. Jetzt kommt HEVC Main10 mit HDR. Fordert die App 10 Bit an, die der PC nicht kodieren kann, startet der Stream jetzt in 8 Bit statt mit einem Encoder-Fehler | `wasm/main.cpp`, `wasm/wasmplayer.cpp`, `wasm/platform/messages.js`, `wasm/platform/index.js` |
+| 26 | **Neue Overlay-Zeilen:** *Configured bitrate* (die beim Start angeforderte Bitrate) und *Host frame rate (30 s)*, gemessen aus den Aufnahme-Zeitstempeln des PCs über 30 s und nach Bildnummern gezählt, sodass Paketverluste das Ergebnis nicht verfälschen | Zeigt im Stream, welche Bitrate wirklich angefordert wurde, und deckt ein Host-Display mit 59,94 statt 60 Hz auf (alle ~17 s ein Haken), was die FPS-Zeilen mit ihrer Genauigkeit von ±0,5 FPS nicht können | `wasm/wasmplayer.cpp`, `wasm/platform/messages.js` |
+| 27 | **Von Hand gewählte Bitrate bleibt erhalten**, wenn Auflösung, FPS, Codec oder HDR wechseln (wie bei Moonlight für PC). Erneutes Wählen derselben Auflösung oder FPS setzt die Bitrate nicht mehr zurück. Die Presets greifen wieder, sobald *Optimize bitrate presets* umgeschaltet wird | Bisher landete 4K60 nach einem Ausflug auf 120 FPS beim Preset von 80 Mbit/s statt der gewählten 100 bzw. 120. Mit deinen 5 % FEC bekam der Encoder dann ~75 statt ~94 bzw. ~113 Mbit/s | `wasm/platform/index.js` |
+| 28 | **Hoch/Runter im Bitrate-Menü** ändern die Bitrate in 5-Mbit/s-Schritten (Links/Rechts weiter 0,5) | 95 → 150 Mbit/s mit 11 statt 110 Tastendrücken, praktisch für die Bitrate-Leiter | `wasm/platform/navigation.js`, `wasm/index.html` |
 
 **So sieht es in der App aus** (Screenshots aus einem Browser-Test mit simulierten Tizen-APIs):
 
@@ -466,18 +471,21 @@ Das größte Einzelbild liegt ungefähr bei Encoder-Bitrate ÷ FPS × (1 + `nven
 - **WLAN:** 100 → 120 → 150 Mbit/s, je 15 Minuten.
 - **LAN (mit Burst-Fix):** 60 → 70 → 75 → 80 Mbit/s, je 15 Minuten.
 - Den höchsten fehlerfreien Wert wählen und **eine Stufe zurückgehen**, als Reserve für schwierige Szenen.
+- Im Bitrate-Menü stellen **Hoch/Runter** in 5-Mbit/s-Schritten, **Links/Rechts** in 0,5-Mbit/s-Schritten.
+- Eine von Hand gewählte Bitrate bleibt jetzt erhalten, wenn du Auflösung, FPS, Codec oder HDR wechselst. Die App meldet das einmal. Die Bitrate-Presets greifen erst wieder, wenn du *Optimize bitrate presets* umschaltest. Ein Ausflug auf 120 FPS lässt 4K60 also nicht mehr unbemerkt bei 80 Mbit/s landen.
 
 ### Phase 3 – A/B-Tests (jeweils nur eine Sache ändern)
 
 | Test | Wann | Worauf achten |
 |---|---|---|
-| HEVC ↔ AV1 | GPU kann AV1 | Detailschärfe bei gleicher Bitrate, Decoding time. Kann der PC kein AV1 (oder mit HDR kein 10-Bit-AV1), nimmt die App jetzt HEVC mit derselben Bittiefe und meldet das. Im Overlay muss *Codec: AV1* stehen, sonst ist es kein AV1-Test |
+| HEVC ↔ AV1 | GPU kann AV1 | Vorher: Reference Frame Invalidation und *HDR static metadata* in beiden Läufen aus. Die Metadaten gehen nur in HEVC-Keyframes, sonst würde der TV die Lichter der beiden Codecs unterschiedlich abbilden. Nach dem Codec-Wechsel die Bitrate prüfen: Mit eingeschalteten *Optimize bitrate presets* setzt die App für AV1 eine deutlich niedrigere Bitrate. Im Overlay muss *Codec: AV1 10-bit HDR* stehen, ohne Ersatz-Hinweis der App. Der TV muss auch mit AV1 in seinen HDR-Bildmodus wechseln, denn das „HDR“ im Overlay zeigt nur den Zustand des Host-Displays. Erst bei gleicher Bitrate vergleichen (z. B. 100 Mbit/s), dann AV1 mit ~80 Mbit/s. Testfrage: Gibt AV1 dasselbe Bild mit weniger WLAN-Last? Dazu *Host processing latency* (Encoder) sowie *Average rendering time*, *Pending frames* und *Rendering frame rate* (TV) vergleichen. Die Dekodierzeit des TVs zeigt das Overlay nicht. Kann der PC kein AV1 (oder mit HDR kein 10-Bit-AV1), nimmt die App HEVC mit derselben Bittiefe und meldet das |
 | NVENC P4 ↔ P5/P6 | Encoder hat Reserven | Bildqualität vs. *Host processing latency* |
 | Frame Pacing an ↔ aus | Mikroruckler | Gleichmäßigkeit vs. Latenz |
 | Game Mode / ForceGM ↔ Low Latency | Je nach Tizen-Version | Latenz, Stabilität, ob der TV in den Spielmodus wechselt |
-| **Reference Frame Invalidation** an ↔ aus | Nur wenn Drops auftreten | Erholt sich das Bild nach einem Drop schneller? Bleiben Artefakte stehen → wieder aus. RFI greift bei Sunshine (NVENC) nur, wenn vom ersten verlorenen bis zum zuletzt kodierten Bild weniger als 5 (HEVC) bzw. 8 (AV1) Bilder liegen, sonst kommt doch ein Keyframe: bei 60 FPS unter ~67 bzw. ~117 ms, bei 120 FPS unter ~33 bzw. ~58 ms. Das Fenster schließt die Erkennung am TV und den Weg der Anfrage zum PC ein, der WLAN-Aussetzer selbst muss also noch kürzer sein. AV1 hat das größere Fenster |
+| **Reference Frame Invalidation** an ↔ aus | Nur wenn Drops auftreten | Erholt sich das Bild nach einem Drop schneller? Bleiben Artefakte stehen → wieder aus. RFI greift bei Sunshine (NVENC) nur, wenn vom ersten verlorenen bis zum zuletzt kodierten Bild weniger als 5 (HEVC) bzw. 8 (AV1) Bilder liegen, sonst kommt doch ein Keyframe: bei 60 FPS unter ~67 bzw. ~117 ms, bei 120 FPS unter ~33 bzw. ~58 ms. Das Fenster schließt die Erkennung am TV und den Weg der Anfrage zum PC ein, der WLAN-Aussetzer selbst muss also noch kürzer sein. AV1 hat das größere Fenster. Moonlight für PC und Android schalten AV1-RFI nur für Software-Decoder bzw. freigegebene Decoder ein, auf dem Hardware-Decoder des TVs ist es also ungetestet: mit AV1 erst probieren, wenn AV1 ohne RFI sauber läuft |
 | 4K120 | Option auf mehr Flüssigkeit | Sichtprüfung (z. B. testufo.com auf dem PC) statt Overlay, siehe A.8. Nicht sichtbar flüssiger → bei 60 FPS bleiben |
 | `nvenc_vbv_increase` 0 → 50 → 100 (nur WLAN) | Blockartefakte in schnellen Szenen | Bildqualität bei Kameraschwenks, Session-Drops müssen 0 bleiben |
+| VDD 60,000 ↔ 59,94 Hz | Nur wenn nach der Umstellung auf 60,000 Hz (5.1) noch etwa alle 17 s (60 FPS) bzw. 8 s (120 FPS) ein kurzes Haken bei langsamen Schwenks bleibt und das VDD beide Raten anbietet | Je 2 Minuten gleichmäßiger Schwenk (z. B. testufo.com auf dem PC), die Variante ohne periodisches Haken behalten. Wie das Panel im App-Betrieb taktet, ist nicht dokumentiert. Vermutlich zeigt der TV im Low-Latency-Modus jedes Bild sofort. Ist der PC schneller als das Panel, zeigt sich das eher als langsam steigende Latenz, also auch auf *Average rendering time* und das Eingabegefühl achten. Ein Rest bleibt immer: PC- und TV-Uhr weichen um einige zehn ppm ab. Das ergibt höchstens alle paar Minuten ein wiederholtes oder ausgelassenes Bild und lässt sich ohne VRR nicht beseitigen |
 | Split Frame Encoding an ↔ Treiber entscheidet | Latenz | *Host processing latency* (Durchschnitt und Maximum) |
 | Audio-Jitter-Puffer 100 → 75 → 50 ms | Ton läuft spürbar hinterher | Aussetzer oder Knacksen → eine Stufe zurück |
 | **Audio clock sync** an ↔ aus (Web Audio) | Ton setzt alle paar Minuten kurz aus oder springt | In der Konsole die Zeile `[audio.js, statistics]`: `dropped` und `underrun` müssen bei 0 bleiben, `sync` zeigt die Korrektur in ppm |
@@ -506,6 +514,8 @@ Das größte Einzelbild liegt ungefähr bei Encoder-Bitrate ÷ FPS × (1 + `nven
 | *Average frame pacing delay* dauerhaft hoch | Der Pacer hält die Bilder zurück (bewusst, für gleichmäßige Bildfolge) | Normal sind wenige Millisekunden. Für minimale Latenz Frame Pacing aus (A/B-Test) |
 | *Average rendering time* steigt mit der Bitrate | Die Übergabe an den Hardware-Decoder blockiert, der Decoder-Pfad des TVs ist am Limit | Bitrate eine Stufe senken |
 | *Session recovery keyframes* steigt | Jeder Anstieg ist ein sichtbarer Aussetzer | Ursache über die Zeilen oben finden |
+| *Incoming bitrate* deutlich unter *Configured bitrate* | *Configured bitrate* ist die beim Start angeforderte Bitrate inklusive FEC und Audio, also eine Obergrenze. Der Encoder bekommt bei 5 % FEC etwa das 0,94-Fache minus ~1 Mbit/s, bei 20 % FEC etwa das 0,79-Fache (Tabelle in 5.4). In ruhigen Szenen liegt er weit darunter | Nur auffällig zusammen mit Drops oder sinkender *Incoming frame rate* |
+| *Host frame rate (30 s)* zeigt z. B. 59,94 statt 60 | Gemessen aus den Aufnahme-Zeitstempeln des PCs, erscheint nach den ersten 30 s. 59,94 heißt: Das Host-Display läuft mit 59,94 Hz | Display auf 60,000 Hz stellen (5.1). Nur in Bewegung ablesen: In ruhigen Szenen wiederholt Sunshine Bilder, und unter den Ziel-FPS bei Bewegung liefert das Spiel bzw. der PC zu wenige Bilder |
 | WLAN-Signalstärke < 60 % | Schlechte Funkverbindung | Router näher, anderer Kanal, LAN-Variante |
 
 ---
@@ -517,7 +527,7 @@ Das größte Einzelbild liegt ungefähr bei Encoder-Bitrate ÷ FPS × (1 + `nven
 | Schwarzes Bild oder Freeze nur per LAN, per WLAN okay | 100-Mbit-Port plus Bursts | Burst-Fix (4.1) und ≤ 75 Mbit/s |
 | „Video konnte nicht gestartet werden“ bei 4K | H.264 oder 4K144 gewählt | HEVC/AV1 nutzen, max. 4K120 |
 | Bild friert beim ersten Frame ein (Tizen 9+) | Game-Mode-Änderung von Samsung | Game mode aus, ForceGM-Variante |
-| Ruckeln trotz 60 FPS im Overlay | Panel-Refresh nicht korrekt initialisiert | Workaround mit eingeschaltetem HDMI-Gerät (Abschnitt 6) |
+| Ruckeln trotz 60 FPS im Overlay | Host-Display mit 59,94 statt 60 Hz, oder Panel-Refresh nicht korrekt initialisiert | Zuerst *Host frame rate* im Overlay bzw. `Display refresh rate` im Sunshine-Log prüfen (5.1, 5.4). Danach der Workaround mit eingeschaltetem HDMI-Gerät (Abschnitt 6) |
 | Matschiges Bild trotz hoher Bitrate | Encoder überlastet | *Host processing latency* prüfen, Preset senken |
 | Artefakte bleiben nach Drop stehen | RFI auf dem Decoder nicht kompatibel | Reference Frame Invalidation aus |
 | Farben leicht verschoben (alte App-Version) | BT.601-Farbraum | Mit dieser Version behoben |

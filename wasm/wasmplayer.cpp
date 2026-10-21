@@ -83,6 +83,15 @@ static int m_LastFrameNumber = 0;
 // client requested itself after a focus or track change (flagged from the main thread, consumed by the decoder thread)
 static bool s_ReceivedFirstIdrFrame = false;
 static uint32_t s_RecoveryIdrFrames = 0;
+
+// Measurement of the frame rate of the host from its capture timestamps (see UpdateHostFrameRate)
+static constexpr uint32_t kHostFrameRateWindowMs = 30000;
+static constexpr uint32_t kHostFrameRateMaxGapMs = 1000;
+static bool s_HostRateWindowOpen = false;
+static uint32_t s_HostRateStartPts = 0;
+static uint32_t s_HostRateLastPts = 0;
+static int s_HostRateStartFrame = 0;
+static float s_HostFrameRate = 0.0f;
 static std::atomic<bool> s_ExpectedIdrFrame{false};
 
 static std::string s_StatString = "";
@@ -389,6 +398,39 @@ static void ReportVideoFormatFallback(int requestedFormat, int videoFormat) {
   }
 }
 
+// Measure the frame rate of the host from the capture timestamps that it sends with every frame, over a window
+// of 30 s. That resolves the 0.1 % between a 59.94 Hz host display and a 60 FPS stream, which the frame counts
+// of the other overlay lines can't show. Frames are counted by their frame numbers, so frames lost on the network
+// don't lower the result. The window only starts and ends on frames with a real capture time: the frames that
+// the host repeats on static content carry no host processing latency and a send time instead of a capture time.
+// The repeats in between are counted, so the value is only meaningful during motion.
+static void UpdateHostFrameRate(int frameNumber, uint32_t pts, uint16_t hostProcessingLatency) {
+  if (hostProcessingLatency == 0) {
+    return;
+  }
+  if (s_HostRateWindowOpen) {
+    // Restart the window after a stall or a host reset, or when the timestamps go backwards, e.g. when the
+    // 90 kHz RTP timestamp wraps after ~13 hours. The unsigned difference turns a step back into a huge gap.
+    const uint32_t sinceLast = pts - s_HostRateLastPts;
+    if (sinceLast > kHostFrameRateMaxGapMs || frameNumber < s_HostRateStartFrame) {
+      s_HostRateWindowOpen = false;
+    }
+  }
+  s_HostRateLastPts = pts;
+  if (!s_HostRateWindowOpen) {
+    s_HostRateWindowOpen = true;
+    s_HostRateStartPts = pts;
+    s_HostRateStartFrame = frameNumber;
+    return;
+  }
+  const uint32_t elapsed = pts - s_HostRateStartPts;
+  if (elapsed >= kHostFrameRateWindowMs) {
+    s_HostFrameRate = (frameNumber - s_HostRateStartFrame) * 1000.0f / elapsed;
+    s_HostRateStartPts = pts;
+    s_HostRateStartFrame = frameNumber;
+  }
+}
+
 int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int redrawRate, void* context, int drFlags) {
   ClLogMessage("Video decoding setup has started.\n");
 
@@ -452,6 +494,10 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
   s_ReceivedFirstIdrFrame = false;
   s_RecoveryIdrFrames = 0;
   s_ExpectedIdrFrame.store(false);
+
+  // Reset the host frame rate measurement so that no figure from a previous stream is shown
+  s_HostRateWindowOpen = false;
+  s_HostFrameRate = 0.0f;
 
   // Ensure that StartupVidDecSetup is called every time when VidDecSetup is invoked to reinitialize the media pipeline
   int initVidDec = StartupVidDecSetup(videoFormat, width, height, redrawRate, context, drFlags);
@@ -702,6 +748,9 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
   // Track the total number of bytes received by the decoding unit
   total_bytes += decodeUnit->fullLength;
 
+  // Measure the frame rate of the host from its capture timestamps
+  UpdateHostFrameRate(decodeUnit->frameNumber, decodeUnit->presentationTimeMs, decodeUnit->frameHostProcessingLatency);
+
   // Start performance stats collection if this is the first frame
   if (!m_LastFrameNumber) {
     // Record the timestamp when measurement started
@@ -924,8 +973,25 @@ void MoonlightInstance::FormatVideoStats(VIDEO_STATS& stats, char* output, int l
       "Incoming frame rate from network: %.2f FPS\n"
       "Decoding frame rate: %.2f FPS\n"
       "Rendering frame rate: %.2f FPS\n"
-      "Incoming bitrate from network: %.2f Mbps\n",
-      stats.receivedFps, stats.decodedFps, stats.renderedFps, stats.receivedBitrate
+      "Incoming bitrate from network: %.2f Mbps\n"
+      "Configured bitrate: %.1f Mbps\n",
+      stats.receivedFps, stats.decodedFps, stats.renderedFps, stats.receivedBitrate,
+      g_Instance->m_StreamConfig.bitrate / 1000.0f
+    );
+    // Abort if string formatting failed or buffer overflowed
+    if (ret < 0 || ret >= length - offset) {
+      assert(false);
+      return;
+    }
+    offset += ret;
+  }
+
+  // Show the frame rate of the host once the first measurement window is complete
+  if (s_HostFrameRate > 0.0f) {
+    ret = snprintf(
+      &output[offset], length - offset,
+      "Host frame rate (30 s): %.2f FPS\n",
+      s_HostFrameRate
     );
     // Abort if string formatting failed or buffer overflowed
     if (ret < 0 || ret >= length - offset) {

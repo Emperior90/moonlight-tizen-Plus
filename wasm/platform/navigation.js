@@ -1,4 +1,6 @@
 const hoveredClassName = 'hovered';
+// Bitrate change in Mbps for UP/DOWN in the bitrate menu (LEFT/RIGHT use the 0.5 Mbps step of the slider)
+const BITRATE_COARSE_STEP = 5;
 
 // Check if the provided object is an HTML element
 function isHtmlElement(el) {
@@ -1087,8 +1089,16 @@ const Views = {
     view: new ListView(() => 
       document.getElementById('videoBitrateMenu')
       .parentNode.children[3].children[1].children),
-    up: function() {},
-    down: function() {},
+    // UP/DOWN change the bitrate in coarse steps, so that e.g. 95 -> 150 Mbps takes 11 presses instead of 110.
+    // The value is assigned directly, because the range input always clamps and snaps an assigned value.
+    up: function() {
+      bitrateSlider.value = Math.min(parseFloat(bitrateSlider.max), parseFloat(bitrateSlider.value) + BITRATE_COARSE_STEP);
+      bitrateSlider.dispatchEvent(new Event('input'));
+    },
+    down: function() {
+      bitrateSlider.value = Math.max(parseFloat(bitrateSlider.min), parseFloat(bitrateSlider.value) - BITRATE_COARSE_STEP);
+      bitrateSlider.dispatchEvent(new Event('input'));
+    },
     left: function() {
       bitrateSlider.stepDown();
       bitrateSlider.dispatchEvent(new Event('input'));

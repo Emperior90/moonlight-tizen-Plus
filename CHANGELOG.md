@@ -19,6 +19,9 @@ All notable changes to this project will be documented in this file.
 - Logged the UDP receive buffer size granted by the TV and the receive timeout mode at stream start
 - Added a notice when the host can only provide a fallback for the selected codec or HDR mode (another codec, or SDR instead of HDR)
 - Documented in the optimization plan how to check in the Sunshine log what was negotiated (HDR, bit depth, color range, encoder options) and what bitrate the encoder gets
+- Added the configured bitrate and the host frame rate, measured over 30 seconds from the capture timestamps of the host, to the performance stats, which reveals a host display running at 59.94 instead of 60 Hz
+- Added 5 Mbps steps to the bitrate menu with UP and DOWN, while LEFT and RIGHT keep the 0.5 Mbps steps
+- Documented an AV1 versus HEVC test procedure and the refresh rate of the host display in the optimization plan
 
 ### Changed
 - Reworked the video frame pacing to follow the usual arrival time of the frames, so that a single late frame no longer holds back every following frame by up to tens of milliseconds, and to follow a later arrival time only once two consecutive windows confirm it, so that the burst of frames after a network stall cannot hold back the next second of frames
@@ -40,6 +43,7 @@ All notable changes to this project will be documented in this file.
 - Changed the default video settings to the optimal streaming settings for the S90C (4K, 60 FPS, HEVC, HDR, and a bitrate for the network connection)
 - Used the codec modes reported by the host for the codec negotiation, and offered HEVC with the same bit depth as a fallback when AV1 is selected, so that a host without AV1 (or without 10-bit AV1 for HDR) gets HEVC instead of a 4K H.264 stream without HDR
 - Reworded the AV1 warning to say what AV1 needs and that the stream falls back to HEVC
+- Kept a bitrate picked by hand when the resolution, frame rate, codec or HDR mode changes, like moonlight-qt, instead of resetting it to the preset; toggling 'Optimize bitrate presets' applies the presets again, and selecting the current resolution or frame rate again no longer resets the bitrate
 
 ### Fixed
 - Fixed 'Restore Defaults' turning off the 'Video frame pacing' and 'Host address field mode' settings even though they are enabled by default
