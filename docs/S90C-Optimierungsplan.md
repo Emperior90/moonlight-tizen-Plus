@@ -98,6 +98,7 @@ Gegen Netzwerk und TV spricht: 0 % Verlust, der Web-Audio-Scheduler fängt Uhren
 - **P6 + Two-Pass Full:** sinnvoll für maximale Qualität. 11 ms bei 4K liegen unter den 16,7 ms pro Bild, zählen aber voll zur Latenz. Für dein Latenz-Ziel deshalb *Split Frame Encoding: Enabled* setzen: Die RTX 5080 hat zwei Encoder, die sich dann jedes Bild teilen. Laut Sunshine-Doku verkürzt das die Kodierzeit deutlich, bei minimalem Qualitätsverlust. Liegt das *Maximum* der Host processing latency danach trotzdem regelmäßig über ~14 ms, *Two-Pass: Quarter resolution* testen.
 - **VBV-Erhöhung 0:** der sichere Startwert. Für mehr Qualität in schnellen Szenen über dein WLAN 50 bzw. 100 testen (A.8). **Spatial AQ aus:** richtig bei hohen Bitraten.
 - *Minimale CPU-Threads*, *QP* und *CAVLC* wirken bei NVENC-HEVC mit Bitratensteuerung nicht. Die kannst du ignorieren.
+- **Prüfen, was wirklich läuft:** Ob HDR10, 10 Bit, Limited Range, P6, Two-Pass, VBV-Erhöhung und Split Frame Encoding im Stream tatsächlich aktiv sind, zeigt das Sunshine-Log nach dem Verbindungsaufbau. Wie man es liest und was der Encoder bei welcher Bitrate bekommt, steht in Abschnitt 5.4.
 - **Version:** v2026.914.233613 konnte ich nicht verifizieren. Öffentlich auffindbar war zuletzt v2026.724.x, und auf die GitHub-Releases hatte ich keinen Zugriff. Deine installierte Version zeigt die Sunshine-Weboberfläche. Die aktuelle stabile Version steht auf github.com/LizardByte/Sunshine/releases.
 
 ### A.5 Moonlight am TV
@@ -174,8 +175,8 @@ Ein Punkt kommt neu dazu: **HDR-Metadaten.** Sunshines NVENC-Pfad schreibt keine
 
 **In Bewegung** entscheidet, wie viele Bits ein schwieriges Bild bekommen darf:
 
-1. **Bitrate:** 95 Mbit/s bei 60 FPS sind ~1,6 Mbit pro Bild. Mehr Bitrate hilft direkt, also die Bitrate-Leiter aus A.7 durchgehen.
-2. **VBV:** Mit `nvenc_vbv_increase = 0` darf kein Bild größer werden als Bitrate ÷ FPS. Genau schnelle Kameraschwenks, Vegetation und Partikel bräuchten mehr. Über dein WLAN, ohne den 100-Mbit-Port im Weg, lohnt ein Test mit **50, dann 100 %**. Größere Bilder brauchen über die Funkstrecke ein paar Millisekunden länger. Tauchen Session-Drops auf, zurück auf 0.
+1. **Bitrate:** Von 95 Mbit/s bekommt der Encoder bei deinen 5 % FEC ~89 Mbit/s, bei 60 FPS also ~1,5 Mbit pro Bild (Rechnung in 5.4). Mehr Bitrate hilft direkt, also die Bitrate-Leiter aus A.7 durchgehen.
+2. **VBV:** Mit `nvenc_vbv_increase = 0` darf kein Bild größer werden als Encoder-Bitrate ÷ FPS, bei 95 Mbit/s also ~1,5 Mbit. Genau schnelle Kameraschwenks, Vegetation und Partikel bräuchten mehr. Über dein WLAN, ohne den 100-Mbit-Port im Weg, lohnt ein Test mit **50, dann 100 %**. Größere Bilder brauchen über die Funkstrecke ein paar Millisekunden länger. Tauchen Session-Drops auf, zurück auf 0.
 3. **Frame Generation aus:** FG-Zwischenbilder haben bei schnellen Bewegungen eigene Artefakte, die im Stream genauso sichtbar sind.
 4. **P6 mit Two-Pass Full** ist für die Qualität richtig. Mit Split Frame Encoding bleibt die Kodierzeit trotzdem niedrig.
 5. **Bewegungsschärfe des OLEDs:** Bei 60 Hz verwischt das Auge bewegte Bilder (Sample-and-Hold). Zwischenbildberechnung würde das mildern, kostet aber Latenz. Für dein Ziel bleibt sie aus.
@@ -186,10 +187,10 @@ Die App ist vorbereitet: Sie meldet dem TV für 4K120 das nötige Codec-Level 5.
 
 - **Darstellung:** Laut Projekt-Wiki begrenzt Tizen die Darstellung von Apps auf vielen Modellen auf ~60 FPS, auch bei einem 120-Hz-Panel.
 - **Messbarkeit:** Das Overlay zählt die an den TV-Player übergebenen Bilder, nicht die angezeigten. Eine *Rendering frame rate* von 120 beweist also nicht, dass der TV 120 Bilder zeigt. Prüfen lässt sich das nur mit dem Auge, z. B. mit testufo.com im Browser auf dem PC: im Stream 60 und 120 FPS vergleichen.
-- **Bildqualität:** Bei 150 Mbit/s bleiben pro Bild 1,25 Mbit statt ~1,6 Mbit wie bei 4K60 mit 95 Mbit/s. Jedes Einzelbild wird schlechter.
+- **Bildqualität:** Bei 150 Mbit/s bleiben dem Encoder pro Bild ~1,18 Mbit statt ~1,49 Mbit wie bei 4K60 mit 95 Mbit/s (jeweils mit 5 % FEC). Jedes Einzelbild wird schlechter.
 - **PC:** Das virtuelle Display muss auf 120 Hz laufen, und das Spiel muss ohne FG 120 FPS schaffen. Der Encoder muss in 8,3 ms fertig sein, P6 mit Two-Pass Full braucht bei 4K aber ~11 ms. Also Split Frame Encoding an oder das Preset senken.
 
-**Fazit:** 4K60 ist das Hauptprofil für dein Ziel. 4K120 einmal testen und nur behalten, wenn es sichtbar flüssiger ist. Als Mittelweg gibt es jetzt **3200 × 1800 bei 120 FPS**: 69 % der 4K-Pixel, bei 120 Mbit/s mit 0,17 Bit pro Pixel fast so viel wie 4K60 bei 100 Mbit/s (0,20), und der Encoder hat rund 30 % weniger zu tun. Dafür muss das virtuelle Display 3200 × 1800 bei 120 Hz anbieten.
+**Fazit:** 4K60 ist das Hauptprofil für dein Ziel. 4K120 einmal testen und nur behalten, wenn es sichtbar flüssiger ist. Als Mittelweg gibt es jetzt **3200 × 1800 bei 120 FPS**: 69 % der 4K-Pixel, bei 120 Mbit/s mit ~0,16 Bit pro Pixel fast so viel wie 4K60 bei 100 Mbit/s (~0,19; beides Encoder-Budget bei 5 % FEC), und der Encoder hat rund 30 % weniger zu tun. Dafür muss das virtuelle Display 3200 × 1800 bei 120 Hz anbieten.
 
 ---
 
@@ -227,8 +228,8 @@ Fehler entstehen fast immer an einer dieser vier Stellen:
 ### 2.1 Der 100-Mbit-LAN-Port und die Bursts (häufigste Ursache)
 
 - Sunshine schickt jedes Bild als Paket-Burst mit bis zu **~800 Mbit/s** (im Sunshine-Quellcode fest auf 80 % von 1 Gbit/s eingestellt).
-- Ein Bild ist bei Sunshines Standard-Einstellung (`nvenc_vbv_increase = 0`) höchstens etwa *Bitrate ÷ FPS* groß, inklusive FEC. Bei 75 Mbit/s und 60 FPS sind das ≈ 1,25 Mbit ≈ **156 KB**.
-- Diese 156 KB kommen in ~1,6 ms am Switch an. Der TV-Port leert in dieser Zeit aber nur ~20 KB. Der Switch muss also **~140 KB pro Bild** zwischenspeichern.
+- Ein Bild ist bei Sunshines Standard-Einstellung (`nvenc_vbv_increase = 0`) höchstens etwa *Encoder-Bitrate ÷ FPS* groß, dazu kommen die FEC-Pakete. Bei 75 Mbit/s, 60 FPS und den Standard-20 % FEC bekommt der Encoder ~59 Mbit/s: ≈ 0,98 Mbit pro Bild, mit FEC ≈ 1,18 Mbit ≈ **148 KB**. Mit 5 % FEC sind es ≈ 154 KB, also fast gleich viel.
+- Diese ~150 KB kommen in ~1,5 ms am Switch an. Der TV-Port leert in dieser Zeit aber nur ~19 KB. Der Switch muss also **~130 KB pro Bild** zwischenspeichern.
 - Viele günstige Switches und Router haben insgesamt nur 128–512 KB Puffer, geteilt über alle Ports. Läuft er über, gehen Pakete verloren. Die Folge: Frame-Drops, Freezes, schwarzes Bild. Das passiert, obwohl die *durchschnittliche* Bitrate weit unter 100 Mbit/s liegt.
 - Über WLAN tritt das so nicht auf: Der Access Point puffert deutlich mehr, und die Funkstrecke ist schneller als 100 Mbit/s.
 
@@ -236,7 +237,7 @@ Fehler entstehen fast immer an einer dieser vier Stellen:
 
 ### 2.2 Bitrate in Moonlight = Gesamtbudget
 
-Sunshine rechnet die in Moonlight eingestellte Bitrate als *Gesamtbudget*: Davon gehen 20 % FEC, Audio und ~0,5 Mbit/s Overhead ab, der Rest geht an den Encoder. Auf dem Kabel landen inklusive IP/UDP/Ethernet-Headern etwa **+5 %**.
+Sunshine rechnet die in Moonlight eingestellte Bitrate als *Gesamtbudget*: Davon gehen der FEC-Anteil (`fec_percentage`, Standard 20 %, bei dir 5 %), Audio (Stereo ~0,5 Mbit/s) und ~0,5 Mbit/s Overhead ab, der Rest geht an den Encoder. Die genaue Rechnung steht in 5.4. Auf dem Kabel landen inklusive IP/UDP/Ethernet-Headern etwa **+5 %**.
 
 - 75 Mbit/s in Moonlight ≈ 79 Mbit/s auf dem Kabel, das passt in 100 Mbit/s mit Reserve.
 - 80 Mbit/s ≈ 84 Mbit/s, das ist das sinnvolle Maximum über LAN.
@@ -244,10 +245,10 @@ Sunshine rechnet die in Moonlight eingestellte Bitrate als *Gesamtbudget*: Davon
 
 ### 2.3 Bits pro Bild (warum 4K60 die beste Bildqualität liefert)
 
-| Profil | Bits pro Bild bei 100 Mbit/s |
-|---|---|
-| 4K @ 60 FPS | 1,67 Mbit |
-| 4K @ 120 FPS | 0,83 Mbit |
+| Profil | Bits pro Bild für den Encoder bei 100 Mbit/s, FEC 20 % (Standard) | dasselbe mit FEC 5 % (dein Setup) |
+|---|---|---|
+| 4K @ 60 FPS | 1,32 Mbit | 1,57 Mbit |
+| 4K @ 120 FPS | 0,66 Mbit | 0,78 Mbit |
 
 Bei gleicher Bitrate hat 4K60 pro Bild die doppelte Datenmenge. Weil Tizen-Apps auf vielen Modellen ohnehin nur ~60 FPS darstellen, ist **4K60 die beste Wahl für maximale Bildqualität**. 4K120 lohnt sich nur, wenn der TV die 120 Bilder auch zeigt. Das Overlay kann das nicht belegen, denn es zählt die an den Player übergebenen Bilder. Wie man es prüft, steht in A.8.
 
@@ -349,6 +350,33 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
 - Den GPU-Spielraum für den Encoder freihalten: Die GPU nicht konstant bei 99 % betreiben, sonst leidet die Encoder-Latenz.
 - Audio: *Steam Streaming Speakers* mit 16 Bit / 48 kHz (laut Projekt-Wiki am stabilsten).
 
+### 5.4 Prüfen, was wirklich ausgehandelt wurde (Sunshine-Log)
+
+Das Overlay am TV zeigt nicht, mit welchen Farbeinstellungen der PC kodiert. Das steht im Sunshine-Log (Weboberfläche → *Troubleshooting* → *Logs*). Sunshine testet beim Start und bei jedem Verbindungsaufbau seine Encoder mit Testeinstellungen, deshalb tauchen die Zeilen mehrfach auf. Zum Stream des TVs gehört nur der Block nach `New streaming session started` bzw. `CLIENT CONNECTED`.
+
+| Zeile | Soll für dein Ziel | Bedeutung |
+|---|---|---|
+| `Color coding: HDR (Rec. 2020 + SMPTE 2084 PQ)` | so | HDR10 ist aktiv. Steht dort `SDR (Rec. 709)` zusammen mit `Color depth: 10-bit`, hat der TV HDR angefordert, aber das Host-Display (bei dir das VDD) ist nicht im HDR-Modus. Der Stream ist dann 10-Bit-SDR ohne PQ: Windows-HDR für dieses Display einschalten |
+| `Color depth: 10-bit` | so | Main10 läuft |
+| `Color range: MPEG` | so | MPEG = Limited Range (Empfehlung), JPEG = Full Range |
+| `NvEnc: created encoder v… HEVC P6 …` | enthält `10-bit`, `two-pass`, bei Split Frame Encoding `sfe` (erzwungen) bzw. `sfe-auto` (Treiber entscheidet), bei VBV-Erhöhung `vbv+N` | Zwischen den Angaben können weitere stehen, z. B. `async`. `two-pass` sagt nicht, ob Quarter oder Full Resolution. `rfi` heißt nur, dass die GPU Reference Frame Invalidation kann; ob der TV es nutzt, folgt dem RFI-Schalter der App |
+
+**Was der Encoder bekommt:**
+
+*Encoder-Bitrate = Bitrate in Moonlight × (100 − `fec_percentage`) ÷ 100 − Audio − 0,5 Mbit/s*
+
+Audio ist bei Stereo 0,512 Mbit/s (ab 15 Mbit/s die hohe Qualitätsstufe), bei 5.1 bzw. 7.1 1,536 bzw. 2,048 Mbit/s, wenn der Host die hohe Qualität für Surround anbietet. Die 100-Mbit/s-Grenze, die Moonlight intern für ältere Hosts setzt, gilt für Sunshine nicht.
+
+| Bitrate in Moonlight (Stereo) | Encoder bei FEC 5 % (dein Setup) | Encoder bei FEC 20 % (Standard) | pro Bild bei 60 FPS (FEC 5 %) |
+|---|---|---|---|
+| 75 Mbit/s | ~70,2 Mbit/s | ~59,0 Mbit/s | ~1,17 Mbit |
+| 95 Mbit/s | ~89,2 Mbit/s | ~75,0 Mbit/s | ~1,49 Mbit |
+| 100 Mbit/s | ~94,0 Mbit/s | ~79,0 Mbit/s | ~1,57 Mbit |
+| 120 Mbit/s | ~113,0 Mbit/s | ~95,0 Mbit/s | ~1,88 Mbit |
+| 150 Mbit/s | ~141,5 Mbit/s | ~119,0 Mbit/s | ~2,36 Mbit |
+
+Das größte Einzelbild liegt ungefähr bei Encoder-Bitrate ÷ FPS × (1 + `nvenc_vbv_increase` ÷ 100). Den exakten Wert schreibt Sunshine nur auf Debug-Stufe ins Log (`Final adjusted video encoding bitrate is N Kbps`). Dafür `min_log_level` für einen Test auf `debug` stellen und danach zurück. `max_bitrate` bleibt auf 0.
+
 ---
 
 ## 6. Einstellungen am S90C
@@ -378,7 +406,7 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
 |---|---|---|---|
 | 1 | **Farbraum BT.709** statt BT.601 für SDR-Streams | Korrekte Farben auf dem 4K-TV. HDR nutzt weiterhin BT.2020 | `wasm/main.cpp` |
 | 2 | **Codec-Level 5.2** (HEVC `hev1.x.x.L156`, AV1 `av01.0.14M`) für Streams über 4K60, mit automatischem Rückfall auf 5.1, falls der TV ablehnt | Der Decoder wird für 4K90/120 passend konfiguriert. Bis 4K60 ändert sich nichts | `wasm/wasmplayer.cpp` |
-| 3 | **Reference Frame Invalidation** (neu, experimentell, Standard aus) | Nach Paketverlust schickt der PC kein komplettes Keyframe (groß oder unscharf), sondern ein normales Bild, das auf einem älteren Bild aufbaut. Erlaubt zusätzlich mehr Referenzbilder | `wasm/main.cpp`, `wasm/index.html`, `wasm/platform/index.js` |
+| 3 | **Reference Frame Invalidation** (neu, experimentell, Standard aus) | Nach Paketverlust schickt der PC kein komplettes Keyframe (groß oder unscharf), sondern ein normales Bild, das auf einem älteren Bild aufbaut. Keine bessere Kompression: Sunshine (NVENC) lässt jedes Bild weiter nur auf ein Referenzbild verweisen, der größere Puffer dient nur der Wiederherstellung | `wasm/main.cpp`, `wasm/index.html`, `wasm/platform/index.js` |
 | 4 | **Sitzungs-Statistik** im Overlay: verlorene Frames *seit Stream-Start* und Zahl der Wiederherstellungs-Keyframes (Keyframes, die die App selbst nach einem Fokus- oder Track-Wechsel anfordert, zählen nicht mit), dazu eine **Netzwerkzeile** (LAN bzw. WLAN mit Signalstärke) | Fehlerfreiheit lässt sich über eine ganze Session prüfen, kurze Drops gehen nicht mehr unter | `wasm/wasmplayer.cpp`, `wasm/input.cpp`, `wasm/platform/messages.js`, `wasm/platform/index.js` |
 | 5 | **Verbindungserkennung LAN/WLAN** | Warnung bei mehr als 80 Mbit/s per LAN, Bitrate-Presets per LAN auf 75 Mbit/s begrenzt | `wasm/platform/index.js` |
 | 6 | **Button „Samsung S90C optimization“** und S90C-Werte als Standard (Neuinstallation und „Restore Defaults“) | Der Dialog zeigt, was gesetzt wird, und erst „Continue“ setzt 4K60, HEVC, HDR, Frame Pacing, passenden Game Mode und die Bitrate passend zur Verbindung | `wasm/index.html`, `wasm/platform/index.js`, `wasm/platform/navigation.js`, `wasm/static/css/style.css` |
@@ -394,12 +422,13 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
 | 16 | **Ein Slice pro Bild** statt vier (Encoder-Einstellung, die der Client meldet) | Bessere Kompression bei gleicher Bitrate: Der Hardware-Decoder des TVs verarbeitet ganze Bilder, mehrere Slices helfen nur Software-Decodern und kosten Bits an den Slice-Grenzen | `wasm/main.cpp`, `wasm/wasmplayer.cpp` |
 | 17 | **Web Audio:** Der Ton darf höchstens das 1,5-Fache des Jitter-Puffers hinter dem Bild liegen (vorher das Doppelte), und der Puffer lässt sich bis 25 ms einstellen | Weniger Ton-Verzögerung bei Uhrendrift zwischen PC und TV, mehr Spielraum für Latenz-Tests | `wasm/platform/audio.js`, `wasm/index.html` |
 | 18 | **HDR static metadata** (neu, experimentell, Standard aus): Die App fügt jedem HEVC-Keyframe die HDR10-Metadaten des Host-Displays ein (Mastering Display Colour Volume, Content Light Level), die Sunshine über den Steuerkanal liefert, der TV aber bisher nie bekam. Treffen die Metadaten erst nach dem ersten Keyframe ein oder ändern sie sich (HDR am Host eingeschaltet), fordert die App ein neues Keyframe an | Mit *HDR Tone Mapping: Statisch* kann der TV auf die Spitzenhelligkeit und den Farbraum des (virtuellen) Host-Displays abbilden, statt einen Standardwert anzunehmen | `wasm/wasmplayer.cpp`, `wasm/connectionlistener.cpp`, `wasm/main.cpp`, `wasm/index.html`, `wasm/platform/index.js`, `wasm/platform/navigation.js` |
-| 19 | **Auflösung 3200 × 1800 (1800p)** mit eigenen Bitrate-Presets (30/60/75/90/100 Mbit/s für 30–144 FPS) | Zwischenstufe mit 69 % der 4K-Pixel: bei 100 Mbit/s 0,29 statt 0,20 Bit pro Pixel (60 FPS). Gedacht für 120 FPS und für den 75-Mbit/s-Fall per LAN. Für das schärfste Standbild sollte das virtuelle Display am PC dann ebenfalls 3200 × 1800 liefern, sonst wird zweimal skaliert | `wasm/index.html`, `wasm/platform/index.js` |
+| 19 | **Auflösung 3200 × 1800 (1800p)** mit eigenen Bitrate-Presets (30/60/75/90/100 Mbit/s für 30–144 FPS) | Zwischenstufe mit 69 % der 4K-Pixel: bei 100 Mbit/s ~0,27 statt ~0,19 Bit pro Pixel (60 FPS, Encoder-Budget bei 5 % FEC). Gedacht für 120 FPS und für den 75-Mbit/s-Fall per LAN. Für das schärfste Standbild sollte das virtuelle Display am PC dann ebenfalls 3200 × 1800 liefern, sonst wird zweimal skaliert | `wasm/index.html`, `wasm/platform/index.js` |
 | 20 | **Hinweis bei 90 FPS:** 90 teilt weder 60 noch 120 Hz glatt | Erspart einen irreführenden Versuch; 120 FPS direkt testen oder bei 60 bleiben | `wasm/platform/index.js` |
 | 21 | **Verbindungswarnungen und Rumble** werden asynchron an die Oberfläche übergeben | Der Video-Empfangs-Thread wartet nicht mehr auf den Haupt-Thread, der UDP-Puffer läuft bei beschäftigtem Haupt-Thread nicht zusätzlich voll | `wasm/connectionlistener.cpp`, `wasm/gamepad.cpp` |
 | 22 | **Logausgabe des tatsächlichen UDP-Empfangspuffers** und des Timeout-Modus beim Stream-Start | Der Puffer ist die ganze Toleranz für Aussetzer des Empfangs-Threads bei 100–150 Mbit/s (angefordert ~2,9 MB ≈ 150 ms bei 150 Mbit/s). Ob Tizen das gewährt, steht jetzt im Log | `moonlight-common-c/src/PlatformSockets.c`, `moonlight-common-c/src/VideoStream.c` |
 | 23 | **Audio clock sync** (neu, experimentell, Standard aus, nur Web Audio): hält die Ton-Verzögerung am Jitter-Puffer, indem der Ton um höchstens 500 ppm schneller oder langsamer abgespielt wird. Der Resampler interpoliert kubisch (vier Stützstellen) und schaltet nur auf ganzen Samples um, damit nichts klickt | Ohne Taktabgleich lässt jede Uhrendrift zwischen PC und TV den Ton alle paar Minuten ein Stück auslassen (5 ms) oder nach einem Leerlauf neu ansetzen (ein Loch von der Größe des Puffers). In der Simulation mit dem echten Scheduler-Code: 0 Aussetzer über 5 Minuten bei ±300 ppm und 3 ms WLAN-Jitter, Höhenabfall während der Korrektur 0,5 dB bei 10 kHz | `wasm/platform/audio.js`, `wasm/index.html`, `wasm/platform/index.js`, `wasm/platform/navigation.js` |
 | 24 | **Beschreibung von „Optimize game settings“** beschreibt, was Sunshine wirklich tut | Nur die Auflösung folgt dem Client, die Bildwiederholrate folgt der FPS-Einstellung ohnehin, und nur Modi, die das Host-Display anbietet, lassen sich setzen | `wasm/index.html`, Locales |
+| 25 | **Sichere Codec-Aushandlung mit AV1:** Die App nutzt die Codec-Fähigkeiten, die der PC selbst meldet, und bietet bei AV1 immer HEVC mit derselben Bittiefe als Ersatz an. Kann der PC nur Ersatz liefern (anderer Codec oder SDR statt HDR), erscheint ein Hinweis | Bei deiner RTX 5080 ändert sich nichts, AV1 wird wie bisher ausgehandelt. Ohne AV1-Encoder am PC kam bisher ein 4K-H.264-Stream ohne HDR, den der TV wahrscheinlich nicht dekodiert. Jetzt kommt HEVC Main10 mit HDR. Fordert die App 10 Bit an, die der PC nicht kodieren kann, startet der Stream jetzt in 8 Bit statt mit einem Encoder-Fehler | `wasm/main.cpp`, `wasm/wasmplayer.cpp`, `wasm/platform/messages.js`, `wasm/platform/index.js` |
 
 **So sieht es in der App aus** (Screenshots aus einem Browser-Test mit simulierten Tizen-APIs):
 
@@ -442,11 +471,11 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
 
 | Test | Wann | Worauf achten |
 |---|---|---|
-| HEVC ↔ AV1 | GPU kann AV1 | Detailschärfe bei gleicher Bitrate, Decoding time |
+| HEVC ↔ AV1 | GPU kann AV1 | Detailschärfe bei gleicher Bitrate, Decoding time. Kann der PC kein AV1 (oder mit HDR kein 10-Bit-AV1), nimmt die App jetzt HEVC mit derselben Bittiefe und meldet das. Im Overlay muss *Codec: AV1* stehen, sonst ist es kein AV1-Test |
 | NVENC P4 ↔ P5/P6 | Encoder hat Reserven | Bildqualität vs. *Host processing latency* |
 | Frame Pacing an ↔ aus | Mikroruckler | Gleichmäßigkeit vs. Latenz |
 | Game Mode / ForceGM ↔ Low Latency | Je nach Tizen-Version | Latenz, Stabilität, ob der TV in den Spielmodus wechselt |
-| **Reference Frame Invalidation** an ↔ aus | Nur wenn Drops auftreten | Erholt sich das Bild nach einem Drop schneller? Bleiben Artefakte stehen → wieder aus |
+| **Reference Frame Invalidation** an ↔ aus | Nur wenn Drops auftreten | Erholt sich das Bild nach einem Drop schneller? Bleiben Artefakte stehen → wieder aus. RFI greift bei Sunshine (NVENC) nur, wenn vom ersten verlorenen bis zum zuletzt kodierten Bild weniger als 5 (HEVC) bzw. 8 (AV1) Bilder liegen, sonst kommt doch ein Keyframe: bei 60 FPS unter ~67 bzw. ~117 ms, bei 120 FPS unter ~33 bzw. ~58 ms. Das Fenster schließt die Erkennung am TV und den Weg der Anfrage zum PC ein, der WLAN-Aussetzer selbst muss also noch kürzer sein. AV1 hat das größere Fenster |
 | 4K120 | Option auf mehr Flüssigkeit | Sichtprüfung (z. B. testufo.com auf dem PC) statt Overlay, siehe A.8. Nicht sichtbar flüssiger → bei 60 FPS bleiben |
 | `nvenc_vbv_increase` 0 → 50 → 100 (nur WLAN) | Blockartefakte in schnellen Szenen | Bildqualität bei Kameraschwenks, Session-Drops müssen 0 bleiben |
 | Split Frame Encoding an ↔ Treiber entscheidet | Latenz | *Host processing latency* (Durchschnitt und Maximum) |

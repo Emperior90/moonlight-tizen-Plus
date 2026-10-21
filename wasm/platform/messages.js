@@ -360,6 +360,21 @@ function handleMessage(msg) {
   } else if (msg.indexOf('TransientMsg: ') === 0) {
     // Show transient message as notification
     snackbarLogLong(translateBackendMessage(msg.replace('TransientMsg: ', '')));
+  } else if (msg.indexOf('CodecFallbackMsg: ') === 0) {
+    // Tell the user that the host could only provide a fallback for the selected codec or HDR mode
+    switch (msg.replace('CodecFallbackMsg: ', '')) {
+      case 'HEVC':
+        snackbarLogLong('The host PC can\'t encode the selected codec, so the stream uses HEVC instead.');
+        break;
+      case 'H264':
+        snackbarLogLong('The host PC can\'t encode the selected codec, so the stream uses H.264 instead, which Samsung TVs generally decode only up to 1080p.');
+        break;
+      case 'SDR':
+        snackbarLogLong('The host PC can\'t encode 10-bit video with this codec, so the stream runs without HDR.');
+        break;
+      default:
+        break;
+    }
   } else if (msg.indexOf('DialogMsg: ') === 0) {
     // Show dialog message using the warning dialog
     warningDialog(t('Connection Error'), translateBackendMessage(msg.replace('DialogMsg: ', '')));

@@ -199,6 +199,15 @@ void* MoonlightInstance::InputThreadFunc(void* context) {
   return NULL;
 }
 
+// Whether the codec modes from the server info of the host can be trusted for the codec negotiation. Hosts
+// that don't report them send 0. Sunshine reports only H.264 when its encoder probe failed, e.g. because no
+// display was attached yet (a virtual display that only appears at launch), and probes again at launch. Such
+// a stale value would turn an HDR stream into 8-bit or drop AV1 for no reason, so it isn't trusted. A host that
+// really can encode only H.264 still gets H.264, because the negotiation also checks the RTSP reply of the host.
+static bool HasReliableHostCodecModes(int serverCodecModeSupport) {
+  return serverCodecModeSupport > 0 && (serverCodecModeSupport & (SCM_MASK_HEVC | SCM_MASK_AV1)) != 0;
+}
+
 void* MoonlightInstance::ConnectionThreadFunc(void* context) {
   MoonlightInstance* me = (MoonlightInstance*)context;
   int err;
@@ -248,6 +257,16 @@ void* MoonlightInstance::ConnectionThreadFunc(void* context) {
     serverInfo.serverCodecModeSupport = SCM_H264;
     PostToJs("Selecting the fallback server code mode to: SCM_H264");
   }
+  // Use the codec modes that the host reported in its server info instead, like moonlight-qt does. The
+  // negotiation then only picks a profile that the host can really encode, e.g. HEVC Main instead of a
+  // Main10 stream that the encoder can't start. Hosts that don't report them keep the modes from above,
+  // and so do hosts that report neither HEVC nor AV1 (see HasReliableHostCodecModes).
+  if (HasReliableHostCodecModes(me->m_ServerCodecModeSupport)) {
+    serverInfo.serverCodecModeSupport = me->m_ServerCodecModeSupport;
+    char hostModes[64];
+    snprintf(hostModes, sizeof(hostModes), "0x%x", (unsigned int)me->m_ServerCodecModeSupport);
+    PostToJs(std::string("Using the server codec mode support of the host: ") + hostModes);
+  }
 
   // Initialize the audio renderer capabilities with the value shared by both audio backends
   MoonlightInstance::s_ArCallbacks.capabilities = CAPABILITY_DIRECT_SUBMIT;
@@ -272,7 +291,9 @@ void* MoonlightInstance::ConnectionThreadFunc(void* context) {
     // Let the host recover from packet loss by invalidating the lost reference frames, instead of sending an IDR
     // frame, which is either much larger than the other frames (a traffic spike on the 100 Mbps Ethernet port of
     // the TV) or, when the encoder caps its size, visibly blurry. The recovery frame references an older frame, so
-    // it keeps the usual size and quality. This also lets the host use more reference frames. It's only enabled
+    // it keeps the usual size and quality. With Sunshine's NVENC encoder, the larger reference buffer that this
+    // requests (5 frames for HEVC, 8 for AV1, instead of 1) only gives the host older frames to fall back on.
+    // Every frame still references a single frame, so compression efficiency is unchanged. It's only enabled
     // for HEVC and AV1, because H.264 RFI is unreliable on many hardware decoders.
     MoonlightInstance::s_DrCallbacks.capabilities |= CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC | CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1;
     PostToJs("Selecting the video decoder capabilities to: CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC | CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1");
@@ -432,9 +453,30 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
     m_StreamConfig.supportedVideoFormats |= hdrMode ? VIDEO_FORMAT_H265_MAIN10 : VIDEO_FORMAT_H265;
     PostToJs(hdrMode ? "Selecting the video format to: VIDEO_FORMAT_H265_MAIN10" : "Selecting the video format to: VIDEO_FORMAT_H265");
   } else if (videoCodec == "AV1") { // AV1
-    // Apply the desired HDR or SDR profile ​for the AV1 codec based on the HDR toggle switch state
-    m_StreamConfig.supportedVideoFormats |= hdrMode ? VIDEO_FORMAT_AV1_MAIN10 : VIDEO_FORMAT_AV1_MAIN8;
-    PostToJs(hdrMode ? "Selecting the video format to: VIDEO_FORMAT_AV1_MAIN10" : "Selecting the video format to: VIDEO_FORMAT_AV1_MAIN8");
+    // Leave AV1 out when the host reported its codec modes and can't encode AV1 at all, or can't encode it
+    // in 10-bit for an HDR stream while it can encode HEVC Main10. The second case keeps HDR instead of an
+    // 8-bit AV1 stream. Hosts without reliable codec modes are offered AV1 as before.
+    bool hostLacksAv1 = false;
+    if (HasReliableHostCodecModes(serverCodecModeSupport)) {
+      if ((serverCodecModeSupport & SCM_MASK_AV1) == 0) {
+        hostLacksAv1 = true;
+      } else if (hdrMode && (serverCodecModeSupport & SCM_AV1_MAIN10) == 0 && (serverCodecModeSupport & SCM_HEVC_MAIN10) != 0) {
+        hostLacksAv1 = true;
+      }
+    }
+    if (!hostLacksAv1) {
+      // Apply the desired HDR or SDR profile ​for the AV1 codec based on the HDR toggle switch state
+      m_StreamConfig.supportedVideoFormats |= hdrMode ? VIDEO_FORMAT_AV1_MAIN10 : VIDEO_FORMAT_AV1_MAIN8;
+      PostToJs(hdrMode ? "Selecting the video format to: VIDEO_FORMAT_AV1_MAIN10" : "Selecting the video format to: VIDEO_FORMAT_AV1_MAIN8");
+    } else {
+      PostToJs("Skipping the video format AV1, because the host can't encode it with the selected HDR mode");
+    }
+    // Offer HEVC with the same bit depth as a fallback. The negotiation checks AV1 first, so AV1 still wins
+    // whenever the host offers it. Without this, a host that can't encode AV1 (or that re-probed its encoders
+    // after the server info was fetched) would get a 4K H.264 stream without HDR, which the TV likely can't
+    // decode, because Samsung TVs generally decode H.264 only up to 1080p.
+    m_StreamConfig.supportedVideoFormats |= hdrMode ? VIDEO_FORMAT_H265_MAIN10 : VIDEO_FORMAT_H265;
+    PostToJs(hdrMode ? "Selecting the fallback video format to: VIDEO_FORMAT_H265_MAIN10" : "Selecting the fallback video format to: VIDEO_FORMAT_H265");
   } else { // Unknown
     // Default case for unsupported codec selection
     ClLogMessage("Unsupported video codec '%s' detected! Reverting to the default codec...\n", videoCodec.c_str());
@@ -444,6 +486,15 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
     // Fallback to H.264 if no codec was selected
     m_StreamConfig.supportedVideoFormats = VIDEO_FORMAT_H264;
     PostToJs("Selecting the fallback video format to: VIDEO_FORMAT_H264");
+  }
+  // Remember the codec and bit depth that were selected, so that the video setup can tell the user when the
+  // host could only provide a fallback (another codec, or SDR instead of HDR)
+  if (videoCodec == "AV1") {
+    m_RequestedVideoFormat = hdrMode ? VIDEO_FORMAT_AV1_MAIN10 : VIDEO_FORMAT_AV1_MAIN8;
+  } else if (videoCodec == "HEVC") {
+    m_RequestedVideoFormat = hdrMode ? VIDEO_FORMAT_H265_MAIN10 : VIDEO_FORMAT_H265;
+  } else {
+    m_RequestedVideoFormat = VIDEO_FORMAT_H264;
   }
 
   // Initialize the color range with default value

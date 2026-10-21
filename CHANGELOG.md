@@ -17,6 +17,8 @@ All notable changes to this project will be documented in this file.
 - Added an experimental 'Audio clock sync' setting for the Web Audio backend that keeps the audio delay at the jitter buffer by playing a few ppm faster or slower, instead of dropping or repeating sound when the clocks of the host and the TV drift apart; the resampler now interpolates with a four point cubic kernel
 - Added a hint that 90 FPS does not divide the 60 or 120 Hz output of the TV evenly
 - Logged the UDP receive buffer size granted by the TV and the receive timeout mode at stream start
+- Added a notice when the host can only provide a fallback for the selected codec or HDR mode (another codec, or SDR instead of HDR)
+- Documented in the optimization plan how to check in the Sunshine log what was negotiated (HDR, bit depth, color range, encoder options) and what bitrate the encoder gets
 
 ### Changed
 - Reworked the video frame pacing to follow the usual arrival time of the frames, so that a single late frame no longer holds back every following frame by up to tens of milliseconds, and to follow a later arrival time only once two consecutive windows confirm it, so that the burst of frames after a network stall cannot hold back the next second of frames
@@ -36,6 +38,8 @@ All notable changes to this project will be documented in this file.
 - Declared HEVC and AV1 level 5.2 for streams above 4K at 60 FPS, with a fallback to level 5.1 for TVs that reject it
 - Limited the bitrate presets to 75 Mbps when the TV is connected over its 100 Mbps Ethernet port
 - Changed the default video settings to the optimal streaming settings for the S90C (4K, 60 FPS, HEVC, HDR, and a bitrate for the network connection)
+- Used the codec modes reported by the host for the codec negotiation, and offered HEVC with the same bit depth as a fallback when AV1 is selected, so that a host without AV1 (or without 10-bit AV1 for HDR) gets HEVC instead of a 4K H.264 stream without HDR
+- Reworded the AV1 warning to say what AV1 needs and that the stream falls back to HEVC
 
 ### Fixed
 - Fixed 'Restore Defaults' turning off the 'Video frame pacing' and 'Host address field mode' settings even though they are enabled by default

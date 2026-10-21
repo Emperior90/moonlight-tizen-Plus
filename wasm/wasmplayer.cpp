@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <condition_variable>
 #include <functional>
 #include <mutex>
@@ -360,8 +361,39 @@ int MoonlightInstance::StartupVidDecSetup(int videoFormat, int width, int height
   return 0;
 }
 
+static const char* VideoCodecName(int videoFormat) {
+  if (videoFormat & VIDEO_FORMAT_MASK_AV1) {
+    return "AV1";
+  }
+  if (videoFormat & VIDEO_FORMAT_MASK_H265) {
+    return "HEVC";
+  }
+  return "H264";
+}
+
+// Tell the user when the host could only provide a fallback for the selected codec or HDR mode, so that
+// e.g. an HEVC stream instead of AV1, or an SDR stream while the HDR switch is on, doesn't go unnoticed
+static void ReportVideoFormatFallback(int requestedFormat, int videoFormat) {
+  if (requestedFormat == 0) {
+    return;
+  }
+  const char* requestedCodec = VideoCodecName(requestedFormat);
+  const char* negotiatedCodec = VideoCodecName(videoFormat);
+  if (strcmp(requestedCodec, negotiatedCodec) != 0) {
+    MoonlightInstance::ClLogMessage("The host provided %s instead of the selected %s codec\n", negotiatedCodec, requestedCodec);
+    PostToJs(std::string("CodecFallbackMsg: ") + negotiatedCodec);
+  }
+  if ((requestedFormat & VIDEO_FORMAT_MASK_10BIT) != 0 && (videoFormat & VIDEO_FORMAT_MASK_10BIT) == 0) {
+    MoonlightInstance::ClLogMessage("The host provided an 8-bit stream instead of the selected 10-bit HDR stream\n");
+    PostToJs(std::string("CodecFallbackMsg: SDR"));
+  }
+}
+
 int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int redrawRate, void* context, int drFlags) {
   ClLogMessage("Video decoding setup has started.\n");
+
+  // Tell the user when the negotiated format differs from the selected one
+  ReportVideoFormatFallback(g_Instance->m_RequestedVideoFormat, videoFormat);
 
   // Resize the decode buffer based on initial decode buffer length
   s_DecodeBuffer.resize(INITIAL_DECODE_BUFFER_LEN);

@@ -3894,7 +3894,7 @@ function warnVideoCodec() {
   // Video codec warning
   if (!codecWarning && (chosenVideoCodec === 'AV1')) {
     // Warn only if video codec is selected to AV1
-    snackbarLogLong('Warning: Selected codec may not be supported by your host PC and may significantly slow down performance!');
+    snackbarLogLong('Warning: AV1 needs a host GPU with an AV1 encoder and a TV with an AV1 decoder. If the host PC can\'t encode AV1, the stream uses HEVC instead.');
     // Set flag for video codec warning
     codecWarning = true;
   } else if (codecWarning && (chosenVideoCodec === 'HEVC' || chosenVideoCodec === 'H264')) {

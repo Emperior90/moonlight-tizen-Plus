@@ -240,6 +240,8 @@ class MoonlightInstance {
   std::string m_GfeVersion;
   std::string m_RtspUrl;
   int m_ServerCodecModeSupport;
+  // The video format of the selected codec and HDR mode, before any fallback formats are added
+  int m_RequestedVideoFormat = 0;
 
   bool m_FramePacingEnabled;
   bool m_OptimizeGamesEnabled;
