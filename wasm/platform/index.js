@@ -78,6 +78,7 @@ const UPDATE_INTERVAL = 24 * 60 * 60 * 1000; // Automatic check for updates inte
 const ETHERNET_MAX_BITRATE = 80; // Highest bitrate in Mbps that fits the 100 Mbps Ethernet port of Samsung TVs, including FEC and network overhead
 const RECOMMENDED_ETHERNET_BITRATE = 75; // Recommended 4K bitrate in Mbps over the 100 Mbps Ethernet port, leaving headroom for larger frames
 const RECOMMENDED_WIFI_BITRATE = 100; // Recommended 4K bitrate in Mbps over 5 GHz Wi-Fi, matching the 4K HEVC decoder specification of the TV
+const CODEC_MODES_REFRESH_TIMEOUT_MS = 1500; // Longest wait in ms for the codec modes of the host after a launch or resume request
 const RECOMMENDED_DEFAULT_BITRATE = 80; // Recommended 4K bitrate in Mbps when the network connection type of the TV is unknown
 
 // Called by the common.js module
@@ -3120,14 +3121,18 @@ function startGame(host, appID) {
             });
             return;
           }
-          // Start stream request
-          sendMessage('startRequest', [
-            host.address, host.httpPort, streamWidth, streamHeight, frameRate, bitrate.toString(), rikey, rikeyid.toString(),
-            host.appVersion, host.gfeVersion, $root.find('sessionUrl0').text().trim(), host.serverCodecModeSupport,
-            framePacing, optimizeGames, rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons,
-            audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
-            gameMode, disableWarnings, performanceStats, refFrameInvalidation, hdrMetadata
-          ]);
+          // Read the session URL now, because refreshing the server info replaces the global $root
+          var sessionUrl = $root.find('sessionUrl0').text().trim();
+          // Start stream request with the codec modes from the encoder probe of this resume request
+          refreshCodecModesBeforeStream(host).then(function(codecModes) {
+            sendMessage('startRequest', [
+              host.address, host.httpPort, streamWidth, streamHeight, frameRate, bitrate.toString(), rikey, rikeyid.toString(),
+              host.appVersion, host.gfeVersion, sessionUrl, codecModes,
+              framePacing, optimizeGames, rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons,
+              audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
+              gameMode, disableWarnings, performanceStats, refFrameInvalidation, hdrMetadata
+            ]);
+          });
         }, function(failedResumeApp) {
           console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to resume app with id: ' + appID + '\n Returned error was: ' + failedResumeApp + '!');
           snackbarLog('Failed to resume %1$s', appToStart.title);
@@ -3172,14 +3177,18 @@ function startGame(host, appID) {
           });
           return;
         }
-        // Start stream request
-        sendMessage('startRequest', [
-          host.address, host.httpPort, streamWidth, streamHeight, frameRate, bitrate.toString(), rikey, rikeyid.toString(),
-          host.appVersion, host.gfeVersion, $root.find('sessionUrl0').text().trim(), host.serverCodecModeSupport,
-          framePacing, optimizeGames, rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons,
-          audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
-          gameMode, disableWarnings, performanceStats, refFrameInvalidation, hdrMetadata
-        ]);
+        // Read the session URL now, because refreshing the server info replaces the global $root
+        var sessionUrl = $root.find('sessionUrl0').text().trim();
+        // Start stream request with the codec modes from the encoder probe of this launch request
+        refreshCodecModesBeforeStream(host).then(function(codecModes) {
+          sendMessage('startRequest', [
+            host.address, host.httpPort, streamWidth, streamHeight, frameRate, bitrate.toString(), rikey, rikeyid.toString(),
+            host.appVersion, host.gfeVersion, sessionUrl, codecModes,
+            framePacing, optimizeGames, rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons,
+            audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
+            gameMode, disableWarnings, performanceStats, refFrameInvalidation, hdrMetadata
+          ]);
+        });
       }, function(failedLaunchApp) {
         console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to launch app with id: ' + appID + '\n Returned error was: ' + failedLaunchApp + '!');
         snackbarLog('Failed to launch %1$s', appToStart.title);
@@ -3194,6 +3203,31 @@ function startGame(host, appID) {
     });
   }, function(failedRefreshInfo) {
     console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to refresh server info! Returned error was: ' + failedRefreshInfo + ' and failed server was: ' + '\n', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
+  });
+}
+
+// Read the codec modes of the host again once it accepted the launch or resume request. Sunshine probes its encoders
+// while it handles that request, so the modes from the earlier server info can be stale, e.g. when no display was
+// attached at the earlier probe and the host reported no 10-bit modes. The refresh is bounded, so that a slow host
+// can't hold up the stream start, and the earlier modes are used if it fails or takes too long.
+function refreshCodecModesBeforeStream(host) {
+  var previousModes = host.serverCodecModeSupport;
+  var timeout = new Promise(function(resolve) {
+    setTimeout(function() { resolve(false); }, CODEC_MODES_REFRESH_TIMEOUT_MS);
+  });
+  var refresh = host.refreshServerInfo().then(function() {
+    return true;
+  }, function(failedRefreshInfo) {
+    console.warn('%c[index.js, refreshCodecModesBeforeStream]', 'color: green;', 'Warning: Failed to refresh the server info before the stream! Returned error was: ' + failedRefreshInfo);
+    return false;
+  });
+  return Promise.race([refresh, timeout]).then(function(refreshed) {
+    if (!refreshed) {
+      console.warn('%c[index.js, refreshCodecModesBeforeStream]', 'color: green;', 'Warning: Using the earlier codec modes of the host: ' + previousModes);
+      return previousModes;
+    }
+    console.log('%c[index.js, refreshCodecModesBeforeStream]', 'color: green;', 'Codec modes of the host for this stream: ' + host.serverCodecModeSupport);
+    return host.serverCodecModeSupport;
   });
 }
 
@@ -3545,88 +3579,37 @@ function warnBitrate() {
   }
 }
 
+// Standard bitrate presets in Mbps by resolution and frame rate. 1800p is interpolated by pixel count between the
+// 1440p and 2160p presets.
+var STANDARD_BITRATE_PRESETS = {
+  '854:480': { '30': 2, '60': 4, '90': 5, '120': 6, '144': 8 },
+  '1280:720': { '30': 5, '60': 10, '90': 12, '120': 15, '144': 18 },
+  '1920:1080': { '30': 10, '60': 20, '90': 25, '120': 30, '144': 35 },
+  '2560:1440': { '30': 20, '60': 40, '90': 50, '120': 60, '144': 70 },
+  '3200:1800': { '30': 30, '60': 60, '90': 75, '120': 90, '144': 100 },
+  '3840:2160': { '30': 40, '60': 80, '90': 100, '120': 120, '144': 140 },
+};
+
+// Return the standard preset in Mbps for a resolution and frame rate, or null for a frame rate without a preset
+function getStandardPresetBitrate(res, frameRate) {
+  var presets = STANDARD_BITRATE_PRESETS[res];
+  if (!presets) {
+    // Unrecognized option! In case someone screws with the JS to add custom resolutions.
+    return 10;
+  }
+  var preset = presets[String(frameRate)];
+  return preset !== undefined ? preset : null;
+}
+
 function standardBitratePresets() {
   console.log('%c[index.js, standardBitratePresets]', 'color: green;', 'Applying standard bitrate presets...');
   var res = $('#selectResolution').data('value');
   var frameRate = $('#selectFramerate').data('value').toString();
 
   // Set the bitrate based on the selected resolution and frame rate
-  if (res === '854:480') { // 480p
-    if (frameRate === '30') { // 30 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('2');
-    } else if (frameRate === '60') { // 60 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('4');
-    } else if (frameRate === '90') { // 90 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('5');
-    } else if (frameRate === '120') { // 120 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('6');
-    } else if (frameRate === '144') { // 144 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('8');
-    }
-  } else if (res === '1280:720') { // 720p
-    if (frameRate === '30') { // 30 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('5');
-    } else if (frameRate === '60') { // 60 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('10');
-    } else if (frameRate === '90') { // 90 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('12');
-    } else if (frameRate === '120') { // 120 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('15');
-    } else if (frameRate === '144') { // 144 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('18');
-    }
-  } else if (res === '1920:1080') { // 1080p
-    if (frameRate === '30') { // 30 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('10');
-    } else if (frameRate === '60') { // 60 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('20');
-    } else if (frameRate === '90') { // 90 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('25');
-    } else if (frameRate === '120') { // 120 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('30');
-    } else if (frameRate === '144') { // 144 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('35');
-    }
-  } else if (res === '2560:1440') { // 1440p
-    if (frameRate === '30') { // 30 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('20');
-    } else if (frameRate === '60') { // 60 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('40');
-    } else if (frameRate === '90') { // 90 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('50');
-    } else if (frameRate === '120') { // 120 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('60');
-    } else if (frameRate === '144') { // 144 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('70');
-    }
-  } else if (res === '3200:1800') { // 1800p
-    // Interpolated by pixel count between the 1440p and 2160p presets
-    if (frameRate === '30') { // 30 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('30');
-    } else if (frameRate === '60') { // 60 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('60');
-    } else if (frameRate === '90') { // 90 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('75');
-    } else if (frameRate === '120') { // 120 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('90');
-    } else if (frameRate === '144') { // 144 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('100');
-    }
-  } else if (res === '3840:2160') { // 2160p
-    if (frameRate === '30') { // 30 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('40');
-    } else if (frameRate === '60') { // 60 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('80');
-    } else if (frameRate === '90') { // 90 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('100');
-    } else if (frameRate === '120') { // 120 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('120');
-    } else if (frameRate === '144') { // 144 FPS
-      $('#bitrateSlider')[0].MaterialSlider.change('140');
-    }
-  } else {
-    // Unrecognized option! In case someone screws with the JS to add custom resolutions.
-    $('#bitrateSlider')[0].MaterialSlider.change('10');
+  var preset = getStandardPresetBitrate(res, frameRate);
+  if (preset !== null) {
+    $('#bitrateSlider')[0].MaterialSlider.change(String(preset));
   }
 
   // Keep the bitrate within what the network connection of the TV can carry
@@ -4759,12 +4742,34 @@ function loadUserDataCb() {
       document.querySelector('#optimizeBitrateBtn').MaterialSwitch.on();
     }
     const storedOptimizeBitrate = previousValue.optimizeBitrate == true;
-    // Load whether the bitrate presets follow the video settings. Without a stored value (a fresh install, or an
-    // update from a version without this setting), they only follow them when the optimized presets are on, which
-    // were chosen on purpose. Otherwise the bitrate is the recommended one for the network connection, and is kept.
+    // Load whether the bitrate presets follow the video settings
     getData('autoAdjustBitrate', function(storedValue) {
-      autoAdjustBitrate = storedValue.autoAdjustBitrate != null ? storedValue.autoAdjustBitrate == true : storedOptimizeBitrate;
-      console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Auto adjust bitrate state: ' + autoAdjustBitrate);
+      if (storedValue.autoAdjustBitrate != null) {
+        autoAdjustBitrate = storedValue.autoAdjustBitrate == true;
+        console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Auto adjust bitrate state: ' + autoAdjustBitrate);
+        return;
+      }
+      // Without a stored value (a fresh install, or an update from a version without this setting), decide once
+      // whether the stored bitrate came from the presets, which earlier versions applied on every resolution and frame
+      // rate change. Then they keep following the settings. A bitrate that differs from the preset was picked by hand
+      // (or set by the optimal streaming settings), and a fresh install has the recommended bitrate, so these are kept.
+      getData('bitrate', function(storedBitrate) {
+        getData('resolution', function(storedResolution) {
+          getData('frameRate', function(storedFramerate) {
+            var followsPresets = storedOptimizeBitrate;
+            if (!followsPresets && storedBitrate.bitrate != null && storedResolution.resolution != null && storedFramerate.frameRate != null) {
+              var preset = getStandardPresetBitrate(storedResolution.resolution, storedFramerate.frameRate);
+              if (preset !== null && preset > RECOMMENDED_ETHERNET_BITRATE && getActiveConnectionType() === 'ethernet') {
+                preset = RECOMMENDED_ETHERNET_BITRATE;
+              }
+              followsPresets = preset !== null && parseFloat(storedBitrate.bitrate) === preset;
+            }
+            autoAdjustBitrate = followsPresets;
+            storeData('autoAdjustBitrate', autoAdjustBitrate, null);
+            console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Auto adjust bitrate state (first decision): ' + autoAdjustBitrate);
+          });
+        });
+      });
     });
   });
 

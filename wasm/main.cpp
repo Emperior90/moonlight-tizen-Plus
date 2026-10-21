@@ -201,9 +201,11 @@ void* MoonlightInstance::InputThreadFunc(void* context) {
 
 // Whether the codec modes from the server info of the host can be trusted for the codec negotiation. Hosts
 // that don't report them send 0. Sunshine reports only H.264 when its encoder probe failed, e.g. because no
-// display was attached yet (a virtual display that only appears at launch), and probes again at launch. Such
-// a stale value would turn an HDR stream into 8-bit or drop AV1 for no reason, so it isn't trusted. A host that
-// really can encode only H.264 still gets H.264, because the negotiation also checks the RTSP reply of the host.
+// display was attached yet (a virtual display that only appears at launch), and probes again at launch. The
+// frontend reads the modes again after the launch request for that reason, but falls back to the earlier ones
+// if that fails. Such a stale value would turn an HDR stream into 8-bit or drop AV1 for no reason, so it isn't
+// trusted. A host that really can encode only H.264 still gets H.264, because the negotiation also checks the
+// RTSP reply of the host.
 static bool HasReliableHostCodecModes(int serverCodecModeSupport) {
   return serverCodecModeSupport > 0 && (serverCodecModeSupport & (SCM_MASK_HEVC | SCM_MASK_AV1)) != 0;
 }

@@ -91,6 +91,7 @@ static bool s_HostRateWindowOpen = false;
 static uint32_t s_HostRateStartPts = 0;
 static uint32_t s_HostRateLastPts = 0;
 static int s_HostRateStartFrame = 0;
+static int s_HostRateRepeats = 0;
 static float s_HostFrameRate = 0.0f;
 static std::atomic<bool> s_ExpectedIdrFrame{false};
 
@@ -398,14 +399,18 @@ static void ReportVideoFormatFallback(int requestedFormat, int videoFormat) {
   }
 }
 
-// Measure the frame rate of the host from the capture timestamps that it sends with every frame, over a window
-// of 30 s. That resolves the 0.1 % between a 59.94 Hz host display and a 60 FPS stream, which the frame counts
-// of the other overlay lines can't show. Frames are counted by their frame numbers, so frames lost on the network
-// don't lower the result. The window only starts and ends on frames with a real capture time: the frames that
-// the host repeats on static content carry no host processing latency and a send time instead of a capture time.
-// The repeats in between are counted, so the value is only meaningful during motion.
+// Measure the rate at which the host captures new images from the capture timestamps that it sends with every
+// frame, over a window of 30 s. That resolves the 0.1 % between a 59.94 Hz host display and a 60 FPS stream, which
+// the frame counts of the other overlay lines can't show. Frames are counted by their frame numbers, so frames lost
+// on the network don't lower the result. Frames that the host encodes again from the previous image (on static
+// content, or for a keyframe request when no new image is ready) carry no host processing latency and a send time
+// instead of a capture time. They don't start or end a window, and the ones that arrive are subtracted, so that
+// e.g. a keyframe request doesn't add a frame to the window and make a 59.94 Hz display read 59.97.
 static void UpdateHostFrameRate(int frameNumber, uint32_t pts, uint16_t hostProcessingLatency) {
   if (hostProcessingLatency == 0) {
+    if (s_HostRateWindowOpen) {
+      s_HostRateRepeats++;
+    }
     return;
   }
   if (s_HostRateWindowOpen) {
@@ -421,13 +426,15 @@ static void UpdateHostFrameRate(int frameNumber, uint32_t pts, uint16_t hostProc
     s_HostRateWindowOpen = true;
     s_HostRateStartPts = pts;
     s_HostRateStartFrame = frameNumber;
+    s_HostRateRepeats = 0;
     return;
   }
   const uint32_t elapsed = pts - s_HostRateStartPts;
   if (elapsed >= kHostFrameRateWindowMs) {
-    s_HostFrameRate = (frameNumber - s_HostRateStartFrame) * 1000.0f / elapsed;
+    s_HostFrameRate = (frameNumber - s_HostRateStartFrame - s_HostRateRepeats) * 1000.0f / elapsed;
     s_HostRateStartPts = pts;
     s_HostRateStartFrame = frameNumber;
+    s_HostRateRepeats = 0;
   }
 }
 
@@ -497,6 +504,7 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
 
   // Reset the host frame rate measurement so that no figure from a previous stream is shown
   s_HostRateWindowOpen = false;
+  s_HostRateRepeats = 0;
   s_HostFrameRate = 0.0f;
 
   // Ensure that StartupVidDecSetup is called every time when VidDecSetup is invoked to reinitialize the media pipeline
