@@ -58,6 +58,9 @@ static TimeStamp s_pktPts;
 static TimeStamp s_ptsDiff;
 static TimeStamp s_lastSec;
 
+// Pacing offset calculated from the previous time window, which a rise of the offset has to be supported by
+static TimeStamp s_lastWindowOffset;
+
 // Arrival times of the frames in the current pacing window relative to their presentation timestamps, in seconds
 static std::vector<double> s_PacingLateness;
 
@@ -70,9 +73,11 @@ static bool s_FramePacingEnabled = false;
 static uint32_t total_bytes = 0;
 static int m_LastFrameNumber = 0;
 
-// IDR frames received after the first one, which the host only sends to recover the stream
+// IDR frames received after the first one that the host sent to recover the stream, i.e. not the ones this
+// client requested itself after a focus or track change (flagged from the main thread, consumed by the decoder thread)
 static bool s_ReceivedFirstIdrFrame = false;
 static uint32_t s_RecoveryIdrFrames = 0;
+static std::atomic<bool> s_ExpectedIdrFrame{false};
 
 static std::string s_StatString = "";
 
@@ -137,7 +142,7 @@ void MoonlightInstance::VideoTrackListener::OnTrackOpen() {
   std::unique_lock<std::mutex> lock(m_Instance->m_Mutex);
   m_Instance->m_VideoStarted = true;
   m_Instance->m_EmssVideoStateChanged.notify_all();
-  LiRequestIdrFrame();
+  RequestIdrFrame();
 }
 
 void MoonlightInstance::VideoTrackListener::OnTrackClosed(samsung::wasm::ElementaryMediaTrack::CloseReason) {
@@ -156,8 +161,14 @@ void MoonlightInstance::DidChangeFocus(bool got_focus) {
   // Request an IDR frame to dump the frame queue that may have
   // built up from the GL pipeline being stalled.
   if (got_focus) {
-    LiRequestIdrFrame();
+    RequestIdrFrame();
   }
+}
+
+// Request an IDR frame for a reason other than recovering the stream, so the session stats don't count it as a recovery
+void MoonlightInstance::RequestIdrFrame() {
+  s_ExpectedIdrFrame.store(true);
+  LiRequestIdrFrame();
 }
 
 bool MoonlightInstance::InitializeRenderingSurface(int width, int height) {
@@ -356,6 +367,7 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
 
   // Initialize the timestamp difference to zero
   s_ptsDiff = 0s;
+  s_lastWindowOffset = 0s;
 
   // Clear the frame arrival times of the pacing window from a previous stream
   s_PacingLateness.clear();
@@ -385,6 +397,7 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
   // Reset the recovery keyframe count so the session totals don't include a previous stream
   s_ReceivedFirstIdrFrame = false;
   s_RecoveryIdrFrames = 0;
+  s_ExpectedIdrFrame.store(false);
 
   // Ensure that StartupVidDecSetup is called every time when VidDecSetup is invoked to reinitialize the media pipeline
   int initVidDec = StartupVidDecSetup(videoFormat, width, height, redrawRate, context, drFlags);
@@ -480,10 +493,12 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     s_hasFirstFrame = true;
   }
 
-  // Count the IDR frames after the first one, because the host only sends them to recover the
-  // stream (e.g. after packet loss), so each one is a visible hiccup in the session
+  // Count the IDR frames after the first one that the host sent to recover the stream (e.g. after packet
+  // loss), because each one is a visible hiccup in the session. The ones this client requested itself
+  // after a focus or track change are expected and not counted.
   if (decodeUnit->frameType == FRAME_TYPE_IDR) {
-    if (s_ReceivedFirstIdrFrame) {
+    const bool expected = s_ExpectedIdrFrame.exchange(false);
+    if (s_ReceivedFirstIdrFrame && !expected) {
       s_RecoveryIdrFrames++;
     }
     s_ReceivedFirstIdrFrame = true;
@@ -519,8 +534,18 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     if (fromStart > s_lastSec + kTimeWindow) {
       // Start the next time window from the current time
       s_lastSec = fromStart;
-      // Update the time difference from the arrival times of the frames in the last time window
-      s_ptsDiff = CalculatePacingOffset(s_PacingLateness);
+      // Update the time difference from the arrival times of the frames in the last time window. A rise is only
+      // followed as far as the previous window supports it too, because the burst of frames delivered after a
+      // network stall raises the offset of the window it lands in, which would hold back every frame of the next
+      // window (and overflow the decode unit queue at 120 FPS). A permanent rise, e.g. after frames were lost,
+      // shows up in two consecutive windows and is followed by the second one. A drop takes effect right away.
+      const TimeStamp windowOffset = CalculatePacingOffset(s_PacingLateness);
+      if (windowOffset > s_ptsDiff) {
+        s_ptsDiff = std::max(s_ptsDiff, std::min(windowOffset, s_lastWindowOffset));
+      } else {
+        s_ptsDiff = windowOffset;
+      }
+      s_lastWindowOffset = windowOffset;
       s_PacingLateness.clear();
     }
   }

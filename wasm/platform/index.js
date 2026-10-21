@@ -4060,18 +4060,25 @@ function applyOptimalStreamingSettings(connectionType) {
   const recommendedBitrate = getRecommendedBitrate(connectionType);
   $('#bitrateSlider')[0].MaterialSlider.change(String(recommendedBitrate));
   saveBitrate();
+
+  // Re-run the one-shot warning checks so their flags match the applied resolution, frame rate and codec
+  warnResolutionFramerate();
+  warnH264Resolution();
+  warnVideoCodec();
 }
 
-// Apply the optimal streaming settings for the Samsung S90C and show them along with advice for the network connection
+// Show the optimal streaming settings for the Samsung S90C along with advice for the network connection, and apply them
+// once the user confirms, because they replace the stored video settings
 function s90cSettingsDialog() {
   const connectionType = getActiveConnectionType();
-  applyOptimalStreamingSettings(connectionType);
+  const optimalResolution = getOptimalResolution();
+  const optimalResolutionText = $('.videoResolutionMenu li[data-value="' + optimalResolution + '"]').text().trim();
+  const recommendedBitrate = getRecommendedBitrate(connectionType);
 
-  const hdrEnabled = $('#hdrModeSwitch').parent().hasClass('is-checked');
-  let message = t('The optimal streaming settings for the Samsung S90C have been applied:') + '<br>' +
-    '&#8226; ' + t('Video resolution') + ': ' + escapeHTML($('#selectResolution').text().trim()) + ', ' + escapeHTML($('#selectFramerate').text().trim()) + '<br>' +
-    '&#8226; ' + t('Video codec') + ': ' + (hdrEnabled ? t('HEVC Main10 with HDR') : t('HEVC')) + '<br>' +
-    '&#8226; ' + t('Video bitrate') + ': ' + escapeHTML($('#bitrateSlider').val()) + ' Mbps<br><br>';
+  let message = t('The following streaming settings will be applied for the Samsung S90C:') + '<br>' +
+    '&#8226; ' + t('Video resolution') + ': ' + escapeHTML(optimalResolutionText) + ', 60 FPS<br>' +
+    '&#8226; ' + t('Video codec') + ': ' + (isHdrCapable ? t('HEVC Main10 with HDR') : t('HEVC')) + '<br>' +
+    '&#8226; ' + t('Video bitrate') + ': ' + recommendedBitrate + ' Mbps<br><br>';
 
   // Explain the bitrate limits of the network connection and how to stream without frame drops
   if (connectionType === 'ethernet') {
@@ -4079,7 +4086,7 @@ function s90cSettingsDialog() {
   } else if (connectionType === 'wifi') {
     message += t('The TV is connected via Wi-Fi. Use a 5 GHz network with a strong signal and connect the host PC by cable. If the performance statistics show no dropped frames, you can raise the bitrate up to 150 Mbps.');
   } else {
-    message += t('The network connection type of the TV could not be detected, so a moderate bitrate has been applied.');
+    message += t('The network connection type of the TV could not be detected, so a moderate bitrate will be applied.');
   }
 
   // Point to the ForceGM variant, because the game mode setting stays disabled on Tizen 9.0 and newer
@@ -4092,7 +4099,51 @@ function s90cSettingsDialog() {
     message += '<br><br>' + t('Note: This TV (%1$s) is not a Samsung S90C, so these settings may not be optimal.', escapeHTML(modelName));
   }
 
-  warningDialog(t('Samsung S90C optimization'), message);
+  var warningDialogOverlay = document.querySelector('#warningDialogOverlay');
+  var warningDialog = document.querySelector('#warningDialog');
+
+  // Set the title and message
+  document.getElementById('warningDialogTitle').innerHTML = t('Samsung S90C optimization');
+  document.getElementById('warningDialogText').innerHTML = message;
+
+  // Show the dialog and push the view
+  warningDialogOverlay.style.display = 'flex';
+  warningDialog.showModal();
+  isDialogOpen = true;
+  Navigation.push(Views.WarningDialog);
+
+  // Show the Continue button next to the Close button, which acts as Cancel
+  $('#continueWarning').show();
+  // Remove single-button class since both buttons are now visible
+  warningDialog.classList.remove('single-button');
+
+  // Cancel — close the dialog and keep the current settings
+  $('#closeWarning').off('click');
+  $('#closeWarning').on('click', function() {
+    console.log('%c[index.js, s90cSettingsDialog]', 'color: green;', 'Closing the S90C optimization dialog without applying the settings.');
+    warningDialogOverlay.style.display = 'none';
+    warningDialog.close();
+    isDialogOpen = false;
+    // Restore the default state for future standard warnings
+    $('#continueWarning').hide();
+    Navigation.pop();
+    Navigation.switch();
+  });
+
+  // Continue — apply the settings
+  $('#continueWarning').off('click');
+  $('#continueWarning').on('click', function() {
+    console.log('%c[index.js, s90cSettingsDialog]', 'color: green;', 'User confirmed the S90C optimization. Applying the settings for the network connection: ' + connectionType);
+    warningDialogOverlay.style.display = 'none';
+    warningDialog.close();
+    isDialogOpen = false;
+    // Restore the default state for future standard warnings
+    $('#continueWarning').hide();
+    Navigation.pop();
+    applyOptimalStreamingSettings(connectionType);
+    Navigation.switch();
+    snackbarLog('The optimal streaming settings for the Samsung S90C have been applied.');
+  });
 }
 
 // Reset all settings to their default state and save the value data
@@ -4475,6 +4526,8 @@ function loadUserDataCb() {
       // Set the default state to HEVC, because Samsung TVs generally decode H.264 only up to 1080p
       $('#selectCodec').text($('#hevc').text()).attr('data-value', 'HEVC').data('value', 'HEVC');
     }
+    // Warn when a previously stored H.264 codec meets the 4K default of the resolution, which is restored before the codec
+    warnH264Resolution();
   });
 
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored hdrMode preferences.');

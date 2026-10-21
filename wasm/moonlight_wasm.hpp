@@ -162,6 +162,7 @@ class MoonlightInstance {
   static void ClConnectionStatusUpdate(int connectionStatus);
 
   void DidChangeFocus(bool got_focus);
+  static void RequestIdrFrame();
   bool InitializeRenderingSurface(int width, int height);
 
   static int VidDecSetup(int videoFormat, int width, int height, int redrawRate, void* context, int drFlags);

@@ -5,15 +5,15 @@ All notable changes to this project will be documented in this file.
 ## Unreleased (Samsung S90C optimizations)
 
 ### Added
-- Added a 'Samsung S90C optimization' button that applies the optimal streaming settings for the S90C with a bitrate matching the network connection of the TV
+- Added a 'Samsung S90C optimization' button that shows the optimal streaming settings for the S90C with a bitrate matching the network connection of the TV, and applies them on confirmation
 - Introduced a new experimental 'Reference frame invalidation' setting to recover from packet loss without a full keyframe (HEVC and AV1)
-- Added session totals of network frame drops and recovery keyframes to the performance stats, along with the network connection of the TV
+- Added session totals of network frame drops and recovery keyframes (excluding the keyframes the app requests itself after a focus or track change) to the performance stats, along with the network connection of the TV
 - Added detection of the Ethernet or Wi-Fi connection of the TV with a warning above 80 Mbps over the 100 Mbps Ethernet port
-- Added warnings when selecting H.264 above 1080p or 4K above 120 FPS, which exceed the video decoder of the TV
+- Added warnings when selecting H.264 above 1080p (also at startup when a stored H.264 codec meets the new 4K default) or 4K above 120 FPS, which exceed the video decoder of the TV
 - Added an optimization plan for the S90C covering the network, host, TV settings and test procedure (`docs/S90C-Optimierungsplan.md`)
 
 ### Changed
-- Reworked the video frame pacing to follow the usual arrival time of the frames, so that a single late frame no longer holds back every following frame by up to tens of milliseconds
+- Reworked the video frame pacing to follow the usual arrival time of the frames, so that a single late frame no longer holds back every following frame by up to tens of milliseconds, and to follow a later arrival time only once two consecutive windows confirm it, so that the burst of frames after a network stall cannot hold back the next second of frames
 - Paused the gamepad polling of the UI while streaming, which kept the main thread busy every 5 ms even though the streaming session polls the gamepads on its own
 - Read all gamepads with a single call to the main thread per poll instead of one call per gamepad slot plus two, leaving more room for the Web Audio scheduler
 - Sent the controller state to the host only when it changes (with a refresh every 100 ms) instead of 200 times per second, reducing the Wi-Fi uplink traffic of the TV
