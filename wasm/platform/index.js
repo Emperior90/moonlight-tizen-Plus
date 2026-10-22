@@ -3224,6 +3224,7 @@ function startGame(host, appID) {
           // Start stream request with the codec modes from the encoder probe of this resume request
           refreshCodecModesBeforeStream(host).then(function(codecModes) {
             if (launchId !== streamLaunchId) {
+              console.log('%c[index.js, startGame]', 'color: green;', 'Not starting the stream of a cancelled resume request.');
               return;
             }
             wasmSessionStarted = true;
@@ -3291,6 +3292,7 @@ function startGame(host, appID) {
         // Start stream request with the codec modes from the encoder probe of this launch request
         refreshCodecModesBeforeStream(host).then(function(codecModes) {
           if (launchId !== streamLaunchId) {
+            console.log('%c[index.js, startGame]', 'color: green;', 'Not starting the stream of a cancelled launch request.');
             return;
           }
           wasmSessionStarted = true;

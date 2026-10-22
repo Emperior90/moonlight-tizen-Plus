@@ -575,9 +575,10 @@ function _audReceiveFrame(heapOffset, samples, channels, sampleRate, stride, seq
   // plays it. The drift decides how often a frame is dropped, this bound only decides how far
   // the audio may trail the picture before that: at most half a jitter buffer more than the target.
   // Right after a resync, the frames that piled up during the stall arrive back to back on top of
-  // the primed buffer. They are trimmed to the jitter buffer plus two frames instead, and counted
-  // apart, so that the drops above keep describing the drift alone.
-  var catchUpLimit = targetSeconds + 2.0 * samples / sampleRate;
+  // the primed buffer. They are trimmed to the jitter buffer plus two frames instead (at most the
+  // bound above, which is lower for a buffer under four frames), and counted apart, so that the
+  // drops above keep describing the drift alone.
+  var catchUpLimit = Math.min(targetSeconds + 2.0 * samples / sampleRate, 1.5 * targetSeconds);
   if (_audCatchUp && _audNextTime > now + catchUpLimit) {
     stats.droppedCatchUp++;
     if (_audSession) {

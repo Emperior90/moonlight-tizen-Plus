@@ -309,6 +309,10 @@ function leaveStreamView(host) {
   if (!host) {
     return;
   }
+  // Show that the app list is on its way, since the refresh can wait behind a launch request that is still in flight
+  $('#wasmSpinner').css('display', 'inline-block');
+  $('#wasmSpinnerLogo').hide();
+  $('#wasmSpinnerMessage').text(t('Loading Apps...'));
   // Refresh the server info to update the current game and app list
   host.refreshServerInfo().then(function(ret) {
     // Return to the app list with new current game

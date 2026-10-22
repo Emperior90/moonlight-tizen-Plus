@@ -87,6 +87,14 @@ static bool s_ReceivedFirstIdrFrame = false;
 static uint32_t s_RecoveryIdrFrames = 0;
 static uint32_t s_ResetsAtLastIdr = 0;
 
+// Client-side causes of an IDR frame (a request of this client, a video pipeline reset) that no IDR frame has answered
+// yet, and when they were last booked. Each IDR frame answers one cause, so that the second IDR frame of a reopened
+// track (requested on reopen, then again by the reset after the rejected P-frame) isn't counted either. Causes the
+// host answered with a single IDR frame expire, so that they can't hide a later recovery.
+static uint32_t s_PendingIdrCauses = 0;
+static uint64_t s_PendingIdrCausesMs = 0;
+static constexpr uint64_t kIdrCauseTimeoutMs = 500;
+
 // Frames that the client dropped itself (decode unit queue overflow or decoder refresh), which moonlight-common-c
 // counts separately, so that the overlay doesn't report them as frames lost on the network
 static uint32_t s_LastClientDroppedFrames = 0;
@@ -126,6 +134,10 @@ static std::atomic<uint64_t> s_VideoTrackOpenMs{0};
 static uint32_t s_RejectedModeFailures = 0;
 static bool s_AnyAppendSucceeded = false;
 static bool s_TerminatingStream = false;
+
+// The media source of the TV failed before the connection was fully started, which the decoder thread then ends the
+// stream for (see VideoTrackListener::OnTrackClosed)
+static std::atomic<bool> s_VideoSourceFailed{false};
 
 // Top of the WASM heap when the stream was set up, for the heap growth of the stream in the overlay
 static uintptr_t s_HeapTopAtSetup = 0;
@@ -236,11 +248,16 @@ void MoonlightInstance::VideoTrackListener::OnTrackClosed(samsung::wasm::Element
   }
 
   // The app never reopens a media source that failed, so the picture would stay frozen. End the stream with a
-  // message instead, the same way as a stop request does (this runs on the main thread, like StopStream).
-  if (closeReason == kCloseReasonSourceError && m_Instance->m_Running) {
+  // message instead, the same way as a stop request does (this runs on the main thread, like StopStream). While the
+  // connection is still being started, the next frame on the decoder thread ends it through moonlight-common-c.
+  if (closeReason == kCloseReasonSourceError) {
     ClLogMessage("The video player of the TV failed during the stream\n");
-    m_Instance->CancelPendingSetup();
-    m_Instance->OnConnectionStopped(ERROR_VIDEO_PLAYER_FAILED);
+    if (m_Instance->m_Running) {
+      m_Instance->CancelPendingSetup();
+      m_Instance->OnConnectionStopped(ERROR_VIDEO_PLAYER_FAILED);
+    } else {
+      s_VideoSourceFailed = true;
+    }
   }
 }
 
@@ -533,7 +550,6 @@ static const char* AppendResultName(int code) {
 
 // Count a frame the player rejected, and log the first rejection with each result and every 100th after it
 static void RecordAppendFailure(int code) {
-  s_AppendLastFailureCode = code;
   if (code == kAppendResultBufferFull) {
     // Counted with the retry, see VidDecSubmitDecodeUnit
   } else if (code == kAppendResultExpectsKeyframe) {
@@ -542,6 +558,7 @@ static void RecordAppendFailure(int code) {
     s_AppendTrackNotReady++;
   } else {
     s_AppendOtherFailures++;
+    s_AppendLastFailureCode = code;
   }
   const uint32_t count = ++s_AppendFailuresByCode[code >= 0 && code < kAppendResultCodes ? code : 0];
   if (count % 100 == 1) {
@@ -617,6 +634,7 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
   s_ReceivedFirstIdrFrame = false;
   s_RecoveryIdrFrames = 0;
   s_ResetsAtLastIdr = 0;
+  s_PendingIdrCauses = 0;
   s_ExpectedIdrFrame.store(false);
 
   // Reset the counts of the frames the client dropped itself (moonlight-common-c resets its count before setup)
@@ -636,6 +654,7 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
   s_RejectedModeFailures = 0;
   s_AnyAppendSucceeded = false;
   s_TerminatingStream = false;
+  s_VideoSourceFailed = false;
 
   // Remember the top of the heap, for the heap growth of this stream
   s_HeapTopAtSetup = (uintptr_t)sbrk(0);
@@ -770,6 +789,10 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
   // count as neither network nor TV drops: the frame number and the client drops are followed here, so that the
   // first frame after the track reopens only shows the real losses in its gap.
   if (!g_Instance->m_VideoStarted) {
+    if (s_VideoSourceFailed.exchange(false)) {
+      s_TerminatingStream = true;
+      LiTerminateConnectionAsync(ERROR_VIDEO_PLAYER_FAILED);
+    }
     if (m_LastFrameNumber != 0) {
       s_FramesDiscardedWhileClosed += (uint32_t)(decodeUnit->frameNumber - m_LastFrameNumber);
       m_LastFrameNumber = decodeUnit->frameNumber;
@@ -856,13 +879,25 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
   // ones after moonlight-common-c reset the video pipeline (a decode unit queue overflow or a frame the player
   // rejected), which requests the IDR frame itself: the video pipeline reset count shows those hiccups.
   if (decodeUnit->frameType == FRAME_TYPE_IDR) {
-    const bool expected = s_ExpectedIdrFrame.exchange(false);
+    const uint64_t idrMs = LiGetMillis();
     const uint32_t resets = LiGetClientVideoResets();
-    if (s_ReceivedFirstIdrFrame && !expected && resets == s_ResetsAtLastIdr) {
+    const uint32_t newCauses = (s_ExpectedIdrFrame.exchange(false) ? 1 : 0) + (resets - s_ResetsAtLastIdr);
+    s_ResetsAtLastIdr = resets;
+    if (s_PendingIdrCauses != 0 && idrMs - s_PendingIdrCausesMs > kIdrCauseTimeoutMs) {
+      s_PendingIdrCauses = 0;
+    }
+    if (newCauses != 0) {
+      s_PendingIdrCauses += newCauses;
+      s_PendingIdrCausesMs = idrMs;
+    }
+    if (!s_ReceivedFirstIdrFrame) {
+      // The host starts every stream with an IDR frame, which answers none of the causes
+      s_ReceivedFirstIdrFrame = true;
+    } else if (s_PendingIdrCauses != 0) {
+      s_PendingIdrCauses--;
+    } else {
       s_RecoveryIdrFrames++;
     }
-    s_ResetsAtLastIdr = resets;
-    s_ReceivedFirstIdrFrame = true;
   }
 
   // Calculate the start of the pacing duration in milliseconds

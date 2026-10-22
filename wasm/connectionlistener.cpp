@@ -33,13 +33,10 @@ void MoonlightInstance::ClConnectionTerminated(int errorCode) {
   // stay blocked, and the next stream freezes the application while waiting for them.
   g_Instance->CancelPendingSetup();
 
-  // Teardown the connection, unless it's still being started, because LiStopConnection
-  // must not be invoked during LiStartConnection. The stop thread stops it in that case,
-  // once the connection thread has returned.
-  if (g_Instance->m_Running) {
-    LiStopConnection();
-  }
-
+  // Leave the teardown to the stop thread that OnConnectionStopped starts, which joins the
+  // connection thread first, because LiStopConnection must not be invoked during
+  // LiStartConnection. Stopping here as well would run a second LiStopConnection at the same
+  // time as the stop thread of a stop request (RED, the gamepad combo) that comes in meanwhile.
   emscripten_sync_run_in_main_runtime_thread(EM_FUNC_SIG_VI, onConnectionStopped, errorCode);
 }
 
