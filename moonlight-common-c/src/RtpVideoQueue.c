@@ -264,6 +264,10 @@ static int reconstructFrame(PRTP_VIDEO_QUEUE queue) {
     reed_solomon* rs = NULL;
     // Time the recovery, since it runs on the receive thread and no packets are read from the socket meanwhile
     uint64_t recoveryStartMs = PltGetMillis();
+    uint32_t recoveryMs = 0;
+    uint32_t statMissingDataPackets = 0;
+    uint32_t statLostPackets = 0;
+    bool statRecoveryAttempted = false;
     unsigned char** packets = calloc(totalPackets, sizeof(unsigned char*));
     unsigned char* marks = calloc(totalPackets, sizeof(unsigned char));
     if (packets == NULL || marks == NULL) {
@@ -340,30 +344,12 @@ static int reconstructFrame(PRTP_VIDEO_QUEUE queue) {
     // If this fails, something is probably wrong with our FEC state.
     LC_ASSERT(ret == 0);
 
-    // Record the recovery for the session statistics of the performance overlay
-    if (ret == 0) {
-        uint32_t recoveryMs = (uint32_t)(PltGetMillis() - recoveryStartMs);
-        uint32_t missingDataPackets = queue->bufferDataPackets - queue->receivedDataPackets;
-        queue->statRecoveredBlocks++;
-        queue->statRecoveredPackets += missingDataPackets;
-        if (recoveryMs > queue->statLongestRecoveryMs) {
-            queue->statLongestRecoveryMs = recoveryMs;
-        }
-        if (recoveryMs >= 8) {
-            queue->statSlowRecoveries++;
-        }
-        // Keep the block that used the largest share of its parity packets, which shows how close the link
-        // came to losing a frame
-        if (queue->bufferParityPackets != 0 &&
-                (queue->statWorstParityPackets == 0 ||
-                 (uint64_t)missingDataPackets * queue->statWorstParityPackets > (uint64_t)queue->statWorstMissingPackets * queue->bufferParityPackets)) {
-            queue->statWorstMissingPackets = missingDataPackets;
-            queue->statWorstParityPackets = queue->bufferParityPackets;
-        }
-    }
-    else {
-        queue->statRecoveryFailures++;
-    }
+    // Note the recovery for the session statistics of the performance overlay, which are recorded below with the
+    // final result. The packets lost so far (data and parity) are the parity headroom this block used up.
+    recoveryMs = (uint32_t)(PltGetMillis() - recoveryStartMs);
+    statMissingDataPackets = queue->bufferDataPackets - queue->receivedDataPackets;
+    statLostPackets = queue->missingPackets;
+    statRecoveryAttempted = true;
 
     if (queue->bufferDataPackets != queue->receivedDataPackets) {
 #ifdef FEC_VERBOSE
@@ -478,6 +464,34 @@ cleanup_packets:
             } else if (packets[i] != NULL) {
                 free(packets[i]);
             }
+        }
+    }
+
+    // Record the recovery once per FEC block with its final result. A recovered packet that failed the sanity
+    // checks above (PACKET_RECOVERY_FAILURE) makes it a failure; the block then stays pending and may run the
+    // recovery again with later parity packets, which must not count it twice.
+    if (statRecoveryAttempted && !queue->statBlockRecorded) {
+        queue->statBlockRecorded = true;
+        if (ret == 0) {
+            queue->statRecoveredBlocks++;
+            queue->statRecoveredPackets += statMissingDataPackets;
+            if (recoveryMs > queue->statLongestRecoveryMs) {
+                queue->statLongestRecoveryMs = recoveryMs;
+            }
+            if (recoveryMs >= 8) {
+                queue->statSlowRecoveries++;
+            }
+            // Keep the block that used the largest share of its parity packets, which shows how close the link
+            // came to losing a frame
+            if (queue->bufferParityPackets != 0 &&
+                    (queue->statWorstParityPackets == 0 ||
+                     (uint64_t)statLostPackets * queue->statWorstParityPackets > (uint64_t)queue->statWorstMissingPackets * queue->bufferParityPackets)) {
+                queue->statWorstMissingPackets = statLostPackets;
+                queue->statWorstParityPackets = queue->bufferParityPackets;
+            }
+        }
+        else {
+            queue->statRecoveryFailures++;
         }
     }
 
@@ -731,6 +745,7 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         queue->missingPackets = 0;
         queue->useFastQueuePath = true;
         queue->reportedLostFrame = false;
+        queue->statBlockRecorded = false;
         queue->bufferDataPackets = (nvPacket->fecInfo & 0xFFC00000) >> 22;
         queue->fecPercentage = (nvPacket->fecInfo & 0xFF0) >> 4;
         queue->bufferParityPackets = (queue->bufferDataPackets * queue->fecPercentage + 99) / 100;

@@ -73,6 +73,12 @@ static int s_AudioSequence = 0;
 // Frames the Opus decoder rejected since the last time it was reported
 static int s_AudioDecodeErrors = 0;
 
+// Arrival of the previous packet with audio data. Sunshine sends no packets while the host is silent, so a long
+// gap before a packet tells the scheduler that the host paused its audio, which empties the schedule without
+// any sound missing, rather than an underrun.
+static std::chrono::steady_clock::time_point s_LastAudioDataTime;
+static bool s_HasLastAudioDataTime = false;
+
 static inline TimeStamp FrameDuration(double samplesPerFrame, double sampleRate) {
   // Calculate the duration of a frame based on the number of samples per frame and the sample rate
   return TimeStamp(samplesPerFrame / sampleRate);
@@ -173,14 +179,25 @@ static void DecodeAndScheduleFrame(OpusMSDecoder* decoder, const unsigned char* 
   // Number this frame so the scheduler can report the ones that never reached the main thread
   int sequence = s_AudioSequence++;
 
+  // Measure the time since the previous packet with audio data (0 for the first one and for concealed losses)
+  int arrivalGapMs = 0;
+  if (!concealLoss) {
+    const auto now = std::chrono::steady_clock::now();
+    if (s_HasLastAudioDataTime) {
+      arrivalGapMs = (int)std::min<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(now - s_LastAudioDataTime).count(), 3600000LL);
+    }
+    s_LastAudioDataTime = now;
+    s_HasLastAudioDataTime = true;
+  }
+
   // Hand the decoded samples to the audio scheduler running on the main thread. This is
   // asynchronous, so the audio thread is never blocked waiting on the browser event loop.
   MAIN_THREAD_ASYNC_EM_ASM({
     if (typeof _audReceiveFrame === 'function') {
-      _audReceiveFrame($0, $1, $2, $3, $4, $5);
+      _audReceiveFrame($0, $1, $2, $3, $4, $5, $6);
     }
   }, (int)(size_t)slot, decodeLen, (int)s_channelCount, s_sampleRate,
-     (int)kAudioSlotStride, sequence);
+     (int)kAudioSlotStride, sequence, arrivalGapMs);
 }
 
 int MoonlightInstance::AudDecInit(int audioConfiguration, POPUS_MULTISTREAM_CONFIGURATION opusConfig, void* context, int arFlags) {
@@ -249,6 +266,7 @@ int MoonlightInstance::AudDecInit(int audioConfiguration, POPUS_MULTISTREAM_CONF
     s_AudioSlotIndex = 0;
     s_AudioSequence = 0;
     s_AudioDecodeErrors = 0;
+    s_HasLastAudioDataTime = false;
 
     // Select the jitter buffer target requested by the user, or the default one when unset
     int audioJitterMs = g_Instance->m_AudioJitterMs > 0 ? g_Instance->m_AudioJitterMs : kDefaultAudioJitterMs;

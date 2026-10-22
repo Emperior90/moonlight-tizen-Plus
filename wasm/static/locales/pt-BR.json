@@ -222,6 +222,7 @@
   "Exit": "Sair",
   "Enter IP, Hostname or [IP]:Port...": "Insira o IP, o nome do host ou [IP]:Porta...",
   "Audio (Web Audio): %1$s": "Áudio (Web Audio): %1$s",
+  "raise to %1$s ms or enable Audio clock sync": "aumentar para %1$s ms ou ativar a sincronização do relógio de áudio",
   "raise to %1$s ms": "aumentar para %1$s ms",
   "needs Audio clock sync": "requer a sincronização do relógio de áudio",
   "measuring": "medindo",

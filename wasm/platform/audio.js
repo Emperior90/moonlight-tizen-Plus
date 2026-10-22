@@ -100,6 +100,11 @@ var AUD_JITTER_SMOOTHING = 0.005;
 // the main thread have had a chance to show up
 var AUD_SUGGESTION_MIN_MS = 10 * 60 * 1000;
 
+// Shortest gap without audio packets that counts as a pause of the host audio (together with twice the jitter
+// buffer, see _audReceiveFrame). Sunshine sends nothing while the host is silent, so the schedule runs dry
+// during a pause without any sound missing.
+var AUD_HOST_PAUSE_MIN_MS = 250;
+
 // Reset the session totals and the jitter measurement
 function _audResetSession() {
   _audSession = {
@@ -442,7 +447,9 @@ function _audBuildBuffer(heapOffset, samples, channels, stride) {
 //   sampleRate - sample rate of the frame in Hz (48000)
 //   stride     - number of samples between the channels of the frame in the WASM heap
 //   sequence   - index of the frame in the stream, used to detect frames that never arrived
-function _audReceiveFrame(heapOffset, samples, channels, sampleRate, stride, sequence) {
+//   arrivalGapMs - time since the previous packet with audio data on the audio thread, used to tell a pause of
+//                the host audio apart from an underrun (0 for the first packet and for concealed losses)
+function _audReceiveFrame(heapOffset, samples, channels, sampleRate, stride, sequence, arrivalGapMs) {
   if (!_audRunning || !_audContext) {
     return;
   }
@@ -490,8 +497,14 @@ function _audReceiveFrame(heapOffset, samples, channels, sampleRate, stride, seq
   // Convert the jitter buffer target published by the WASM module to seconds
   var targetSeconds = (window._mlAudioTargetMs || AUD_DEFAULT_TARGET_MS) / 1000.0;
 
+  // A packet after a long gap without audio from the host ends a pause of the host audio (e.g. a silent desktop
+  // or loading screen), which emptied the schedule without any sound missing. It's handled like the start of
+  // the stream: not counted as an underrun and not measured as jitter. A gap shorter than twice the jitter
+  // buffer or 250 ms still counts, so that network stalls longer than the buffer remain visible.
+  var hostPause = (arrivalGapMs || 0) > Math.max(2000.0 * targetSeconds, AUD_HOST_PAUSE_MIN_MS);
+
   // Measure the jitter for the performance overlay (never allowed to stop the audio)
-  if (_audNextTime !== 0.0) {
+  if (_audNextTime !== 0.0 && !hostPause) {
     try {
       _audRecordSessionLead(_audNextTime - now);
     } catch (error) {
@@ -504,7 +517,7 @@ function _audReceiveFrame(heapOffset, samples, channels, sampleRate, stride, seq
   // were left to play. Snapping to the clock itself would leave the schedule with no headroom
   // at all, so the next stall of any length would leave another hole in the output.
   if (_audNextTime < now) {
-    if (_audNextTime !== 0.0) {
+    if (_audNextTime !== 0.0 && !hostPause) {
       stats.underruns++;
       if (_audSession) {
         _audSession.underruns++;
@@ -598,7 +611,11 @@ function getAudioStatsLines() {
     }
 
     var suggestion;
-    if (session.underruns > 0) {
+    if (session.underruns > 0 && !_audClockSync) {
+      // Without clock sync, an underrun may come from the drift between the host and TV clocks, which a larger
+      // buffer only postpones
+      suggestion = t('raise to %1$s ms or enable Audio clock sync', String(Math.min(500, targetMs + 25)));
+    } else if (session.underruns > 0) {
       suggestion = t('raise to %1$s ms', String(Math.min(500, targetMs + 25)));
     } else if (!_audClockSync) {
       suggestion = t('needs Audio clock sync');

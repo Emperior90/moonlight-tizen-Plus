@@ -775,17 +775,20 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     // Record the timestamp when measurement started
     m_ActiveWndVideoStats.measurementStartTimestamp = LiGetMillis();
     m_LastFrameNumber = decodeUnit->frameNumber;
+    s_LastClientDroppedFrames = clientDroppedFrames;
   } else {
     // Any frame number greater than the last frame number + 1 represents a dropped frame. The ones the client
-    // dropped itself since the previous frame were not lost on the network, so they are counted separately.
+    // dropped itself were not lost on the network, so they are counted separately. The receive thread can
+    // count such frames before their gap shows up here (e.g. while this thread waits in the pacer), so the
+    // client drops not covered by this gap are carried over to the next gap rather than discarded.
     const uint32_t gap = (uint32_t)(decodeUnit->frameNumber - (m_LastFrameNumber + 1));
     const uint32_t tvDroppedFrames = std::min(gap, clientDroppedFrames - s_LastClientDroppedFrames);
     m_ActiveWndVideoStats.networkDroppedFrames += gap - tvDroppedFrames;
     m_ActiveWndVideoStats.totalFrames += gap;
     s_SessionTvDroppedFrames += tvDroppedFrames;
+    s_LastClientDroppedFrames += tvDroppedFrames;
     m_LastFrameNumber = decodeUnit->frameNumber;
   }
-  s_LastClientDroppedFrames = clientDroppedFrames;
 
   // Track the longest decode unit queue of the stats window, since a single reading per window misses a backlog
   // that builds up and is flushed in between

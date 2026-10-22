@@ -852,13 +852,14 @@ typedef struct _VIDEO_NETWORK_STATS {
     // FEC blocks with lost data packets that were recovered from parity, and the data packets recovered
     uint32_t fecRecoveredBlocks;
     uint32_t fecRecoveredPackets;
-    // Recoveries that failed although enough packets had arrived
+    // Recoveries whose result failed the sanity checks of the recovered packets, so the frame was lost
     uint32_t fecRecoveryFailures;
     // Longest compute time of one recovery, and the number of recoveries that took 8 ms or more. The video
     // receive thread doesn't read from the socket while it recovers a block.
     uint32_t fecLongestRecoveryMs;
     uint32_t fecSlowRecoveries;
-    // The recovered block that used the largest share of its parity packets
+    // The recovered block that used the largest share of its parity packets: the packets it lost (data and
+    // parity) by the time it was recovered, against its parity packets
     uint32_t fecWorstMissingPackets;
     uint32_t fecWorstParityPackets;
     // Receive buffer size of the video socket as requested and as reported by the OS (0 if unknown). Linux

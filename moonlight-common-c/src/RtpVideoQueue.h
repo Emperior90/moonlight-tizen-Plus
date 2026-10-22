@@ -54,6 +54,7 @@ typedef struct _RTP_VIDEO_QUEUE {
     uint32_t statSlowRecoveries;
     uint32_t statWorstMissingPackets;
     uint32_t statWorstParityPackets;
+    bool statBlockRecorded; // the recovery of the current FEC block was already counted
 } RTP_VIDEO_QUEUE, *PRTP_VIDEO_QUEUE;
 
 #define RTPF_RET_QUEUED    0
