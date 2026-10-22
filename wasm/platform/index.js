@@ -52,6 +52,7 @@ var ethernetPresetNotice = false; // Flag indicating whether the Ethernet bitrat
 var h264ResolutionWarning = false; // Flag indicating whether the H.264 resolution warning message has shown, initial value is false
 var autoAdjustBitrate = false; // Flag indicating whether resolution, frame rate, codec and HDR changes apply the bitrate presets, which stops once the bitrate is picked by hand, initial value is false
 var keptBitrateNotice = false; // Flag indicating whether the notice about a kept hand-picked bitrate has shown, initial value is false
+var tvScreenSaverEnabled = null; // Last screensaver state requested from the TV, initial value is null (never requested)
 var streamNetworkInfo = ''; // Network connection summary shown in the performance statistics while streaming, initial value is empty
 var streamConnectionType = 'unknown'; // Network connection type of the current streaming session, initial value is unknown
 var lastWifiSignalRefreshMs = 0; // Time of the last Wi-Fi signal strength refresh of the network connection summary, initial value is 0
@@ -756,6 +757,34 @@ function getActiveConnectionType() {
     console.warn('%c[index.js, getActiveConnectionType]', 'color: green;', 'Warning: Failed to get the active network connection type: ' + e);
   }
   return 'unknown';
+}
+
+// Turn the screensaver of the TV off while streaming and on again afterwards. Samsung asks apps to turn it off during
+// playback without remote control input, and a session played only with a gamepad may not count as activity for the
+// TV. It's only turned on again after it was turned off here, so that the static menus of the app don't stay on the
+// OLED panel, and nothing is requested on TVs without the API.
+function setTvScreenSaver(enabled) {
+  if (enabled ? tvScreenSaverEnabled !== false : tvScreenSaverEnabled === false) {
+    return;
+  }
+  try {
+    if (typeof webapis === 'undefined' || !webapis.appcommon || typeof webapis.appcommon.setScreenSaver !== 'function' || !webapis.appcommon.AppCommonScreenSaverState) {
+      return;
+    }
+    const screenSaverStates = webapis.appcommon.AppCommonScreenSaverState;
+    const requestedState = enabled ? screenSaverStates.SCREEN_SAVER_ON : screenSaverStates.SCREEN_SAVER_OFF;
+    if (requestedState === undefined) {
+      return;
+    }
+    tvScreenSaverEnabled = enabled;
+    webapis.appcommon.setScreenSaver(requestedState, function() {
+      console.log('%c[index.js, setTvScreenSaver]', 'color: green;', 'Screensaver of the TV turned ' + (enabled ? 'on' : 'off'));
+    }, function(error) {
+      console.warn('%c[index.js, setTvScreenSaver]', 'color: green;', 'Warning: Failed to turn the screensaver of the TV ' + (enabled ? 'on' : 'off') + ': ' + (error && error.name) + ' ' + (error && error.message));
+    });
+  } catch (e) {
+    console.warn('%c[index.js, setTvScreenSaver]', 'color: green;', 'Warning: Failed to set the screensaver of the TV: ' + (e && e.name) + ' ' + (e && e.message));
+  }
 }
 
 // Get the recommended 4K bitrate in Mbps for the given network connection type of the TV. Samsung TVs have
@@ -2543,6 +2572,8 @@ function sortTitles(list, sortOrder) {
 // Handle layout elements when displaying the Apps view
 function showAppsMode() {
   console.log('%c[index.js, showAppsMode]', 'color: green;', 'Entering "Show Apps" mode.');
+  // Make sure the screensaver works again in the menus, even if the stream ended in an unusual way
+  setTvScreenSaver(true);
   $('#header-title').html(t('Apps'));
   $('#header-logo').show();
   $('#main-header').show();
@@ -3540,7 +3571,7 @@ function applyBitratePresets() {
     console.log('%c[index.js, applyBitratePresets]', 'color: green;', 'Keeping the bitrate of ' + $('#bitrateSlider').val() + ' Mbps');
     // Explain once how to get the presets back, since nothing else changes on screen
     if (!keptBitrateNotice) {
-      snackbarLogLong('Keeping your bitrate of %1$s Mbps. Turn \'Optimize bitrate presets\' on or off to apply the bitrate presets again.', $('#bitrateSlider').val());
+      snackbarLogLong('Keeping your bitrate of %1$s Mbps. Turning \'Optimize bitrate presets\' on applies low presets (about 45 Mbps for 4K at 60 FPS), turning it off applies the standard presets (80 Mbps for 4K at 60 FPS).', $('#bitrateSlider').val());
       keptBitrateNotice = true;
     }
     // Re-check the bitrate warnings, e.g. for the Ethernet port of the TV
@@ -4204,9 +4235,14 @@ function s90cSettingsDialog() {
     message += t('The network connection type of the TV could not be detected, so a moderate bitrate will be applied.');
   }
 
-  // Point to the ForceGM variant, because the game mode setting stays disabled on Tizen 9.0 and newer
+  // Point to the ForceGM variant, because the game mode setting stays disabled on Tizen 9.0 and newer, unless it's
+  // already installed
   if (parseFloat(platformVer) >= 9.0) {
-    message += '<br><br>' + t('Game mode stays disabled on Tizen %1$s, so install the ForceGM variant for the lowest latency.', platformVer);
+    if (checkForceGMVariant()) {
+      message += '<br><br>' + t('ForceGM variant detected: the app asks the TV for its Game Mode, so the Game mode setting stays off here and the decoder uses the Low Latency mode.');
+    } else {
+      message += '<br><br>' + t('Game mode stays disabled on Tizen %1$s, so install the ForceGM variant for the lowest latency.', platformVer);
+    }
   }
 
   // Mention that the settings target the S90C when they are applied on another TV
@@ -4383,10 +4419,14 @@ function initSpecialKeys() {
     if (e.key === 'XF86Back' && isInGame === true) {
       // Send the Escape key (ESC) to the host while streaming
       sendEscapeKeyToHost();
-      // Simulate mouse to move focus back to the streaming session
-      videoElement.dispatchEvent(new MouseEvent('mousedown', {
-        bubbles: true, cancelable: true, view: window, clientX: 0, clientY: 0
-      }));
+      // Simulate mouse to move focus back to the streaming session. Only while the pointer isn't locked yet,
+      // because the stream sends a mouse button press without a release for a click on the locked pointer,
+      // which would leave the left mouse button of the host held down.
+      if (!document.pointerLockElement) {
+        videoElement.dispatchEvent(new MouseEvent('mousedown', {
+          bubbles: true, cancelable: true, view: window, clientX: 0, clientY: 0
+        }));
+      }
     }
   });
 }

@@ -413,8 +413,8 @@
             </div>
             <div class="setting-option">
               <label data-i18n="Video HDR">Video HDR</label>
-              <span class="mdl-list__item-text-body" data-i18n="- HDR requires an HDR10-capable device, a GPU that can encode HEVC Main 10, and HDR10-enabled game.">
-                - HDR requires an HDR10-capable device, a GPU that can encode HEVC Main 10, and HDR10-enabled game.
+              <span class="mdl-list__item-text-body" data-i18n="- HDR requires an HDR10-capable device, a GPU that can encode HEVC Main 10, and HDR10-enabled game. HDR must also be on for the host display (e.g. a virtual display), in Windows or through Sunshine's display device settings. Otherwise the stream is 10-bit SDR, shown as 10-bit SDR in the performance statistics.">
+                - HDR requires an HDR10-capable device, a GPU that can encode HEVC Main 10, and HDR10-enabled game. HDR must also be on for the host display (e.g. a virtual display), in Windows or through Sunshine's display device settings. Otherwise the stream is 10-bit SDR, shown as 10-bit SDR in the performance statistics.
               </span>
               <div id="videoHdrMenu">
                 <label id="hdrModeBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="hdrModeSwitch">
@@ -441,8 +441,8 @@
             </div>
             <div class="setting-option">
               <label data-i18n="Game mode">Game mode</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Enable for ultra low latency with game mode or disable for low latency with post-processing video enhancements.">
-                - Enable for ultra low latency with game mode or disable for low latency with post-processing video enhancements.
+              <span class="mdl-list__item-text-body" data-i18n="- Enable for ultra low latency with game mode or disable for low latency with post-processing video enhancements. On Tizen 9 and newer keep it off with either app variant, as it can freeze the picture there. This switch only selects the decoder latency mode (Ultra Low or Low); the ForceGM variant asks the TV for its Game Mode instead.">
+                - Enable for ultra low latency with game mode or disable for low latency with post-processing video enhancements. On Tizen 9 and newer keep it off with either app variant, as it can freeze the picture there. This switch only selects the decoder latency mode (Ultra Low or Low); the ForceGM variant asks the TV for its Game Mode instead.
               </span>
               <div id="gameModeMenu">
                 <label id="gameModeBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="gameModeSwitch">
@@ -505,8 +505,8 @@
             </div>
             <div class="setting-option">
               <label data-i18n="Optimize bitrate presets">Optimize bitrate presets</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Calculates bitrate based on selected resolution, frame rate, codec, and HDR settings to determine the optimal value.">
-                - Calculates bitrate based on selected resolution, frame rate, codec, and HDR settings to determine the optimal value.
+              <span class="mdl-list__item-text-body" data-i18n="- Calculates a low bitrate from the resolution, frame rate, codec and HDR settings, e.g. about 45 Mbps for 4K at 60 FPS with HEVC HDR. For the best image quality keep it off and set the bitrate by hand.">
+                - Calculates a low bitrate from the resolution, frame rate, codec and HDR settings, e.g. about 45 Mbps for 4K at 60 FPS with HEVC HDR. For the best image quality keep it off and set the bitrate by hand.
               </span>
               <div id="optimizeBitrateMenu">
                 <label id="optimizeBitrateBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="optimizeBitrateSwitch">

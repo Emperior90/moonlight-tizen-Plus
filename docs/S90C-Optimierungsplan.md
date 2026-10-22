@@ -91,6 +91,7 @@ Gegen Netzwerk und TV spricht: 0 % Verlust, der Web-Audio-Scheduler fängt Uhren
 |---|---|
 | *Incoming frame rate* < 60, Netzwerk-Drops 0, *Host processing latency* (max) hoch | PC: Spiel/Encoder. Mit **HWiNFO** über die Session VRAM-Belegung, GPU-Hotspot, Speichertemperatur und Takt mitloggen |
 | *Session frames dropped by network* / *Session recovery keyframes* steigen | WLAN: FRITZ!Box-Ereignisprotokoll prüfen |
+| *Session frames dropped by the TV* steigt | TV-seitig: Der TV kam mit den Bildern nicht nach und hat seine Video-Pipeline zurückgesetzt. Das ist kein WLAN-Problem. Bitrate eine Stufe senken, App neu starten, Ergebnis notieren |
 | *Incoming* 60, aber *Rendering* < 60 oder *Average frame wait time* / *Pending frames* steigen | TV-seitig: App neu starten, Ergebnis notieren |
 
 ### A.4 Sunshine: Einstellungen passen, mit Anmerkungen
@@ -107,7 +108,7 @@ Gegen Netzwerk und TV spricht: 0 % Verlust, der Web-Audio-Scheduler fängt Uhren
 - **Full color range:** Nur behalten, wenn ein Schwarzwert-Test das bestätigt. Erkennt der TV den vollen Bereich nicht korrekt, saufen dunkle Details ab und helle clippen. Das wirkt „knackiger“, kostet aber Zeichnung in dunklen Szenen, und davon hat Witcher 3 viele. Test: eine Near-Black-Testseite oder der HDR-Kalibrierungsbildschirm des Spiels, einmal mit „Full“, einmal mit „Limited“. Gewinner ist die Einstellung, bei der die dunkelsten Stufen gerade noch unterscheidbar sind.
 - **Bitrate 4K/95 Mbit/s** ist ein guter Wert, nahe an Samsungs Decoder-Spezifikation. Optional 4K mit 110 Mbit/s 30 Minuten lang testen und dabei auf die Session-Zähler, *Average frame wait time* und *Average rendering time* achten.
 - **4K vs. 1440p bei 3 m Abstand:** Ein 4K-Pixel ist auf 55" aus 3 m nur ~0,36 Bogenminuten groß, ein 1440p-Pixel ~0,55. Das menschliche Auge löst grob 0,5–1 Bogenminute auf. Aus deinem Abstand ist 1440p also nah an der Wahrnehmungsgrenze, und 1440p mit 120 Mbit/s hat pro Pixel rund dreimal so viele Bits wie 4K mit 95 Mbit/s. In dunklen, detailreichen Szenen (Vegetation, Nebel) kann 1440p deshalb sauberer wirken, 4K punktet bei feinen Kanten. Ein direkter Vergleich aus 3 m lohnt sich.
-- **Web Audio mit 100 ms:** ein sicherer Wert. Für weniger Ton-Verzögerung nach diesem Update 75, dann 50 ms testen (A.8). Bei Aussetzern wieder erhöhen.
+- **Web Audio mit 100 ms:** ein sicherer Wert. Für weniger Ton-Verzögerung 75, dann 50 ms testen (A.8). Die Zeilen *Audio buffer* und *Audio session* im Overlay zeigen dabei Aussetzer (*underruns*) und nach 10 Minuten mit *Audio clock sync* einen Vorschlag für die Puffergröße (*suggested buffer*). Bei Aussetzern wieder erhöhen.
 
 ### A.6 TV-Einstellungen
 
@@ -311,7 +312,7 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
 ### 4.3 Was nicht funktioniert
 
 - **USB-LAN-Adapter**: werden von Samsung-TVs nicht unterstützt (zudem nur USB 2.0).
-- **Jumbo Frames**: TV-seitig nicht möglich. Die Paketgröße ist mit 1392 Byte bereits das Maximum für eine MTU von 1500.
+- **Jumbo Frames**: TV-seitig nicht möglich. Ohne Fragmentierung wären über IPv4 bei einer MTU von 1500 bis zu 1456 Byte Nutzdaten möglich. Die App nutzt wie Moonlight für PC und Android 1392 Byte, als Reserve für VPN- oder Tunnel-Overhead. 1456 Byte brächten nur rund 4 % weniger Pakete und keinen sichtbaren Unterschied.
 - **Powerline (dLAN)**: hoher Jitter und Paketverlust, nicht empfehlenswert.
 
 ---
@@ -362,6 +363,7 @@ Das Overlay am TV zeigt nicht, mit welchen Farbeinstellungen der PC kodiert. Das
 | `Color range: MPEG` | so | MPEG = Limited Range (Empfehlung), JPEG = Full Range |
 | `NvEnc: created encoder v… HEVC P6 …` (bzw. `… AV1 P6 …`) | enthält `10-bit`, `two-pass`, bei Split Frame Encoding `sfe` (erzwungen) bzw. `sfe-auto` (Treiber entscheidet), bei VBV-Erhöhung `vbv+N` | Zwischen den Angaben können weitere stehen, z. B. `async`. `two-pass` sagt nicht, ob Quarter oder Full Resolution. `rfi` heißt nur, dass die GPU Reference Frame Invalidation kann; ob der TV es nutzt, folgt dem RFI-Schalter der App. Beim AV1-Test muss dort `AV1` und `10-bit` stehen, sonst kodiert der PC kein AV1 Main10 |
 | `Display refresh rate [60Hz]` (bzw. `[120Hz]`) | ganzzahlig, gleich den Stream-FPS | Steht dort eine krumme Rate wie `59.9401Hz` und danach `Adjusted capture rate to 59.9401fps to better match display`, läuft der Stream mit 59,94 statt 60 Bildern. Dann im VDD bzw. in Windows (*Erweiterte Anzeigeeinstellungen*) die ganzzahlige Rate wählen. Auch mit aktivierter Display-Device-Konfiguration (`dd_refresh_rate_option = auto`) ist das nicht garantiert: Sunshine fordert die FPS-Rate an, akzeptiert aber jede Rate, die weniger als 0,9 Hz davon abweicht. Die Zeilen gibt es nur bei der Standard-Aufnahme (Desktop Duplication), nicht mit `capture = wgc` |
+| `Capture size       : 3840x2160` | gleich der Stream-Auflösung | Sonst skaliert Sunshine das Bild vor dem Kodieren, z. B. weil das virtuelle Display eine andere Auflösung hat |
 
 **Was der Encoder bekommt:**
 
@@ -391,6 +393,7 @@ Das größte Einzelbild liegt ungefähr bei Encoder-Bitrate ÷ FPS × (1 + `nven
 - **Schärfe: 0**, **Farbraum: Auto**, Farbton nach Geschmack (*Warm1* ist näher an der Norm).
 - **Eco-Einstellungen:** *Helligkeitsoptimierung* und *Energiesparmodus* **aus**, sonst dimmt der TV dunkle Szenen und HDR-Spitzen.
 - **HDR Tone Mapping:** *Aktiv* = heller und knackiger, *Statisch* = folgt den HDR10-Metadaten (exakter). Beides ausprobieren.
+- **Automatisches Ausschalten:** Nach EU-Vorgabe schaltet der TV nach spätestens 4 Stunden ohne Bedienung in den Standby (Allgemein → Energie und Energiesparen → *Automatisch ausschalten*). Die App kann diesen Zähler nicht zurücksetzen, und ob Controller-Eingaben als Bedienung zählen, ist unklar. Für Sessions über 4 Stunden die Funktion ausschalten oder zwischendurch eine Taste der Fernbedienung drücken. Den Bildschirmschoner schaltet die App während des Streams selbst ab.
 
 **Game Mode / Latenz:**
 
@@ -409,7 +412,7 @@ Das größte Einzelbild liegt ungefähr bei Encoder-Bitrate ÷ FPS × (1 + `nven
 | 1 | **Farbraum BT.709** statt BT.601 für SDR-Streams | Korrekte Farben auf dem 4K-TV. HDR nutzt weiterhin BT.2020 | `wasm/main.cpp` |
 | 2 | **Codec-Level 5.2** (HEVC `hev1.x.x.L156`, AV1 `av01.0.14M`) für Streams über 4K60, mit automatischem Rückfall auf 5.1, falls der TV ablehnt | Der Decoder wird für 4K90/120 passend konfiguriert. Bis 4K60 ändert sich nichts | `wasm/wasmplayer.cpp` |
 | 3 | **Reference Frame Invalidation** (neu, experimentell, Standard aus) | Nach Paketverlust schickt der PC kein komplettes Keyframe (groß oder unscharf), sondern ein normales Bild, das auf einem älteren Bild aufbaut. Keine bessere Kompression: Sunshine (NVENC) lässt jedes Bild weiter nur auf ein Referenzbild verweisen, der größere Puffer dient nur der Wiederherstellung | `wasm/main.cpp`, `wasm/index.html`, `wasm/platform/index.js` |
-| 4 | **Sitzungs-Statistik** im Overlay: verlorene Frames *seit Stream-Start* und Zahl der Wiederherstellungs-Keyframes (Keyframes, die die App selbst nach einem Fokus- oder Track-Wechsel anfordert, zählen nicht mit), dazu eine **Netzwerkzeile** (LAN bzw. WLAN mit Signalstärke) | Fehlerfreiheit lässt sich über eine ganze Session prüfen, kurze Drops gehen nicht mehr unter | `wasm/wasmplayer.cpp`, `wasm/input.cpp`, `wasm/platform/messages.js`, `wasm/platform/index.js` |
+| 4 | **Sitzungs-Statistik** im Overlay: verlorene Frames *seit Stream-Start* und Zahl der Wiederherstellungs-Keyframes (Keyframes, die die App selbst beim Öffnen des Video-Tracks oder nach geänderten HDR-Metadaten anfordert, zählen nicht mit), dazu eine **Netzwerkzeile** (LAN bzw. WLAN mit Signalstärke) | Fehlerfreiheit lässt sich über eine ganze Session prüfen, kurze Drops gehen nicht mehr unter | `wasm/wasmplayer.cpp`, `wasm/input.cpp`, `wasm/platform/messages.js`, `wasm/platform/index.js` |
 | 5 | **Verbindungserkennung LAN/WLAN** | Warnung bei mehr als 80 Mbit/s per LAN, Bitrate-Presets per LAN auf 75 Mbit/s begrenzt | `wasm/platform/index.js` |
 | 6 | **Button „Samsung S90C optimization“** und S90C-Werte als Standard (Neuinstallation und „Restore Defaults“) | Der Dialog zeigt, was gesetzt wird, und erst „Continue“ setzt 4K60, HEVC, HDR, Frame Pacing, passenden Game Mode und die Bitrate passend zur Verbindung | `wasm/index.html`, `wasm/platform/index.js`, `wasm/platform/navigation.js`, `wasm/static/css/style.css` |
 | 7 | **Warnungen:** H.264 über 1080p (auch beim Start, wenn ein früher gespeichertes H.264 auf den neuen 4K-Standard trifft), 4K über 120 FPS | Verhindert Einstellungen, die der Decoder nicht kann | `wasm/platform/index.js` |
@@ -434,6 +437,16 @@ Das größte Einzelbild liegt ungefähr bei Encoder-Bitrate ÷ FPS × (1 + `nven
 | 26 | **Neue Overlay-Zeilen:** *Configured bitrate* (die beim Start angeforderte Bitrate) und *Host frame rate (30 s)*, gemessen aus den Aufnahme-Zeitstempeln des PCs über 30 s und nach Bildnummern gezählt, sodass Paketverluste das Ergebnis nicht verfälschen. Vom PC wiederholte Bilder zählen nicht mit | Zeigt im Stream, welche Bitrate wirklich angefordert wurde, und deckt ein Host-Display mit 59,94 statt 60 Hz auf (alle ~17 s ein Haken), was die FPS-Zeilen mit ihrer Genauigkeit von ±0,5 FPS nicht können | `wasm/wasmplayer.cpp`, `wasm/platform/messages.js` |
 | 27 | **Die Bitrate bleibt erhalten**, wenn Auflösung, FPS, Codec oder HDR wechseln: die von Hand gewählte ebenso wie die vom S90C-Button, nach „Restore Defaults“ oder bei einer Neuinstallation empfohlene. Die Presets folgen diesen Einstellungen erst wieder, wenn *Optimize bitrate presets* umgeschaltet wird, und nur bis die Bitrate wieder von Hand geändert wird. Nach einem Update entscheidet die App einmal: War die gespeicherte Bitrate das Preset zu Auflösung und FPS (frühere Versionen setzten es bei jedem Wechsel) oder waren die optimierten Presets an, folgen die Presets weiter. Erneutes Wählen derselben Auflösung oder FPS setzt die Bitrate nicht mehr zurück | Bisher landete 4K60 nach einem Ausflug auf 120 FPS beim Preset von 80 Mbit/s statt der gewählten 100 bzw. 120. Mit deinen 5 % FEC bekam der Encoder dann ~75 statt ~94 bzw. ~113 Mbit/s | `wasm/platform/index.js` |
 | 28 | **Hoch/Runter im Bitrate-Menü** ändern die Bitrate in 5-Mbit/s-Schritten (Links/Rechts weiter 0,5) | 95 → 150 Mbit/s mit 11 statt 110 Tastendrücken, praktisch für die Bitrate-Leiter | `wasm/platform/navigation.js`, `wasm/index.html` |
+| 29 | **Fehlerkorrektur ohne überflüssige Rechnung:** Beim Reparieren verlorener Pakete multiplizierte die Bibliothek jedes Mal eine Matrix mit der Einheitsmatrix | Auf einem PC gemessen: 15 statt 0,4 ms pro großem Block (242 Datenpakete), 4 statt 0,2 ms bei 150 Datenpaketen. Auf dem TV vermutlich ein Vielfaches. In dieser Zeit liest der Empfangs-Thread keine Pakete, die Reparatur selbst verzögerte also die folgenden Bilder. Das Ergebnis ist bitgenau gleich (geprüft über ~1.200 Blockgrößen) | `moonlight-common-c/reedsolomon/rs.c` |
+| 30 | **Kein 2-Sekunden-Einfrieren nach falsch vorhergesagtem Verlust:** Die Vorhersage verlorener Bilder läuft wie in der offiziellen Moonlight-Version nur noch mit RFI. Dazu die offizielle Korrektur für ein teilweise empfangenes Keyframe | Ohne RFI konnten umsortierte WLAN-Pakete das Bild bis zu 120 Bilder lang (2 s bei 60 FPS) einfrieren, mit falscher Warnung „Slow connection“. Wie oft das vorkam, zeigt nur das TV-Log | `moonlight-common-c/src/RtpVideoQueue.c`, `VideoDepacketizer.c` |
+| 31 | **Verlorene Audiopakete mit 5 statt 10 ms Ersatzton** (Web Audio) | Bisher wuchs die Ton-Verzögerung mit jedem nicht reparierbaren Audiopaket um 5 ms und wurde später mit einem hörbaren Schnitt abgebaut | `wasm/auddec.cpp` |
+| 32 | **Bildschirmschoner des TVs während des Streams aus**, danach wieder an | Kein Bildschirmschoner mitten in einer langen Session, die nur mit dem Controller gespielt wird | `wasm/platform/index.js`, `wasm/platform/messages.js` |
+| 33 | **Kein Keyframe mehr beim Fangen des Mauszeigers**, und die Zurück-Taste löst bei gefangenem Zeiger keinen Mausklick mehr aus | Ein kurz unscharfes Bild weniger. Die linke Maustaste des PCs bleibt nicht mehr gedrückt hängen | `wasm/input.cpp`, `wasm/platform/index.js`, `wasm/wasmplayer.cpp` |
+| 34 | **Frame Pacer wartet am Ende 0,2 statt 1 ms aktiv** | Weniger CPU-Last am TV, vor allem bei 120 FPS. Die Pacing-Verzögerung bleibt praktisch gleich | `wasm/wasmplayer.cpp` |
+| 35 | **Vom TV verworfene Bilder getrennt gezählt:** Läuft die Warteschlange vor dem Decoder über oder lehnt der Player ein Bild ab, zählen die verworfenen Bilder als *Session frames dropped by the TV* statt als Netzwerkverlust. *Pending frames* zeigt zusätzlich das Maximum pro Sekunde | Die Bitrate-Leiter unterscheidet jetzt einen überlasteten TV von WLAN-Verlust. Die falsche Warnung „Slow connection“ entfällt in diesem Fall | `moonlight-common-c/src/VideoDepacketizer.c`, `wasm/wasmplayer.cpp` |
+| 36 | **Audiozeilen im Overlay** (Web Audio): Puffer, Vorlauf, Browser-Latenz, Aussetzer, übersprungene und verlorene Pakete, Clock-Sync-Korrektur und ein Vorschlag für die Puffergröße | Die Ton-Verzögerung lässt sich am TV ohne Entwickler-Konsole sicher von 100 auf z. B. 50 ms senken | `wasm/platform/audio.js`, `wasm/platform/messages.js` |
+| 37 | **Fehlerkorrektur und UDP-Puffer im Overlay:** reparierte Blöcke und Pakete, längste Reparatur, knappster Block, angeforderter und gemeldeter Empfangspuffer | Zeigt, wie nah das WLAN an sichtbaren Verlusten ist und ob Tizen den Puffer kürzt | `moonlight-common-c/src/RtpVideoQueue.c`, `VideoStream.c`, `wasm/wasmplayer.cpp` |
+| 38 | **Texte korrigiert:** Der S90C-Dialog erkennt die installierte ForceGM-Variante. Die Hilfe zu *Game mode*, *Optimize bitrate presets* und HDR sagt jetzt, was die Schalter bei dir tun, und der Hinweis zur gehaltenen Bitrate empfiehlt nicht mehr den Weg zu 45 Mbit/s | Keine falschen Schritte auf dem Weg zu 4K mit hoher Bitrate | `wasm/index.html`, `wasm/platform/index.js` |
 
 **So sieht es in der App aus** (Screenshots aus einem Browser-Test mit simulierten Tizen-APIs):
 
@@ -461,7 +474,7 @@ Das größte Einzelbild liegt ungefähr bei Encoder-Bitrate ÷ FPS × (1 + `nven
 2. Settings → Advanced Settings → **Performance statistics** an. Während des Streams lässt es sich auch per Shortcut ein- und ausblenden.
 3. 15–20 Minuten ein **anspruchsvolles Spiel** spielen: viel Vegetation, Partikel, schnelle Kameraschwenks.
 4. **Bestanden, wenn:**
-   - *Session frames dropped by network* = **0** (oder < 0,01 %),
+   - *Session frames dropped by network* = **0** (oder < 0,01 %) und *Session frames dropped by the TV* = **0**,
    - *Session recovery keyframes* = **0–1** (eins direkt nach dem Start kann normal sein),
    - *Rendering frame rate* stabil bei ~60 FPS,
    - *Average frame wait time* und *Average rendering time* stabil bei wenigen Millisekunden, *Pending frames* 0–1. Steigen sie über die Session an, staut sich etwas vor dem Decoder.
@@ -472,7 +485,9 @@ Das größte Einzelbild liegt ungefähr bei Encoder-Bitrate ÷ FPS × (1 + `nven
 - **LAN (mit Burst-Fix):** 60 → 70 → 75 → 80 Mbit/s, je 15 Minuten.
 - Den höchsten fehlerfreien Wert wählen und **eine Stufe zurückgehen**, als Reserve für schwierige Szenen.
 - Im Bitrate-Menü stellen **Hoch/Runter** in 5-Mbit/s-Schritten, **Links/Rechts** in 0,5-Mbit/s-Schritten.
-- Die Bitrate bleibt jetzt erhalten, wenn du Auflösung, FPS, Codec oder HDR wechselst, ob von Hand gewählt oder vom S90C-Button gesetzt. Die App meldet das einmal. Die Bitrate-Presets greifen erst wieder, wenn du *Optimize bitrate presets* umschaltest. Ein Ausflug auf 120 FPS lässt 4K60 also nicht mehr unbemerkt bei 80 Mbit/s landen.
+- Die Bitrate bleibt jetzt erhalten, wenn du Auflösung, FPS, Codec oder HDR wechselst, ob von Hand gewählt oder vom S90C-Button gesetzt. Die App meldet das einmal. *Optimize bitrate presets* nicht als Weg zurück nutzen: Einschalten setzt niedrige berechnete Werte (etwa 45 Mbit/s für 4K60 mit HEVC HDR), Ausschalten die Standard-Presets (80 Mbit/s für 4K60). Für hohe Bitraten den Regler von Hand stellen. Ein Ausflug auf 120 FPS lässt 4K60 also nicht mehr unbemerkt bei 80 Mbit/s landen.
+- Bestanden ist eine Stufe, wenn auch *Session frames dropped by the TV* bei 0 bleibt. Steigt nur dieser Wert, ist nicht das WLAN, sondern der Decoder-Pfad des TVs am Limit.
+- *Session FEC recoveries* zählt Verluste, die die Fehlerkorrektur unsichtbar repariert hat. *Worst FEC block* zeigt, wie knapp es war: Werden fast alle Paritätspakete eines Blocks gebraucht, droht beim nächsten Aussetzer ein sichtbarer Verlust. Dann in Sunshine `fec_percentage` von 5 auf 10 erhöhen.
 
 ### Phase 3 – A/B-Tests (jeweils nur eine Sache ändern)
 
@@ -487,16 +502,41 @@ Das größte Einzelbild liegt ungefähr bei Encoder-Bitrate ÷ FPS × (1 + `nven
 | `nvenc_vbv_increase` 0 → 50 → 100 (nur WLAN) | Blockartefakte in schnellen Szenen | Bildqualität bei Kameraschwenks, Session-Drops müssen 0 bleiben |
 | VDD 60,000 ↔ 59,94 Hz | Nur wenn nach der Umstellung auf 60,000 Hz (5.1) noch etwa alle 17 s (60 FPS) bzw. 8 s (120 FPS) ein kurzes Haken bei langsamen Schwenks bleibt und das VDD beide Raten anbietet | Je 2 Minuten gleichmäßiger Schwenk (z. B. testufo.com auf dem PC), die Variante ohne periodisches Haken behalten. Wie das Panel im App-Betrieb taktet, ist nicht dokumentiert. Vermutlich zeigt der TV im Low-Latency-Modus jedes Bild sofort. Ist der PC schneller als das Panel, zeigt sich das eher als langsam steigende Latenz, also auch auf *Average rendering time* und das Eingabegefühl achten. Ein Rest bleibt immer: PC- und TV-Uhr weichen um einige zehn ppm ab. Das ergibt höchstens alle paar Minuten ein wiederholtes oder ausgelassenes Bild und lässt sich ohne VRR nicht beseitigen |
 | Split Frame Encoding an ↔ Treiber entscheidet | Latenz | *Host processing latency* (Durchschnitt und Maximum) |
-| Audio-Jitter-Puffer 100 → 75 → 50 ms | Ton läuft spürbar hinterher | Aussetzer oder Knacksen → eine Stufe zurück |
-| **Audio clock sync** an ↔ aus (Web Audio) | Ton setzt alle paar Minuten kurz aus oder springt | In der Konsole die Zeile `[audio.js, statistics]`: `dropped` und `underrun` müssen bei 0 bleiben, `sync` zeigt die Korrektur in ppm |
+| Audio-Jitter-Puffer 100 → 75 → 50 ms | Ton läuft spürbar hinterher | Mit *Audio clock sync* an mindestens 10 Minuten spielen und den Vorschlag *suggested buffer* in der Zeile *Audio session* übernehmen. *underruns* müssen danach bei 0 bleiben, sonst eine Stufe zurück. Der Ton sollte nicht vor dem Bild kommen, das prüft der Latenz-Test unten |
+| **Audio clock sync** an ↔ aus (Web Audio) | Ton setzt alle paar Minuten kurz aus oder springt | Overlay-Zeile *Audio session*: *underruns* und *skipped* müssen bei 0 bleiben, *clock sync* zeigt die Korrektur in ppm. Ohne Overlay steht dasselbe in der Konsole in der Zeile `[audio.js, statistics]` |
 | **HDR static metadata** an ↔ aus | HDR-Lichter wirken zu flach oder clippen | Zeichnung in Lichtern und Schatten (HDR-Kalibrierungsbild des Spiels). Startet der Stream nicht → aus |
 | EMSS ↔ Web Audio | Bei Knacksern oder Audio-Aussetzern | Audioqualität, ob Video-Ruckler verschwinden |
+
+#### Latenz messen (Kamera-Test)
+
+Das Overlay sieht weder die Dekodierung im TV noch die Bildverarbeitung des Panels. Die Gesamtlatenz vom Tastendruck bis zum Bild misst nur eine Kamera.
+
+1. **Testseite am PC:** Diese Datei als `latenz.html` speichern und im Browser im Vollbild öffnen. Der Bildschirm wird weiß, solange am Controller A gedrückt ist. Der Browser sieht dabei den virtuellen Controller von Sunshine.
+   ```html
+   <!doctype html><body style="margin:0;background:#000;height:100vh"><script>
+   function loop(){var p=navigator.getGamepads&&navigator.getGamepads()[0];
+   document.body.style.background=(p&&p.buttons[0].pressed)?'#fff':'#000';
+   requestAnimationFrame(loop);}loop();</script></body>
+   ```
+2. **Filmen:** Handy mit 240 FPS so aufstellen, dass Controller und TV im Bild sind. Ein Bild der Aufnahme sind 4,2 ms.
+3. **Zählen:** Pro Konfiguration mindestens 20, für die Ultra-Low-Entscheidung 30 Tastendrücke. Gezählt wird vom Moment, in dem die Taste ganz unten ist, bis zur ersten weißen Fläche an einer festen Stelle oben im Bild. Der Median zählt.
+4. **Genauigkeit:** Bei 60 FPS streuen die Werte allein durch die Bildphase um bis zu 16,7 ms. Mit 20 Drücken sind daher nur Unterschiede ab etwa 5–6 ms belastbar. Kleinere Effekte wie 100 gegen 150 Mbit/s liest man besser im Overlay ab.
+
+| Konfiguration | Was sie zeigt |
+|---|---|
+| 0: `Moonlight.wgt` gegen `Moonlight-ForceGM.wgt`, beide mit *Game mode* aus | Ob der Spielmodus des TVs bei 4K wirklich Latenz spart. Das ist vermutlich der größte Block. Nach der Neuinstallation die Einstellungen prüfen |
+| 1: ForceGM, *Game mode* aus (Low Latency) | Der Stand, den die App unter Tizen 9 einstellt |
+| 2: ForceGM, *Game mode* an (Ultra Low Latency) | Sofort abbrechen, wenn das erste Bild einfriert, der Bildschirm schwarz bleibt oder Artefakte auftreten |
+| 3: Frame Pacing an gegen aus | Was die gleichmäßige Bildfolge an Latenz kostet |
+
+**Regel:** Ultra Low (Konfiguration 2) nur behalten, wenn sie 2 Stunden stabil läuft und ihr Median mindestens ~8 ms unter Konfiguration 1 liegt.
 
 ### Phase 4 – Bildqualität prüfen
 
 - HDR: Windows-HDR-Kalibrierung durchführen. Dunkle Verläufe (Himmel, Nebel) auf Banding prüfen (10 Bit sollte keins zeigen).
 - Farben: Hauttöne und Grüntöne mit dem PC-Monitor vergleichen. Mit BT.709 sollten keine Farbverschiebungen mehr auftreten.
 - Schwarzwert: *Color range* auf „begrenzt“ lassen. Wirkt Schwarz grau oder sind dunkle Details abgeschnitten, Sunshine/GPU auf begrenzten Bereich prüfen.
+- **Schärfe 1:1:** Nur mit Stream-Auflösung 3840 × 2160 aussagekräftig. Die Windows-Skalierung des virtuellen Displays für den Test auf 100 % stellen (Einstellungen → Anzeige → Skalierung), sonst vergrößert schon der PC das Bild. Danach zurückstellen. Ein Testbild mit abwechselnd 1 Pixel breiten schwarzen und weißen Linien, senkrecht und waagerecht, in Originalgröße im Vollbild öffnen, den Mauszeiger beiseite und ein paar Sekunden stehen lassen. Am TV aus der Nähe prüfen, ob die Linien gleichmäßig getrennt sind. Graue Flächen, Moiré oder Schwebungen heißen, dass irgendwo skaliert wird. Zuerst `Capture size` im Sunshine-Log prüfen (5.4), dann Schärfe 0 und *Digital Clean View* aus am TV. Bleibt es unscharf, skaliert der TV die Video-Ebene der App. Das lässt sich in der App nicht beheben, das Ergebnis bitte notieren. Leichte Farbsäume an weißen Linien kommen von der Subpixel-Anordnung des QD-OLED, farbige 1-Pixel-Linien verschwimmen durch die 4:2:0-Farbunterabtastung immer etwas. Beides ist kein Fehler.
 
 ### Phase 5 – Dauertest
 
@@ -514,6 +554,10 @@ Das größte Einzelbild liegt ungefähr bei Encoder-Bitrate ÷ FPS × (1 + `nven
 | *Average frame pacing delay* dauerhaft hoch | Der Pacer hält die Bilder zurück (bewusst, für gleichmäßige Bildfolge) | Normal sind wenige Millisekunden. Für minimale Latenz Frame Pacing aus (A/B-Test) |
 | *Average rendering time* steigt mit der Bitrate | Die Übergabe an den Hardware-Decoder blockiert, der Decoder-Pfad des TVs ist am Limit | Bitrate eine Stufe senken |
 | *Session recovery keyframes* steigt | Jeder Anstieg ist ein sichtbarer Aussetzer | Ursache über die Zeilen oben finden |
+| *Session frames dropped by the TV* > 0 | Der TV kam nicht nach: Die Warteschlange vor dem Decoder lief über, oder der Player hat ein Bild abgelehnt. Die App hat die Pipeline zurückgesetzt (*video pipeline resets*) und ein Keyframe angefordert | Kein WLAN-Problem. Bitrate eine Stufe senken. Bleibt *Pending frames (max)* dauerhaft hoch, ist der Decoder-Pfad am Limit |
+| *Session FEC recoveries* steigt, *Worst FEC block* nahe am Maximum | Paketverluste, die die Fehlerkorrektur noch repariert hat. *longest* ist die längste Rechenzeit einer Reparatur, *slow* zählt die ab 8 ms | Bei vielen Reparaturen oder knappem *Worst FEC block* in Sunshine `fec_percentage` auf 10 erhöhen. *failed* muss 0 bleiben |
+| *UDP receive buffer* deutlich unter *requested* | Tizen hat den Empfangspuffer gekürzt. Linux meldet dabei das Doppelte der nutzbaren Größe | Nur notieren. Ist er kleiner als ein 4K-Bild (~300 KB), können Stockungen des Empfangs-Threads Pakete kosten |
+| *Audio session*: *underruns* oder *skipped* > 0 | *underruns* sind Lücken im Ton, *skipped* ohne *Audio clock sync* meist Uhrendrift zwischen PC und TV | Puffer um 25 ms erhöhen (*suggested buffer* nennt den Wert) oder *Audio clock sync* einschalten |
 | *Incoming bitrate* deutlich unter *Configured bitrate* | *Configured bitrate* ist die beim Start angeforderte Bitrate inklusive FEC und Audio, also eine Obergrenze. Der Encoder bekommt bei 5 % FEC etwa das 0,95-Fache minus ~1 Mbit/s, bei 20 % FEC das 0,8-Fache minus ~1 Mbit/s (Tabelle in 5.4). In ruhigen Szenen liegt er weit darunter | Nur auffällig zusammen mit Drops oder sinkender *Incoming frame rate* |
 | *Host frame rate (30 s)* zeigt z. B. 59,94 statt 60 | Gemessen aus den Aufnahme-Zeitstempeln des PCs, erscheint nach den ersten 30 s. Gezählt werden nur neu aufgenommene Bilder, keine Wiederholungen. 59,94 heißt: Das Host-Display läuft mit 59,94 Hz | Display auf 60,000 Hz stellen (5.1). In Bewegung ablesen: In ruhigen Szenen nimmt der PC kaum neue Bilder auf, dann bleibt der letzte Wert stehen. Liegt der Wert in Bewegung unter den Ziel-FPS, liefert das Spiel bzw. der PC zu wenige Bilder |
 | WLAN-Signalstärke < 60 % | Schlechte Funkverbindung | Router näher, anderer Kanal, LAN-Variante |

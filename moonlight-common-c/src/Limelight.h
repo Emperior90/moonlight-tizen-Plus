@@ -838,6 +838,38 @@ int LiFindExternalAddressIP4(const char* stunServer, unsigned short stunPort, un
 // if CAPABILITY_DIRECT_SUBMIT is not set for the video renderer.
 int LiGetPendingVideoFrames(void);
 
+// Returns the number of video frames this client dropped itself since the stream started, because the decode
+// unit queue overflowed or the decoder requested an IDR frame, including the frames dropped while waiting for
+// that IDR frame. These frames show up as gaps in the frame numbers like frames lost on the network.
+uint32_t LiGetClientDroppedVideoFrames(void);
+
+// Returns how often this client reset its video pipeline since the stream started (decode unit queue overflow
+// or an IDR frame requested by the decoder).
+uint32_t LiGetClientVideoResets(void);
+
+// Session statistics of the video FEC recovery and the video socket
+typedef struct _VIDEO_NETWORK_STATS {
+    // FEC blocks with lost data packets that were recovered from parity, and the data packets recovered
+    uint32_t fecRecoveredBlocks;
+    uint32_t fecRecoveredPackets;
+    // Recoveries that failed although enough packets had arrived
+    uint32_t fecRecoveryFailures;
+    // Longest compute time of one recovery, and the number of recoveries that took 8 ms or more. The video
+    // receive thread doesn't read from the socket while it recovers a block.
+    uint32_t fecLongestRecoveryMs;
+    uint32_t fecSlowRecoveries;
+    // The recovered block that used the largest share of its parity packets
+    uint32_t fecWorstMissingPackets;
+    uint32_t fecWorstParityPackets;
+    // Receive buffer size of the video socket as requested and as reported by the OS (0 if unknown). Linux
+    // reports twice the usable size, because it includes bookkeeping overhead.
+    int requestedReceiveBufferSize;
+    int reportedReceiveBufferSize;
+} VIDEO_NETWORK_STATS, *PVIDEO_NETWORK_STATS;
+
+// Fills in the session statistics of the video FEC recovery and the video socket
+void LiGetVideoNetworkStats(PVIDEO_NETWORK_STATS stats);
+
 // Returns the number of queued audio frames ready for delivery. Only relevant
 // if CAPABILITY_DIRECT_SUBMIT is not set for the audio renderer. For most uses,
 // LiGetPendingAudioDuration() is probably a better option than this function.

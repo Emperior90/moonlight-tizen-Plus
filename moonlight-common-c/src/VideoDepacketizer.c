@@ -24,6 +24,17 @@ static unsigned int firstPacketPresentationTime;
 static bool dropStatePending;
 static bool idrFrameProcessed;
 
+// Frames this client dropped itself because the decoder didn't keep up: the decode unit queue overflowed, or the
+// decoder asked for an IDR frame, plus the frames dropped while waiting for the IDR frame after that. They show up
+// as gaps in the frame numbers like frames lost on the network, so they are counted to tell the two apart. Each
+// counter has a single writer: the receive thread for the queue overflow and the IDR wait, and the decoder thread
+// for the decoder refresh.
+static uint32_t clientRecvDroppedFrames;
+static uint32_t clientQueueOverflows;
+static uint32_t clientRefreshDroppedFrames;
+static uint32_t clientDecoderRefreshes;
+static bool clientResetPending;
+
 #define DR_CLEANUP -1000
 
 #define CONSECUTIVE_DROP_LIMIT 120
@@ -76,6 +87,11 @@ void initializeVideoDepacketizer(int pktSize) {
     dropStatePending = false;
     idrFrameProcessed = false;
     strictIdrFrameWait = !isReferenceFrameInvalidationEnabled();
+    clientRecvDroppedFrames = 0;
+    clientQueueOverflows = 0;
+    clientRefreshDroppedFrames = 0;
+    clientDecoderRefreshes = 0;
+    clientResetPending = false;
 }
 
 // Free the NAL chain
@@ -101,9 +117,10 @@ static void dropFrameState(void) {
     // We're dropping frame state now
     dropStatePending = false;
 
-    if (strictIdrFrameWait || !idrFrameProcessed || waitingForIdrFrame) {
+    if (strictIdrFrameWait || !idrFrameProcessed || waitingForIdrFrame || (nalChainHead && frameType == FRAME_TYPE_IDR)) {
         // We'll need an IDR frame now if we're in non-RFI mode, if we've never
-        // received an IDR frame, or if we explicitly need an IDR frame.
+        // received an IDR frame, if we explicitly need an IDR frame, or if we
+        // just dropped a partially processed IDR frame (as in upstream).
         waitingForIdrFrame = true;
     }
     else {
@@ -128,18 +145,22 @@ static void dropFrameState(void) {
     cleanupFrameState();
 }
 
-// Cleanup the list of decode units
-static void freeDecodeUnitList(PLINKED_BLOCKING_QUEUE_ENTRY entry) {
+// Cleanup the list of decode units and return how many there were
+static uint32_t freeDecodeUnitList(PLINKED_BLOCKING_QUEUE_ENTRY entry) {
     PLINKED_BLOCKING_QUEUE_ENTRY nextEntry;
+    uint32_t count = 0;
 
     while (entry != NULL) {
         nextEntry = entry->flink;
 
         // Complete this with a failure status
         LiCompleteVideoFrame(entry->data, DR_CLEANUP);
+        count++;
 
         entry = nextEntry;
     }
+
+    return count;
 }
 
 void stopVideoDepacketizer(void) {
@@ -517,8 +538,14 @@ static void reassembleFrame(int frameNumber) {
                     // Free the DU we were going to queue
                     free(qdu);
 
-                    // Free all frames in the decode unit queue
-                    freeDecodeUnitList(LbqFlushQueueItems(&decodeUnitQueue));
+                    // Free all frames in the decode unit queue, and count them and the one that didn't fit
+                    // as dropped by this client rather than by the network
+                    clientRecvDroppedFrames += 1 + freeDecodeUnitList(LbqFlushQueueItems(&decodeUnitQueue));
+                    clientQueueOverflows++;
+                    clientResetPending = true;
+
+                    // The frame arrived completely, so it doesn't count as lost for the connection quality warnings
+                    connectionReceivedCompleteFrame(frameNumber);
 
                     // Request an IDR frame to recover
                     LiRequestIdrFrame();
@@ -673,6 +700,7 @@ static void processAvcHevcRtpPayloadSlow(PBUFFER_DESC currentPos, PLENTRY_INTERN
             // No longer waiting for an IDR frame
             waitingForIdrFrame = false;
             waitingForRefInvalFrame = false;
+            clientResetPending = false;
 
             // Cancel any pending IDR frame request
             waitingForNextSuccessfulFrame = false;
@@ -711,8 +739,10 @@ void requestDecoderRefresh(void) {
     // Wait for the next IDR frame
     waitingForIdrFrame = true;
     
-    // Flush the decode unit queue
-    freeDecodeUnitList(LbqFlushQueueItems(&decodeUnitQueue));
+    // Flush the decode unit queue, and count the flushed frames as dropped by this client
+    clientRefreshDroppedFrames += freeDecodeUnitList(LbqFlushQueueItems(&decodeUnitQueue));
+    clientDecoderRefreshes++;
+    clientResetPending = true;
     
     // Request the receive thread drop its state
     // on the next call. We can't do it here because
@@ -853,6 +883,7 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
                 if (!(NegotiatedVideoFormat & (VIDEO_FORMAT_MASK_H264 | VIDEO_FORMAT_MASK_H265))) {
                     waitingForIdrFrame = false;
                     waitingForNextSuccessfulFrame = false;
+                    clientResetPending = false;
                     frameType = FRAME_TYPE_IDR;
                 }
                 // Fall-through
@@ -1069,6 +1100,14 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
             if (waitingForIdrFrame) {
                 Limelog("Waiting for IDR frame\n");
 
+                // A frame dropped while waiting for the IDR frame after this client reset the decoder pipeline
+                // was dropped by the client, not lost on the network, so it also counts as received for the
+                // connection quality warnings
+                if (clientResetPending) {
+                    clientRecvDroppedFrames++;
+                    connectionReceivedCompleteFrame(frameIndex);
+                }
+
                 // We wait for the first fully received frame after a loss to approximate
                 // detection of the recovery of the network. Requesting an IDR frame while
                 // the network is unstable will just contribute to congestion collapse.
@@ -1105,6 +1144,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
                 dropStatePending = false;
             }
             else {
+                if (clientResetPending) {
+                    clientRecvDroppedFrames++;
+                }
                 dropFrameState();
                 return;
             }
@@ -1181,4 +1223,12 @@ void queueRtpPacket(PRTPV_QUEUE_ENTRY queueEntryPtr) {
 
 int LiGetPendingVideoFrames(void) {
     return LbqGetItemCount(&decodeUnitQueue);
+}
+
+uint32_t LiGetClientDroppedVideoFrames(void) {
+    return clientRecvDroppedFrames + clientRefreshDroppedFrames;
+}
+
+uint32_t LiGetClientVideoResets(void) {
+    return clientQueueOverflows + clientDecoderRefreshes;
 }

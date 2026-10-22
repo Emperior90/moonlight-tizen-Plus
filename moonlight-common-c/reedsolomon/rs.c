@@ -384,7 +384,6 @@ void reed_solomon_init(void) {
 
 reed_solomon* reed_solomon_new(int data_shards, int parity_shards) {
     gf* vm = NULL;
-    gf* top = NULL;
     int err = 0;
     reed_solomon* rs = NULL;
 
@@ -417,20 +416,12 @@ reed_solomon* reed_solomon_new(int data_shards, int parity_shards) {
                 vm[ptr++] = row == col ? 1 : 0;
         }
 
-        top = sub_matrix(vm, 0, 0, data_shards, data_shards, rs->shards, data_shards);
-        if (NULL == top) {
-            err = 3;
-            break;
-        }
-
-        err = invert_mat(top, data_shards);
-        assert(0 == err);
-
-        rs->m = multiply1(vm, rs->shards, data_shards, top, data_shards, data_shards);
-        if (NULL == rs->m) {
-            err = 4;
-            break;
-        }
+        // The top square of vm is the identity matrix, so its inverse is the identity too, and multiplying vm by
+        // that inverse gave vm back. That multiply cost (data + parity) * data^2 table lookups, e.g. ~15 ms for 242
+        // data shards on a desktop CPU and longer on a TV, and it ran on the video receive thread for every FEC block
+        // that needed recovery. vm is therefore used directly; its parity rows are filled in below as before.
+        rs->m = vm;
+        vm = NULL;
 
         for (int j = 0; j < parity_shards; j++) {
             for (int i = 0; i < data_shards; i++)
@@ -443,10 +434,6 @@ reed_solomon* reed_solomon_new(int data_shards, int parity_shards) {
             break;
         }
 
-        free(vm);
-        free(top);
-        vm = NULL;
-        top = NULL;
         return rs;
 
     } while(0);
@@ -454,9 +441,6 @@ reed_solomon* reed_solomon_new(int data_shards, int parity_shards) {
     fprintf(stderr, "err=%d\n", err);
     if (NULL != vm)
         free(vm);
-
-    if (NULL != top)
-        free(top);
 
     if (NULL != rs) {
         if (NULL != rs->m)

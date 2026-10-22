@@ -20,6 +20,9 @@ static bool receivedDataFromPeer;
 static uint64_t firstDataTimeMs;
 static bool receivedFullFrame;
 
+// Receive buffer size of the video socket as reported by the OS, or 0 if unknown
+static int rtpReceiveBufferSize;
+
 // We can't request an IDR frame until the depacketizer knows
 // that a packet was lost. This timeout bounds the time that
 // the RTP queue will wait for missing/reordered packets.
@@ -42,6 +45,7 @@ void initializeVideoStream(void) {
     receivedDataFromPeer = false;
     firstDataTimeMs = 0;
     receivedFullFrame = false;
+    rtpReceiveBufferSize = 0;
 }
 
 // Clean up the video stream
@@ -339,6 +343,15 @@ int startVideoStream(void* rendererContext, int drFlags) {
         return LastSocketError();
     }
 
+    // Remember the receive buffer size that the OS reports, which may be clamped below the request
+    {
+        int reportedSize = 0;
+        SOCKADDR_LEN len = sizeof(reportedSize);
+        if (getsockopt(rtpSocket, SOL_SOCKET, SO_RCVBUF, (char*)&reportedSize, &len) == 0 && reportedSize > 0) {
+            rtpReceiveBufferSize = reportedSize;
+        }
+    }
+
     VideoCallbacks.start();
 
     err = PltCreateThread("VideoRecv", VideoReceiveThreadProc, NULL, &receiveThread);
@@ -415,4 +428,17 @@ int startVideoStream(void* rendererContext, int drFlags) {
     }
 
     return 0;
+}
+
+void LiGetVideoNetworkStats(PVIDEO_NETWORK_STATS stats) {
+    // The counters have a single writer, the video receive thread, so plain reads are enough for the overlay
+    stats->fecRecoveredBlocks = rtpQueue.statRecoveredBlocks;
+    stats->fecRecoveredPackets = rtpQueue.statRecoveredPackets;
+    stats->fecRecoveryFailures = rtpQueue.statRecoveryFailures;
+    stats->fecLongestRecoveryMs = rtpQueue.statLongestRecoveryMs;
+    stats->fecSlowRecoveries = rtpQueue.statSlowRecoveries;
+    stats->fecWorstMissingPackets = rtpQueue.statWorstMissingPackets;
+    stats->fecWorstParityPackets = rtpQueue.statWorstParityPackets;
+    stats->requestedReceiveBufferSize = RTP_RECV_PACKETS_BUFFERED * (StreamConfig.packetSize + MAX_RTP_HEADER_SIZE);
+    stats->reportedReceiveBufferSize = rtpReceiveBufferSize;
 }

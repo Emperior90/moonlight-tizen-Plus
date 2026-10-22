@@ -37,7 +37,7 @@ using HTMLAsyncResult = samsung::wasm::OperationResult;
 using TimeStamp = samsung::wasm::Seconds;
 
 static constexpr TimeStamp kFrameTimeMargin = 0.5ms;
-static constexpr TimeStamp kPacingSpinTime = 1ms;
+static constexpr TimeStamp kPacingSpinTime = 0.2ms;
 static constexpr TimeStamp kTimeWindow = 1s;
 static constexpr uint32_t kSampleRate = 48000;
 
@@ -80,9 +80,18 @@ static uint32_t total_bytes = 0;
 static int m_LastFrameNumber = 0;
 
 // IDR frames received after the first one that the host sent to recover the stream, i.e. not the ones this
-// client requested itself after a focus or track change (flagged from the main thread, consumed by the decoder thread)
+// client requested itself when the video track (re)opens or the HDR metadata changes (flagged from the main
+// thread, consumed by the decoder thread)
 static bool s_ReceivedFirstIdrFrame = false;
 static uint32_t s_RecoveryIdrFrames = 0;
+
+// Frames that the client dropped itself (decode unit queue overflow or decoder refresh), which moonlight-common-c
+// counts separately, so that the overlay doesn't report them as frames lost on the network
+static uint32_t s_LastClientDroppedFrames = 0;
+static uint32_t s_SessionTvDroppedFrames = 0;
+
+// Highest number of frames waiting in the decode unit queue during the current stats window
+static int s_PendingFramesMax = 0;
 
 // Measurement of the frame rate of the host from its capture timestamps (see UpdateHostFrameRate)
 static constexpr uint32_t kHostFrameRateWindowMs = 30000;
@@ -171,14 +180,6 @@ void MoonlightInstance::VideoTrackListener::OnSessionIdChanged(samsung::wasm::Se
   ClLogMessage("VIDEO ElementaryMediaTrack::OnSessionIdChanged\n");
   std::unique_lock<std::mutex> lock(m_Instance->m_Mutex);
   m_Instance->m_VideoSessionId.store(new_session_id);
-}
-
-void MoonlightInstance::DidChangeFocus(bool got_focus) {
-  // Request an IDR frame to dump the frame queue that may have
-  // built up from the GL pipeline being stalled.
-  if (got_focus) {
-    RequestIdrFrame();
-  }
 }
 
 // Request an IDR frame for a reason other than recovering the stream, so the session stats don't count it as a recovery
@@ -480,7 +481,7 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
   s_HdrMetadataEnabled = g_Instance->m_HdrMetadataEnabled;
 
   // Preallocate space for the performance stats string
-  s_StatString.resize(1500);
+  s_StatString.resize(2048);
 
   // Clear active window video statistics to start fresh
   memset(&m_ActiveWndVideoStats, 0, sizeof(m_ActiveWndVideoStats));
@@ -501,6 +502,11 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
   s_ReceivedFirstIdrFrame = false;
   s_RecoveryIdrFrames = 0;
   s_ExpectedIdrFrame.store(false);
+
+  // Reset the counts of the frames the client dropped itself (moonlight-common-c resets its count before setup)
+  s_LastClientDroppedFrames = 0;
+  s_SessionTvDroppedFrames = 0;
+  s_PendingFramesMax = 0;
 
   // Reset the host frame rate measurement so that no figure from a previous stream is shown
   s_HostRateWindowOpen = false;
@@ -690,7 +696,7 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
 
   // Count the IDR frames after the first one that the host sent to recover the stream (e.g. after packet
   // loss), because each one is a visible hiccup in the session. The ones this client requested itself
-  // after a focus or track change are expected and not counted.
+  // when the video track (re)opened or the HDR metadata changed are expected and not counted.
   if (decodeUnit->frameType == FRAME_TYPE_IDR) {
     const bool expected = s_ExpectedIdrFrame.exchange(false);
     if (s_ReceivedFirstIdrFrame && !expected) {
@@ -715,8 +721,10 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     while (s_pktPts > fromStart - s_ptsDiff + kFrameTimeMargin) {
       // Calculate the remaining wait time until the packet timestamp is within the frame time margin
       TimeStamp waitTime = s_pktPts - (fromStart - s_ptsDiff + kFrameTimeMargin);
-      // Sleep through most of the wait to free up the CPU for the other streaming threads,
-      // and only spin for the final stretch in case the sleep wakes up late
+      // Sleep through most of the wait to free up the CPU for the other streaming threads, and only spin for
+      // the final stretch in case the sleep wakes up late. In a worker thread, usleep of this Emscripten version
+      // (1.39) waits with Atomics.wait and spins only its last 0.1 ms itself, so a short guard is enough; the
+      // former 1 ms spin cost up to ~0.9 ms of CPU per paced frame.
       if (waitTime > kPacingSpinTime) {
         usleep(std::chrono::duration_cast<std::chrono::microseconds>(waitTime - kPacingSpinTime).count());
       }
@@ -759,17 +767,29 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
   // Measure the frame rate of the host from its capture timestamps
   UpdateHostFrameRate(decodeUnit->frameNumber, decodeUnit->presentationTimeMs, decodeUnit->frameHostProcessingLatency);
 
+  // Frames the client dropped itself so far, e.g. when the decode unit queue overflowed
+  const uint32_t clientDroppedFrames = LiGetClientDroppedVideoFrames();
+
   // Start performance stats collection if this is the first frame
   if (!m_LastFrameNumber) {
     // Record the timestamp when measurement started
     m_ActiveWndVideoStats.measurementStartTimestamp = LiGetMillis();
     m_LastFrameNumber = decodeUnit->frameNumber;
   } else {
-    // Any frame number greater than the last frame number + 1 represents a dropped frame
-    m_ActiveWndVideoStats.networkDroppedFrames += decodeUnit->frameNumber - (m_LastFrameNumber + 1);
-    m_ActiveWndVideoStats.totalFrames += decodeUnit->frameNumber - (m_LastFrameNumber + 1);
+    // Any frame number greater than the last frame number + 1 represents a dropped frame. The ones the client
+    // dropped itself since the previous frame were not lost on the network, so they are counted separately.
+    const uint32_t gap = (uint32_t)(decodeUnit->frameNumber - (m_LastFrameNumber + 1));
+    const uint32_t tvDroppedFrames = std::min(gap, clientDroppedFrames - s_LastClientDroppedFrames);
+    m_ActiveWndVideoStats.networkDroppedFrames += gap - tvDroppedFrames;
+    m_ActiveWndVideoStats.totalFrames += gap;
+    s_SessionTvDroppedFrames += tvDroppedFrames;
     m_LastFrameNumber = decodeUnit->frameNumber;
   }
+  s_LastClientDroppedFrames = clientDroppedFrames;
+
+  // Track the longest decode unit queue of the stats window, since a single reading per window misses a backlog
+  // that builds up and is flushed in between
+  s_PendingFramesMax = std::max(s_PendingFramesMax, LiGetPendingVideoFrames());
 
   // Get the current time in milliseconds to check whether the stats window has elapsed
   uint32_t nowMs = LiGetMillis();
@@ -796,6 +816,7 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     // Reset byte count for the next measurement interval, even while the overlay is hidden,
     // so that enabling the overlay mid-stream doesn't report every byte since the stream started
     total_bytes = 0;
+    s_PendingFramesMax = 0;
     // Accumulate active window stats into global stats for overall tracking
     AddVideoStats(m_ActiveWndVideoStats, m_GlobalVideoStats);
     // Move current active stats to last window stats and reset active window stats for new interval
@@ -1052,14 +1073,14 @@ void MoonlightInstance::FormatVideoStats(VIDEO_STATS& stats, char* output, int l
       "Average frame wait time: %.2f ms\n"
       "Average frame pacing delay: %.2f ms\n"
       "Average rendering time: %.2f ms\n"
-      "Pending frames: %d\n",
+      "Pending frames: %d (max %d)\n",
       (float)stats.networkDroppedFrames / stats.totalFrames * 100,
       rttString,
       (float)stats.totalReassemblyTime / stats.decodedFrames,
       (float)stats.totalDecodeTime / stats.decodedFrames,
       (float)stats.totalPacerTime / stats.renderedFrames,
       (float)stats.totalRenderTime / stats.renderedFrames,
-      LiGetPendingVideoFrames()
+      LiGetPendingVideoFrames(), s_PendingFramesMax
     );
     // Abort if string formatting failed or buffer overflowed
     if (ret < 0 || ret >= length - offset) {
@@ -1075,9 +1096,11 @@ void MoonlightInstance::FormatVideoStats(VIDEO_STATS& stats, char* output, int l
     ret = snprintf(
       &output[offset], length - offset,
       "Session frames dropped by network: %u (%.2f%%)\n"
+      "Session frames dropped by the TV: %u (video pipeline resets: %u)\n"
       "Session recovery keyframes: %u\n",
       m_GlobalVideoStats.networkDroppedFrames,
       (float)m_GlobalVideoStats.networkDroppedFrames / m_GlobalVideoStats.totalFrames * 100,
+      s_SessionTvDroppedFrames, LiGetClientVideoResets(),
       s_RecoveryIdrFrames
     );
     // Abort if string formatting failed or buffer overflowed
@@ -1086,6 +1109,48 @@ void MoonlightInstance::FormatVideoStats(VIDEO_STATS& stats, char* output, int l
       return;
     }
     offset += ret;
+
+    // Print the FEC recoveries of the session: losses the parity packets repaired without a visible effect, how
+    // long the longest repair blocked the receive thread, and how close the worst block came to losing a frame
+    VIDEO_NETWORK_STATS networkStats = {};
+    LiGetVideoNetworkStats(&networkStats);
+    ret = snprintf(
+      &output[offset], length - offset,
+      "Session FEC recoveries: %u blocks, %u packets (longest %u ms, %u slow, %u failed)\n",
+      networkStats.fecRecoveredBlocks, networkStats.fecRecoveredPackets, networkStats.fecLongestRecoveryMs,
+      networkStats.fecSlowRecoveries, networkStats.fecRecoveryFailures
+    );
+    if (ret < 0 || ret >= length - offset) {
+      assert(false);
+      return;
+    }
+    offset += ret;
+    if (networkStats.fecWorstParityPackets != 0) {
+      ret = snprintf(
+        &output[offset], length - offset,
+        "Worst FEC block: %u of %u parity packets used\n",
+        networkStats.fecWorstMissingPackets, networkStats.fecWorstParityPackets
+      );
+      if (ret < 0 || ret >= length - offset) {
+        assert(false);
+        return;
+      }
+      offset += ret;
+    }
+
+    // Print the receive buffer of the video socket, which is the whole tolerance for stalls of the receive thread
+    if (networkStats.reportedReceiveBufferSize > 0) {
+      ret = snprintf(
+        &output[offset], length - offset,
+        "UDP receive buffer: requested %d KB, reported %d KB\n",
+        networkStats.requestedReceiveBufferSize / 1024, networkStats.reportedReceiveBufferSize / 1024
+      );
+      if (ret < 0 || ret >= length - offset) {
+        assert(false);
+        return;
+      }
+      offset += ret;
+    }
   }
 }
 

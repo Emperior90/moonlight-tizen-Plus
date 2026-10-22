@@ -7,7 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 - Added a 'Samsung S90C optimization' button that shows the optimal streaming settings for the S90C with a bitrate matching the network connection of the TV, and applies them on confirmation
 - Introduced a new experimental 'Reference frame invalidation' setting to recover from packet loss without a full keyframe (HEVC and AV1)
-- Added session totals of network frame drops and recovery keyframes (excluding the keyframes the app requests itself after a focus or track change) to the performance stats, along with the network connection of the TV
+- Added session totals of network frame drops and recovery keyframes (excluding the keyframes the app requests itself when the video track opens or the HDR metadata changes) to the performance stats, along with the network connection of the TV
 - Added detection of the Ethernet or Wi-Fi connection of the TV with a warning above 80 Mbps over the 100 Mbps Ethernet port
 - Added warnings when selecting H.264 above 1080p (also at startup when a stored H.264 codec meets the new 4K default) or 4K above 120 FPS, which exceed the video decoder of the TV
 - Added an optimization plan for the S90C covering the network, host, TV settings and test procedure (`docs/S90C-Optimierungsplan.md`)
@@ -23,7 +23,14 @@ All notable changes to this project will be documented in this file.
 - Added 5 Mbps steps to the bitrate menu with UP and DOWN, while LEFT and RIGHT keep the 0.5 Mbps steps
 - Documented an AV1 versus HEVC test procedure and the refresh rate of the host display in the optimization plan
 
+- Added the frames the TV dropped itself (decode unit queue overflow or a frame rejected by the player) as a separate session total, instead of counting them as network drops, and the highest pending frame count per second
+- Added the FEC recoveries of the session, the longest recovery, the worst block and the requested and reported UDP receive buffer to the performance stats
+- Added audio lines to the performance stats for the Web Audio backend: jitter buffer, schedule lead, browser latency, underruns, skipped and lost frames, clock sync correction and a suggested buffer size
+- Turned the screensaver of the TV off while streaming, and on again afterwards
+- Documented a camera-based latency test, a 1-pixel sharpness test and the automatic power-off of the TV in the optimization plan
+
 ### Changed
+- Reduced the busy wait of the frame pacer from 1 ms to 0.2 ms, as usleep already waits on a futex in worker threads
 - Reworked the video frame pacing to follow the usual arrival time of the frames, so that a single late frame no longer holds back every following frame by up to tens of milliseconds, and to follow a later arrival time only once two consecutive windows confirm it, so that the burst of frames after a network stall cannot hold back the next second of frames
 - Paused the gamepad polling of the UI while streaming, which kept the main thread busy every 5 ms even though the streaming session polls the gamepads on its own
 - Read all gamepads with a single call to the main thread per poll instead of one call per gamepad slot plus two, leaving more room for the Web Audio scheduler
@@ -46,6 +53,11 @@ All notable changes to this project will be documented in this file.
 - Kept the bitrate when the resolution, frame rate, codec or HDR mode changes, instead of resetting it to the preset. This applies to a bitrate picked by hand and to the recommended bitrate of the S90C settings, 'Restore Defaults' and a fresh install. The presets follow these settings again after toggling 'Optimize bitrate presets', until the bitrate is changed by hand, which is how moonlight-qt keeps a hand-picked bitrate. On an update, the presets keep following the settings if the stored bitrate was the preset for the stored resolution and frame rate, or if the optimized presets were on. Selecting the current resolution or frame rate again no longer resets the bitrate
 
 ### Fixed
+- Fixed every FEC recovery blocking the video receive thread for up to 15 ms or more on a desktop CPU by removing a needless matrix multiply from the Reed-Solomon setup (the output is unchanged)
+- Fixed a freeze of up to 120 frames (2 s at 60 FPS) after a wrongly predicted frame loss without reference frame invalidation, as in upstream moonlight-common-c, and a partially received IDR frame leading to a reference frame invalidation request
+- Fixed each lost audio packet adding 5 ms to the audio delay of the Web Audio backend by concealing it with one negotiated frame instead of 10 ms
+- Fixed the Back key pressing the left mouse button of the host without releasing it once the pointer was locked, and stopped requesting a keyframe on pointer lock
+- Fixed the S90C dialog asking to install the ForceGM variant when it is already installed, and the help texts of 'Game mode', 'Optimize bitrate presets' and HDR
 - Fixed 'Restore Defaults' turning off the 'Video frame pacing' and 'Host address field mode' settings even though they are enabled by default
 - Fixed the resolution and frame rate warning comparing the values as text instead of numbers
 

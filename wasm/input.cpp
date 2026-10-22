@@ -194,12 +194,10 @@ void MoonlightInstance::DidLockMouse(int32_t result) {
     ClLogMessage("Error locking mouse, event type: %d\n", result);
   }
 
+  // No IDR frame is requested here any more: the old one dumped a frame queue built up by a stalled GL
+  // pipeline, which doesn't exist with the hardware video plane of the TV, and every IDR frame from the host
+  // is briefly soft, because the encoder caps its size to that of a normal frame.
   m_MouseLocked = (result == 0);
-  if (m_MouseLocked) {
-    // Request an IDR frame to dump the frame queue that may have
-    // built up from the GL pipeline being stalled.
-    RequestIdrFrame();
-  }
 }
 
 void MoonlightInstance::MouseLockLost() {

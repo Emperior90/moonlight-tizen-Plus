@@ -109,7 +109,11 @@ function replaceKnownStatsLabels(text) {
     .replace(/Average rendering time:/g, t('Average rendering time:'))
     .replace(/Pending frames:/g, t('Pending frames:'))
     .replace(/Session frames dropped by network:/g, t('Session frames dropped by network:'))
+    .replace(/Session frames dropped by the TV:/g, t('Session frames dropped by the TV:'))
     .replace(/Session recovery keyframes:/g, t('Session recovery keyframes:'))
+    .replace(/Session FEC recoveries:/g, t('Session FEC recoveries:'))
+    .replace(/Worst FEC block:/g, t('Worst FEC block:'))
+    .replace(/UDP receive buffer:/g, t('UDP receive buffer:'))
     .replace(/Slow connection to PC\.\nReduce your bitrate!/g, t('Slow connection to PC.\nReduce your bitrate!'));
 }
 
@@ -291,6 +295,8 @@ function handleMessage(msg) {
   console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Message data: ', msg);
   // If it's a recognized event, notify the appropriate function
   if (msg.indexOf('streamTerminated: ') === 0) {
+    // Let the screensaver of the TV work again, since the menus are static
+    setTvScreenSaver(true);
     // Release the audio scheduler of the Web Audio backend, which is a no-op for the EMSS backend
     stopAudioScheduler();
     // Remove the on-screen overlays
@@ -351,6 +357,11 @@ function handleMessage(msg) {
       });
     });
   } else if (msg === 'Connection Established') {
+    // Keep the screensaver of the TV off during a session played only with a gamepad. A connection that completes
+    // after the user already stopped the stream must not turn it off in the menus.
+    if (isInGame === true) {
+      setTvScreenSaver(false);
+    }
     // Prepare the screen for video stream
     $('#loadingSpinner').css('display', 'none');
     $('body').css('backgroundColor', 'transparent');
@@ -409,8 +420,10 @@ function handleMessage(msg) {
       $('#performance-stats').css('display', 'inline-block');
     }
     // Show the performance statistics overlay, followed by the network connection of the TV if it's known
+    // and the audio statistics of the Web Audio backend
     $('#performance-stats').css('background', 'rgba(0, 0, 0, 0.5)');
-    $('#performance-stats').text(translateBackendMessage(msg.replace('StatMsg: ', '')) + (streamNetworkInfo ? '\n' + streamNetworkInfo : ''));
+    var audioStatsLines = typeof getAudioStatsLines === 'function' ? getAudioStatsLines() : '';
+    $('#performance-stats').text(translateBackendMessage(msg.replace('StatMsg: ', '')) + (streamNetworkInfo ? '\n' + streamNetworkInfo : '') + (audioStatsLines ? '\n' + audioStatsLines : ''));
     // Keep the Wi-Fi signal strength of the network connection current while the overlay is shown
     refreshStreamNetworkInfo();
   } else if (msg.indexOf('controllerRumble: ') === 0) {

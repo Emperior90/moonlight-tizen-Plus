@@ -162,7 +162,6 @@ class MoonlightInstance {
   static void ClConnectionStatusUpdate(int connectionStatus);
   static void ClSetHdrMode(bool enabled);
 
-  void DidChangeFocus(bool got_focus);
   static void RequestIdrFrame();
   bool InitializeRenderingSurface(int width, int height);
 

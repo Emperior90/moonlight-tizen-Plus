@@ -210,7 +210,12 @@ static int reconstructFrame(PRTP_VIDEO_QUEUE queue) {
         // based on the packets we've received (or not) so far. If the number of missing shards exceeds the total
         // needed shards, there is no hope of recovering the data. The only way we could recover this frame is by
         // receiving OOS data, which is unlikely because we've not seen any recently from this host.
-        if (!queue->reportedLostFrame && !queue->receivedOosData) {
+        //
+        // Like upstream moonlight-common-c, this prediction only runs with reference frame invalidation. Without
+        // it, the early report can only put the depacketizer into an IDR wait without requesting anything. If the
+        // prediction is wrong and the frame completes from late packets, every following frame is then dropped
+        // until the consecutive drop limit requests an IDR, which froze the picture for ~2 s at 60 FPS.
+        if (isReferenceFrameInvalidationEnabled() && !queue->reportedLostFrame && !queue->receivedOosData) {
             // NB: We use totalPackets - neededPackets instead of just bufferParityPackets here because we require
             // one extra parity shard for recovery if we're in FEC validation mode.
             if (queue->missingPackets > totalPackets - neededPackets) {
@@ -257,6 +262,8 @@ static int reconstructFrame(PRTP_VIDEO_QUEUE queue) {
     }
 
     reed_solomon* rs = NULL;
+    // Time the recovery, since it runs on the receive thread and no packets are read from the socket meanwhile
+    uint64_t recoveryStartMs = PltGetMillis();
     unsigned char** packets = calloc(totalPackets, sizeof(unsigned char*));
     unsigned char* marks = calloc(totalPackets, sizeof(unsigned char));
     if (packets == NULL || marks == NULL) {
@@ -332,6 +339,31 @@ static int reconstructFrame(PRTP_VIDEO_QUEUE queue) {
     // We should always provide enough parity to recover the missing data successfully.
     // If this fails, something is probably wrong with our FEC state.
     LC_ASSERT(ret == 0);
+
+    // Record the recovery for the session statistics of the performance overlay
+    if (ret == 0) {
+        uint32_t recoveryMs = (uint32_t)(PltGetMillis() - recoveryStartMs);
+        uint32_t missingDataPackets = queue->bufferDataPackets - queue->receivedDataPackets;
+        queue->statRecoveredBlocks++;
+        queue->statRecoveredPackets += missingDataPackets;
+        if (recoveryMs > queue->statLongestRecoveryMs) {
+            queue->statLongestRecoveryMs = recoveryMs;
+        }
+        if (recoveryMs >= 8) {
+            queue->statSlowRecoveries++;
+        }
+        // Keep the block that used the largest share of its parity packets, which shows how close the link
+        // came to losing a frame
+        if (queue->bufferParityPackets != 0 &&
+                (queue->statWorstParityPackets == 0 ||
+                 (uint64_t)missingDataPackets * queue->statWorstParityPackets > (uint64_t)queue->statWorstMissingPackets * queue->bufferParityPackets)) {
+            queue->statWorstMissingPackets = missingDataPackets;
+            queue->statWorstParityPackets = queue->bufferParityPackets;
+        }
+    }
+    else {
+        queue->statRecoveryFailures++;
+    }
 
     if (queue->bufferDataPackets != queue->receivedDataPackets) {
 #ifdef FEC_VERBOSE

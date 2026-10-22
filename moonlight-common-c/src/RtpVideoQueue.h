@@ -45,6 +45,15 @@ typedef struct _RTP_VIDEO_QUEUE {
 
     uint32_t lastOosFramePresentationTimestamp;
     bool receivedOosData;
+
+    // Session statistics of the FEC recovery, written only by the video receive thread and reset with the queue
+    uint32_t statRecoveredBlocks;
+    uint32_t statRecoveredPackets;
+    uint32_t statRecoveryFailures;
+    uint32_t statLongestRecoveryMs;
+    uint32_t statSlowRecoveries;
+    uint32_t statWorstMissingPackets;
+    uint32_t statWorstParityPackets;
 } RTP_VIDEO_QUEUE, *PRTP_VIDEO_QUEUE;
 
 #define RTPF_RET_QUEUED    0

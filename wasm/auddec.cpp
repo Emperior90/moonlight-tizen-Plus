@@ -1,5 +1,6 @@
 #include "moonlight_wasm.hpp"
 
+#include <algorithm>
 #include <chrono>
 
 #include <emscripten.h>
@@ -131,10 +132,15 @@ static void DecodeAndScheduleFrame(OpusMSDecoder* decoder, const unsigned char* 
 
   // Decode the incoming audio packet using Opus decoder. The whole slot is offered to the
   // decoder rather than the negotiated frame size, so a packet that carries more audio than
-  // the RTSP negotiation announced is still decoded instead of being rejected.
+  // the RTSP negotiation announced is still decoded instead of being rejected. A lost packet
+  // (no data) is concealed with exactly one negotiated frame instead, because libopus fills
+  // the whole requested size for concealment: offering the slot turned every lost 5 ms packet
+  // into 10 ms of audio, which raised the audio delay by 5 ms for each loss.
+  const bool concealLoss = (sampleData == nullptr || sampleLength <= 0);
+  const int frameSize = concealLoss ? (int)std::min<size_t>(s_samplesPerFrame, kAudioSlotStride) : (int)kAudioSlotStride;
   int decodeLen = opus_multistream_decode(
     decoder, sampleData, sampleLength,
-    s_AudioPcm, kAudioSlotStride, 0
+    s_AudioPcm, frameSize, 0
   );
 
   // Check if audio decoding failed

@@ -88,6 +88,59 @@ var AUD_SYNC_SMOOTHING = 0.005;
 // Counters of the current statistics interval, described in _audLogStatistics()
 var _audStats = null;
 
+// Totals of the whole session and the jitter measurement for the performance overlay, described in
+// getAudioStatsLines(). They are kept apart from _audStats, which starts over every few seconds.
+var _audSession = null;
+
+// Smoothing of the average schedule lead that the jitter is measured against, per scheduled frame (as for the
+// clock sync), so that the slow drift between the host and TV clocks doesn't count as jitter
+var AUD_JITTER_SMOOTHING = 0.005;
+
+// Minimum session length before the overlay suggests a smaller jitter buffer, so that the rare long stalls of
+// the main thread have had a chance to show up
+var AUD_SUGGESTION_MIN_MS = 10 * 60 * 1000;
+
+// Reset the session totals and the jitter measurement
+function _audResetSession() {
+  _audSession = {
+    since: Date.now(),
+    underruns: 0,
+    droppedFull: 0,
+    droppedEmpty: 0,
+    decoderGaps: 0,
+    notRunning: 0,
+    // Average schedule lead in seconds, and the largest drop below it in ms, which is how much of the jitter
+    // buffer a stall of the main thread or a late burst of packets actually used
+    leadAverage: 0.0,
+    maxDeficitMs: 0.0,
+    // Schedule lead since the overlay was last updated, in ms
+    windowLeadMin: Infinity,
+    windowLeadSum: 0.0,
+    windowLeadCount: 0,
+  };
+}
+
+// Record the schedule lead of a frame before the scheduler acts on it, i.e. before a resync after an underrun,
+// so that the stall that caused the underrun is measured too
+function _audRecordSessionLead(rawLead) {
+  var session = _audSession;
+  if (!session) {
+    return;
+  }
+  var leadMs = rawLead * 1000.0;
+  if (leadMs < session.windowLeadMin) {
+    session.windowLeadMin = leadMs;
+  }
+  session.windowLeadSum += leadMs;
+  session.windowLeadCount++;
+  if (session.leadAverage > 0) {
+    var deficitMs = (session.leadAverage - rawLead) * 1000.0;
+    if (deficitMs > session.maxDeficitMs) {
+      session.maxDeficitMs = deficitMs;
+    }
+  }
+}
+
 // Reset the counters of the statistics interval
 function _audResetStatistics() {
   _audStats = {
@@ -220,6 +273,7 @@ function startAudioScheduler() {
   _audLeadFiltered = 0.0;
   _audCorrection = 0.0;
   _audResetStatistics();
+  _audResetSession();
 
   // Report the state of the audio path, which the TV may reopen at a different sample rate or
   // suspend altogether when a picture mode such as Game Mode reroutes its audio output
@@ -251,6 +305,7 @@ function stopAudioScheduler() {
   _audPhase = 0.0;
   _audTail = null;
   _audStats = null;
+  _audSession = null;
 
   if (_audContext) {
     try {
@@ -399,6 +454,9 @@ function _audReceiveFrame(heapOffset, samples, channels, sampleRate, stride, seq
   // when the main thread was not serviced for long enough that the slot pool wrapped around
   if (stats.lastSequence >= 0 && sequence > stats.lastSequence + 1) {
     stats.decoderGaps += sequence - stats.lastSequence - 1;
+    if (_audSession) {
+      _audSession.decoderGaps += sequence - stats.lastSequence - 1;
+    }
   }
   stats.lastSequence = sequence;
 
@@ -414,6 +472,9 @@ function _audReceiveFrame(heapOffset, samples, channels, sampleRate, stride, seq
       }
     }
     stats.notRunning++;
+    if (_audSession) {
+      _audSession.notRunning++;
+    }
     _audNextTime = 0.0;
     return;
   }
@@ -429,6 +490,15 @@ function _audReceiveFrame(heapOffset, samples, channels, sampleRate, stride, seq
   // Convert the jitter buffer target published by the WASM module to seconds
   var targetSeconds = (window._mlAudioTargetMs || AUD_DEFAULT_TARGET_MS) / 1000.0;
 
+  // Measure the jitter for the performance overlay (never allowed to stop the audio)
+  if (_audNextTime !== 0.0) {
+    try {
+      _audRecordSessionLead(_audNextTime - now);
+    } catch (error) {
+      _audSession = null;
+    }
+  }
+
   // Prime the schedule to the whole jitter buffer when it fell behind the clock, which happens
   // on the first frame and whenever the main thread was stalled for longer than the frames that
   // were left to play. Snapping to the clock itself would leave the schedule with no headroom
@@ -436,6 +506,12 @@ function _audReceiveFrame(heapOffset, samples, channels, sampleRate, stride, seq
   if (_audNextTime < now) {
     if (_audNextTime !== 0.0) {
       stats.underruns++;
+      if (_audSession) {
+        _audSession.underruns++;
+      }
+    }
+    if (_audSession) {
+      _audSession.leadAverage = targetSeconds;
     }
     _audNextTime = now + targetSeconds;
     _audPhase = 0.0;
@@ -454,6 +530,9 @@ function _audReceiveFrame(heapOffset, samples, channels, sampleRate, stride, seq
   // the audio may trail the picture before that: at most half a jitter buffer more than the target.
   if (_audNextTime > now + 1.5 * targetSeconds) {
     stats.droppedFull++;
+    if (_audSession) {
+      _audSession.droppedFull++;
+    }
     _audLogStatistics(false);
     return;
   }
@@ -461,6 +540,9 @@ function _audReceiveFrame(heapOffset, samples, channels, sampleRate, stride, seq
   var buffer = _audBuildBuffer(heapOffset, samples, channels, stride);
   if (!buffer) {
     stats.droppedEmpty++;
+    if (_audSession) {
+      _audSession.droppedEmpty++;
+    }
     _audLogStatistics(false);
     return;
   }
@@ -473,7 +555,71 @@ function _audReceiveFrame(heapOffset, samples, channels, sampleRate, stride, seq
 
   _audRecordHeadroom(_audNextTime - now);
   stats.scheduled++;
+  if (_audSession) {
+    var lead = _audNextTime - now;
+    _audSession.leadAverage = _audSession.leadAverage > 0 ? _audSession.leadAverage + AUD_JITTER_SMOOTHING * (lead - _audSession.leadAverage) : lead;
+  }
 
   _audNextTime += buffer.duration;
   _audLogStatistics(false);
+}
+
+// Return the lines for the performance overlay while the Web Audio backend plays, or an empty string otherwise:
+//
+//   buffer     the jitter buffer target, the average and the smallest schedule lead since the last update
+//              (how far ahead of the audio clock the frames were scheduled), and the latency the browser
+//              reports for its own output path (not including the TV's or a soundbar's processing)
+//   session    underruns (holes in the sound), frames skipped because the schedule ran too far ahead (with
+//              clock sync off this is the drift between the host and TV clocks) or produced no samples,
+//              frames lost on the way from the decoder, and the clock sync correction
+//   suggested  the smallest jitter buffer that would have absorbed the largest jitter of the session plus
+//              10 ms, in steps of the buffer slider. It's only given with clock sync on, since otherwise the
+//              drift drains a small buffer into underruns, after 10 minutes without underruns, and as a
+//              larger buffer after an underrun
+function getAudioStatsLines() {
+  try {
+    if (!_audRunning || !_audContext || !_audSession) {
+      return '';
+    }
+    if (_audContext.state !== 'running') {
+      return t('Audio (Web Audio): %1$s', _audContext.state);
+    }
+
+    var session = _audSession;
+    var targetMs = window._mlAudioTargetMs || AUD_DEFAULT_TARGET_MS;
+    var format = function(value) {
+      return isFinite(value) ? String(Math.round(value)) : 'n/a';
+    };
+    var leadAverage = session.windowLeadCount > 0 ? session.windowLeadSum / session.windowLeadCount : NaN;
+    var deviceLatencyMs = NaN;
+    if (isFinite(_audContext.baseLatency)) {
+      var outputLatency = isFinite(_audContext.outputLatency) && _audContext.outputLatency > 0 ? _audContext.outputLatency : 0;
+      deviceLatencyMs = (_audContext.baseLatency + outputLatency) * 1000.0;
+    }
+
+    var suggestion;
+    if (session.underruns > 0) {
+      suggestion = t('raise to %1$s ms', String(Math.min(500, targetMs + 25)));
+    } else if (!_audClockSync) {
+      suggestion = t('needs Audio clock sync');
+    } else if (Date.now() - session.since < AUD_SUGGESTION_MIN_MS) {
+      suggestion = t('measuring');
+    } else {
+      suggestion = String(Math.max(25, Math.ceil((session.maxDeficitMs + 10) / 25) * 25)) + ' ms';
+    }
+
+    var lines = t('Audio buffer: %1$s ms, lead avg %2$s ms, min %3$s ms, browser latency %4$s ms',
+      String(targetMs), format(leadAverage), format(session.windowLeadMin), format(deviceLatencyMs)) + '\n' +
+      t('Audio session: underruns %1$s, skipped %2$s, lost %3$s, clock sync %4$s, suggested buffer %5$s',
+        String(session.underruns), String(session.droppedFull + session.droppedEmpty), String(session.decoderGaps),
+        _audClockSync ? (_audCorrection * 1e6).toFixed(0) + ' ppm' : t('off'), suggestion);
+
+    // Start the next overlay window
+    session.windowLeadMin = Infinity;
+    session.windowLeadSum = 0.0;
+    session.windowLeadCount = 0;
+    return lines;
+  } catch (error) {
+    return '';
+  }
 }
