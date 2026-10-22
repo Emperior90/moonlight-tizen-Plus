@@ -886,17 +886,23 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     if (s_PendingIdrCauses != 0 && idrMs - s_PendingIdrCausesMs > kIdrCauseTimeoutMs) {
       s_PendingIdrCauses = 0;
     }
-    if (newCauses != 0) {
-      s_PendingIdrCauses += newCauses;
-      s_PendingIdrCausesMs = idrMs;
-    }
+    // This IDR frame answers one of its own causes first, then one left over from an earlier IDR frame
+    uint32_t ownCauses = newCauses;
     if (!s_ReceivedFirstIdrFrame) {
       // The host starts every stream with an IDR frame, which answers none of the causes
       s_ReceivedFirstIdrFrame = true;
+    } else if (ownCauses != 0) {
+      ownCauses--;
     } else if (s_PendingIdrCauses != 0) {
       s_PendingIdrCauses--;
     } else {
       s_RecoveryIdrFrames++;
+    }
+    // Causes left over from this IDR frame replace older ones, so that none outlives the expiry after the IDR frame
+    // that booked it
+    if (ownCauses != 0) {
+      s_PendingIdrCauses = ownCauses;
+      s_PendingIdrCausesMs = idrMs;
     }
   }
 
