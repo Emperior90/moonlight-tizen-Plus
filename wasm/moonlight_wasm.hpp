@@ -94,6 +94,8 @@ constexpr const char* kCanvasName = "#wasm_module";
 // Error code reported when the TV rejects the video stream or doesn't start it in time,
 // which usually means the TV doesn't support the selected resolution or frame rate
 #define ERROR_VIDEO_SETUP_FAILED -200
+// The TV's video player failed or permanently rejected the frames after the stream had started
+#define ERROR_VIDEO_PLAYER_FAILED -201
 
 class MoonlightInstance {
   public:
@@ -263,7 +265,8 @@ class MoonlightInstance {
   bool m_HdrMetadataEnabled;
 
   STREAM_CONFIGURATION m_StreamConfig;
-  bool m_Running;
+  // Read by the media listeners on the main thread while the connection and stop threads change it
+  std::atomic<bool> m_Running;
 
   pthread_t m_ConnectionThread;
   pthread_t m_InputThread;
@@ -291,6 +294,9 @@ class MoonlightInstance {
   std::atomic<bool> m_AudioStarted;
   std::atomic<bool> m_VideoStarted;
   std::atomic<bool> m_ConnectionCancelled;
+  // Whether the stream was already stopped, so that a repeated stop (a double RED press, the gamepad combo racing a
+  // termination by the host) doesn't start a second stop thread and post a second streamTerminated
+  std::atomic<bool> m_StopIssued;
   pthread_t m_StopThread;
   std::atomic<samsung::wasm::SessionId> m_AudioSessionId;
   std::atomic<samsung::wasm::SessionId> m_VideoSessionId;

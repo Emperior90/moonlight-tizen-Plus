@@ -14,7 +14,7 @@ All notable changes to this project will be documented in this file.
 - Added an experimental 'HDR static metadata' setting that inserts the HDR10 metadata of the host display (mastering display colour volume, content light level) into the HEVC keyframes, which Sunshine only sends over the control channel and the TV never received
 - Added the frame receive time, the frame wait time before the video thread and the pending frame count to the performance stats, and renamed the pacer time to 'Average frame pacing delay'; the former 'Average decoding time' mixed the queue wait with the pacing
 - Added the 3200 x 1800 (1800p) resolution with bitrate presets as a step between 1440p and 4K
-- Added an experimental 'Audio clock sync' setting for the Web Audio backend that keeps the audio delay at the jitter buffer by playing a few ppm faster or slower, instead of dropping or repeating sound when the clocks of the host and the TV drift apart; the resampler now interpolates with a four point cubic kernel
+- Added an experimental 'Audio clock sync' setting for the Web Audio backend that keeps the audio delay at the jitter buffer by playing up to 500 ppm (0.05 %) faster or slower, instead of skipping 5 ms frames or leaving a gap the size of the jitter buffer when the clocks of the host and the TV drift apart; the resampler now interpolates with a four point cubic kernel
 - Added a hint that 90 FPS does not divide the 60 or 120 Hz output of the TV evenly
 - Logged the UDP receive buffer size granted by the TV and the receive timeout mode at stream start
 - Added a notice when the host can only provide a fallback for the selected codec or HDR mode (another codec, or SDR instead of HDR)
@@ -22,12 +22,16 @@ All notable changes to this project will be documented in this file.
 - Added the configured bitrate and the host frame rate, measured over 30 seconds from the capture timestamps of the host, to the performance stats, which reveals a host display running at 59.94 instead of 60 Hz
 - Added 5 Mbps steps to the bitrate menu with UP and DOWN, while LEFT and RIGHT keep the 0.5 Mbps steps
 - Documented an AV1 versus HEVC test procedure and the refresh rate of the host display in the optimization plan
-
 - Added the frames the TV dropped itself (decode unit queue overflow or a frame rejected by the player) as a separate session total, instead of counting them as network drops, and the highest pending frame count per second
 - Added the FEC recoveries of the session, the longest recovery, the worst block and the requested and reported UDP receive buffer to the performance stats
 - Added audio lines to the performance stats for the Web Audio backend: jitter buffer, schedule lead, browser latency, underruns, skipped and lost frames, clock sync correction and a suggested buffer size
 - Turned the screensaver of the TV off while streaming, and on again afterwards
 - Documented a camera-based latency test, a 1-pixel sharpness test and the automatic power-off of the TV in the optimization plan
+- Added a 'TV player rejections' line to the performance stats that counts the frames the video player of the TV rejected by reason (buffer full, keyframe required, track not ready, other), and logged each rejection reason by name
+- Added a 'WASM heap top' line to the performance stats, and the same value to the log at the end of each stream, so that a memory leak over long sessions shows up before an allocation aborts the module
+- Added a message and an automatic restart when the WebAssembly module aborts or one of its threads crashes, instead of a silent freeze
+- Logged why the TV closed a media track, a reopening of the video track during the stream and the frames discarded meanwhile, and when the app is hidden and shown again
+- Documented a lifecycle test (Home key, TV menus, input switch, RED during the start) in the optimization plan
 
 ### Changed
 - Reduced the busy wait of the frame pacer from 1 ms to 0.2 ms, as usleep already waits on a futex in worker threads
@@ -48,11 +52,22 @@ All notable changes to this project will be documented in this file.
 - Declared HEVC and AV1 level 5.2 for streams above 4K at 60 FPS, with a fallback to level 5.1 for TVs that reject it
 - Limited the bitrate presets to 75 Mbps when the TV is connected over its 100 Mbps Ethernet port
 - Changed the default video settings to the optimal streaming settings for the S90C (4K, 60 FPS, HEVC, HDR, and a bitrate for the network connection)
+- Retried a frame that met a full video player buffer for up to one frame duration, and ended the stream with a message when the player keeps rejecting its format for 3 seconds, instead of requesting keyframes forever on a black screen
+- Ended the stream with a message when the media source of the TV fails during the stream, instead of leaving a frozen picture
+- Trimmed the backlog of audio frames that arrives after an underrun of the Web Audio backend to the jitter buffer plus two frames, so that the audio delay no longer stays at 1.5 times the jitter buffer for minutes after each underrun, and counted these frames apart from the skipped ones
+- Stopped counting the keyframes that follow a reset of the video pipeline of the TV as recovery keyframes, since the video pipeline reset count already shows them
+- Stopped counting the frames that arrive while the video track of the TV is closed (e.g. while the app is hidden) as network drops
+- Queued the development and stable release workflows, which share the ForceGM image tag, so that a release can't get the ForceGM package of another commit
+- Unified the bitrate ladder of the optimization plan (100, 120, 135 and 150 Mbps over Wi-Fi, with one set of pass criteria and a rule for the final value), made its FEC recommendation consistent with the 5 % setup, extended the long-run test to 2.5 hours and explained the remaining performance stats lines
+- Described the real correction range of 'Audio clock sync' and what happens without it, and pointed the jitter buffer help to the suggested buffer size in the performance stats
 - Used the codec modes reported by the host for the codec negotiation, read again after the launch or resume request because Sunshine probes its encoders then, and offered HEVC with the same bit depth as a fallback when AV1 is selected. A host without AV1 now gets HEVC instead of a 4K H.264 stream without HDR, and a host without 10-bit AV1 gets HEVC Main10 with HDR instead of an AV1 stream that it can only encode in 8-bit (or not at all on older Sunshine versions)
 - Reworded the AV1 warning to say what AV1 needs and that the stream falls back to HEVC
 - Kept the bitrate when the resolution, frame rate, codec or HDR mode changes, instead of resetting it to the preset. This applies to a bitrate picked by hand and to the recommended bitrate of the S90C settings, 'Restore Defaults' and a fresh install. The presets follow these settings again after toggling 'Optimize bitrate presets', until the bitrate is changed by hand, which is how moonlight-qt keeps a hand-picked bitrate. On an update, the presets keep following the settings if the stored bitrate was the preset for the stored resolution and frame rate, or if the optimized presets were on. Selecting the current resolution or frame rate again no longer resets the bitrate
 
 ### Fixed
+- Fixed a stream starting anyway after RED was pressed during 'Starting...', without audio and with RED and YELLOW not working, by cancelling the start and ignoring the late reply of the host
+- Fixed a repeated stop (a double RED press, the gamepad combo or a termination by the host at the same time) starting a second teardown thread and a second return to the app list
+- Fixed a Smart Hub deep link starting a second stream on top of a running one
 - Fixed every FEC recovery blocking the video receive thread for up to 15 ms or more on a desktop CPU by removing a needless matrix multiply from the Reed-Solomon setup (the output is unchanged)
 - Fixed a freeze of up to 120 frames (2 s at 60 FPS) after a wrongly predicted frame loss without reference frame invalidation, as in upstream moonlight-common-c, and a partially received IDR frame leading to a reference frame invalidation request
 - Fixed each lost audio packet adding 5 ms to the audio delay of the Web Audio backend by concealing it with one negotiated frame instead of 10 ms

@@ -65,6 +65,12 @@ void LiInterruptConnection(void) {
     ConnectionInterrupted = true;
 }
 
+// End an established connection with the given error code. The termination shim runs the client's callback on
+// its own thread and ignores repeated calls, so this is safe from the decoder and renderer callbacks.
+void LiTerminateConnectionAsync(int errorCode) {
+    ListenerCallbacks.connectionTerminated(errorCode);
+}
+
 // Stop the connection by undoing the step at the current stage and those before it
 void LiStopConnection(void) {
     // Disable termination callbacks now

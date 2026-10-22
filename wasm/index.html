@@ -338,8 +338,8 @@
             </div>
             <div id="audioJitterOption" class="setting-option">
               <label data-i18n="Audio jitter buffer">Audio jitter buffer</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Increase to keep the sound smooth over an unstable network or decrease to lower the audio delay.">
-                - Increase to keep the sound smooth over an unstable network or decrease to lower the audio delay.
+              <span class="mdl-list__item-text-body" data-i18n="- Increase to keep the sound smooth over an unstable network or decrease to lower the audio delay. With Audio clock sync on, the performance statistics suggest a size after 10 minutes.">
+                - Increase to keep the sound smooth over an unstable network or decrease to lower the audio delay. With Audio clock sync on, the performance statistics suggest a size after 10 minutes.
               </span>
               <div id="audioJitterMenu">
                 <button type="button" id="selectAudioJitter" class="mdl-button mdl-js-button mdl-js-ripple-effect">100 ms</button>
@@ -354,8 +354,8 @@
               <label><span data-i18n="Audio clock sync">Audio clock sync</span>
                 <span class="badge badge-experimental" data-i18n="Experimental">Experimental</span>
               </label>
-              <span class="mdl-list__item-text-body" data-i18n="- Keeps the audio delay at the jitter buffer by playing the sound a few ppm faster or slower, instead of skipping or repeating a bit of sound every few minutes when the clocks of the host and the TV drift apart.">
-                - Keeps the audio delay at the jitter buffer by playing the sound a few ppm faster or slower, instead of skipping or repeating a bit of sound every few minutes when the clocks of the host and the TV drift apart.
+              <span class="mdl-list__item-text-body" data-i18n="- Keeps the audio delay at the jitter buffer by playing the sound up to 0.05 % faster or slower, which is inaudible. Without it, the drift between the clocks of the host and the TV lets the delay grow to 1.5x the buffer and then skips 5 ms of sound every few minutes, or leaves a gap as long as the buffer once it runs empty. The suggested buffer in the performance statistics needs it.">
+                - Keeps the audio delay at the jitter buffer by playing the sound up to 0.05 % faster or slower, which is inaudible. Without it, the drift between the clocks of the host and the TV lets the delay grow to 1.5x the buffer and then skips 5 ms of sound every few minutes, or leaves a gap as long as the buffer once it runs empty. The suggested buffer in the performance statistics needs it.
               </span>
               <div id="audioClockSyncMenu">
                 <label id="audioClockSyncBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="audioClockSyncSwitch">

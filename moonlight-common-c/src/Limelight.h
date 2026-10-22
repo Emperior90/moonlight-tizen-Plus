@@ -547,6 +547,11 @@ void LiStopConnection(void);
 // so it is not safe to start another connection before the first LiStartConnection() call returns.
 void LiInterruptConnection(void);
 
+// This function ends an established connection with the given error code, as if the connection had failed on its
+// own: the client's connectionTerminated() callback runs once, on a separate thread. It's safe to call from the
+// decoder and renderer callbacks, which must not call LiStopConnection() themselves.
+void LiTerminateConnectionAsync(int errorCode);
+
 // Use to get a user-visible string to display initialization progress
 // from the integer passed to the ConnListenerStageXXX callbacks
 const char* LiGetStageName(int stage);

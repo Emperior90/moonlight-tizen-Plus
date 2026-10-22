@@ -3,6 +3,11 @@ name: Release (Stable)
 # Configure this workflow to be triggered manually from the GitHub Actions tab for the `master` branch.
 on:
   workflow_dispatch:
+# Queues the release runs of both workflows, because they push the ForceGM image to the same `:forcegm` tag, which an
+# overlapping run would overwrite before the upload job of the other run pulls it (a package of another commit).
+concurrency:
+  group: moonlight-release-images
+  cancel-in-progress: false
 # Defines two custom environment variables for the workflow. These are used for the Container registry domain, and a name for the Docker image that this workflow builds.
 env:
   REGISTRY: ghcr.io

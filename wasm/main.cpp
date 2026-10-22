@@ -37,6 +37,7 @@ MoonlightInstance* g_Instance;
 MoonlightInstance::MoonlightInstance()
   : m_AudioBackend(AudioBackend::Emss),
     m_AudioJitterMs(0),
+    m_Running(false),
     m_OpusDecoder(NULL),
     m_MouseLocked(false),
     m_MouseLastPosX(-1),
@@ -64,6 +65,7 @@ MoonlightInstance::MoonlightInstance()
     m_AudioTrack(),
     m_VideoTrack(),
     m_ConnectionCancelled(false),
+    m_StopIssued(false),
     m_StopThread(0),
     m_SourceClosed(false),
     m_SourceAttached(false) {
@@ -80,6 +82,12 @@ void MoonlightInstance::OnConnectionStarted(uint32_t unused) {
 }
 
 void MoonlightInstance::OnConnectionStopped(uint32_t error) {
+  // Stop only once per stream
+  if (m_StopIssued.exchange(true)) {
+    ClLogMessage("Ignoring a repeated stop request\n");
+    return;
+  }
+
   // Not running anymore
   m_Running = false;
 
@@ -317,7 +325,10 @@ void* MoonlightInstance::ConnectionThreadFunc(void* context) {
     // Notify the JS code that the stream has ended!
     // NB: We pass error code 0 here to avoid triggering a "Connection terminated" warning message.
     if (me->m_ConnectionCancelled) {
-      PostToJs(MSG_STREAM_TERMINATED + std::to_string(0));
+      // A stop request that cancelled the start has already told the JS code
+      if (!me->m_StopIssued) {
+        PostToJs(MSG_STREAM_TERMINATED + std::to_string(0));
+      }
     } else {
       PostToJs(MSG_STREAM_TERMINATED + std::to_string(err));
     }
@@ -350,6 +361,7 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
     m_StopThread = 0;
   }
   m_ConnectionCancelled = false;
+  m_StopIssued = false;
   m_SourceClosed = false;
   m_SourceAttached = false;
   m_InputThread = 0;

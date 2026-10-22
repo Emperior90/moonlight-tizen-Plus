@@ -36,7 +36,7 @@ Dieses Dokument beschreibt:
 2. **60 statt 120 FPS:** Tizen-Apps werden auf vielen Modellen nur mit ~60 FPS dargestellt. Bei gleicher Bitrate bekommt jedes Bild bei 60 FPS doppelt so viele Bits, das ergibt sichtbar bessere Bildqualität.
 3. **HEVC Main10 (HDR) in 4K**, H.264 nur bis 1080p (der Samsung-Decoder kann H.264 praktisch nur bis Level 4.2).
 4. **Encoder am PC** mit Qualitäts-Reserve: NVENC-Preset P4–P6 statt P1, aber nur solange der Encoder nicht ausgelastet ist.
-5. **Messen statt raten:** Statistik-Overlay einschalten. Die neuen **Sitzungszähler** müssen über eine ganze Spielsession bei 0 bleiben.
+5. **Messen statt raten:** Statistik-Overlay einschalten. *Session frames dropped by network*, *Session frames dropped by the TV* und *Session recovery keyframes* müssen über eine ganze Spielsession bei 0 bleiben (ein Recovery-Keyframe direkt nach dem Start ist normal). *Session FEC recoveries* darf steigen.
 
 **Für niedrige Latenz** kommen vier Hebel dazu: der Spielmodus des TVs (ForceGM-Variante), Frame Generation aus, *Split Frame Encoding* in Sunshine und ein kleinerer Audio-Puffer. Die ganze Kette mit deinen Werten steht in [Abschnitt A.8](#a8-dein-ziel-4k60-optional-mehr-beste-bildqualität-niedrige-latenz).
 
@@ -56,7 +56,7 @@ Die Ursache steht im Code von Version 1.18/1.19: Der Pacer hat seinen Takt einma
 
 Diese Version richtet den Takt am *typischen* Ankunftszeitpunkt der Bilder aus (Median plus dreifache robuste Streuung, gedeckelt auf eine halbe Frame-Dauer) und misst ab dem Eintreffen eines Bildes. Einen Anstieg des Takts übernimmt sie erst, wenn zwei aufeinanderfolgende Zeitfenster ihn bestätigen: Nach einem WLAN-Stall von über einer halben Sekunde kommen die aufgestauten Bilder als Schwall an und würden sonst das nächste Zeitfenster um bis zu mehrere hundert Millisekunden zurückhalten (bei 120 FPS läuft dabei die Warteschlange über, Folge wäre ein Recovery-Keyframe). Ein Rückgang gilt sofort. In meiner Simulation (10 min, 60 und 120 FPS) sank die Zusatzverzögerung in den Szenarien mit WLAN-Aussetzern deutlich, und bei normalem Jitter lief die Bildfolge gleichmäßiger. Nur bei sehr häufigen großen Aussetzern ruckelte sie etwas mehr.
 
-**Was du nach dem Update sehen solltest:** Das Overlay trennt die Wartezeit jetzt in ihre Stufen (siehe „So liest man das Overlay“ in Abschnitt 8): *Average frame wait time* (fertig empfangenes Bild wartet auf den Video-Thread) sollte bei wenigen Millisekunden liegen, *Average frame pacing delay* (bewusste Wartezeit des Pacers) ebenfalls, und *Pending frames* bei 0–1. Zusammen entsprechen sie der alten *Average decoding time*, die bei dir 50–72 ms betrug. Frame Pacing bleibt abschaltbar (A/B-Test in Phase 3).
+**Was du nach dem Update sehen solltest:** Das Overlay trennt die Wartezeit jetzt in ihre Stufen (siehe „So liest man das Overlay“ in Abschnitt 8): *Average frame wait time* (fertig empfangenes Bild wartet auf den Video-Thread) sollte bei wenigen Millisekunden liegen, *Average frame pacing delay* (bewusste Wartezeit des Pacers) ebenfalls, und *Pending frames* bei 0–1. Die beiden Zeiten zusammen entsprechen der alten *Average decoding time*, die bei dir 50–72 ms betrug. Frame Pacing bleibt abschaltbar (A/B-Test in Phase 3).
 
 ### A.2 Netzwerk: sehr gut, kleine Feinheiten
 
@@ -66,7 +66,7 @@ Diese Version richtet den Takt am *typischen* Ankunftszeitpunkt der Bilder aus (
 - **Kanäle:** Funken FRITZ!Box und Repeater beide in 36–48, teilen sie sich die Funkzeit. Wenn möglich, die Box auf einen anderen 5-GHz-Block legen (z. B. 100+) und den Repeater auf 36–48 lassen. Außerdem einen **festen Kanal** statt Autokanal wählen, damit nicht mitten in der Session gewechselt wird.
 - **FRITZ!Box-Ereignisprotokoll** (System → Ereignisse, Filter WLAN): Direkt nach dem nächsten 2-h-Ruckeln nachsehen, ob der TV sich ab-/angemeldet hat oder der Kanal gewechselt wurde.
 - Die Priorisierung als „Echtzeitanwendung“ wirkt nur auf Internet-Verkehr, nicht auf PC → TV im Heimnetz. Sie schadet aber nicht.
-- **FEC 5 %:** in Ordnung, solange die neuen *Session*-Zähler über lange Sessions bei 0 bleiben. Tauchen dort Drops auf, auf 10 % erhöhen.
+- **FEC 5 %:** in Ordnung, solange *Session frames dropped by network* über lange Sessions bei 0 bleibt und *Worst FEC block* (X von Y Paritätspaketen) mit X deutlich unter Y bleibt. *Session FEC recoveries* darf steigen, das sind unsichtbar reparierte Verluste. Tauchen Drops auf oder kommt X nahe an Y, auf 10 % erhöhen.
 
 ### A.3 Das Ruckeln nach ~2 h: wahrscheinlich der PC
 
@@ -90,8 +90,9 @@ Gegen Netzwerk und TV spricht: 0 % Verlust, der Web-Audio-Scheduler fängt Uhren
 | Beobachtung | Ursache |
 |---|---|
 | *Incoming frame rate* < 60, Netzwerk-Drops 0, *Host processing latency* (max) hoch | PC: Spiel/Encoder. Mit **HWiNFO** über die Session VRAM-Belegung, GPU-Hotspot, Speichertemperatur und Takt mitloggen |
-| *Session frames dropped by network* / *Session recovery keyframes* steigen | WLAN: FRITZ!Box-Ereignisprotokoll prüfen |
-| *Session frames dropped by the TV* steigt | TV-seitig: Der TV kam mit den Bildern nicht nach und hat seine Video-Pipeline zurückgesetzt. Das ist kein WLAN-Problem. Bitrate eine Stufe senken, App neu starten, Ergebnis notieren |
+| *Session frames dropped by network* steigt (mit oder ohne *Session recovery keyframes*) | WLAN: FRITZ!Box-Ereignisprotokoll prüfen |
+| *Session recovery keyframes* steigen, *Session frames dropped by network* und *by the TV* bleiben bei 0 | PC: Sunshine hat Aufnahme oder Encoder neu gestartet, und jeder Neustart beginnt mit einem Keyframe. Im Sunshine-Log zu dieser Zeit nach `Starting async encoder teardown`, `Could not encode video packet` oder einer neu initialisierten Aufnahme suchen. Keyframes nach einem Reset der TV-Pipeline zählt die App nicht hier, sondern als *video pipeline resets* |
+| *Session frames dropped by the TV* steigt | TV-seitig, kein WLAN-Problem. Zeigt *TV player rejections* dabei *buffer full*, oder bleibt *Pending frames (max)* hoch, kam der TV mit den Bildern nicht nach: Bitrate eine Stufe senken, App neu starten, Ergebnis notieren. Ein einmaliger Sprung mit *keyframe required* oder *track not ready* direkt nach dem Zurückkehren in die App heißt nur, dass der TV seinen Player neu geöffnet hat |
 | *Incoming* 60, aber *Rendering* < 60 oder *Average frame wait time* / *Pending frames* steigen | TV-seitig: App neu starten, Ergebnis notieren |
 
 ### A.4 Sunshine: Einstellungen passen, mit Anmerkungen
@@ -106,7 +107,7 @@ Gegen Netzwerk und TV spricht: 0 % Verlust, der Web-Audio-Scheduler fängt Uhren
 
 - **Update auf diese Version** (1.19.0 + S90C-Änderungen): Sie bringt die Leistungsoptimierungen aus A.7, die Session-Zähler und die BT.709-Farben. Achtung: Der Button „Samsung S90C optimization“ stellt *Color range* auf „begrenzt“. Bewusst so, siehe nächster Punkt.
 - **Full color range:** Nur behalten, wenn ein Schwarzwert-Test das bestätigt. Erkennt der TV den vollen Bereich nicht korrekt, saufen dunkle Details ab und helle clippen. Das wirkt „knackiger“, kostet aber Zeichnung in dunklen Szenen, und davon hat Witcher 3 viele. Test: eine Near-Black-Testseite oder der HDR-Kalibrierungsbildschirm des Spiels, einmal mit „Full“, einmal mit „Limited“. Gewinner ist die Einstellung, bei der die dunkelsten Stufen gerade noch unterscheidbar sind.
-- **Bitrate 4K/95 Mbit/s** ist ein guter Wert, nahe an Samsungs Decoder-Spezifikation. Optional 4K mit 110 Mbit/s 30 Minuten lang testen und dabei auf die Session-Zähler, *Average frame wait time* und *Average rendering time* achten.
+- **Bitrate 4K/95 Mbit/s** ist ein guter Wert, nahe an Samsungs Decoder-Spezifikation. Höhere Werte mit der Bitrate-Leiter aus Phase 2 (Abschnitt 8) testen und dabei auf die Session-Zähler, *Average frame wait time* und *Average rendering time* achten.
 - **4K vs. 1440p bei 3 m Abstand:** Ein 4K-Pixel ist auf 55" aus 3 m nur ~0,36 Bogenminuten groß, ein 1440p-Pixel ~0,55. Das menschliche Auge löst grob 0,5–1 Bogenminute auf. Aus deinem Abstand ist 1440p also nah an der Wahrnehmungsgrenze, und 1440p mit 120 Mbit/s hat pro Pixel rund dreimal so viele Bits wie 4K mit 95 Mbit/s. In dunklen, detailreichen Szenen (Vegetation, Nebel) kann 1440p deshalb sauberer wirken, 4K punktet bei feinen Kanten. Ein direkter Vergleich aus 3 m lohnt sich.
 - **Web Audio mit 100 ms:** ein sicherer Wert. Für weniger Ton-Verzögerung 75, dann 50 ms testen (A.8). Die Zeilen *Audio buffer* und *Audio session* im Overlay zeigen dabei Aussetzer (*underruns*) und nach 10 Minuten mit *Audio clock sync* einen Vorschlag für die Puffergröße (*suggested buffer*). Bei Aussetzern wieder erhöhen.
 
@@ -140,16 +141,15 @@ An diesen Stellen habe ich im Code fünf unnötige Lasten gefunden. Diese Versio
 | 4 | Mit eingeschaltetem Overlay hat der **Video-Thread einmal pro Sekunde auf den Haupt-Thread gewartet**, um die Statistik zu übergeben. | Wird übergeben, ohne zu warten. | Der Video-Thread stockt nicht mehr, wenn der Haupt-Thread gerade beschäftigt ist. |
 | 5 | Kompiliert mit `-Os` (auf Dateigröße optimiert). | Kompiliert mit `-O2` (auf Geschwindigkeit optimiert). | Schnellerer Code in den heißen Pfaden (Paketverarbeitung, Opus). Die Datei wird etwas größer. |
 
-Geprüft, aber unverändert gelassen: Der Video-Empfang ist bereits gut eingestellt (blockierender Socket, angeforderter Empfangspuffer ~2,9 MB, Paketgröße 1392 Byte, keine Video-Verschlüsselung). Das Host-Polling pausiert während des Streams schon. Logausgaben laufen nicht über den Haupt-Thread. Rumble-Meldungen kommen über einen eigenen Thread, der sie beim Warten zusammenfasst.
+Geprüft, aber unverändert gelassen: Der Video-Empfang ist bereits gut eingestellt (blockierender Socket, angeforderter Empfangspuffer ~2,9 MB, Paketgröße 1392 Byte, keine Video-Verschlüsselung). Das Host-Polling pausiert während des Streams schon. Logausgaben laufen nicht über den Haupt-Thread. Rumble-Meldungen fasst moonlight-common-c in einem eigenen Thread zusammen; ihre Übergabe an die Oberfläche wartet seit Änderung 21 in Abschnitt 7 nicht mehr auf den Haupt-Thread.
 
 **Ehrliche Einordnung:** Den Decoder macht keine dieser Änderungen schneller, und auf einem echten TV habe ich nichts gemessen. Ich erwarte vor allem weniger Spitzen, also weniger Audio-Aussetzer mit *Web Audio*, eine gleichmäßigere Übergabe der Bilder und weniger Konkurrenz im WLAN. Ob das für 4K über 95 Mbit/s reicht, zeigt erst der Test.
 
 **So testest du es** (4K60, HEVC, sonst alles wie bisher):
 
-1. Bitrate-Leiter **95 → 110 → 120 Mbit/s**, je 20 Minuten im selben anspruchsvollen Spiel, Overlay an. Die Zeile *Configured bitrate* im Overlay zeigt, welche Bitrate die Session wirklich angefordert hat.
-2. **Bestanden**, wenn *Session frames dropped by network* und *Session recovery keyframes* bei 0 bleiben, die *Rendering frame rate* stabil bei 60 liegt und der Ton nicht aussetzt.
-3. **Bei Audio-Aussetzern** einmal *Audio backend: EMSS* testen. EMSS übergibt den Ton direkt aus dem Audio-Thread an den TV-Player und braucht den Haupt-Thread dafür nicht.
-4. Steigt die *Average rendering time* (Übergabe eines Bildes an den TV-Player) mit der Bitrate deutlich an, ist der Decoder-Pfad des TVs am Limit. Dann eine Stufe zurückgehen.
+1. **Bitrate-Leiter nach Phase 2** (Abschnitt 8): 100 → 120 → 135 → 150 Mbit/s im selben anspruchsvollen Spiel, Overlay an, mit den Bestehenskriterien und der Regel für den Endwert von dort. Die Zeile *Configured bitrate* im Overlay zeigt, welche Bitrate die Session wirklich angefordert hat.
+2. **Bei Audio-Aussetzern** einmal *Audio backend: EMSS* testen. EMSS übergibt den Ton direkt aus dem Audio-Thread an den TV-Player und braucht den Haupt-Thread dafür nicht.
+3. Steigt die *Average rendering time* (Übergabe eines Bildes an den TV-Player) mit der Bitrate deutlich an, ist der Decoder-Pfad des TVs am Limit. Dann eine Stufe zurückgehen.
 
 ### A.8 Dein Ziel: 4K60 (optional mehr), beste Bildqualität, niedrige Latenz
 
@@ -163,7 +163,7 @@ Die Verzögerung zwischen Tastendruck und Bild setzt sich aus mehreren Gliedern 
 | Frame Generation 2x | Das Spiel rendert intern nur 30 FPS | **FG aus**, DLSS Super Resolution (Balanced/Performance), **Reflex an** | Grob 30–50 ms: FG hält ein internes Bild (~33 ms) zurück, und 30 FPS reagieren träger als 60 |
 | Wartezeit am TV vor dem Decoder | *Average decoding time* 50–72 ms (1440p, Version 1.18) | **Diese Version** (neues Frame Pacing, A.1). Für das absolute Minimum Frame Pacing aus (A/B-Test) | Bis zu mehrere Dutzend Millisekunden. Das Overlay zeigt es jetzt getrennt als *Average frame wait time* und *Average frame pacing delay* |
 | Encoder am PC | ~11 ms bei 4K (P6, Two-Pass Full) | ***Split Frame Encoding: Enabled***: Beide NVENC-Einheiten der RTX 5080 teilen sich jedes Bild | Laut Sunshine-Doku deutlich kürzere Kodierzeit bei minimalem Effizienzverlust. Die *Host processing latency* im Overlay zeigt es |
-| Ton | Web Audio mit 100 ms Jitter-Puffer | **Puffer auf 50–75 ms** senken. Nach diesem Update ist der Haupt-Thread entlastet. Bei Aussetzern wieder erhöhen | Der Ton läuft etwa um den Pufferwert hinter dem Bild. Geht die Uhr des PCs etwas schneller als die des TVs, wächst der Abstand im Lauf der Session bis zum 1,5-Fachen, bei 100 ms also bis 150 ms. Die neue Option *Audio clock sync* (A/B-Test in Phase 3) hält ihn stattdessen am Pufferwert |
+| Ton | Web Audio mit 100 ms Jitter-Puffer | **Puffer auf 50–75 ms** senken. Nach diesem Update ist der Haupt-Thread entlastet. Bei Aussetzern wieder erhöhen | Der Ton läuft etwa um den Pufferwert hinter dem Bild. Geht die Uhr des PCs etwas schneller als die des TVs, wächst der Abstand im Lauf der Session bis zum 1,5-Fachen, bei 100 ms also bis 150 ms. Die neue Option *Audio clock sync* (A/B-Test in Phase 3) hält ihn stattdessen am Pufferwert. Nach einem Aussetzer startet der Ton jetzt wieder bei etwa Puffer + 10 ms, statt mit dem Rückstau minutenlang beim 1,5-Fachen zu bleiben (Änderung 39) |
 | Netzwerk | 1–3 ms | nichts zu tun | – |
 
 Im Spiel außerdem eine **Bildratenbegrenzung auf 60 FPS** setzen (Abschnitt 5.3), wenn die GPU sonst dauerhaft am Anschlag läuft. Das hält die Render-Warteschlange kurz und lässt dem Encoder GPU-Reserve.
@@ -176,7 +176,7 @@ Ein Punkt kommt neu dazu: **HDR-Metadaten.** Sunshines NVENC-Pfad schreibt keine
 
 **In Bewegung** entscheidet, wie viele Bits ein schwieriges Bild bekommen darf:
 
-1. **Bitrate:** Von 95 Mbit/s bekommt der Encoder bei deinen 5 % FEC ~89 Mbit/s, bei 60 FPS also ~1,5 Mbit pro Bild (Rechnung in 5.4). Mehr Bitrate hilft direkt, also die Bitrate-Leiter aus A.7 durchgehen.
+1. **Bitrate:** Von 95 Mbit/s bekommt der Encoder bei deinen 5 % FEC ~89 Mbit/s, bei 60 FPS also ~1,5 Mbit pro Bild (Rechnung in 5.4). Mehr Bitrate hilft direkt, also die Bitrate-Leiter aus Phase 2 (Abschnitt 8) durchgehen.
 2. **VBV:** Mit `nvenc_vbv_increase = 0` darf kein Bild größer werden als Encoder-Bitrate ÷ FPS, bei 95 Mbit/s also ~1,5 Mbit. Genau schnelle Kameraschwenks, Vegetation und Partikel bräuchten mehr. Über dein WLAN, ohne den 100-Mbit-Port im Weg, lohnt ein Test mit **50, dann 100 %**. Größere Bilder brauchen über die Funkstrecke ein paar Millisekunden länger. Tauchen Session-Drops auf, zurück auf 0.
 3. **Frame Generation aus:** FG-Zwischenbilder haben bei schnellen Bewegungen eigene Artefakte, die im Stream genauso sichtbar sind.
 4. **P6 mit Two-Pass Full** ist für die Qualität richtig. Mit Split Frame Encoding bleibt die Kodierzeit trotzdem niedrig.
@@ -219,7 +219,7 @@ Die App ist vorbereitet: Sie meldet dem TV für 4K120 das nötige Codec-Level 5.
 Die Kette sieht so aus:
 
 ```
-Spiel → GPU-Encoder (NVENC) → Sunshine (+20 % FEC, Pacing ~800 Mbit/s)
+Spiel → GPU-Encoder (NVENC) → Sunshine (+FEC: Standard 20 %, bei dir 5 %; Pacing ~800 Mbit/s)
       → PC-Netzwerkkarte (1 Gbit/s) → Router/Switch → TV (100 Mbit/s LAN oder Wi-Fi 5)
       → WASM-Empfang + FEC-Rekonstruktion → Hardware-Decoder (EMSS) → OLED-Panel
 ```
@@ -307,7 +307,7 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
    - kein Mesh-Repeater mit Funk-Backhaul zwischen Router und TV (halbiert den Durchsatz und erhöht den Jitter).
 3. **Router möglichst im selben Raum** und mit Sichtverbindung zum TV.
 4. Im Statistik-Overlay steht jetzt die **WLAN-Signalstärke**. Ziel: **> 70 %**.
-5. **Bitrate-Leiter:** Start bei 100 Mbit/s, dann 120 und 150 Mbit/s. Jeweils eine Spielsession lang testen und den höchsten Wert nehmen, bei dem die Sitzungszähler bei 0 bleiben. Danach eine Stufe zurückgehen, als Reserve.
+5. **Bitrate-Leiter:** wie in Phase 2 (Abschnitt 8): 100 → 120 → 135 → 150 Mbit/s, mit den Bestehenskriterien und der Regel für den Endwert von dort.
 
 ### 4.3 Was nicht funktioniert
 
@@ -338,7 +338,7 @@ Die App hat vom PC bisher den Farbraum **BT.601** angefordert, also den Standard
 | `nvenc_spatial_aq` | aus | aus (höchstens bei niedrigen Bitraten testen) | Bringt bei 75–150 Mbit/s kaum etwas, kostet Encoder-Leistung |
 | `nvenc_vbv_increase` | 0 | **LAN: 0 lassen. WLAN: 50 bzw. 100 testen** | Höhere Werte erlauben größere Einzelbilder. Das verbessert schwierige Bewegungsszenen, erzeugt aber größere Bursts, und die sind Gift für den 100-Mbit-Port |
 | `nvenc_split_encode` | driver_decides | **enabled** (bei GPUs mit zwei NVENC-Einheiten) | Teilt jedes Bild auf beide Encoder auf. Laut Sunshine-Doku deutlich kürzere Kodierzeit bei minimalem Effizienzverlust. Für 4K120 praktisch Pflicht |
-| `fec_percentage` | 20 | 20 lassen | Fehlerkorrektur für vereinzelte Paketverluste (vor allem im WLAN) |
+| `fec_percentage` | 20 | **bei dir 5 % lassen** (20 als sicherer Start bei unbekanntem Netz) | Fehlerkorrektur für vereinzelte Paketverluste (vor allem im WLAN). Jeder Prozentpunkt geht dem Encoder ab: bei 100 Mbit/s ~94 statt ~79 Mbit/s (5.4). Auf 10 % erhöhen, wenn *Session frames dropped by network* über 0 steigt oder *Worst FEC block* (X von Y Paritätspaketen) mit X nahe an Y kommt (Phase 2) |
 | `hevc_mode` / `av1_mode` | 0 (nach Encoder-Fähigkeiten) | 0 | Main10 für HDR wird automatisch angeboten, wenn die GPU es kann. Nicht 1 oder 2: Bei `av1_mode = 2` (nur 8 Bit) nimmt die App mit HDR HEVC Main10 und meldet das |
 | `lan_encryption_mode` | 0 | 0 | Verschlüsselung kostet auf dem TV zusätzliche CPU-Zeit |
 
@@ -425,7 +425,7 @@ Das größte Einzelbild liegt ungefähr bei Encoder-Bitrate ÷ FPS × (1 + `nven
 | 14 | **Build mit `-O2` statt `-Os`** | Schnellerer Code in den heißen Pfaden, etwas größere Datei | `CMakeLists.txt` |
 | 15 | **Overlay zeigt die Stufen am TV getrennt:** *Average frame receive time* (Übertragung des Bild-Bursts), *Average frame wait time* (Warten auf den Video-Thread; mit Frame Pacing zählt dazu auch die restliche Pacing-Wartezeit des vorherigen Bildes, wenn dieses Bild früh ankam), *Average frame pacing delay*, *Average rendering time*, *Pending frames* | Die alte *Average decoding time* vermischte Warteschlange und Pacing. Jetzt lässt sich ablesen, wo die Zeit am TV bleibt und ob sich Bilder stauen | `wasm/wasmplayer.cpp`, `wasm/platform/messages.js` |
 | 16 | **Ein Slice pro Bild** statt vier (Encoder-Einstellung, die der Client meldet) | Bessere Kompression bei gleicher Bitrate: Der Hardware-Decoder des TVs verarbeitet ganze Bilder, mehrere Slices helfen nur Software-Decodern und kosten Bits an den Slice-Grenzen | `wasm/main.cpp`, `wasm/wasmplayer.cpp` |
-| 17 | **Web Audio:** Der Ton darf höchstens das 1,5-Fache des Jitter-Puffers hinter dem Bild liegen (vorher das Doppelte), und der Puffer lässt sich bis 25 ms einstellen | Weniger Ton-Verzögerung bei Uhrendrift zwischen PC und TV, mehr Spielraum für Latenz-Tests | `wasm/platform/audio.js`, `wasm/index.html` |
+| 17 | **Web Audio:** Der Ton darf höchstens das 1,5-Fache des Jitter-Puffers hinter dem Bild liegen (vorher das Doppelte), und der Puffer lässt sich bis 25 ms einstellen | Weniger Ton-Verzögerung bei Uhrendrift zwischen PC und TV, mehr Spielraum für Latenz-Tests. Nach einem Aussetzer siehe Änderung 39 | `wasm/platform/audio.js`, `wasm/index.html` |
 | 18 | **HDR static metadata** (neu, experimentell, Standard aus): Die App fügt jedem HEVC-Keyframe die HDR10-Metadaten des Host-Displays ein (Mastering Display Colour Volume, Content Light Level), die Sunshine über den Steuerkanal liefert, der TV aber bisher nie bekam. Treffen die Metadaten erst nach dem ersten Keyframe ein oder ändern sie sich (HDR am Host eingeschaltet), fordert die App ein neues Keyframe an | Mit *HDR Tone Mapping: Statisch* kann der TV auf die Spitzenhelligkeit und den Farbraum des (virtuellen) Host-Displays abbilden, statt einen Standardwert anzunehmen | `wasm/wasmplayer.cpp`, `wasm/connectionlistener.cpp`, `wasm/main.cpp`, `wasm/index.html`, `wasm/platform/index.js`, `wasm/platform/navigation.js` |
 | 19 | **Auflösung 3200 × 1800 (1800p)** mit eigenen Bitrate-Presets (30/60/75/90/100 Mbit/s für 30–144 FPS) | Zwischenstufe mit 69 % der 4K-Pixel: bei 100 Mbit/s ~0,27 statt ~0,19 Bit pro Pixel (60 FPS, Encoder-Budget bei 5 % FEC). Gedacht für 120 FPS und für den 75-Mbit/s-Fall per LAN. Für das schärfste Standbild sollte das virtuelle Display am PC dann ebenfalls 3200 × 1800 liefern, sonst wird zweimal skaliert | `wasm/index.html`, `wasm/platform/index.js` |
 | 20 | **Hinweis bei 90 FPS:** 90 teilt weder 60 noch 120 Hz glatt | Erspart einen irreführenden Versuch; 120 FPS direkt testen oder bei 60 bleiben | `wasm/platform/index.js` |
@@ -444,9 +444,20 @@ Das größte Einzelbild liegt ungefähr bei Encoder-Bitrate ÷ FPS × (1 + `nven
 | 33 | **Kein Keyframe mehr beim Fangen des Mauszeigers**, und die Zurück-Taste löst bei gefangenem Zeiger keinen Mausklick mehr aus | Ein kurz unscharfes Bild weniger. Die linke Maustaste des PCs bleibt nicht mehr gedrückt hängen | `wasm/input.cpp`, `wasm/platform/index.js`, `wasm/wasmplayer.cpp` |
 | 34 | **Frame Pacer wartet am Ende 0,2 statt 1 ms aktiv** | Weniger CPU-Last am TV, vor allem bei 120 FPS. Die Pacing-Verzögerung bleibt praktisch gleich | `wasm/wasmplayer.cpp` |
 | 35 | **Vom TV verworfene Bilder getrennt gezählt:** Läuft die Warteschlange vor dem Decoder über oder lehnt der Player ein Bild ab, zählen die verworfenen Bilder als *Session frames dropped by the TV* statt als Netzwerkverlust. *Pending frames* zeigt zusätzlich das Maximum pro Sekunde | Die Bitrate-Leiter unterscheidet jetzt einen überlasteten TV von WLAN-Verlust. Die falsche Warnung „Slow connection“ entfällt in diesem Fall | `moonlight-common-c/src/VideoDepacketizer.c`, `wasm/wasmplayer.cpp` |
-| 36 | **Audiozeilen im Overlay** (Web Audio): Puffer, Vorlauf, Browser-Latenz, Aussetzer, übersprungene und verlorene Pakete, Clock-Sync-Korrektur und ein Vorschlag für die Puffergröße. Tonpausen am PC zählen nicht als Aussetzer | Die Ton-Verzögerung lässt sich am TV ohne Entwickler-Konsole sicher von 100 auf z. B. 50 ms senken | `wasm/platform/audio.js`, `wasm/platform/messages.js` |
+| 36 | **Audiozeilen im Overlay** (Web Audio): Puffer, Vorlauf, Browser-Latenz, Aussetzer, übersprungene Frames, Frames, die auf dem Weg vom Decoder zum Scheduler verloren gingen, Clock-Sync-Korrektur und ein Vorschlag für die Puffergröße. Tonpausen am PC zählen nicht als Aussetzer. Im Netz verlorene Audiopakete ersetzt der Decoder mit 5 ms Ersatzton, sie erscheinen hier nicht | Die Ton-Verzögerung lässt sich am TV ohne Entwickler-Konsole sicher von 100 auf z. B. 50 ms senken | `wasm/platform/audio.js`, `wasm/platform/messages.js` |
 | 37 | **Fehlerkorrektur und UDP-Puffer im Overlay:** reparierte Blöcke und Pakete, längste Reparatur, knappster Block, angeforderter und gemeldeter Empfangspuffer | Zeigt, wie nah das WLAN an sichtbaren Verlusten ist und ob Tizen den Puffer kürzt | `moonlight-common-c/src/RtpVideoQueue.c`, `VideoStream.c`, `wasm/wasmplayer.cpp` |
 | 38 | **Texte korrigiert:** Der S90C-Dialog erkennt die installierte ForceGM-Variante. Die Hilfe zu *Game mode*, *Optimize bitrate presets* und HDR sagt jetzt, was die Schalter bei dir tun, und der Hinweis zur gehaltenen Bitrate empfiehlt nicht mehr den Weg zu 45 Mbit/s | Keine falschen Schritte auf dem Weg zu 4K mit hoher Bitrate | `wasm/index.html`, `wasm/platform/index.js` |
+| 39 | **Web Audio nach einem Aussetzer:** Die Ton-Frames, die sich während eines Stalls angestaut haben und danach auf einmal ankommen, kürzt der Scheduler auf Puffer + 2 Frames. Gezählt werden sie getrennt (*trimmed* in der Konsolenzeile `[audio.js, statistics]`), nicht unter *skipped* | Bisher blieb die Ton-Verzögerung nach einem Aussetzer beim 1,5-Fachen des Puffers: mit Clock Sync 1–2 Minuten lang, ohne Clock Sync bis die Uhrendrift sie abgebaut hat. In der Simulation mit dem echten Scheduler-Code nach einem 150-ms-Stall ~113 statt ~153 ms bei 100 ms Puffer. Gegen Uhrendrift hilft das nicht, dafür bleibt *Audio clock sync* zuständig. Ob WLAN-Stalls am TV solche Schwälle erzeugen, zeigt *lead avg* in der Zeile *Audio buffer* vor und nach einem Aussetzer | `wasm/platform/audio.js` |
+| 40 | **Stoppen wird start-sicher und einmalig:** Rot während „Starting…“ bricht den Start ab und kehrt zur App-Liste zurück, die späte Antwort des PCs wird ignoriert. Doppeltes oder gehaltenes Rot, die Gamepad-Tastenkombination und ein Abbruch durch den PC zugleich lösen nur noch einen Abbau aus | Vorher konnte ein Stream nach Rot während des Starts trotzdem anlaufen, ohne Ton und ohne funktionierende Rot- und Gelb-Taste. Den Fehler gab es schon vorher, der Codec-Abgleich vor dem Start hat das Zeitfenster um bis zu 1,5 s verlängert. Ein zweiter Stopp startete einen zweiten Abbau-Thread | `wasm/platform/index.js`, `wasm/platform/messages.js`, `wasm/platform/remote_controller.js`, `wasm/main.cpp`, `wasm/moonlight_wasm.hpp` |
+| 41 | **Smart-Hub-Kacheln während eines Streams ignoriert:** Ein Deep Link startet keinen zweiten Stream über dem laufenden. Für eine andere App erscheint der Hinweis, erst den Stream zu beenden | Nur relevant, wenn der TV Smart-Hub-Vorschauen unterstützt (Log: `Smart Hub support … true`), unter Tizen 9 vermutlich nicht. Reine Absicherung | `wasm/platform/index.js` |
+| 42 | **Meldung bei einem Absturz der Streaming-Engine:** Bricht das WASM-Modul ab (z. B. `abort(OOM)`) oder stürzt einer seiner Threads ab (`pthread sent an error!`), räumt die App die Stream-Ansicht ab, ohne das Modul noch einmal aufzurufen, zeigt einen Dialog und startet nach dem Schließen neu | Statt eines stummen Einfrierens weißt du, was passiert ist, und kannst das Spiel nach dem Neustart fortsetzen. Rein diagnostisch: Ob so etwas auf dem TV vorkommt, ist unbekannt. Der Konsolentext ist der Beleg, den du melden solltest | `wasm/platform/common.js`, `wasm/platform/index.js` |
+| 43 | **Ablehnungen des TV-Players nach Ergebniscode:** Einen vollen Player-Puffer versucht die App bis zu eine Bilddauer lang erneut. Alle Ablehnungen stehen mit Namen im Log und, sobald es welche gibt, in der Overlay-Zeile *TV player rejections* (*buffer full* mit den doch angenommenen, *keyframe required*, *track not ready*, *other* mit dem letzten Code). Lehnt der Player das Format dauerhaft ab (ungültige Parameter, Auflösung oder Bildrate) und nimmt 3 s lang kein Bild an, endet der Stream mit einer Meldung | Vorher führte jede Ablehnung ohne Angabe des Grundes zu einem Reset der Pipeline, ein abgelehnter Modus zu endlosen Keyframe-Anfragen bei schwarzem Bild. Ob *buffer full* mit der synchronen Übergabe auf dem S90C überhaupt vorkommt, zeigt erst der TV. Die Wartezeit der Wiederholung zählt in die *Average rendering time* | `wasm/wasmplayer.cpp`, `moonlight-common-c/src/Connection.c`, `Limelight.h`, Locales |
+| 44 | **Geschlossener Video-Track:** Der Grund steht im Log (z. B. `reason 3: source suspended`), ebenso ein Wiederöffnen während des Streams und die Zahl der dabei verworfenen Bilder. Diese Bilder zählen weder als Netzwerk- noch als TV-Drop. Meldet der TV einen Fehler der Medienquelle, endet der Stream mit einer eigenen Meldung statt mit einem eingefrorenen Bild | Nach Home-Taste oder Eingangswechsel zeigt *Session frames dropped by network* keinen falschen Sprung mehr. Der Fehlerfall ist auf dem TV nicht beobachtet | `wasm/wasmplayer.cpp`, `wasm/main.cpp`, `wasm/platform/messages.js` |
+| 45 | **Recovery-Keyframes ohne TV-Resets:** Ein Keyframe nach einem Reset der TV-Pipeline zählt nicht mehr als *Session recovery keyframes*, das zeigt schon *video pipeline resets* | Der Zähler weist jetzt auf das WLAN (zusammen mit Netzwerk-Drops) oder den PC (ohne Drops), nicht mehr auf den TV | `wasm/wasmplayer.cpp` |
+| 46 | **Overlay-Zeile *WASM heap top*:** oberes Ende des Speichers der Engine gegen die festen 128 MB, dazu der Zuwachs seit Stream-Start. Am Stream-Ende steht derselbe Wert im Log | Ein Speicherleck über lange Sessions wird sichtbar, bevor eine Speicheranforderung das Modul abbricht. Der Wert sinkt nie, weil freier Speicher darunter wiederverwendet wird. Ein stetiger Anstieg über Stunden ist das Warnzeichen | `wasm/wasmplayer.cpp`, `wasm/platform/messages.js` |
+| 47 | **Log beim Verlassen und Zurückkehren** (Home, Eingangswechsel, TV-Menüs): Sichtbarkeit, Stream-Zustand und wie lange die App verdeckt war | Grundlage für den Lebenszyklus-Test in Abschnitt 8. Am Stream ändert das nichts | `wasm/platform/index.js` |
+| 48 | **Release-Workflows laufen nacheinander** | Zwei gleichzeitige Läufe konnten das gemeinsame `:forcegm`-Image überschreiben, sodass ein Release die ForceGM-Datei eines anderen Commits bekam | `.github/workflows/release-development.yml`, `release-stable.yml` |
+| 49 | **Hilfetexte:** *Audio clock sync* nennt die echte Korrektur (bis 0,05 %) und was ohne Clock Sync passiert, der Jitter-Puffer verweist auf den Vorschlag im Overlay | Die Puffergröße lässt sich gezielt mit dem Overlay-Vorschlag senken | `wasm/index.html`, Locales |
 
 **So sieht es in der App aus** (Screenshots aus einem Browser-Test mit simulierten Tizen-APIs):
 
@@ -455,7 +466,7 @@ Das größte Einzelbild liegt ungefähr bei Encoder-Bitrate ÷ FPS × (1 + `nven
 | ![Basic Settings](images/s90c-basic-settings.png) | ![S90C-Dialog](images/s90c-dialog.png) | ![Video Settings](images/s90c-video-settings.png) |
 
 > [!WARNING]
-> Die Änderungen sind auf Kompilierbarkeit geprüft (Syntax-Check mit Stub-Headern, die die EM_ASM-Makros von Emscripten 1.39.4 nachbilden, JavaScript-Syntax, Locale-Sync). Alle EM_ASM-Blöcke habe ich nach dem Präprozessor als JavaScript validiert. Den gebündelten Gamepad-Block habe ich in Node gegen den Original-Code von Emscripten 1.39.4 getestet. Den HDR-Metadaten-Schreiber habe ich mit 504 Wertekombinationen gegen eine unabhängige Referenz geprüft (Bytes, Emulation-Prevention, Rück-Dekodierung). Die neue Sende-Logik für Controller lief in einem Testprogramm mit Address- und UB-Sanitizer, über beide Abfragewege. Die Einstellungslogik und die Pause der Menü-Gamepad-Abfrage habe ich in Chromium mit simulierten Tizen-APIs automatisiert durchgespielt: 29 + 11 Prüfungen, alle bestanden. Auf einem echten S90C konnte ich die Änderungen **nicht** testen: Das Tizen-SDK und der Samsung-Emscripten-Compiler ließen sich in meiner Umgebung nicht herunterladen, und ich habe keinen Zugriff auf deinen TV. Der erste Test auf dem TV ist deshalb Teil des Plans (Abschnitt 8, Phase 0–1).
+> Stand acab67f hat der Workflow „Release (Development)“ beide Pakete (`Moonlight.wgt`, `Moonlight-ForceGM.wgt` mit `use.game.mode`) mit der Samsung-Emscripten-Toolchain (1.39.4.7) gebaut und signiert; Phase 0 baut den aktuellen Stand des Branches ohnehin neu. Vorher geprüft: Syntax-Check mit Stub-Headern, die die EM_ASM-Makros von Emscripten 1.39.4 nachbilden, JavaScript-Syntax und Locale-Sync. Alle EM_ASM-Blöcke habe ich nach dem Präprozessor als JavaScript validiert. Den gebündelten Gamepad-Block habe ich in Node gegen den Original-Code von Emscripten 1.39.4 getestet. Den HDR-Metadaten-Schreiber habe ich mit 504 Wertekombinationen gegen eine unabhängige Referenz geprüft (Bytes, Emulation-Prevention, Rück-Dekodierung). Die neue Sende-Logik für Controller lief in einem Testprogramm mit Address- und UB-Sanitizer, über beide Abfragewege. Die Einstellungslogik und die Pause der Menü-Gamepad-Abfrage habe ich in Chromium mit simulierten Tizen-APIs automatisiert durchgespielt: 29 + 11 Prüfungen, alle bestanden. Auf einem echten S90C konnte ich die Änderungen **nicht** testen, ich habe keinen Zugriff auf deinen TV. Der erste Test auf dem TV ist deshalb Teil des Plans (Abschnitt 8, Phase 0–1).
 
 ---
 
@@ -481,13 +492,24 @@ Das größte Einzelbild liegt ungefähr bei Encoder-Bitrate ÷ FPS × (1 + `nven
 
 ### Phase 2 – Bitrate-Leiter
 
-- **WLAN:** 100 → 120 → 150 Mbit/s, je 15 Minuten.
-- **LAN (mit Burst-Fix):** 60 → 70 → 75 → 80 Mbit/s, je 15 Minuten.
-- Den höchsten fehlerfreien Wert wählen und **eine Stufe zurückgehen**, als Reserve für schwierige Szenen.
+Das ist die einzige Bitrate-Leiter des Plans, A.5, A.7, A.8 und 4.2 verweisen hierher.
+
+- **WLAN:** 100 → 120 → 135 → 150 Mbit/s, je 15–20 Minuten im selben anspruchsvollen Spiel (mit Hoch im Bitrate-Menü 4, 3 und 3 Tastendrücke). Besteht schon 100 nicht, in 10-Mbit/s-Schritten nach unten gehen (90, 80).
+- **LAN (mit Burst-Fix):** 60 → 70 → 75 → 80 Mbit/s, je 15 Minuten. Den höchsten fehlerfreien Wert wählen und eine Stufe zurückgehen.
+- **Für jede Stufe den Stream neu starten.** Die Bitrate gilt ab dem Stream-Start (*Configured bitrate*), und die Session-Zähler beginnen nur mit einem neuen Stream bei 0.
+- **Bestanden** ist eine Stufe, wenn
+  - *Session frames dropped by network* = 0 und *Session frames dropped by the TV* = 0,
+  - *Session recovery keyframes* höchstens 1 (direkt nach dem Start),
+  - *Rendering frame rate* stabil bei 60,
+  - *Average rendering time* und *Pending frames* nicht ansteigen,
+  - *Audio session* keine *underruns* zeigt.
+
+  An der ersten Stufe, die nicht besteht, abbrechen: Höhere Stufen sagen dann nichts mehr.
+- **Endwert (WLAN):** höchste bestandene Stufe minus 15 Mbit/s (3 × Runter), aber nicht unter 100, wenn 100 bestanden hat. Beispiel: 135 besteht, 150 nicht → 120 (bei 5 % FEC ~113 statt ~94 Mbit/s für den Encoder, 5.4). Den Endwert im Dauertest (Phase 5) bestätigen.
 - Im Bitrate-Menü stellen **Hoch/Runter** in 5-Mbit/s-Schritten, **Links/Rechts** in 0,5-Mbit/s-Schritten.
 - Die Bitrate bleibt jetzt erhalten, wenn du Auflösung, FPS, Codec oder HDR wechselst, ob von Hand gewählt oder vom S90C-Button gesetzt. Die App meldet das einmal. *Optimize bitrate presets* nicht als Weg zurück nutzen: Einschalten setzt niedrige berechnete Werte (etwa 45 Mbit/s für 4K60 mit HEVC HDR), Ausschalten die Standard-Presets (80 Mbit/s für 4K60). Für hohe Bitraten den Regler von Hand stellen. Ein Ausflug auf 120 FPS lässt 4K60 also nicht mehr unbemerkt bei 80 Mbit/s landen.
-- Bestanden ist eine Stufe, wenn auch *Session frames dropped by the TV* bei 0 bleibt. Steigt nur dieser Wert, ist nicht das WLAN, sondern der Decoder-Pfad des TVs am Limit.
-- *Session FEC recoveries* zählt Verluste, die die Fehlerkorrektur unsichtbar repariert hat. *Worst FEC block* zeigt, wie knapp es war: Werden fast alle Paritätspakete eines Blocks gebraucht, droht beim nächsten Aussetzer ein sichtbarer Verlust. Dann in Sunshine `fec_percentage` von 5 auf 10 erhöhen.
+- Steigt nur *Session frames dropped by the TV*, ist nicht das WLAN, sondern der Decoder-Pfad des TVs am Limit. Zeigt *TV player rejections* dabei *buffer full*, hat der Player die Bilder nicht schnell genug abgenommen.
+- *Session FEC recoveries* zählt Verluste, die die Fehlerkorrektur unsichtbar repariert hat. *Worst FEC block* (X von Y Paritätspaketen) zeigt, wie knapp es war: Kommt X nahe an Y, droht beim nächsten Aussetzer ein sichtbarer Verlust. Dann in Sunshine `fec_percentage` von 5 auf 10 erhöhen. Das ist kein Ausschlusskriterium für die Stufe. Kleine Blöcke (ruhige Szenen) haben nur 2 Paritätspakete, dort ist schon ein verlorenes Paket „1 von 2“.
 
 ### Phase 3 – A/B-Tests (jeweils nur eine Sache ändern)
 
@@ -529,7 +551,7 @@ Das Overlay sieht weder die Dekodierung im TV noch die Bildverarbeitung des Pane
 | 2: ForceGM, *Game mode* an (Ultra Low Latency) | Sofort abbrechen, wenn das erste Bild einfriert, der Bildschirm schwarz bleibt oder Artefakte auftreten |
 | 3: Frame Pacing an gegen aus | Was die gleichmäßige Bildfolge an Latenz kostet |
 
-**Regel:** Ultra Low (Konfiguration 2) nur behalten, wenn sie 2 Stunden stabil läuft und ihr Median mindestens ~8 ms unter Konfiguration 1 liegt.
+**Regel:** Ultra Low (Konfiguration 2) nur behalten, wenn sie 2 Stunden stabil läuft (Bestehenskriterien wie in Phase 5) und ihr Median mindestens ~8 ms unter Konfiguration 1 liegt.
 
 ### Phase 4 – Bildqualität prüfen
 
@@ -540,7 +562,31 @@ Das Overlay sieht weder die Dekodierung im TV noch die Bildverarbeitung des Pane
 
 ### Phase 5 – Dauertest
 
-60+ Minuten mit dem finalen Profil. Die Sitzungszähler müssen bei 0 bleiben.
+Mindestens **2,5 Stunden** mit dem finalen Profil, also über die ~2-h-Marke hinaus, an der das Ruckeln bisher auftrat (A.3). Bestanden, wenn
+
+- *Session frames dropped by network* und *Session frames dropped by the TV* bei 0 bleiben. Hier gilt streng 0: 0,01 % wären über 2,5 h bei 60 FPS rund 54 verlorene Bilder,
+- *Session recovery keyframes* höchstens 1 zeigt (direkt nach dem Start),
+- bei *Session FEC recoveries* *failed* bei 0 bleibt (die Reparaturen selbst dürfen steigen),
+- *Audio session* keine *underruns* zeigt,
+- *WASM heap top* nicht stetig steigt.
+
+Für Sessions über 4 Stunden vorher *Automatisch ausschalten* am TV deaktivieren (Abschnitt 6).
+
+### Lebenszyklus-Test: App verlassen und zurückkehren
+
+Was mit einem laufenden Stream passiert, wenn die App verdeckt wird, ist nicht dokumentiert. Die App protokolliert es jetzt, ändert aber nichts am Stream. Die Zeilen stehen in der Konsole (Web Inspector per Fernzugriff, z. B. mit Tizen Studio). Jeweils notieren, ob Bild und Ton zurückkommen, ob der Stream länger als 10 s verdeckt überlebt und welche Gründe im Log stehen.
+
+| Test | Worauf achten |
+|---|---|
+| Home-Taste, nach 3 s zurück zur App | `[index.js, visibilitychange] The page is now hidden …` und `… visible … after being hidden for N ms`, `VIDEO ElementaryMediaTrack::OnTrackClosed (reason N: …)`, `VIDEO ElementaryMediaTrack::OnTrackOpen (reopened during the stream)`, `Discarded N frames while the video track was closed`. *Session frames dropped by network* darf sich dabei nicht ändern |
+| Home-Taste, nach 30 s zurück | Wie oben. Lebt die Session noch? Sunshine beendet sie nach ~10 s ohne Antwort |
+| Schnelleinstellungen bzw. Bildmenü des TVs während des Streams | Meldet die App sich dabei als verdeckt, schließt der TV den Video-Track? |
+| Game Bar (ForceGM) | Wie oben |
+| Eingangswechsel per Anynet+ (HDMI-CEC) und zurück | Wie oben |
+| Rot während „Starting…“ | Die App bleibt in der App-Liste, 10 s später startet kein Stream. Log: `Cancelling the start of the stream`, danach `Ignoring the reply to a cancelled launch request` und kein `Starting the streaming session...` |
+| Rot doppelt oder gehalten am Stream-Ende | Genau ein Abbau (`Stopping video stream...` usw.) und ein `streamTerminated`. Ein zweiter Stopp über die Gamepad-Kombination zeigt `Ignoring a repeated stop request` |
+
+Erst wenn das Log zeigt, dass ein verdeckter Stream nicht von selbst zurückkommt oder der PC an eine verdeckte App weiterstreamt, lohnt ein automatischer Stopp (dann mit langer Wartezeit, ab 60 s).
 
 ### So liest man das Overlay
 
@@ -548,16 +594,22 @@ Das Overlay sieht weder die Dekodierung im TV noch die Bildverarbeitung des Pane
 |---|---|---|
 | *Frames dropped by your network connection* > 0 | Netzwerk (Bursts per LAN, Funkstörung per WLAN) | Burst-Fix, Bitrate runter, WLAN-Kanal/-Position verbessern |
 | *Host processing latency* hoch oder schwankend | Encoder oder GPU am PC überlastet | Preset senken, FPS im Spiel begrenzen |
-| *Incoming frame rate* < Ziel-FPS bei 0 Drops | Das Spiel liefert nicht genug Bilder | Spiel-FPS stabilisieren, GPU-Last senken |
+| *Incoming frame rate* < Ziel-FPS bei 0 Drops | Das Spiel liefert nicht genug Bilder. *Video stream: … FPS* zählt nach den Bildnummern des PCs, verlorene Bilder mitgezählt, *Incoming frame rate* nur die angekommenen. Nur in Bewegung aussagekräftig: In ruhigen Szenen kodiert Sunshine standardmäßig nur die halbe Bildrate | Spiel-FPS stabilisieren, GPU-Last senken |
+| *Decoding frame rate* und *Rendering frame rate* unterschiedlich | *Decoding frame rate* zählt die Bilder, die der Video-Thread nach dem Pacing an den TV-Player übergeben will (sie ist immer gleich *Incoming frame rate*), *Rendering frame rate* die, die der Player angenommen hat. Keine der beiden misst die Dekodierung im TV | Normal sind beide gleich. Sonst lehnt der Player Bilder ab: *TV player rejections* zeigt den Grund |
+| *Average network latency* springt oder *variance* bleibt hoch | Letzte Schätzung der Round-Trip-Zeit des Steuerkanals TV ↔ PC (trotz „Average“ kein Session-Mittel), nicht die Bildlatenz | Den eigenen Ruhewert merken. Sprünge oder eine dauerhaft hohe *variance* im Vergleich dazu deuten auf Funkstörungen: Kanal und Position prüfen |
 | *Average frame receive time* hoch (per LAN ~12–16 ms bei 75 Mbit/s, per WLAN deutlich weniger) | Zeit vom ersten bis zum letzten Paket eines Bildes, also die Übertragung des Bild-Bursts | Per LAN normal (100-Mbit-Port). Per WLAN hoch: Funkstrecke prüfen (Signal, Kanal) |
 | *Average frame wait time* oder *Pending frames* steigen im Lauf der Session an | Fertig empfangene Bilder warten auf den Video-Thread, der TV kommt nicht nach. (Steigt der Wert nur kurz zusammen mit *Average frame pacing delay*, war es der Pacer nach einem Latenzsprung, kein Rückstau) | *Average rendering time* prüfen. Zur Abgrenzung kurz mit Frame Pacing aus vergleichen: bleibt der Wert dann bei wenigen Millisekunden, war es das Pacing. Sonst Bitrate, FPS oder Auflösung senken |
 | *Average frame pacing delay* dauerhaft hoch | Der Pacer hält die Bilder zurück (bewusst, für gleichmäßige Bildfolge) | Normal sind wenige Millisekunden. Für minimale Latenz Frame Pacing aus (A/B-Test) |
 | *Average rendering time* steigt mit der Bitrate | Die Übergabe an den Hardware-Decoder blockiert, der Decoder-Pfad des TVs ist am Limit | Bitrate eine Stufe senken |
 | *Session recovery keyframes* steigt | Jeder Anstieg ist ein sichtbarer Aussetzer | Ursache über die Zeilen oben finden |
-| *Session frames dropped by the TV* > 0 | Der TV kam nicht nach: Die Warteschlange vor dem Decoder lief über, oder der Player hat ein Bild abgelehnt. Die App hat die Pipeline zurückgesetzt (*video pipeline resets*) und ein Keyframe angefordert | Kein WLAN-Problem. Bitrate eine Stufe senken. Bleibt *Pending frames (max)* dauerhaft hoch, ist der Decoder-Pfad am Limit |
+| *Session frames dropped by the TV* > 0 | Die Warteschlange vor dem Decoder lief über, oder der Player hat ein Bild abgelehnt. Die App hat die Pipeline zurückgesetzt (*video pipeline resets*) und ein Keyframe angefordert. Bilder, die verworfen wurden, während der Video-Track geschlossen war (App verdeckt), zählen nicht mit | Kein WLAN-Problem. Bitrate eine Stufe senken, wenn *TV player rejections* *buffer full* zeigt oder *Pending frames (max)* dauerhaft hoch bleibt. Nicht bei *keyframe required* oder *track not ready*: Dann hat der TV seinen Player neu geöffnet (z. B. nach der Home-Taste) |
+| *TV player rejections* erscheint | Der TV-Player hat Bilder abgelehnt, nach Grund: *buffer full* (Puffer voll; in Klammern die nach kurzem Warten doch angenommenen), *keyframe required* (er braucht erst ein Keyframe, typisch nach dem Wiederöffnen), *track not ready* (Track geschlossen oder neu geöffnet), *other* mit dem letzten Code. Ob *buffer full* auf dem S90C überhaupt vorkommt, zeigt nur der TV | *buffer full*: Bitrate eine Stufe senken. Endet der Stream mit „The TV was unable to start the streaming …“, lehnt der TV den Modus ab: Auflösung, FPS oder Codec ändern |
 | *Session FEC recoveries* steigt, *Worst FEC block* nahe am Maximum | Paketverluste, die die Fehlerkorrektur noch repariert hat. *longest* ist die längste Rechenzeit einer Reparatur, *slow* zählt die ab 8 ms. *Worst FEC block* nennt die bis zur Reparatur verlorenen Pakete des knappsten Blocks, Daten und Parität zusammen, gegen seine Paritätspakete. *failed* zählt Reparaturen, deren Ergebnis die Prüfung nicht bestand, das Bild ging dann verloren | Bei vielen Reparaturen oder knappem *Worst FEC block* in Sunshine `fec_percentage` auf 10 erhöhen. *failed* muss 0 bleiben |
+| *WASM heap top* steigt über Stunden stetig | Oberes Ende des Speichers der Engine gegen die festen 128 MB. Der Wert sinkt nie, freier Speicher darunter wird wiederverwendet. *+N MB this stream* ist der Zuwachs seit Stream-Start | Ein Anstieg nach dem Start ist normal. Klettert er über Stunden Richtung 128 MB, Wert und Spielzeit notieren und melden: Das ist ein Speicherleck, das den Stream sonst mit einer Fehlermeldung beendet |
 | *UDP receive buffer* deutlich unter *requested* | Tizen hat den Empfangspuffer gekürzt. Linux meldet dabei das Doppelte der nutzbaren Größe | Nur notieren. Ist er kleiner als ein 4K-Bild (~300 KB), können Stockungen des Empfangs-Threads Pakete kosten |
-| *Audio session*: *underruns* oder *skipped* > 0 | *underruns* sind Lücken im Ton. Pausen, in denen der PC gar keinen Ton schickt (stiller Desktop, Ladebildschirm), zählen nicht. *skipped* ohne *Audio clock sync* ist meist Uhrendrift zwischen PC und TV | Puffer um 25 ms erhöhen (*suggested buffer* nennt den Wert) oder *Audio clock sync* einschalten. Ohne Clock Sync kann auch ein Aussetzer von der Uhrendrift kommen, dann hilft ein größerer Puffer nur kurz |
+| *Audio buffer*: *min* nahe 0 | *lead avg*/*min*: wie weit die Ton-Frames vor der Audio-Uhr eingeplant sind (seit dem letzten Update). *browser latency*: vom Browser gemeldete Ausgabelatenz, ohne die Verarbeitung im TV oder in einer Soundbar. Grob läuft der Ton um *lead avg* + *browser latency* hinter dem Bild | *min* nahe 0 heißt, der Puffer war fast leer: Der nächste Stall wird ein Aussetzer. Puffer erhöhen |
+| *Audio (Web Audio): suspended* statt der beiden Audiozeilen | Der Browser hat die Tonausgabe angehalten, z. B. während der TV seine Audioausgabe umschaltet | Kommt sie nicht nach wenigen Sekunden zurück, Stream neu starten und notieren |
+| *Audio session*: *underruns* oder *skipped* > 0 | *underruns* sind Lücken im Ton. Pausen, in denen der PC gar keinen Ton schickt (stiller Desktop, Ladebildschirm), zählen nicht. *skipped* ohne *Audio clock sync* ist meist Uhrendrift zwischen PC und TV. Der Rückstau, der nach einem Aussetzer gekürzt wird, zählt nicht dazu. *lost* sind fertig dekodierte Frames, die auf dem Weg zum Scheduler verloren gingen (der Haupt-Thread war zu lange blockiert), keine Netzwerkverluste | Puffer um 25 ms erhöhen (*suggested buffer* nennt den Wert) oder *Audio clock sync* einschalten. Ohne Clock Sync kann auch ein Aussetzer von der Uhrendrift kommen, dann hilft ein größerer Puffer nur kurz |
 | *Incoming bitrate* deutlich unter *Configured bitrate* | *Configured bitrate* ist die beim Start angeforderte Bitrate inklusive FEC und Audio, also eine Obergrenze. Der Encoder bekommt bei 5 % FEC etwa das 0,95-Fache minus ~1 Mbit/s, bei 20 % FEC das 0,8-Fache minus ~1 Mbit/s (Tabelle in 5.4). In ruhigen Szenen liegt er weit darunter | Nur auffällig zusammen mit Drops oder sinkender *Incoming frame rate* |
 | *Host frame rate (30 s)* zeigt z. B. 59,94 statt 60 | Gemessen aus den Aufnahme-Zeitstempeln des PCs, erscheint nach den ersten 30 s. Gezählt werden nur neu aufgenommene Bilder, keine Wiederholungen. 59,94 heißt: Das Host-Display läuft mit 59,94 Hz | Display auf 60,000 Hz stellen (5.1). In Bewegung ablesen: In ruhigen Szenen nimmt der PC kaum neue Bilder auf, dann bleibt der letzte Wert stehen. Liegt der Wert in Bewegung unter den Ziel-FPS, liefert das Spiel bzw. der PC zu wenige Bilder |
 | WLAN-Signalstärke < 60 % | Schlechte Funkverbindung | Router näher, anderer Kanal, LAN-Variante |
@@ -583,11 +635,11 @@ Das Overlay sieht weder die Dekodierung im TV noch die Bildverarbeitung des Pane
 Deine Setup-Angaben sind in Abschnitt A eingearbeitet. Folgendes würde die Diagnose noch genauer machen:
 
 1. **Sunshine-Version** aus der Sunshine-Weboberfläche.
-2. **Werte im Overlay, wenn das 2-h-Ruckeln auftritt** (mit dieser neuen Version): *Incoming frame rate*, *Rendering frame rate*, *Host processing latency* (min/max/avg), *Session frames dropped by network*, *Session recovery keyframes*, *Average frame wait time*, *Average frame pacing delay*, *Average rendering time*, *Pending frames*.
+2. **Werte im Overlay, wenn das 2-h-Ruckeln auftritt** (mit dieser neuen Version): *Incoming frame rate*, *Rendering frame rate*, *Host processing latency* (min/max/avg), *Session frames dropped by network*, *Session frames dropped by the TV* (mit *video pipeline resets*), *Session recovery keyframes*, *Session FEC recoveries*, *TV player rejections* (falls angezeigt), *WASM heap top*, *Average frame wait time*, *Average frame pacing delay*, *Average rendering time*, *Pending frames*.
 3. **HWiNFO-Log** derselben Session: VRAM-Belegung, GPU-Hotspot- und Speichertemperatur, GPU- und Speichertakt.
 4. **FRITZ!Box**: Hängt der TV im Mesh unter dem Repeater? Gab es zum Zeitpunkt des Ruckelns WLAN-Ereignisse?
 5. **Schwarzwert-Test** *Full* vs. *Limited color range*: Bei welcher Einstellung bleiben die dunkelsten Stufen unterscheidbar?
-6. **4K-Bitrate-Leiter mit dieser Version** (Abschnitt A.7): bis zu welcher Bitrate bleibt alles bei 0, und wie entwickeln sich *Average frame wait time*, *Average frame pacing delay*, *Average rendering time* und *Pending frames*? Gab es Audio-Aussetzer?
+6. **4K-Bitrate-Leiter mit dieser Version** (Phase 2 in Abschnitt 8): bis zu welcher Bitrate bleibt alles bei 0, und wie entwickeln sich *Average frame wait time*, *Average frame pacing delay*, *Average rendering time* und *Pending frames*? Gab es Audio-Aussetzer?
 7. **Latenz-Tests aus A.8:** Läuft 4K mit der ForceGM-Variante sauber? Wie stark sinkt die *Host processing latency* mit Split Frame Encoding?
 
 ---

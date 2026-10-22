@@ -114,6 +114,8 @@ function replaceKnownStatsLabels(text) {
     .replace(/Session FEC recoveries:/g, t('Session FEC recoveries:'))
     .replace(/Worst FEC block:/g, t('Worst FEC block:'))
     .replace(/UDP receive buffer:/g, t('UDP receive buffer:'))
+    .replace(/TV player rejections:/g, t('TV player rejections:'))
+    .replace(/WASM heap top:/g, t('WASM heap top:'))
     .replace(/Slow connection to PC\.\nReduce your bitrate!/g, t('Slow connection to PC.\nReduce your bitrate!'));
 }
 
@@ -286,6 +288,53 @@ var handlePromiseMessage = function(callbackId, type, msg) {
 }
 
 /**
+ * leaveStreamView - Leaves the stream view and returns to the app list, after a stream ended or its start was cancelled
+ *
+ * @param  {Object} host The host of the stream
+ * @return {void}
+ */
+function leaveStreamView(host) {
+  // Let the screensaver of the TV work again, since the menus are static
+  setTvScreenSaver(true);
+  // Release the audio scheduler of the Web Audio backend, which is a no-op for the EMSS backend
+  stopAudioScheduler();
+  // Remove the on-screen overlays
+  $('#connection-warnings, #performance-stats').css('display', 'none');
+  // Remove the video stream now
+  $('#listener').removeClass('fullscreen');
+  $('#loadingSpinner').css('display', 'none');
+  $('#loadingSpinnerMessage').text('');
+  $('body').css('backgroundColor', '#282C38');
+  $('#wasm_module').css('display', 'none');
+  if (!host) {
+    return;
+  }
+  // Refresh the server info to update the current game and app list
+  host.refreshServerInfo().then(function(ret) {
+    // Return to the app list with new current game
+    showApps(host).then(() => {
+      // Scroll to the current game row
+      Navigation.switch();
+      // Switch to Apps view
+      if (!window.isDialogOpen) {
+        Navigation.change(Views.Apps);
+      }
+    });
+  }, function(failedRefreshInfo) {
+    console.error('%c[messages.js, leaveStreamView]', 'color: gray;', 'Error: Failed to refresh server info! Returned error was: ' + failedRefreshInfo + '!');
+    // Return to the app list anyway
+    showApps(host).then(() => {
+      // Scroll to the current game row
+      Navigation.switch();
+      // Switch to Apps view
+      if (!window.isDialogOpen) {
+        Navigation.change(Views.Apps);
+      }
+    });
+  });
+}
+
+/**
  * handleMessage - Handles messages from the Wasm module
  *
  * @param  {Object} msg An object given by the Wasm module
@@ -295,17 +344,12 @@ function handleMessage(msg) {
   console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Message data: ', msg);
   // If it's a recognized event, notify the appropriate function
   if (msg.indexOf('streamTerminated: ') === 0) {
-    // Let the screensaver of the TV work again, since the menus are static
-    setTvScreenSaver(true);
-    // Release the audio scheduler of the Web Audio backend, which is a no-op for the EMSS backend
-    stopAudioScheduler();
-    // Remove the on-screen overlays
-    $('#connection-warnings, #performance-stats').css('display', 'none');
-    // Remove the video stream now
-    $('#listener').removeClass('fullscreen');
-    $('#loadingSpinner').css('display', 'none');
-    $('body').css('backgroundColor', '#282C38');
-    $('#wasm_module').css('display', 'none');
+    // The stream is over: ignore further RED presses and late replies of its launch right away, not only once the
+    // app list has loaded. This runs synchronously inside Module.stopStream(), before the next key press.
+    isInGame = false;
+    wasmSessionStarted = false;
+    streamLaunchId++;
+    leaveStreamView(streamLaunchHost || api);
     // Show a termination snackbar message if the termination was unexpected
     var errorCode = parseInt(msg.replace('streamTerminated: ', ''));
     switch (errorCode) {
@@ -329,39 +373,21 @@ function handleMessage(msg) {
       case -200: // ERROR_VIDEO_SETUP_FAILED
         snackbarLogLong('The TV was unable to start the streaming with the selected video settings. Try reducing the resolution or frame rate and consider changing the codec.');
         break;
+      case -201: // ERROR_VIDEO_PLAYER_FAILED
+        snackbarLogLong('The video player of the TV stopped with an error during the stream. Start the stream again; if it keeps happening, try a lower bitrate, resolution or frame rate.');
+        break;
       default:
         snackbarLogLong('Connection terminated');
         break;
     }
-    // Refresh the server info to update the current game and app list
-    api.refreshServerInfo().then(function(ret) {
-      // Return to the app list with new current game
-      showApps(api).then(() => {
-        // Scroll to the current game row
-        Navigation.switch();
-        // Switch to Apps view
-        if (!window.isDialogOpen) {
-          Navigation.change(Views.Apps);
-        }
-      });
-    }, function(failedRefreshInfo) {
-      console.error('%c[messages.js, handleMessage]', 'color: gray;', 'Error: Failed to refresh server info! Returned error was: ' + failedRefreshInfo + '!');
-      // Return to the app list anyway
-      showApps(api).then(() => {
-        // Scroll to the current game row
-        Navigation.switch();
-        // Switch to Apps view
-        if (!window.isDialogOpen) {
-          Navigation.change(Views.Apps);
-        }
-      });
-    });
   } else if (msg === 'Connection Established') {
-    // Keep the screensaver of the TV off during a session played only with a gamepad. A connection that completes
-    // after the user already stopped the stream must not turn it off in the menus.
-    if (isInGame === true) {
-      setTvScreenSaver(false);
+    // A connection that completes after the user already stopped the stream or cancelled its start must neither
+    // show the video nor turn the screensaver off in the menus
+    if (isInGame !== true) {
+      return;
     }
+    // Keep the screensaver of the TV off during a session played only with a gamepad
+    setTvScreenSaver(false);
     // Prepare the screen for video stream
     $('#loadingSpinner').css('display', 'none');
     $('body').css('backgroundColor', 'transparent');

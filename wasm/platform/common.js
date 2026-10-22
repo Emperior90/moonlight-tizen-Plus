@@ -17,8 +17,30 @@ var common = (function() {
           window.moduleDidLoad();
         }
       },
-      onAbort: () => {
-        console.warn('%c[common.js, createWASMModule]', 'color: gray;', 'Warning: WASM abort called!');
+      // Report an abort of the WASM module (e.g. abort(OOM)) to the UI. The hook runs inside abort(), so it must not
+      // throw or call into the module, and the UI handler runs afterwards.
+      onAbort: (what) => {
+        try {
+          console.warn('%c[common.js, createWASMModule]', 'color: gray;', 'Warning: WASM abort called: ' + what);
+          if (typeof window.onNativeModuleFailure === 'function') {
+            setTimeout(() => window.onNativeModuleFailure('abort(' + what + ')'), 0);
+          }
+        } catch (error) {
+          // Never disturb the abort itself
+        }
+      },
+      // Keep logging everything the module writes to stderr, and report a crashed thread of the module to the UI.
+      // Only the prefix the pthread error handler of the runtime uses counts, so that other messages can't raise
+      // a false alarm.
+      printErr: (text) => {
+        console.warn(text);
+        try {
+          if (typeof text === 'string' && text.indexOf('pthread sent an error!') === 0 && typeof window.onNativeModuleFailure === 'function') {
+            setTimeout(() => window.onNativeModuleFailure(text), 0);
+          }
+        } catch (error) {
+          // Never disturb the error dispatch of the worker
+        }
       },
       onExit: (status) => {
         console.log('%c[common.js, createWASMModule]', 'color: gray;', 'WASM exit called. Status: ' + status + '.');

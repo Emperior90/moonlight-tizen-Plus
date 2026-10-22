@@ -69,6 +69,19 @@ var _audLeadFiltered = 0.0;
 // Correction of the resampling ratio that is currently applied, as a fraction (1e-6 = 1 ppm)
 var _audCorrection = 0.0;
 
+// Whether the schedule was just primed again and the frames that piled up during the stall are still arriving
+// back to back. While it's set, frames beyond the jitter buffer plus two frames are dropped, so that the backlog
+// doesn't leave the audio delay at the 1.5x bound for minutes after every underrun (see _audReceiveFrame).
+var _audCatchUp = false;
+
+// Wall clock time of the previous frame in ms, which tells the backlog after a stall from frames that arrive in
+// real time again
+var _audLastWallMs = 0.0;
+
+// Time on the audio hardware clock at which the schedule was last primed, which bounds the catch-up to one jitter
+// buffer even when the backlog drains slowly
+var _audResyncTime = 0.0;
+
 // Largest correction of the resampling ratio, which bounds the pitch change to an inaudible amount
 var AUD_SYNC_MAX_CORRECTION = 500e-6;
 
@@ -112,6 +125,7 @@ function _audResetSession() {
     underruns: 0,
     droppedFull: 0,
     droppedEmpty: 0,
+    droppedCatchUp: 0,
     decoderGaps: 0,
     notRunning: 0,
     // Average schedule lead in seconds, and the largest drop below it in ms, which is how much of the jitter
@@ -154,6 +168,7 @@ function _audResetStatistics() {
     scheduled: 0,
     droppedFull: 0,
     droppedEmpty: 0,
+    droppedCatchUp: 0,
     notRunning: 0,
     resyncs: 0,
     underruns: 0,
@@ -198,8 +213,8 @@ function _audRecordHeadroom(headroomSeconds) {
 //   latency   the latency the audio context reports, which is the delay the frames are played
 //             with on top of the jitter buffer
 //   frames    frames received, scheduled, dropped because the jitter buffer was full, dropped
-//             because resampling produced no samples, and received while the context was not
-//             running
+//             because resampling produced no samples, dropped from the backlog that arrived back
+//             to back after a resync (trimmed), and received while the context was not running
 //   resync    times the schedule was primed to the jitter buffer again, of which underruns are
 //             the ones that happened after playback had already started, so each one of them
 //             is a hole in the output
@@ -228,6 +243,7 @@ function _audLogStatistics(force) {
     ' scheduled=' + stats.scheduled +
     ' dropped=' + stats.droppedFull +
     ' empty=' + stats.droppedEmpty +
+    ' trimmed=' + stats.droppedCatchUp +
     ' idle=' + stats.notRunning +
     ' | resync=' + stats.resyncs +
     ' underrun=' + stats.underruns +
@@ -277,6 +293,9 @@ function startAudioScheduler() {
   _audBaseRatio = 1.0;
   _audLeadFiltered = 0.0;
   _audCorrection = 0.0;
+  _audCatchUp = false;
+  _audLastWallMs = 0.0;
+  _audResyncTime = 0.0;
   _audResetStatistics();
   _audResetSession();
 
@@ -309,6 +328,9 @@ function stopAudioScheduler() {
   _audRatio = 1.0;
   _audPhase = 0.0;
   _audTail = null;
+  _audCatchUp = false;
+  _audLastWallMs = 0.0;
+  _audResyncTime = 0.0;
   _audStats = null;
   _audSession = null;
 
@@ -503,6 +525,15 @@ function _audReceiveFrame(heapOffset, samples, channels, sampleRate, stride, seq
   // buffer or 250 ms still counts, so that network stalls longer than the buffer remain visible.
   var hostPause = (arrivalGapMs || 0) > Math.max(2000.0 * targetSeconds, AUD_HOST_PAUSE_MIN_MS);
 
+  // End the catch-up after a resync once a frame arrives at least 0.6 frame durations after the previous one,
+  // which means the backlog has drained and the frames arrive in real time again, or one jitter buffer after
+  // the resync at the latest, so that a slowly draining backlog can't keep it going
+  var wallNow = performance.now();
+  if (_audCatchUp && (wallNow - _audLastWallMs >= 600.0 * samples / sampleRate || now >= _audResyncTime + targetSeconds)) {
+    _audCatchUp = false;
+  }
+  _audLastWallMs = wallNow;
+
   // Measure the jitter for the performance overlay (never allowed to stop the audio)
   if (_audNextTime !== 0.0 && !hostPause) {
     try {
@@ -532,6 +563,8 @@ function _audReceiveFrame(heapOffset, samples, channels, sampleRate, stride, seq
     _audLeadFiltered = targetSeconds;
     _audCorrection = 0.0;
     _audRatio = _audBaseRatio;
+    _audCatchUp = true;
+    _audResyncTime = now;
     stats.resyncs++;
   } else if (_audClockSync) {
     _audSteerClock(_audNextTime - now, targetSeconds);
@@ -541,6 +574,18 @@ function _audReceiveFrame(heapOffset, samples, channels, sampleRate, stride, seq
   // buffer, which keeps the audio delay bounded when the host produces audio faster than the TV
   // plays it. The drift decides how often a frame is dropped, this bound only decides how far
   // the audio may trail the picture before that: at most half a jitter buffer more than the target.
+  // Right after a resync, the frames that piled up during the stall arrive back to back on top of
+  // the primed buffer. They are trimmed to the jitter buffer plus two frames instead, and counted
+  // apart, so that the drops above keep describing the drift alone.
+  var catchUpLimit = targetSeconds + 2.0 * samples / sampleRate;
+  if (_audCatchUp && _audNextTime > now + catchUpLimit) {
+    stats.droppedCatchUp++;
+    if (_audSession) {
+      _audSession.droppedCatchUp++;
+    }
+    _audLogStatistics(false);
+    return;
+  }
   if (_audNextTime > now + 1.5 * targetSeconds) {
     stats.droppedFull++;
     if (_audSession) {
@@ -584,7 +629,8 @@ function _audReceiveFrame(heapOffset, samples, channels, sampleRate, stride, seq
 //              reports for its own output path (not including the TV's or a soundbar's processing)
 //   session    underruns (holes in the sound), frames skipped because the schedule ran too far ahead (with
 //              clock sync off this is the drift between the host and TV clocks) or produced no samples,
-//              frames lost on the way from the decoder, and the clock sync correction
+//              frames lost on the way from the decoder, and the clock sync correction. The backlog trimmed
+//              after an underrun isn't counted as skipped, it's a consequence of the underrun.
 //   suggested  the smallest jitter buffer that would have absorbed the largest jitter of the session plus
 //              10 ms, in steps of the buffer slider. It's only given with clock sync on, since otherwise the
 //              drift drains a small buffer into underruns, after 10 minutes without underruns, and as a

@@ -50,8 +50,15 @@ function remoteControllerHandler(e) {
       Navigation.switch();
       break;
     case tvKey.KEY_RED:
-      // Terminate the connection
-      if (isInGame === true) {
+      // Ignore the auto-repeat of a held key
+      if (e.repeat) {
+        break;
+      }
+      if (isInGame === true && !wasmSessionStarted) {
+        // The stream is still starting, so cancel its start instead of stopping a session that doesn't exist yet
+        cancelStreamLaunch();
+      } else if (isInGame === true) {
+        // Terminate the connection
         Module.stopStream();
       }
       break;

@@ -79,16 +79,59 @@ static bool s_HdrMetadataEnabled = false;
 static uint32_t total_bytes = 0;
 static int m_LastFrameNumber = 0;
 
-// IDR frames received after the first one that the host sent to recover the stream, i.e. not the ones this
-// client requested itself when the video track (re)opens or the HDR metadata changes (flagged from the main
-// thread, consumed by the decoder thread)
+// IDR frames received after the first one that the host sent to recover the stream after a loss. Not counted are
+// the ones this client requested itself when the video track (re)opens or the HDR metadata changes (flagged from
+// the main thread, consumed by the decoder thread), and the ones that follow a reset of the video pipeline by
+// moonlight-common-c, which the video pipeline reset count already shows (s_ResetsAtLastIdr).
 static bool s_ReceivedFirstIdrFrame = false;
 static uint32_t s_RecoveryIdrFrames = 0;
+static uint32_t s_ResetsAtLastIdr = 0;
 
 // Frames that the client dropped itself (decode unit queue overflow or decoder refresh), which moonlight-common-c
 // counts separately, so that the overlay doesn't report them as frames lost on the network
 static uint32_t s_LastClientDroppedFrames = 0;
 static uint32_t s_SessionTvDroppedFrames = 0;
+
+// Frames that arrived while the video track of the TV was closed (e.g. while the app was hidden), which are
+// counted as neither network nor TV drops and only logged once the track is open again
+static uint32_t s_FramesDiscardedWhileClosed = 0;
+
+// Results of AppendPacket that the player of the TV rejects a frame with, as values of
+// samsung::wasm::OperationResult (the same as EmssCommon.Result of the EMSS glue)
+static constexpr int kAppendResultInvalidFramerate = 24;
+static constexpr int kAppendResultInvalidResolution = 25;
+static constexpr int kAppendResultBufferFull = 29;
+static constexpr int kAppendResultExpectsKeyframe = 30;
+static constexpr int kAppendResultIgnored = 31;
+static constexpr int kAppendResultInvalidTrackState = 35;
+static constexpr int kAppendResultInvalidVideoParameters = 36;
+static constexpr int kAppendResultCodes = 64;
+
+// Rejected frames of the session by kind for the overlay, and by result code for the log
+static uint32_t s_AppendBufferFull = 0;
+static uint32_t s_AppendBufferFullRecovered = 0;
+static uint32_t s_AppendKeyframeRequired = 0;
+static uint32_t s_AppendTrackNotReady = 0;
+static uint32_t s_AppendOtherFailures = 0;
+static int s_AppendLastFailureCode = 0;
+static uint32_t s_AppendFailuresByCode[kAppendResultCodes] = {};
+
+// A mode the player rejects as unsupported ends the stream once the rejections repeat and no frame was accepted
+// for this long since the last accepted frame or the last (re)opening of the track, so that the player can
+// reconfigure briefly without the stream ending (see VidDecSubmitDecodeUnit)
+static constexpr uint64_t kRejectedModeTimeoutMs = 3000;
+static constexpr uint32_t kRejectedModeMinFailures = 3;
+static uint64_t s_LastAppendSuccessMs = 0;
+static std::atomic<uint64_t> s_VideoTrackOpenMs{0};
+static uint32_t s_RejectedModeFailures = 0;
+static bool s_AnyAppendSucceeded = false;
+static bool s_TerminatingStream = false;
+
+// Top of the WASM heap when the stream was set up, for the heap growth of the stream in the overlay
+static uintptr_t s_HeapTopAtSetup = 0;
+
+// Size of the WASM memory, which is fixed (TOTAL_MEMORY in CMakeLists.txt)
+static constexpr uint32_t kWasmMemoryMb = 128;
 
 // Highest number of frames waiting in the decode unit queue during the current stats window
 static int s_PendingFramesMax = 0;
@@ -109,6 +152,17 @@ static std::string s_StatString = "";
 static VIDEO_STATS m_ActiveWndVideoStats;
 static VIDEO_STATS m_LastWndVideoStats;
 static VIDEO_STATS m_GlobalVideoStats;
+
+// Name of a reason the TV closed a media track for, in the order of samsung::wasm::ElementaryMediaTrack::CloseReason
+// (the same as EmssCommon.CloseReason of the EMSS glue)
+static constexpr int kCloseReasonSourceError = 1;
+static const char* CloseReasonName(int reason) {
+  static const char* const kNames[] = {
+    "source closed", "source error", "source detached", "source suspended", "track disabled", "track ended",
+    "track seeking", "unknown"
+  };
+  return reason >= 0 && reason < (int)(sizeof(kNames) / sizeof(kNames[0])) ? kNames[reason] : "unknown";
+}
 
 MoonlightInstance::SourceListener::SourceListener(
   MoonlightInstance* instance
@@ -146,8 +200,8 @@ void MoonlightInstance::AudioTrackListener::OnTrackOpen() {
   m_Instance->m_EmssAudioStateChanged.notify_all();
 }
 
-void MoonlightInstance::AudioTrackListener::OnTrackClosed(samsung::wasm::ElementaryMediaTrack::CloseReason) {
-  ClLogMessage("AUDIO ElementaryMediaTrack::OnTrackClosed\n");
+void MoonlightInstance::AudioTrackListener::OnTrackClosed(samsung::wasm::ElementaryMediaTrack::CloseReason reason) {
+  ClLogMessage("AUDIO ElementaryMediaTrack::OnTrackClosed (reason %d: %s)\n", static_cast<int>(reason), CloseReasonName(static_cast<int>(reason)));
   std::unique_lock<std::mutex> lock(m_Instance->m_Mutex);
   m_Instance->m_AudioStarted = false;
 }
@@ -163,17 +217,31 @@ MoonlightInstance::VideoTrackListener::VideoTrackListener(
 ) : m_Instance(instance) {}
 
 void MoonlightInstance::VideoTrackListener::OnTrackOpen() {
-  ClLogMessage("VIDEO ElementaryMediaTrack::OnTrackOpen\n");
+  // The track opens once at the start of the stream, and again during it after the TV closed it (e.g. while the app
+  // was hidden). Either way the player needs an IDR frame to start from.
+  ClLogMessage("VIDEO ElementaryMediaTrack::OnTrackOpen%s\n", m_Instance->m_Running ? " (reopened during the stream)" : "");
+  s_VideoTrackOpenMs.store(LiGetMillis());
   std::unique_lock<std::mutex> lock(m_Instance->m_Mutex);
   m_Instance->m_VideoStarted = true;
   m_Instance->m_EmssVideoStateChanged.notify_all();
   RequestIdrFrame();
 }
 
-void MoonlightInstance::VideoTrackListener::OnTrackClosed(samsung::wasm::ElementaryMediaTrack::CloseReason) {
-  ClLogMessage("VIDEO ElementaryMediaTrack::OnTrackClosed\n");
-  std::unique_lock<std::mutex> lock(m_Instance->m_Mutex);
-  m_Instance->m_VideoStarted = false;
+void MoonlightInstance::VideoTrackListener::OnTrackClosed(samsung::wasm::ElementaryMediaTrack::CloseReason reason) {
+  const int closeReason = static_cast<int>(reason);
+  ClLogMessage("VIDEO ElementaryMediaTrack::OnTrackClosed (reason %d: %s)\n", closeReason, CloseReasonName(closeReason));
+  {
+    std::unique_lock<std::mutex> lock(m_Instance->m_Mutex);
+    m_Instance->m_VideoStarted = false;
+  }
+
+  // The app never reopens a media source that failed, so the picture would stay frozen. End the stream with a
+  // message instead, the same way as a stop request does (this runs on the main thread, like StopStream).
+  if (closeReason == kCloseReasonSourceError && m_Instance->m_Running) {
+    ClLogMessage("The video player of the TV failed during the stream\n");
+    m_Instance->CancelPendingSetup();
+    m_Instance->OnConnectionStopped(ERROR_VIDEO_PLAYER_FAILED);
+  }
 }
 
 void MoonlightInstance::VideoTrackListener::OnSessionIdChanged(samsung::wasm::SessionId new_session_id) {
@@ -439,6 +507,53 @@ static void UpdateHostFrameRate(int frameNumber, uint32_t pts, uint16_t hostProc
   }
 }
 
+// Name of a result of AppendPacket for the log, from EmssCommon.Result of the EMSS glue
+static const char* AppendResultName(int code) {
+  switch (code) {
+    case 1: return "WRONG_HANDLE";
+    case 2: return "INVALID_ARGUMENT";
+    case 3: return "INVALID_STATE";
+    case 20: return "ABORTED";
+    case 21: return "FAILED";
+    case 23: return "INVALID_CODEC";
+    case kAppendResultInvalidFramerate: return "INVALID_FRAMERATE";
+    case kAppendResultInvalidResolution: return "INVALID_RESOLUTION";
+    case kAppendResultBufferFull: return "BUFFER_FULL";
+    case kAppendResultExpectsKeyframe: return "EXPECTS_KEYFRAME";
+    case kAppendResultIgnored: return "APPEND_IGNORED";
+    case 33: return "INVALID_DTS";
+    case 34: return "INVALID_PTS";
+    case kAppendResultInvalidTrackState: return "INVALID_TRACK_STATE";
+    case kAppendResultInvalidVideoParameters: return "INVALID_VIDEO_PARAMETERS";
+    case 37: return "NO_PACKET_DATA";
+    case 38: return "RESOURCE_ALLOCATION";
+    default: return "OTHER";
+  }
+}
+
+// Count a frame the player rejected, and log the first rejection with each result and every 100th after it
+static void RecordAppendFailure(int code) {
+  s_AppendLastFailureCode = code;
+  if (code == kAppendResultBufferFull) {
+    // Counted with the retry, see VidDecSubmitDecodeUnit
+  } else if (code == kAppendResultExpectsKeyframe) {
+    s_AppendKeyframeRequired++;
+  } else if (code == kAppendResultIgnored || code == kAppendResultInvalidTrackState) {
+    s_AppendTrackNotReady++;
+  } else {
+    s_AppendOtherFailures++;
+  }
+  const uint32_t count = ++s_AppendFailuresByCode[code >= 0 && code < kAppendResultCodes ? code : 0];
+  if (count % 100 == 1) {
+    MoonlightInstance::ClLogMessage("Append video packet failed: %s (%d), %u times in this stream\n", AppendResultName(code), code, count);
+  }
+}
+
+// Whether the player rejected the format of the frames as unsupported, which retrying can't fix
+static bool IsRejectedModeResult(int code) {
+  return code == kAppendResultInvalidVideoParameters || code == kAppendResultInvalidResolution || code == kAppendResultInvalidFramerate;
+}
+
 int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int redrawRate, void* context, int drFlags) {
   ClLogMessage("Video decoding setup has started.\n");
 
@@ -501,12 +616,29 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
   // Reset the recovery keyframe count so the session totals don't include a previous stream
   s_ReceivedFirstIdrFrame = false;
   s_RecoveryIdrFrames = 0;
+  s_ResetsAtLastIdr = 0;
   s_ExpectedIdrFrame.store(false);
 
   // Reset the counts of the frames the client dropped itself (moonlight-common-c resets its count before setup)
   s_LastClientDroppedFrames = 0;
   s_SessionTvDroppedFrames = 0;
+  s_FramesDiscardedWhileClosed = 0;
   s_PendingFramesMax = 0;
+
+  // Reset the counts of the frames the player rejected
+  s_AppendBufferFull = 0;
+  s_AppendBufferFullRecovered = 0;
+  s_AppendKeyframeRequired = 0;
+  s_AppendTrackNotReady = 0;
+  s_AppendOtherFailures = 0;
+  s_AppendLastFailureCode = 0;
+  memset(s_AppendFailuresByCode, 0, sizeof(s_AppendFailuresByCode));
+  s_RejectedModeFailures = 0;
+  s_AnyAppendSucceeded = false;
+  s_TerminatingStream = false;
+
+  // Remember the top of the heap, for the heap growth of this stream
+  s_HeapTopAtSetup = (uintptr_t)sbrk(0);
 
   // Reset the host frame rate measurement so that no figure from a previous stream is shown
   s_HostRateWindowOpen = false;
@@ -522,10 +654,18 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
     return initVidDec;
   }
 
+  // Measure the time without an accepted frame from here, once the track is open
+  s_LastAppendSuccessMs = LiGetMillis();
+
   return DR_OK;
 }
 
 void MoonlightInstance::VidDecCleanup(void) {
+  // Log the top of the heap, so that a leak over long sessions shows up in the log even without the overlay
+  const uintptr_t heapTop = (uintptr_t)sbrk(0);
+  ClLogMessage("WASM heap top after the stream: %u of %u MB (+%u MB this stream)\n",
+    (unsigned)(heapTop >> 20), kWasmMemoryMb, (unsigned)((heapTop > s_HeapTopAtSetup ? heapTop - s_HeapTopAtSetup : 0) >> 20));
+
   // Clear the decode buffer
   s_DecodeBuffer.clear();
 
@@ -626,8 +766,24 @@ static TimeStamp CalculatePacingOffset(std::vector<double>& lateness) {
 }
 
 int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
-  // Check if video playback has not started
+  // Discard the frames that arrive while the video track of the TV is closed (e.g. while the app is hidden). They
+  // count as neither network nor TV drops: the frame number and the client drops are followed here, so that the
+  // first frame after the track reopens only shows the real losses in its gap.
   if (!g_Instance->m_VideoStarted) {
+    if (m_LastFrameNumber != 0) {
+      s_FramesDiscardedWhileClosed += (uint32_t)(decodeUnit->frameNumber - m_LastFrameNumber);
+      m_LastFrameNumber = decodeUnit->frameNumber;
+      s_LastClientDroppedFrames = LiGetClientDroppedVideoFrames();
+    }
+    return DR_OK;
+  }
+  if (s_FramesDiscardedWhileClosed != 0) {
+    ClLogMessage("Discarded %u frames while the video track was closed\n", s_FramesDiscardedWhileClosed);
+    s_FramesDiscardedWhileClosed = 0;
+  }
+
+  // The stream is ending because the player rejected its mode, so don't hand it any more frames
+  if (s_TerminatingStream) {
     return DR_OK;
   }
 
@@ -696,12 +852,16 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
 
   // Count the IDR frames after the first one that the host sent to recover the stream (e.g. after packet
   // loss), because each one is a visible hiccup in the session. The ones this client requested itself
-  // when the video track (re)opened or the HDR metadata changed are expected and not counted.
+  // when the video track (re)opened or the HDR metadata changed are expected and not counted. Neither are the
+  // ones after moonlight-common-c reset the video pipeline (a decode unit queue overflow or a frame the player
+  // rejected), which requests the IDR frame itself: the video pipeline reset count shows those hiccups.
   if (decodeUnit->frameType == FRAME_TYPE_IDR) {
     const bool expected = s_ExpectedIdrFrame.exchange(false);
-    if (s_ReceivedFirstIdrFrame && !expected) {
+    const uint32_t resets = LiGetClientVideoResets();
+    if (s_ReceivedFirstIdrFrame && !expected && resets == s_ResetsAtLastIdr) {
       s_RecoveryIdrFrames++;
     }
+    s_ResetsAtLastIdr = resets;
     s_ReceivedFirstIdrFrame = true;
   }
 
@@ -874,7 +1034,27 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
   uint32_t beforeRender = LiGetMillis();
 
   // Attempt to append the packet to the video track for rendering
-  if (g_Instance->m_VideoTrack.AppendPacket(pkt)) {
+  auto appendPacket = [&pkt]() {
+    return static_cast<int>(g_Instance->m_VideoTrack.AppendPacket(pkt).operation_result);
+  };
+  constexpr int kAppendSuccess = static_cast<int>(samsung::wasm::OperationResult::kSuccess);
+  int appendResult = appendPacket();
+
+  // The buffer of the player is full: retry the same frame for up to about one frame duration, since the player
+  // only has to take the frames it holds. The wait counts into the average rendering time.
+  if (appendResult == kAppendResultBufferFull) {
+    s_AppendBufferFull++;
+    const uint64_t deadline = LiGetMillis() + std::max<uint32_t>(2, 1000 / std::max<uint32_t>(1, s_Framerate));
+    while (appendResult == kAppendResultBufferFull && g_Instance->m_VideoStarted && LiGetMillis() < deadline) {
+      usleep(1000);
+      appendResult = appendPacket();
+    }
+    if (appendResult == kAppendSuccess) {
+      s_AppendBufferFullRecovered++;
+    }
+  }
+
+  if (appendResult == kAppendSuccess) {
     // Calculate time after rendering
     uint32_t afterRender = LiGetMillis();
     // Increment packet timestamp for next frame
@@ -882,12 +1062,30 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     // Track total render time and count rendered frames
     m_ActiveWndVideoStats.totalRenderTime += afterRender - beforeRender;
     m_ActiveWndVideoStats.renderedFrames++;
-  } else {
-    ClLogMessage("Append video packet failed\n");
-    return DR_NEED_IDR;
+    s_LastAppendSuccessMs = LiGetMillis();
+    s_RejectedModeFailures = 0;
+    s_AnyAppendSucceeded = true;
+    return DR_OK;
   }
 
-  return DR_OK;
+  RecordAppendFailure(appendResult);
+
+  // The player rejects the format of the frames as unsupported. End the stream with a message once that keeps up,
+  // instead of requesting keyframes forever on a black screen. The connection is ended through moonlight-common-c,
+  // since this thread must not stop it itself.
+  if (IsRejectedModeResult(appendResult)) {
+    s_RejectedModeFailures++;
+    const uint64_t nowMs = LiGetMillis();
+    const uint64_t lastProgressMs = std::max(s_LastAppendSuccessMs, s_VideoTrackOpenMs.load());
+    if (s_RejectedModeFailures >= kRejectedModeMinFailures && nowMs - lastProgressMs >= kRejectedModeTimeoutMs) {
+      ClLogMessage("The video player of the TV keeps rejecting the stream (%s), ending it\n", AppendResultName(appendResult));
+      s_TerminatingStream = true;
+      LiTerminateConnectionAsync(s_AnyAppendSucceeded ? ERROR_VIDEO_PLAYER_FAILED : ERROR_VIDEO_SETUP_FAILED);
+      return DR_OK;
+    }
+  }
+
+  return DR_NEED_IDR;
 }
 
 void MoonlightInstance::AddVideoStats(VIDEO_STATS& src, VIDEO_STATS& dst) {
@@ -1113,6 +1311,22 @@ void MoonlightInstance::FormatVideoStats(VIDEO_STATS& stats, char* output, int l
     }
     offset += ret;
 
+    // Print the frames the player of the TV rejected, by kind, once there are any
+    const uint32_t appendFailures = s_AppendBufferFull + s_AppendKeyframeRequired + s_AppendTrackNotReady + s_AppendOtherFailures;
+    if (appendFailures != 0) {
+      ret = snprintf(
+        &output[offset], length - offset,
+        "TV player rejections: buffer full %u (%u recovered), keyframe required %u, track not ready %u, other %u (last code %d)\n",
+        s_AppendBufferFull, s_AppendBufferFullRecovered, s_AppendKeyframeRequired, s_AppendTrackNotReady,
+        s_AppendOtherFailures, s_AppendLastFailureCode
+      );
+      if (ret < 0 || ret >= length - offset) {
+        assert(false);
+        return;
+      }
+      offset += ret;
+    }
+
     // Print the FEC recoveries of the session: losses the parity packets repaired without a visible effect, how
     // long the longest repair blocked the receive thread, and how close the worst block came to losing a frame
     VIDEO_NETWORK_STATS networkStats = {};
@@ -1155,6 +1369,20 @@ void MoonlightInstance::FormatVideoStats(VIDEO_STATS& stats, char* output, int l
       offset += ret;
     }
   }
+
+  // Print the top of the WASM heap against the fixed memory size. It never goes down, since freed memory is reused
+  // below it, so a steady climb over hours is the warning sign of a leak before an allocation aborts the module.
+  const uintptr_t heapTop = (uintptr_t)sbrk(0);
+  ret = snprintf(
+    &output[offset], length - offset,
+    "WASM heap top: %u of %u MB (+%u MB this stream)\n",
+    (unsigned)(heapTop >> 20), kWasmMemoryMb, (unsigned)((heapTop > s_HeapTopAtSetup ? heapTop - s_HeapTopAtSetup : 0) >> 20)
+  );
+  if (ret < 0 || ret >= length - offset) {
+    assert(false);
+    return;
+  }
+  offset += ret;
 }
 
 void MoonlightInstance::TogglePerformanceStats() {

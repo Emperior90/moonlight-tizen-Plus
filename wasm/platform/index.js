@@ -37,6 +37,9 @@ var pairingCert; // Loads the generated certificate
 var myUniqueid;
 var api; // The `api` should only be set if we're in a host-specific screen, on the initial screen it should always be null
 var isInGame = false; // Flag indicating whether the game has started, initial value is false
+var streamLaunchId = 0; // Number of the latest stream launch, which replies of an older or cancelled launch are ignored by, initial value is 0
+var streamLaunchHost = null; // Host of the latest stream launch, initial value is null
+var wasmSessionStarted = false; // Flag indicating whether the start request of the current stream reached the WASM module, initial value is false
 var isDialogOpen = false; // Flag indicating whether the dialog is open, initial value is false
 var isPairingInProgress = false; // Flag indicating whether a pairing process is in progress, initial value is false
 var wasPairingCanceled = false; // Flag indicating whether the current pairing process was canceled by the user, initial value is false
@@ -581,6 +584,13 @@ function restoreUiAfterWasmLoad() {
 
 // Handles the selection of a host, manages the connection, pairing process, including error handling
 function hostChosen(host, onSuccessCallback) {
+  // Ignore a host selection (e.g. from a Smart Hub deep link) while a stream is starting or running. This comes
+  // before setting the flag below, so that the flag can't stay set.
+  if (isInGame) {
+    console.warn('%c[index.js, hostChosen]', 'color: green;', 'Warning: Ignoring the host selection while a stream is active.');
+    return;
+  }
+
   // Check if a host is already being opened to prevent concurrent executions
   if (isHostOpening) {
     return;
@@ -2405,6 +2415,45 @@ function wakeOnLanWarningDialog(host) {
   });
 }
 
+// Handle an abort of the WASM module or a crash of one of its threads (see common.js), which otherwise leaves the
+// stream frozen without any message. The module can't be trusted afterwards, since a dead thread may still hold a
+// lock, so nothing here calls into it: the stream view is torn down on the JS side only, and Moonlight restarts once
+// the dialog is closed. Only the first failure is handled, because a crash can cascade into more.
+var isNativeModuleFailed = false;
+function onNativeModuleFailure(details) {
+  if (isNativeModuleFailed) {
+    return;
+  }
+  isNativeModuleFailed = true;
+  console.error('%c[index.js, onNativeModuleFailure]', 'color: green;', 'Error: The streaming engine failed: ' + details);
+
+  try {
+    if (isInGame) {
+      isInGame = false;
+      wasmSessionStarted = false;
+      streamLaunchId++;
+      setTvScreenSaver(true);
+      stopAudioScheduler();
+      $('#connection-warnings, #performance-stats').css('display', 'none');
+      $('#listener').removeClass('fullscreen');
+      $('#loadingSpinner').css('display', 'none');
+      $('body').css('backgroundColor', '#282C38');
+      $('#wasm_module').css('display', 'none');
+      // Let the remote and gamepads operate the dialog, which the stream view had paused
+      Navigation.start();
+      Controller.startWatching();
+    }
+  } catch (error) {
+    console.error('%c[index.js, onNativeModuleFailure]', 'color: green;', 'Error: Failed to leave the stream view: ' + error);
+  }
+
+  warningDialog('Streaming engine error', 'A part of the streaming engine stopped unexpectedly. Moonlight will restart now; you can resume the game afterwards.');
+  // Restart once the dialog is closed, after its own close handler
+  $('#closeWarning').on('click', function() {
+    restartApplication();
+  });
+}
+
 // Restart the application
 function restartApplication() {
   var restartApplication = window.location;
@@ -2993,7 +3042,18 @@ function startGame(host, appID) {
     console.error('%c[index.js, startGame]', 'color: green;', 'Error: Attempted to start a game, but the host was not initialized properly! Host object: ', host);
     return;
   }
+  // Ignore a second start (e.g. from a Smart Hub deep link) while a stream is starting or running
+  if (isInGame) {
+    console.warn('%c[index.js, startGame]', 'color: green;', 'Warning: Ignoring the start of app ' + appID + ' while a stream is active.');
+    return;
+  }
   localStorage.setItem('lastOpenedApp_' + host.serverUid, appID);
+
+  // Number this launch, so that the replies of the host are ignored once the launch was cancelled or a newer one
+  // started (see cancelStreamLaunch)
+  var launchId = ++streamLaunchId;
+  streamLaunchHost = host;
+  wasmSessionStarted = false;
 
   // Start the audio scheduler of the Web Audio backend while we are still running inside the
   // handler of the key press that started the stream, because the audio context of a device
@@ -3007,6 +3067,9 @@ function startGame(host, appID) {
   // Refresh the server info, because the user might have quit the game
   host.refreshServerInfo().then(function(ret) {
     host.getAppById(appID).then(function(appToStart) {
+      if (launchId !== streamLaunchId) {
+        return;
+      }
       if (host.currentGame != 0 && host.currentGame != appID) {
         host.getAppById(host.currentGame).then(function(currentApp) {
           // Find the existing overlay and dialog elements
@@ -3137,6 +3200,10 @@ function startGame(host, appID) {
           0x030002, // Surround channel mask << 16 | Surround channel count
           gamepadMask // Connect gamepad mask
         ).then(function(launchResult) {
+          if (launchId !== streamLaunchId) {
+            console.log('%c[index.js, startGame]', 'color: green;', 'Ignoring the reply to a cancelled resume request.');
+            return;
+          }
           $xml = $($.parseXML(launchResult.toString()));
           $root = $xml.find('root');
           var status_code = $root.attr('status_code');
@@ -3156,6 +3223,10 @@ function startGame(host, appID) {
           var sessionUrl = $root.find('sessionUrl0').text().trim();
           // Start stream request with the codec modes from the encoder probe of this resume request
           refreshCodecModesBeforeStream(host).then(function(codecModes) {
+            if (launchId !== streamLaunchId) {
+              return;
+            }
+            wasmSessionStarted = true;
             sendMessage('startRequest', [
               host.address, host.httpPort, streamWidth, streamHeight, frameRate, bitrate.toString(), rikey, rikeyid.toString(),
               host.appVersion, host.gfeVersion, sessionUrl, codecModes,
@@ -3165,6 +3236,9 @@ function startGame(host, appID) {
             ]);
           });
         }, function(failedResumeApp) {
+          if (launchId !== streamLaunchId) {
+            return;
+          }
           console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to resume app with id: ' + appID + '\n Returned error was: ' + failedResumeApp + '!');
           snackbarLog('Failed to resume %1$s', appToStart.title);
           showApps(host).then(() => {
@@ -3188,6 +3262,10 @@ function startGame(host, appID) {
         0x030002, // Surround channel mask << 16 | Surround channel count
         gamepadMask // Connect gamepad mask
       ).then(function(launchResult) {
+        if (launchId !== streamLaunchId) {
+          console.log('%c[index.js, startGame]', 'color: green;', 'Ignoring the reply to a cancelled launch request.');
+          return;
+        }
         $xml = $($.parseXML(launchResult.toString()));
         $root = $xml.find('root');
         var status_code = $root.attr('status_code');
@@ -3212,6 +3290,10 @@ function startGame(host, appID) {
         var sessionUrl = $root.find('sessionUrl0').text().trim();
         // Start stream request with the codec modes from the encoder probe of this launch request
         refreshCodecModesBeforeStream(host).then(function(codecModes) {
+          if (launchId !== streamLaunchId) {
+            return;
+          }
+          wasmSessionStarted = true;
           sendMessage('startRequest', [
             host.address, host.httpPort, streamWidth, streamHeight, frameRate, bitrate.toString(), rikey, rikeyid.toString(),
             host.appVersion, host.gfeVersion, sessionUrl, codecModes,
@@ -3221,6 +3303,9 @@ function startGame(host, appID) {
           ]);
         });
       }, function(failedLaunchApp) {
+        if (launchId !== streamLaunchId) {
+          return;
+        }
         console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to launch app with id: ' + appID + '\n Returned error was: ' + failedLaunchApp + '!');
         snackbarLog('Failed to launch %1$s', appToStart.title);
         showApps(host).then(() => {
@@ -3235,6 +3320,17 @@ function startGame(host, appID) {
   }, function(failedRefreshInfo) {
     console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to refresh server info! Returned error was: ' + failedRefreshInfo + ' and failed server was: ' + '\n', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
   });
+}
+
+// Cancel a stream that is still starting, i.e. whose start request hasn't reached the WASM module yet, and return to
+// the app list. The launch or resume request that is in flight can't be aborted: the host may still start the app,
+// which the app list then shows as running, and the reply is ignored (see startGame).
+function cancelStreamLaunch() {
+  console.log('%c[index.js, cancelStreamLaunch]', 'color: green;', 'Cancelling the start of the stream.');
+  streamLaunchId++;
+  isInGame = false;
+  wasmSessionStarted = false;
+  leaveStreamView(streamLaunchHost || api);
 }
 
 // Read the codec modes of the host again once it accepted the launch or resume request. Sunshine probes its encoders
@@ -5032,7 +5128,10 @@ function waitForHostAndNavigateToApp(serverUid, appId) {
           var gameStartInterval = setInterval(function() {
             gameStartAttempts++;
             var gameContainer = document.getElementById('game-container-' + appId);
-            if (gameContainer) {
+            if (isInGame) {
+              // A stream started in the meantime
+              clearInterval(gameStartInterval);
+            } else if (gameContainer) {
               clearInterval(gameStartInterval);
               gameContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
               startGame(host, appId);
@@ -5085,6 +5184,19 @@ function handleDeepLink() {
         var payload = JSON.parse(appControlData[i].value[0]);
         var actionData = JSON.parse(payload.values);
         console.log('%c[index.js, handleDeepLink]', 'color: green;', 'Deep link action data: ', actionData);
+
+        // Ignore the deep link while a stream is starting or running, which would otherwise start a second session
+        // on top of it. Only a tile of a different app gets a hint, since the running one is already on screen.
+        if (isInGame) {
+          console.warn('%c[index.js, handleDeepLink]', 'color: green;', 'Warning: Ignoring the deep link while a stream is active.');
+          var streamServerUid = streamLaunchHost ? streamLaunchHost.serverUid : null;
+          var isOtherApp = actionData.serverUid !== streamServerUid ||
+            (actionData.appId !== null && actionData.appId !== undefined && String(actionData.appId) !== String(localStorage.getItem('lastOpenedApp_' + streamServerUid)));
+          if (isOtherApp) {
+            snackbarLogLong('Stop the current stream first (RED button).');
+          }
+          break;
+        }
 
         if (actionData.serverUid && actionData.appId !== null && actionData.appId !== undefined) {
           // App-level deep link from a preview tile: navigate to the specific host and app
@@ -5295,6 +5407,21 @@ function onWindowLoad() {
 }
 
 window.onload = onWindowLoad;
+
+// Log when the app is hidden and shown again (Home key, input switch, TV menus), with the stream state and how long
+// it was hidden, so that the TV log shows how a stream fares across these events. This only logs; what the player
+// does meanwhile is logged by the WASM module (track close reasons and reopening).
+var pageHiddenSince = 0;
+document.addEventListener('visibilitychange', function() {
+  var details = 'The page is now ' + document.visibilityState + ' (stream active: ' + isInGame + ')';
+  if (document.visibilityState === 'hidden') {
+    pageHiddenSince = Date.now();
+  } else if (pageHiddenSince !== 0) {
+    details += ' after being hidden for ' + (Date.now() - pageHiddenSince) + ' ms';
+    pageHiddenSince = 0;
+  }
+  console.log('%c[index.js, visibilitychange]', 'color: green;', details + '.');
+});
 
 // Gamepad connected events
 window.addEventListener('gamepadconnected', function(e) {
