@@ -31,6 +31,9 @@ try {
   console.error('%c[service.js]', 'color: gray;', '[SmartHub Service] http module is not available: ' + e.message);
 }
 
+// Port of the local box art server. The regular Moonlight app uses 8888, so this build, which can be installed next to
+// it, uses its own port (SMART_HUB_PREVIEW_PORT in wasm/platform/index.js)
+var PREVIEW_PORT = 8889;
 var tvIp = '127.0.0.1';
 var localServer = null;
 var routeMap = {};
@@ -84,7 +87,7 @@ function startLocalServer() {
     return;
   }
   if (localServer) {
-    logAndSend('Local HTTP server is already running on http://' + tvIp + ':8888');
+    logAndSend('Local HTTP server is already running on http://' + tvIp + ':' + PREVIEW_PORT);
     return;
   }
   
@@ -146,8 +149,8 @@ function startLocalServer() {
     logAndSend('Local HTTP server error: ' + err.message);
   });
   
-  localServer.listen(8888, '0.0.0.0', function() {
-    logAndSend('Local HTTP server listening on http://0.0.0.0:8888 (TV IP: ' + tvIp + ')');
+  localServer.listen(PREVIEW_PORT, '0.0.0.0', function() {
+    logAndSend('Local HTTP server listening on http://0.0.0.0:' + PREVIEW_PORT + ' (TV IP: ' + tvIp + ')');
   });
 }
 

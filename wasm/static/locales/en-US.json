@@ -361,6 +361,7 @@
   "The selected host is no longer available on Moonlight.": "The selected host is no longer available on Moonlight.",
   "The selected app is no longer available on this host. Showing the current app list.": "The selected app is no longer available on this host. Showing the current app list.",
   "Stop the current stream first (RED button).": "Stop the current stream first (RED button).",
+  "The stream was ended because Moonlight went to the background. Select the game to resume it.": "The stream was ended because Moonlight went to the background. Select the game to resume it.",
   "Gamepad %1$s has been connected.": "Gamepad %1$s has been connected.",
   "Gamepad %1$s has been disconnected.": "Gamepad %1$s has been disconnected.",
   "Streaming engine error": "Streaming engine error",

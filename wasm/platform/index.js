@@ -65,6 +65,7 @@ var repeatTimeout = null; // Flag indicating whether the repeat timeout is set, 
 var navigationTimeout = null; // Flag indicating whether the navigation timeout is set, initial value is null
 const BUILD_TYPE = '__BUILD_TYPE__'; // Placeholder for build type, which should be replaced during the build process
 const BUILD_COMMIT = '__BUILD_COMMIT__'; // Placeholder for build commit, which should be replaced during the build process
+const SMART_HUB_PREVIEW_PORT = 8889; // Port of the box art server of the Smart Hub service (res/service/service.js). The regular Moonlight app uses 8888, so this build uses its own port to run next to it
 const REPO_OWNER = '__REPO_OWNER__'; // Placeholder for repository owner, which should be replaced during the build process
 const REPO_NAME = '__REPO_NAME__'; // Placeholder for repository name, which should be replaced during the build process
 var _smartHubLocalMessagePort = null; // Local message port for receiving messages from the Smart Hub service
@@ -2847,16 +2848,16 @@ function showApps(host) {
                 if (resolvedPromise.startsWith('file://')) {
                   var localPngPath = resolvedPromise.replace('file://', '');
                   appEntry.txtPath = localPngPath;
-                  appEntry.imageUri = 'http://' + tvIp + ':8888/' + filename + cacheBuster;
+                  appEntry.imageUri = 'http://' + tvIp + ':' + SMART_HUB_PREVIEW_PORT + '/' + filename + cacheBuster;
                   resolveBoxArt();
                 } else {
                   try {
                     var documentsPath = tizen.filesystem.toURI('documents').replace('file://', '');
                     appEntry.txtPath = documentsPath + '/' + filename;
-                    appEntry.imageUri = 'http://' + tvIp + ':8888/' + filename + cacheBuster;
+                    appEntry.imageUri = 'http://' + tvIp + ':' + SMART_HUB_PREVIEW_PORT + '/' + filename + cacheBuster;
                   } catch(err) {
                     appEntry.txtPath = '/opt/usr/home/owner/content/Documents/' + filename;
-                    appEntry.imageUri = 'http://' + tvIp + ':8888/' + filename + cacheBuster;
+                    appEntry.imageUri = 'http://' + tvIp + ':' + SMART_HUB_PREVIEW_PORT + '/' + filename + cacheBuster;
                   }
                   resolveBoxArt();
                 }
@@ -5411,10 +5412,13 @@ function onWindowLoad() {
 
 window.onload = onWindowLoad;
 
-// Log when the app is hidden and shown again (Home key, input switch, TV menus), with the stream state and how long
-// it was hidden, so that the TV log shows how a stream fares across these events. This only logs; what the player
-// does meanwhile is logged by the WASM module (track close reasons and reopening).
+// Log when the app is hidden and shown again (Home key, another app, input switch), with the stream state and how long
+// it was hidden, and end a stream that is starting or running when the app goes to the background. A stream left
+// running in the background keeps the video decoder of the TV and the network busy (the host keeps sending 100+ Mbps),
+// and the TV can hang when another app then starts its own video. The stream ends right away, because the timers of a
+// hidden app aren't guaranteed to run. The game keeps running on the host, so selecting it again resumes it.
 var pageHiddenSince = 0;
+var isStreamStoppedInBackground = false;
 document.addEventListener('visibilitychange', function() {
   var details = 'The page is now ' + document.visibilityState + ' (stream active: ' + isInGame + ')';
   if (document.visibilityState === 'hidden') {
@@ -5424,6 +5428,23 @@ document.addEventListener('visibilitychange', function() {
     pageHiddenSince = 0;
   }
   console.log('%c[index.js, visibilitychange]', 'color: green;', details + '.');
+
+  if (document.visibilityState === 'hidden' && isInGame === true) {
+    console.log('%c[index.js, visibilitychange]', 'color: green;', 'Ending the stream, since Moonlight went to the background.');
+    isStreamStoppedInBackground = true;
+    try {
+      if (wasmSessionStarted) {
+        Module.stopStream();
+      } else {
+        cancelStreamLaunch();
+      }
+    } catch (error) {
+      console.error('%c[index.js, visibilitychange]', 'color: green;', 'Error: Failed to end the stream: ' + error);
+    }
+  } else if (document.visibilityState === 'visible' && isStreamStoppedInBackground) {
+    isStreamStoppedInBackground = false;
+    snackbarLogLong('The stream was ended because Moonlight went to the background. Select the game to resume it.');
+  }
 });
 
 // Gamepad connected events

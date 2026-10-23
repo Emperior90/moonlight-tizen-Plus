@@ -462,6 +462,7 @@ Das größte Einzelbild liegt ungefähr bei Encoder-Bitrate ÷ FPS × (1 + `nven
 | 48 | **Release-Workflows laufen nacheinander**, und das Pre-Release von „Release (Development)“ bekommt die Versionshinweise aus `docs/RELEASE_NOTES_DEV.md` | Zwei gleichzeitige Läufe konnten das gemeinsame `:forcegm`-Image überschreiben, sodass ein Release die ForceGM-Datei eines anderen Commits bekam. Die Release-Seite sagt jetzt, welche Datei du installierst, was neu ist und wie du testest | `.github/workflows/release-development.yml`, `release-stable.yml`, `docs/RELEASE_NOTES_DEV.md` |
 | 49 | **Hilfetexte:** *Audio clock sync* nennt die echte Korrektur (bis 0,05 %) und was ohne Clock Sync passiert, der Jitter-Puffer verweist auf den Vorschlag im Overlay | Die Puffergröße lässt sich gezielt mit dem Overlay-Vorschlag senken | `wasm/index.html`, Locales |
 | 50 | **Eigene App „Moonlight S90C“:** eigener Name, eigene Paket-ID (`MLightS90C`), eigene Widget-ID und ein Icon mit blauem „S90C“-Schriftzug | Diese Version und die normale Moonlight-App können gleichzeitig installiert sein und sind im TV-Menü unterscheidbar. Die neue App hat eigene Einstellungen und muss den Host einmal neu koppeln | `res/config.xml`, `res/icon.png`, `Dockerfile`, `wasm/index.html` |
+| 51 | **Stream endet, wenn die App in den Hintergrund geht** (Home-Taste, andere App, Eingangswechsel); zurück in der App erscheint ein Hinweis. Die Smart-Hub-Vorschau nutzt den Port 8889 statt 8888 | Ein im Hintergrund weiterlaufender Stream belegte Decoder und WLAN, beim Öffnen einer anderen Streaming-App hing der TV. Die Vorschau-Server beider Moonlight-Apps kommen sich nicht mehr in die Quere | `wasm/platform/index.js`, `res/service/service.js`, Locales |
 
 **So sieht es in der App aus** (Screenshots aus einem Browser-Test mit simulierten Tizen-APIs):
 
@@ -578,19 +579,18 @@ Für Sessions über 4 Stunden vorher *Automatisch ausschalten* am TV deaktiviere
 
 ### Lebenszyklus-Test: App verlassen und zurückkehren
 
-Was mit einem laufenden Stream passiert, wenn die App verdeckt wird, ist nicht dokumentiert. Die App protokolliert es jetzt, ändert aber nichts am Stream. Die Zeilen stehen in der Konsole (Web Inspector per Fernzugriff, z. B. mit Tizen Studio). Jeweils notieren, ob Bild und Ton zurückkommen, ob der Stream länger als 10 s verdeckt überlebt und welche Gründe im Log stehen.
+Wird die App verdeckt (Home-Taste, andere App, Eingangswechsel), beendet sie einen laufenden oder startenden Stream sofort (Änderung 51). Ein im Hintergrund weiterlaufender Stream hielt den Video-Decoder des TVs und das WLAN belegt; beim Öffnen einer anderen Streaming-App blieb der TV einmal hängen. Das Spiel läuft am PC weiter und lässt sich mit einem Klick fortsetzen. Die Zeilen stehen in der Konsole (Web Inspector per Fernzugriff, z. B. mit Tizen Studio). Jeweils notieren, ob Bild und Ton zurückkommen, ob der Stream länger als 10 s verdeckt überlebt und welche Gründe im Log stehen.
 
 | Test | Worauf achten |
 |---|---|
-| Home-Taste, nach 3 s zurück zur App | `[index.js, visibilitychange] The page is now hidden …` und `… visible … after being hidden for N ms`, `VIDEO ElementaryMediaTrack::OnTrackClosed (reason N: …)`, `VIDEO ElementaryMediaTrack::OnTrackOpen (reopened during the stream)`, `Discarded N frames while the video track was closed`. *Session frames dropped by network* darf sich dabei nicht ändern |
-| Home-Taste, nach 30 s zurück | Wie oben. Lebt die Session noch? Sunshine beendet sie nach ~10 s ohne Antwort |
-| Schnelleinstellungen bzw. Bildmenü des TVs während des Streams | Meldet die App sich dabei als verdeckt, schließt der TV den Video-Track? |
+| Home-Taste während des Streams, dann zurück zur App | `[index.js, visibilitychange] The page is now hidden …`, `Ending the stream, since Moonlight went to the background.`, ein normaler Abbau. Zurück in der App: App-Liste mit dem Hinweis, dass der Stream beendet wurde; das Spiel läuft am PC weiter und lässt sich fortsetzen |
+| Home-Taste während des Streams, dann eine andere Streaming-App öffnen | Die andere App startet normal, der TV bleibt bedienbar |
+| Schnelleinstellungen bzw. Bildmenü des TVs während des Streams | Der Stream sollte weiterlaufen. Endet er dabei (Log: `Ending the stream, since Moonlight went to the background.`), bitte melden: Dann braucht es eine Wartezeit, bevor die App den Stream beendet |
 | Game Bar (ForceGM) | Wie oben |
-| Eingangswechsel per Anynet+ (HDMI-CEC) und zurück | Wie oben |
+| Eingangswechsel per Anynet+ (HDMI-CEC) und zurück | Der Stream endet wie bei der Home-Taste |
 | Rot während „Starting…“ | Die App zeigt „Loading Apps...“, kehrt zur App-Liste zurück, sobald der PC den Start beantwortet hat, und 10 s später startet kein Stream. Log: `Cancelling the start of the stream` und kein `Starting the streaming session...`. Je nach Zeitpunkt folgt `Ignoring the reply to a cancelled launch request` (bzw. `… resume request`, wenn das Spiel schon lief) oder `Not starting the stream of a cancelled launch request` (bzw. `… resume request`) |
 | Rot doppelt oder gehalten am Stream-Ende | Genau ein Abbau (`Stopping video stream...` usw.) und ein `streamTerminated`; ein weiterer Druck auf Rot oder die Gamepad-Kombination löst nichts mehr aus. `Ignoring a repeated stop request` erscheint nur, wenn sich zwei Stopps wirklich überschneiden, z. B. Rot im Moment, in dem der PC den Stream beendet |
 
-Erst wenn das Log zeigt, dass ein verdeckter Stream nicht von selbst zurückkommt oder der PC an eine verdeckte App weiterstreamt, lohnt ein automatischer Stopp (dann mit langer Wartezeit, ab 60 s).
 
 ### So liest man das Overlay
 

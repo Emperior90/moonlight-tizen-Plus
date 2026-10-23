@@ -29,6 +29,8 @@ Die Details zu jedem Schritt stehen im [Optimierungsplan](S90C-Optimierungsplan.
 
 Auf der SolarCell-Fernbedienung erreichst du Rot und Gelb meist über die Taste **„123“**, die die Farbtasten auf dem Bildschirm einblendet.
 
+Die **Home-Taste** (oder der Wechsel in eine andere App) beendet den Stream. Das Spiel läuft am PC weiter: Moonlight S90C wieder öffnen und das Spiel auswählen, dann geht es weiter.
+
 ## 3. Die drei Zeilen, auf die es ankommt
 
 Sie sollen über die ganze Session bei **0** bleiben:
