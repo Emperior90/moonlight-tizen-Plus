@@ -352,6 +352,7 @@ function handleMessage(msg) {
     // app list has loaded. This runs synchronously inside Module.stopStream(), before the next key press.
     isInGame = false;
     wasmSessionStarted = false;
+    isStreamVideoTrackClosed = false;
     streamLaunchId++;
     leaveStreamView(streamLaunchHost || api);
     // Show a termination snackbar message if the termination was unexpected
@@ -421,6 +422,12 @@ function handleMessage(msg) {
   } else if (msg.indexOf('DialogMsg: ') === 0) {
     // Show dialog message using the warning dialog
     warningDialog(t('Connection Error'), translateBackendMessage(msg.replace('DialogMsg: ', '')));
+  } else if (msg.indexOf('VideoTrackClosed: ') === 0) {
+    // The TV closed the video track of the running stream, e.g. because another app took over the video decoder
+    onStreamVideoTrackStateChanged(true);
+  } else if (msg === 'VideoTrackOpened') {
+    // The TV reopened the video track of the running stream
+    onStreamVideoTrackStateChanged(false);
   } else if (msg === 'displayVideo') {
     // Show the video stream now
     $('#listener').addClass('fullscreen');

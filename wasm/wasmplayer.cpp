@@ -231,8 +231,13 @@ MoonlightInstance::VideoTrackListener::VideoTrackListener(
 void MoonlightInstance::VideoTrackListener::OnTrackOpen() {
   // The track opens once at the start of the stream, and again during it after the TV closed it (e.g. while the app
   // was hidden). Either way the player needs an IDR frame to start from.
-  ClLogMessage("VIDEO ElementaryMediaTrack::OnTrackOpen%s\n", m_Instance->m_Running ? " (reopened during the stream)" : "");
+  const bool reopened = m_Instance->m_Running;
+  ClLogMessage("VIDEO ElementaryMediaTrack::OnTrackOpen%s\n", reopened ? " (reopened during the stream)" : "");
   s_VideoTrackOpenMs.store(LiGetMillis());
+  // Tell the front end, which ends a stream whose video the TV took away while the app is hidden
+  if (reopened) {
+    PostToJs(std::string("VideoTrackOpened"));
+  }
   std::unique_lock<std::mutex> lock(m_Instance->m_Mutex);
   m_Instance->m_VideoStarted = true;
   m_Instance->m_EmssVideoStateChanged.notify_all();
@@ -245,6 +250,12 @@ void MoonlightInstance::VideoTrackListener::OnTrackClosed(samsung::wasm::Element
   {
     std::unique_lock<std::mutex> lock(m_Instance->m_Mutex);
     m_Instance->m_VideoStarted = false;
+  }
+
+  // Tell the front end, which ends a stream whose video the TV took away while the app is hidden (another app took
+  // over the video decoder), but leaves it running behind an overlay of the TV
+  if (m_Instance->m_Running) {
+    PostToJs(std::string("VideoTrackClosed: ") + std::to_string(closeReason));
   }
 
   // The app never reopens a media source that failed, so the picture would stay frozen. End the stream with a

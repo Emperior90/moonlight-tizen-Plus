@@ -14,9 +14,9 @@
 - Eigener Name, eigene Paket-ID und ein Icon mit blauem „S90C“-Schriftzug, damit diese Version und die normale Moonlight-App gleichzeitig installiert sein können und im TV-Menü unterscheidbar sind.
 - Die Smart-Hub-Vorschau nutzt einen eigenen Port, damit sich die beiden Apps nicht in die Quere kommen.
 
-**Home-Taste beendet den Stream**
+**Stream endet im Hintergrund**
 
-- Geht die App in den Hintergrund (Home-Taste, andere App, Eingangswechsel), endet der Stream sofort. Vorher lief er im Hintergrund weiter, belegte Decoder und WLAN, und beim Öffnen einer anderen Streaming-App konnte der TV hängen bleiben. Das Spiel läuft am PC weiter: Moonlight S90C öffnen und das Spiel auswählen.
+- Öffnest du eine andere App oder bleibt Moonlight länger als 30 Sekunden im Hintergrund, endet der Stream. Schnellmenü und Lautstärke des TVs lassen ihn weiterlaufen. Vorher lief er im Hintergrund weiter, belegte das WLAN, und beim Öffnen einer anderen Streaming-App konnte der TV hängen bleiben. Das Spiel läuft am PC weiter: Moonlight S90C öffnen und das Spiel auswählen.
 - Die WLAN-Signalstärke im Overlay zeigt kein „NaN“ mehr, wenn der TV keinen Wert liefert.
 
 **Stabilität und Bedienung**

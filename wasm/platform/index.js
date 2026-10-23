@@ -3062,6 +3062,7 @@ function startGame(host, appID) {
   var launchId = ++streamLaunchId;
   streamLaunchHost = host;
   wasmSessionStarted = false;
+  isStreamVideoTrackClosed = false;
 
   // Start the audio scheduler of the Web Audio backend while we are still running inside the
   // handler of the key press that started the stream, because the audio context of a device
@@ -5433,12 +5434,48 @@ function onWindowLoad() {
 window.onload = onWindowLoad;
 
 // Log when the app is hidden and shown again (Home key, another app, input switch), with the stream state and how long
-// it was hidden, and end a stream that is starting or running when the app goes to the background. A stream left
-// running in the background keeps the video decoder of the TV and the network busy (the host keeps sending 100+ Mbps),
-// and the TV can hang when another app then starts its own video. The stream ends right away, because the timers of a
-// hidden app aren't guaranteed to run. The game keeps running on the host, so selecting it again resumes it.
+// it was hidden, and end a stream that keeps running in the background. Such a stream keeps the network busy (the host
+// keeps sending 100+ Mbps), and the TV can hang when another app then starts its own video. Overlays of the TV such as
+// the quick settings or the volume leave the stream running: it only ends once the TV takes the video away from the
+// app (it closes the video track, as when another app starts) while the app is hidden, or after the app stayed hidden
+// for BACKGROUND_STREAM_STOP_DELAY_MS. The game keeps running on the host, so selecting it again resumes it.
+var BACKGROUND_STREAM_STOP_DELAY_MS = 30000;
 var pageHiddenSince = 0;
 var isStreamStoppedInBackground = false;
+var isStreamVideoTrackClosed = false; // Whether the TV closed the video track of the running stream, see messages.js
+var backgroundStreamStopTimer = null;
+
+// End the stream if it's still running while the app is hidden
+function endStreamInBackground(reason) {
+  clearTimeout(backgroundStreamStopTimer);
+  backgroundStreamStopTimer = null;
+  if (isInGame !== true || document.visibilityState !== 'hidden') {
+    return;
+  }
+  console.log('%c[index.js, endStreamInBackground]', 'color: green;', 'Ending the stream, since Moonlight is in the background (' + reason + ').');
+  isStreamStoppedInBackground = true;
+  try {
+    if (wasmSessionStarted) {
+      Module.stopStream();
+    } else {
+      cancelStreamLaunch();
+    }
+  } catch (error) {
+    console.error('%c[index.js, endStreamInBackground]', 'color: green;', 'Error: Failed to end the stream: ' + error);
+  }
+}
+
+// Called by messages.js when the TV closes or reopens the video track of the running stream
+function onStreamVideoTrackStateChanged(closed) {
+  isStreamVideoTrackClosed = closed;
+  if (closed) {
+    // Act after the media callback of the WASM module that reported it has returned
+    setTimeout(function() {
+      endStreamInBackground('the TV closed the video of the stream');
+    }, 0);
+  }
+}
+
 document.addEventListener('visibilitychange', function() {
   var details = 'The page is now ' + document.visibilityState + ' (stream active: ' + isInGame + ')';
   if (document.visibilityState === 'hidden') {
@@ -5459,20 +5496,24 @@ document.addEventListener('visibilitychange', function() {
       console.error('%c[index.js, visibilitychange]', 'color: green;', 'Error: Failed to stop the audio scheduler: ' + error);
     }
   } else if (document.visibilityState === 'hidden') {
-    console.log('%c[index.js, visibilitychange]', 'color: green;', 'Ending the stream, since Moonlight went to the background.');
-    isStreamStoppedInBackground = true;
-    try {
-      if (wasmSessionStarted) {
-        Module.stopStream();
-      } else {
-        cancelStreamLaunch();
-      }
-    } catch (error) {
-      console.error('%c[index.js, visibilitychange]', 'color: green;', 'Error: Failed to end the stream: ' + error);
+    if (!wasmSessionStarted) {
+      // The stream is still being launched, which has nothing to show yet, so cancel it right away
+      endStreamInBackground('the stream was still starting');
+    } else if (isStreamVideoTrackClosed) {
+      endStreamInBackground('the TV closed the video of the stream');
+    } else {
+      clearTimeout(backgroundStreamStopTimer);
+      backgroundStreamStopTimer = setTimeout(function() {
+        endStreamInBackground('hidden for ' + (BACKGROUND_STREAM_STOP_DELAY_MS / 1000) + ' s');
+      }, BACKGROUND_STREAM_STOP_DELAY_MS);
     }
-  } else if (document.visibilityState === 'visible' && isStreamStoppedInBackground) {
-    isStreamStoppedInBackground = false;
-    snackbarLogLong('The stream was ended because Moonlight went to the background. Select the game to resume it.');
+  } else if (document.visibilityState === 'visible') {
+    clearTimeout(backgroundStreamStopTimer);
+    backgroundStreamStopTimer = null;
+    if (isStreamStoppedInBackground) {
+      isStreamStoppedInBackground = false;
+      snackbarLogLong('The stream was ended because Moonlight went to the background. Select the game to resume it.');
+    }
   }
 });
 
