@@ -4,9 +4,14 @@
 
 - **Tizen 9 (S90C nach dem Update): `Moonlight-ForceGM.wgt`**. Diese Variante schaltet den Spielmodus des TVs ein. In der App *Game mode* dabei aus lassen.
 - Tizen 7/8: `Moonlight.wgt`.
-- Schlägt die Installation wegen einer anderen Signatur fehl, die alte App zuerst deinstallieren. Danach muss der PC neu gekoppelt werden.
+- Die App heißt auf dem TV **„Moonlight S90C“** und hat eine eigene Paket-ID, sie wird also **neben** der normalen Moonlight-App installiert, statt sie zu ersetzen. Beim ersten Start den PC einmal neu koppeln, denn Einstellungen und Kopplung sind getrennt von der anderen App.
+- Ein früherer S90C-Build (vor dieser Version) steht weiter als „Moonlight“ auf dem TV. Du kannst ihn deinstallieren oder die normale Moonlight-App darüber installieren.
 
 ### Neu in diesem Build
+
+**Eigene App „Moonlight S90C“**
+
+- Eigener Name und eigene Paket-ID, damit diese Version und die normale Moonlight-App gleichzeitig installiert sein können und im TV-Menü unterscheidbar sind.
 
 **Stabilität und Bedienung**
 

@@ -461,6 +461,7 @@ Das größte Einzelbild liegt ungefähr bei Encoder-Bitrate ÷ FPS × (1 + `nven
 | 47 | **Log beim Verlassen und Zurückkehren** (Home, Eingangswechsel, TV-Menüs): Sichtbarkeit, Stream-Zustand und wie lange die App verdeckt war | Grundlage für den Lebenszyklus-Test in Abschnitt 8. Am Stream ändert das nichts | `wasm/platform/index.js` |
 | 48 | **Release-Workflows laufen nacheinander**, und das Pre-Release von „Release (Development)“ bekommt die Versionshinweise aus `docs/RELEASE_NOTES_DEV.md` | Zwei gleichzeitige Läufe konnten das gemeinsame `:forcegm`-Image überschreiben, sodass ein Release die ForceGM-Datei eines anderen Commits bekam. Die Release-Seite sagt jetzt, welche Datei du installierst, was neu ist und wie du testest | `.github/workflows/release-development.yml`, `release-stable.yml`, `docs/RELEASE_NOTES_DEV.md` |
 | 49 | **Hilfetexte:** *Audio clock sync* nennt die echte Korrektur (bis 0,05 %) und was ohne Clock Sync passiert, der Jitter-Puffer verweist auf den Vorschlag im Overlay | Die Puffergröße lässt sich gezielt mit dem Overlay-Vorschlag senken | `wasm/index.html`, Locales |
+| 50 | **Eigene App „Moonlight S90C“:** eigener Name, eigene Paket-ID (`MLightS90C`) und eigene Widget-ID | Diese Version und die normale Moonlight-App können gleichzeitig installiert sein und sind im TV-Menü unterscheidbar. Die neue App hat eigene Einstellungen und muss den Host einmal neu koppeln | `res/config.xml`, `Dockerfile`, `wasm/index.html` |
 
 **So sieht es in der App aus** (Screenshots aus einem Browser-Test mit simulierten Tizen-APIs):
 
@@ -480,7 +481,7 @@ Das größte Einzelbild liegt ungefähr bei Encoder-Bitrate ÷ FPS × (1 + `nven
 1. Auf GitHub im Repository unter **Actions → „Release (Development)“ → Run workflow** den Branch `ccr-749486c7-cvis0k` auswählen und starten. Der Workflow baut `Moonlight.wgt` und `Moonlight-ForceGM.wgt` und legt sie als Pre-Release ab.
 2. Installieren, z. B. mit **Apps2Samsung → „Custom WGT File“** (alternativ Tizen Studio oder `tizen install` per Docker, siehe Installation Guide im Projekt-Wiki).
    - Tizen 7/8: `Moonlight.wgt` · Tizen 9+: `Moonlight-ForceGM.wgt`.
-   - Schlägt die Installation wegen einer anderen Signatur fehl, die alte App erst deinstallieren. Danach muss der Host neu gekoppelt werden.
+   - Die App heißt auf dem TV „Moonlight S90C“ und hat eine eigene Paket-ID (`MLightS90C`). Sie wird neben der normalen Moonlight-App installiert, statt sie zu ersetzen. Beim ersten Start den Host neu koppeln, weil Einstellungen und Kopplung getrennt sind. Ein früherer S90C-Build steht weiter als „Moonlight“ auf dem TV.
 
 ### Phase 1 – Grundlinie
 

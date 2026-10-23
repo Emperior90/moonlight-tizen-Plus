@@ -148,9 +148,12 @@ RUN echo \
 	'expect eof\n' \
 | expect
 
-# Rename the output WGT file by appending a suffix for the ForceGM variant, or leave without a suffix for the Standard variant
+# Rename the output WGT file by appending a suffix for the ForceGM variant, or leave without a suffix for the Standard variant.
+# The Tizen CLI names the package after the application name in config.xml, so take the one WGT file it produced.
 RUN if [ "$FORCE_GAME_MODE" = "true" ]; then SUFFIX="-ForceGM"; else SUFFIX=""; fi; \
-	mv build/widget/Moonlight.wgt "Moonlight${SUFFIX}.wgt" && ls -la *.wgt
+	set -- build/widget/*.wgt; \
+	if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then echo "Expected exactly one WGT file in build/widget, found: $*"; exit 1; fi; \
+	mv "$1" "Moonlight${SUFFIX}.wgt" && ls -la *.wgt
 
 # Clean up unnecessary files to reduce image size
 RUN rm -rf \
