@@ -1,3 +1,8 @@
+// Prefix of the Smart Hub preview images in the shared documents directory. This build can be installed next to the
+// regular Moonlight app, which uses 'preview-', so its files get their own prefix (it still starts with 'preview-',
+// which the box art server of the service expects)
+var SMART_HUB_PREVIEW_FILE_PREFIX = 'preview-s90c-';
+
 // Safely wraps IPv6 addresses in brackets for URL construction.
 // IPv4 addresses and DNS hostnames do not contain colons, so they are untouched.
 function formatAddressForUrl(address) {
@@ -679,7 +684,7 @@ NvHTTP.prototype = {
             }
 
             // Check whether an optimized Smart Hub Preview has already been cached
-            var previewFileName = 'preview-' + appId + '.jpg';
+            var previewFileName = SMART_HUB_PREVIEW_FILE_PREFIX + appId + '.jpg';
             var previewFilePath = 'documents/' + previewFileName;
 
             // Try to open the cached preview box art to determine whether it already exists
@@ -741,7 +746,7 @@ NvHTTP.prototype = {
                 } catch(error) {
                   console.error('%c[utils.js, getBoxArt]', 'color: gray;', 'Error: Failed to delete original box art file ' + boxArtFileName + ': ' + error.message);
                 }
-                var previewFileName = 'preview-' + appId + '.jpg';
+                var previewFileName = SMART_HUB_PREVIEW_FILE_PREFIX + appId + '.jpg';
                 try {
                   tizen.filesystem.deleteFile('documents/' + previewFileName);
                 } catch(error) {
@@ -800,8 +805,9 @@ NvHTTP.prototype = {
               // Safely check if the directory entry is a valid string
               if (files[i] && typeof files[i] === 'string') {
                 var filename = files[i];
-                // Check if the filename matches the patterns for cached preview box art images
-                if ((filename.startsWith('boxart-') && filename.endsWith('.png')) || (filename.startsWith('preview-') && filename.endsWith('.jpg'))) {
+                // Check if the filename matches the pattern of the cached preview box art images of this build, and
+                // leave the files of the regular Moonlight app in the shared directory alone
+                if (filename.startsWith(SMART_HUB_PREVIEW_FILE_PREFIX) && filename.endsWith('.jpg')) {
                   try {
                     // Delete the matching cached preview box art files from public storage
                     tizen.filesystem.deleteFile(previewBoxArtDir + '/' + filename);
@@ -931,7 +937,7 @@ NvHTTP.prototype = {
   savePreviewImage: function(appId, previewDataUrl) {
     try {
       // Build the filename and path used by the local HTTP server
-      var filename = 'preview-' + appId + '.jpg';
+      var filename = SMART_HUB_PREVIEW_FILE_PREFIX + appId + '.jpg';
       var filePath = 'documents/' + filename;
 
       // Extract the Base64 payload from the data URL and convert it to binary data

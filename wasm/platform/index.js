@@ -2841,7 +2841,7 @@ function showApps(host) {
                 }
 
                 // Use deterministic filename so the local HTTP server route stays stable
-                var filename = 'preview-' + app.id + '.jpg';
+                var filename = SMART_HUB_PREVIEW_FILE_PREFIX + app.id + '.jpg';
                 var cacheBuster = '?v=' + Date.now();
 
                 // Determine local path from resolvedPromise if it's a file URI
@@ -3042,6 +3042,12 @@ function handleOnScreenOverlays() {
 function startGame(host, appID) {
   if (!host || !host.paired) {
     console.error('%c[index.js, startGame]', 'color: green;', 'Error: Attempted to start a game, but the host was not initialized properly! Host object: ', host);
+    return;
+  }
+  // Don't start a stream while the app is in the background (e.g. the delayed start after quitting another app, or a
+  // deep link that arrives while hidden), see the visibilitychange listener
+  if (document.visibilityState === 'hidden') {
+    console.warn('%c[index.js, startGame]', 'color: green;', 'Warning: Not starting app ' + appID + ' while Moonlight is in the background.');
     return;
   }
   // Ignore a second start (e.g. from a Smart Hub deep link) while a stream is starting or running
@@ -5002,6 +5008,7 @@ function loadHTTPCertsCb() {
         // Using the persisted list avoids requiring live host connections at startup.
         getData('previewApps', function(storedPreview) {
           _previewApps = (storedPreview.previewApps != null) ? storedPreview.previewApps : {};
+          normalizePreviewImageUris(_previewApps);
           updatePreviewData();
         });
         console.log('%c[index.js, loadHTTPCertsCb]', 'color: green;', 'Loading previously connected hosts...');
@@ -5026,6 +5033,19 @@ function loadHTTPCertsCb() {
           }
         });
       });
+    });
+  });
+}
+
+// Point the stored Smart Hub tiles at the box art server of this build, since tiles saved by an earlier build still
+// use the port of the regular Moonlight app (8888), whose server then answers for them or nothing does
+function normalizePreviewImageUris(previewApps) {
+  Object.keys(previewApps).forEach(function(serverUid) {
+    var entry = previewApps[serverUid];
+    (entry && entry.apps || []).forEach(function(app) {
+      if (typeof app.imageUri === 'string') {
+        app.imageUri = app.imageUri.replace(/:\d+\/preview-/, ':' + SMART_HUB_PREVIEW_PORT + '/preview-');
+      }
     });
   });
 }
@@ -5429,7 +5449,16 @@ document.addEventListener('visibilitychange', function() {
   }
   console.log('%c[index.js, visibilitychange]', 'color: green;', details + '.');
 
-  if (document.visibilityState === 'hidden' && isInGame === true) {
+  if (document.visibilityState === 'hidden' && isInGame !== true) {
+    // A start can still be on its way to the stream view (the server info refresh of startGame, the delayed start
+    // after quitting another app, a deep link). Invalidate it, so that it can't start a stream in the background.
+    streamLaunchId++;
+    try {
+      stopAudioScheduler();
+    } catch (error) {
+      console.error('%c[index.js, visibilitychange]', 'color: green;', 'Error: Failed to stop the audio scheduler: ' + error);
+    }
+  } else if (document.visibilityState === 'hidden') {
     console.log('%c[index.js, visibilitychange]', 'color: green;', 'Ending the stream, since Moonlight went to the background.');
     isStreamStoppedInBackground = true;
     try {

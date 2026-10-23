@@ -73,7 +73,8 @@ All notable changes to this project will be documented in this file.
 - Fixed a Smart Hub deep link starting a second stream on top of a running one
 - Fixed the performance stats showing 'signal strength: NaN percent' on TVs that report no Wi-Fi signal strength
 - Fixed a stream left running in the background when the app was hidden (Home key, another app), which kept the video decoder and the network busy and could make the TV hang when another app started its video; the stream now ends and a notice says how to resume
-- Fixed the Smart Hub preview server of this build and the regular Moonlight app competing for the same port (this build uses 8889)
+- Fixed the Smart Hub preview server of this build and the regular Moonlight app competing for the same port (this build uses 8889, and tiles saved earlier are moved to it) and for the same preview image files (this build uses its own file prefix)
+- Fixed a start that was still on its way (e.g. the delayed start after quitting another app) starting the stream after the app went to the background
 - Fixed every FEC recovery blocking the video receive thread for up to 15 ms or more on a desktop CPU by removing a needless matrix multiply from the Reed-Solomon setup (the output is unchanged)
 - Fixed a freeze of up to 120 frames (2 s at 60 FPS) after a wrongly predicted frame loss without reference frame invalidation, as in upstream moonlight-common-c, and a partially received IDR frame leading to a reference frame invalidation request
 - Fixed each lost audio packet adding 5 ms to the audio delay of the Web Audio backend by concealing it with one negotiated frame instead of 10 ms
