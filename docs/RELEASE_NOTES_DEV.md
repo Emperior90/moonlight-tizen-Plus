@@ -16,7 +16,7 @@
 
 **Stream endet im Hintergrund**
 
-- Öffnest du eine andere App oder bleibt Moonlight länger als 30 Sekunden im Hintergrund, endet der Stream. Schnellmenü und Lautstärke des TVs lassen ihn weiterlaufen. Vorher lief er im Hintergrund weiter, belegte das WLAN, und beim Öffnen einer anderen Streaming-App konnte der TV hängen bleiben. Das Spiel läuft am PC weiter: Moonlight S90C öffnen und das Spiel auswählen.
+- Bleibt Moonlight länger als 1 Minute im Hintergrund (Homescreen, andere App), endet der Stream, früher, wenn der TV der App das Video ganz wegnimmt. Schnellmenü und Lautstärke des TVs sollen ihn weiterlaufen lassen; die neue Overlay-Zeile *Moonlight hidden during the stream* zeigt, ob der TV die App dabei verdeckt. Vorher lief er im Hintergrund weiter, belegte das WLAN, und beim Öffnen einer anderen Streaming-App konnte der TV hängen bleiben. Das Spiel läuft am PC weiter: Moonlight S90C öffnen und das Spiel auswählen.
 - Die WLAN-Signalstärke im Overlay zeigt kein „NaN“ mehr, wenn der TV keinen Wert liefert.
 
 **Stabilität und Bedienung**

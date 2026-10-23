@@ -312,6 +312,7 @@
   "TV Model Name: %1$s": "TV Model Name: %1$s",
   "TV Model Group: %1$s": "TV Model Group: %1$s",
   "Failed to load system information!": "Failed to load system information!",
+  "Moonlight hidden during the stream: %1$s times, video closed by the TV: %2$s times (last reason %3$s)": "Moonlight hidden during the stream: %1$s times, video closed by the TV: %2$s times (last reason %3$s)",
   "A pairing request is currently in progress. Please wait for it to timeout or finish before trying again.": "A pairing request is currently in progress. Please wait for it to timeout or finish before trying again.",
   "Failed to connect to %1$s. Ensure Sunshine is running on your host PC or GameStream is enabled in GeForce Experience SHIELD settings.": "Failed to connect to %1$s. Ensure Sunshine is running on your host PC or GameStream is enabled in GeForce Experience SHIELD settings.",
   "Connecting to %1$s...": "Connecting to %1$s...",

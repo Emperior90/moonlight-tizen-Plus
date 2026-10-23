@@ -352,6 +352,7 @@ function handleMessage(msg) {
     // app list has loaded. This runs synchronously inside Module.stopStream(), before the next key press.
     isInGame = false;
     wasmSessionStarted = false;
+    isStreamConnected = false;
     isStreamVideoTrackClosed = false;
     streamLaunchId++;
     leaveStreamView(streamLaunchHost || api);
@@ -391,6 +392,7 @@ function handleMessage(msg) {
     if (isInGame !== true) {
       return;
     }
+    isStreamConnected = true;
     // Keep the screensaver of the TV off during a session played only with a gamepad
     setTvScreenSaver(false);
     // Prepare the screen for video stream
@@ -424,10 +426,10 @@ function handleMessage(msg) {
     warningDialog(t('Connection Error'), translateBackendMessage(msg.replace('DialogMsg: ', '')));
   } else if (msg.indexOf('VideoTrackClosed: ') === 0) {
     // The TV closed the video track of the running stream, e.g. because another app took over the video decoder
-    onStreamVideoTrackStateChanged(true);
+    onStreamVideoTrackStateChanged(true, parseInt(msg.replace('VideoTrackClosed: ', ''), 10));
   } else if (msg === 'VideoTrackOpened') {
     // The TV reopened the video track of the running stream
-    onStreamVideoTrackStateChanged(false);
+    onStreamVideoTrackStateChanged(false, -1);
   } else if (msg === 'displayVideo') {
     // Show the video stream now
     $('#listener').addClass('fullscreen');
@@ -460,7 +462,8 @@ function handleMessage(msg) {
     // and the audio statistics of the Web Audio backend
     $('#performance-stats').css('background', 'rgba(0, 0, 0, 0.5)');
     var audioStatsLines = typeof getAudioStatsLines === 'function' ? getAudioStatsLines() : '';
-    $('#performance-stats').text(translateBackendMessage(msg.replace('StatMsg: ', '')) + (streamNetworkInfo ? '\n' + streamNetworkInfo : '') + (audioStatsLines ? '\n' + audioStatsLines : ''));
+    var backgroundStatsLine = typeof getBackgroundStatsLine === 'function' ? getBackgroundStatsLine() : '';
+    $('#performance-stats').text(translateBackendMessage(msg.replace('StatMsg: ', '')) + (streamNetworkInfo ? '\n' + streamNetworkInfo : '') + (audioStatsLines ? '\n' + audioStatsLines : '') + (backgroundStatsLine ? '\n' + backgroundStatsLine : ''));
     // Keep the Wi-Fi signal strength of the network connection current while the overlay is shown
     refreshStreamNetworkInfo();
   } else if (msg.indexOf('controllerRumble: ') === 0) {

@@ -312,6 +312,7 @@
   "TV Model Name: %1$s": "Nome do Modelo da TV: %1$s",
   "TV Model Group: %1$s": "Grupo do Modelo da TV: %1$s",
   "Failed to load system information!": "Falha ao carregar informações do sistema!",
+  "Moonlight hidden during the stream: %1$s times, video closed by the TV: %2$s times (last reason %3$s)": "Moonlight oculto durante a transmissão: %1$s vezes, vídeo fechado pela TV: %2$s vezes (último motivo %3$s)",
   "A pairing request is currently in progress. Please wait for it to timeout or finish before trying again.": "Uma solicitação de emparelhamento está em andamento. Aguarde até que ela expire ou seja concluída antes de tentar novamente.",
   "Failed to connect to %1$s. Ensure Sunshine is running on your host PC or GameStream is enabled in GeForce Experience SHIELD settings.": "Falha ao conectar a %1$s. Verifique se o Sunshine está em execução no PC host ou se o GameStream está habilitado nas configurações SHIELD do GeForce Experience.",
   "Connecting to %1$s...": "Conectando a %1$s...",

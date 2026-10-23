@@ -29,7 +29,7 @@ Die Details zu jedem Schritt stehen im [Optimierungsplan](S90C-Optimierungsplan.
 
 Auf der SolarCell-Fernbedienung erreichst du Rot und Gelb meist über die Taste **„123“**, die die Farbtasten auf dem Bildschirm einblendet.
 
-Das **Schnellmenü** und die Lautstärke des TVs lassen den Stream weiterlaufen. **Öffnest du eine andere App** oder bleibt Moonlight länger als 30 Sekunden im Hintergrund (z. B. auf dem Homescreen), endet der Stream. Das Spiel läuft am PC weiter: Moonlight S90C wieder öffnen und das Spiel auswählen, dann geht es weiter.
+Das **Schnellmenü** und die Lautstärke des TVs sollen den Stream weiterlaufen lassen. Bleibt Moonlight **länger als 1 Minute im Hintergrund** (Homescreen, andere App), endet der Stream, früher, wenn der TV der App das Video ganz wegnimmt. Endet er doch einmal im Schnellmenü, sag Bescheid und notiere die Overlay-Zeile *Moonlight hidden during the stream*. Das Spiel läuft am PC weiter: Moonlight S90C wieder öffnen und das Spiel auswählen, dann geht es weiter.
 
 ## 3. Die drei Zeilen, auf die es ankommt
 

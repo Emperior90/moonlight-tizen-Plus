@@ -3062,7 +3062,11 @@ function startGame(host, appID) {
   var launchId = ++streamLaunchId;
   streamLaunchHost = host;
   wasmSessionStarted = false;
+  isStreamConnected = false;
   isStreamVideoTrackClosed = false;
+  streamVideoTrackCloseReason = -1;
+  streamHiddenCount = 0;
+  streamVideoTrackCloseCount = 0;
 
   // Start the audio scheduler of the Web Audio backend while we are still running inside the
   // handler of the key press that started the stream, because the audio context of a device
@@ -5435,14 +5439,23 @@ window.onload = onWindowLoad;
 
 // Log when the app is hidden and shown again (Home key, another app, input switch), with the stream state and how long
 // it was hidden, and end a stream that keeps running in the background. Such a stream keeps the network busy (the host
-// keeps sending 100+ Mbps), and the TV can hang when another app then starts its own video. Overlays of the TV such as
-// the quick settings or the volume leave the stream running: it only ends once the TV takes the video away from the
-// app (it closes the video track, as when another app starts) while the app is hidden, or after the app stayed hidden
-// for BACKGROUND_STREAM_STOP_DELAY_MS. The game keeps running on the host, so selecting it again resumes it.
-var BACKGROUND_STREAM_STOP_DELAY_MS = 30000;
+// keeps sending 100+ Mbps), and the TV can hang when another app then starts its own video. Whether overlays of the TV
+// such as the quick settings hide the app isn't known, so a hidden app alone doesn't end the stream at once:
+// - a stream that is still connecting ends at once, since it has nothing to show yet,
+// - a stream whose video track the TV closed for a reason other than a suspension (which only says that the app is
+//   hidden) ends at once, since the TV took the video away from it,
+// - any other stream ends once the app stayed hidden for BACKGROUND_STREAM_STOP_DELAY_MS.
+// The game keeps running on the host, so selecting it again resumes it. The overlay counts how often the app was hidden
+// during the stream and how often the TV closed its video, so a test can show what the quick settings do.
+var BACKGROUND_STREAM_STOP_DELAY_MS = 60000;
+var EMSS_CLOSE_REASON_SOURCE_SUSPENDED = 3;
 var pageHiddenSince = 0;
 var isStreamStoppedInBackground = false;
+var isStreamConnected = false; // Whether the connection of the stream is established, see messages.js
 var isStreamVideoTrackClosed = false; // Whether the TV closed the video track of the running stream, see messages.js
+var streamVideoTrackCloseReason = -1;
+var streamHiddenCount = 0;
+var streamVideoTrackCloseCount = 0;
 var backgroundStreamStopTimer = null;
 
 // End the stream if it's still running while the app is hidden
@@ -5466,14 +5479,28 @@ function endStreamInBackground(reason) {
 }
 
 // Called by messages.js when the TV closes or reopens the video track of the running stream
-function onStreamVideoTrackStateChanged(closed) {
+function onStreamVideoTrackStateChanged(closed, reason) {
   isStreamVideoTrackClosed = closed;
-  if (closed) {
+  if (!closed) {
+    return;
+  }
+  streamVideoTrackCloseCount++;
+  streamVideoTrackCloseReason = reason;
+  if (reason !== EMSS_CLOSE_REASON_SOURCE_SUSPENDED) {
     // Act after the media callback of the WASM module that reported it has returned
     setTimeout(function() {
-      endStreamInBackground('the TV closed the video of the stream');
+      endStreamInBackground('the TV closed the video of the stream, reason ' + reason);
     }, 0);
   }
+}
+
+// Return the overlay line about the stream in the background, once the app was hidden or the TV closed the video
+function getBackgroundStatsLine() {
+  if (isInGame !== true || (streamHiddenCount === 0 && streamVideoTrackCloseCount === 0)) {
+    return '';
+  }
+  return t('Moonlight hidden during the stream: %1$s times, video closed by the TV: %2$s times (last reason %3$s)',
+    String(streamHiddenCount), String(streamVideoTrackCloseCount), String(streamVideoTrackCloseReason));
 }
 
 document.addEventListener('visibilitychange', function() {
@@ -5496,11 +5523,11 @@ document.addEventListener('visibilitychange', function() {
       console.error('%c[index.js, visibilitychange]', 'color: green;', 'Error: Failed to stop the audio scheduler: ' + error);
     }
   } else if (document.visibilityState === 'hidden') {
-    if (!wasmSessionStarted) {
-      // The stream is still being launched, which has nothing to show yet, so cancel it right away
+    streamHiddenCount++;
+    if (!wasmSessionStarted || !isStreamConnected) {
       endStreamInBackground('the stream was still starting');
-    } else if (isStreamVideoTrackClosed) {
-      endStreamInBackground('the TV closed the video of the stream');
+    } else if (isStreamVideoTrackClosed && streamVideoTrackCloseReason !== EMSS_CLOSE_REASON_SOURCE_SUSPENDED) {
+      endStreamInBackground('the TV closed the video of the stream, reason ' + streamVideoTrackCloseReason);
     } else {
       clearTimeout(backgroundStreamStopTimer);
       backgroundStreamStopTimer = setTimeout(function() {
