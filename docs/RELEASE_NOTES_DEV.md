@@ -11,7 +11,7 @@
 
 **Eigene App „Moonlight S90C“**
 
-- Eigener Name und eigene Paket-ID, damit diese Version und die normale Moonlight-App gleichzeitig installiert sein können und im TV-Menü unterscheidbar sind.
+- Eigener Name, eigene Paket-ID und ein Icon mit blauem „S90C“-Schriftzug, damit diese Version und die normale Moonlight-App gleichzeitig installiert sein können und im TV-Menü unterscheidbar sind.
 
 **Stabilität und Bedienung**
 

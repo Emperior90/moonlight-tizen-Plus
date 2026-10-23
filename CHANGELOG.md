@@ -35,7 +35,7 @@ All notable changes to this project will be documented in this file.
 - Added a one-page quick guide for setting up and testing the S90C (`docs/S90C-Kurzanleitung.md`)
 
 ### Changed
-- Renamed the app to 'Moonlight S90C' with its own package ID (MLightS90C), so that it can be installed next to the regular Moonlight app; it keeps its own settings and pairing
+- Renamed the app to 'Moonlight S90C' with its own package ID (MLightS90C) and an 'S90C' badge on the icon, so that it can be installed next to the regular Moonlight app; it keeps its own settings and pairing
 - Reduced the busy wait of the frame pacer from 1 ms to 0.2 ms, as usleep already waits on a futex in worker threads
 - Reworked the video frame pacing to follow the usual arrival time of the frames, so that a single late frame no longer holds back every following frame by up to tens of milliseconds, and to follow a later arrival time only once two consecutive windows confirm it, so that the burst of frames after a network stall cannot hold back the next second of frames
 - Paused the gamepad polling of the UI while streaming, which kept the main thread busy every 5 ms even though the streaming session polls the gamepads on its own
