@@ -251,12 +251,13 @@ jobs:
       contents: write
     # This job turns an existing pre-release into a full release, so that a tested build stays available: the cleanup of
     # the next pre-release of the branch only deletes pre-releases. It keeps the files of the pre-release and moves it to a
-    # new tag on the same commit, which the release creates itself (the in-app update check compares the tag with the app
-    # version, and the timestamp of a pre-release tag would read as a newer version). The description comes from
-    # `docs/RELEASE_NOTES_STABLE.md`.
+    # new tag (the in-app update check compares the tag with the app version, and the timestamp of a pre-release tag would
+    # read as a newer version). The description comes from `docs/RELEASE_NOTES_STABLE.md`.
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - name: Promote the pre-release to a full release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -266,8 +267,16 @@ jobs:
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
           set -euo pipefail
+          # Calls the GitHub API and prints the response, or the error message of GitHub and fails
           api() {
-            curl -sSfL -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github.v3+json" "$@"
+            local status
+            status=$(curl -sSL -o api_response.json -w '%{http_code}' -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" "$@")
+            if [ "$status" -ge 400 ]; then
+              echo "GitHub API error $status: $(cat api_response.json)" >&2
+              return 1
+            fi
+            cat api_response.json
           }
           for tag in "$PROMOTE_TAG" "$RELEASE_TAG"; do
             if ! [[ "$tag" =~ ^v[0-9A-Za-z._-]+$ ]]; then
@@ -316,29 +325,38 @@ jobs:
           } > release_notes.md
           cat release_notes.md
 
-          # The new tag must not exist on another commit (a rerun finds it on the same commit)
+          # The new tag goes on the commit of this run, which the release creates itself: GitHub refused (403) to let the
+          # workflow token create it on the commit of the pre-release, whose workflow files differ from this run's. The
+          # files of the release were built from the commit of the pre-release, so this commit must have the same app
+          # sources and differ only in the workflows and documents.
+          app_changes=$(git diff --name-only "$sha" "$GITHUB_SHA" -- . ':(exclude).github' ':(exclude)docs' \
+            ':(exclude)CHANGELOG.md' ':(exclude)README.md')
+          if [ -n "$app_changes" ]; then
+            echo "The app sources changed since the commit $sha of the pre-release:"
+            echo "$app_changes"
+            exit 1
+          fi
+
+          # The new tag must not exist on another commit (a rerun finds it on this commit)
           status=$(curl -sSL -o existing_ref.json -w '%{http_code}' -H "Authorization: token $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github.v3+json" "$API_URL/git/ref/tags/$RELEASE_TAG")
           if [ "$status" = "200" ]; then
-            if [ "$(jq -r '.object.sha' existing_ref.json)" != "$sha" ]; then
+            if [ "$(jq -r '.object.sha' existing_ref.json)" != "$GITHUB_SHA" ]; then
               echo "The tag $RELEASE_TAG already exists on another commit."
               exit 1
             fi
-            echo "The tag $RELEASE_TAG already exists on commit $sha."
+            echo "The tag $RELEASE_TAG already exists on commit $GITHUB_SHA."
           elif [ "$status" != "404" ]; then
             echo "Unexpected status $status while looking up the tag $RELEASE_TAG."
             exit 1
           fi
 
-          # The release creates the new tag on the commit of the pre-release itself. Creating it through the Git refs API
-          # is refused for this token (403) when the commit holds workflow files that the default branch doesn't have,
-          # while the releases API created the tag of the pre-release on the same commit.
-          jq -n --arg tag "$RELEASE_TAG" --arg sha "$sha" --arg name "Moonlight S90C ${RELEASE_TAG}" --rawfile body release_notes.md \
+          jq -n --arg tag "$RELEASE_TAG" --arg sha "$GITHUB_SHA" --arg name "Moonlight S90C ${RELEASE_TAG}" --rawfile body release_notes.md \
             '{tag_name: $tag, target_commitish: $sha, name: $name, body: $body, draft: false, prerelease: false, make_latest: "true"}' \
             | api -X PATCH "$API_URL/releases/$release_id" --data @- > /dev/null
           echo "Turned the pre-release into the full release $RELEASE_TAG."
-          if [ "$(api "$API_URL/git/ref/tags/$RELEASE_TAG" | jq -r '.object.sha')" != "$sha" ]; then
-            echo "The tag $RELEASE_TAG doesn't point to commit $sha. The tag $PROMOTE_TAG is kept."
+          if [ "$(api "$API_URL/git/ref/tags/$RELEASE_TAG" | jq -r '.object.sha')" != "$GITHUB_SHA" ]; then
+            echo "The tag $RELEASE_TAG doesn't point to commit $GITHUB_SHA. The tag $PROMOTE_TAG is kept."
             exit 1
           fi
 
