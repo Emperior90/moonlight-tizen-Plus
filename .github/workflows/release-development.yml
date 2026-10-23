@@ -1,8 +1,20 @@
 # This workflow builds a Docker image from the repository, pushes it to GitHub Container Registry, and then triggers a second job to extract an artifact and create a GitHub pre-release.
 name: Release (Development)
 # Configure this workflow to be triggered manually from the GitHub Actions tab for development-related branches.
+# With `promote_tag`, it builds nothing and turns that pre-release into a full release instead (see the last job).
 on:
   workflow_dispatch:
+    inputs:
+      promote_tag:
+        description: 'Tag of a pre-release to turn into a full release with its files kept (leave empty to build a new pre-release)'
+        required: false
+        default: ''
+        type: string
+      release_tag:
+        description: 'New tag of the full release, e.g. v1.19.0-s90c.1 (only used with promote_tag)'
+        required: false
+        default: ''
+        type: string
 # Queues the release runs of both workflows, because they push the ForceGM image to the same `:forcegm` tag, which an
 # overlapping run would overwrite before the upload job of the other run pulls it (a package of another commit).
 concurrency:
@@ -15,7 +27,7 @@ env:
 # Defines two jobs. The first builds and pushes the Docker images, while the second extracts the artifacts and creates a GitHub pre-release.
 jobs:
   build-and-push-image:
-    if: github.ref != 'refs/heads/master'
+    if: github.ref != 'refs/heads/master' && inputs.promote_tag == ''
     runs-on: ubuntu-latest
     # Sets the permissions granted to the `GITHUB_TOKEN` for the actions in this job.
     permissions:
@@ -79,7 +91,7 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}:forcegm
           labels: ${{ steps.meta.outputs.labels }}
   run-and-upload-release:
-    if: github.ref != 'refs/heads/master'
+    if: github.ref != 'refs/heads/master' && inputs.promote_tag == ''
     runs-on: ubuntu-latest
     needs: build-and-push-image
     # Sets the permissions granted to the `GITHUB_TOKEN` for the actions in this job.
@@ -231,3 +243,103 @@ jobs:
           asset_path: ./Moonlight-ForceGM.wgt
           asset_name: Moonlight-ForceGM.wgt
           asset_content_type: application/octet-stream
+  promote-pre-release:
+    if: inputs.promote_tag != ''
+    runs-on: ubuntu-latest
+    # Sets the permissions granted to the `GITHUB_TOKEN` for the actions in this job.
+    permissions:
+      contents: write
+    # This job turns an existing pre-release into a full release, so that a tested build stays available: the cleanup of
+    # the next pre-release of the branch only deletes pre-releases. It keeps the files of the pre-release, moves it to a new
+    # tag on the same commit (the in-app update check compares the tag with the app version, and the timestamp of a
+    # pre-release tag would read as a newer version) and takes its description from `docs/RELEASE_NOTES_STABLE.md`.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Promote the pre-release to a full release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROMOTE_TAG: ${{ inputs.promote_tag }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          API_URL: ${{ github.api_url }}/repos/${{ github.repository }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          api() {
+            curl -sSfL -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github.v3+json" "$@"
+          }
+          for tag in "$PROMOTE_TAG" "$RELEASE_TAG"; do
+            if ! [[ "$tag" =~ ^v[0-9A-Za-z._-]+$ ]]; then
+              echo "Invalid tag: '$tag'"
+              exit 1
+            fi
+          done
+          if [ ! -s docs/RELEASE_NOTES_STABLE.md ]; then
+            echo "The release notes docs/RELEASE_NOTES_STABLE.md are missing."
+            exit 1
+          fi
+
+          release=$(api "$API_URL/releases/tags/$PROMOTE_TAG")
+          release_id=$(echo "$release" | jq -r '.id')
+          if [ "$(echo "$release" | jq -r '.prerelease')" != "true" ]; then
+            echo "The release of $PROMOTE_TAG is not a pre-release."
+            exit 1
+          fi
+          # Resolve the commit of the pre-release from its tag (a lightweight tag, or an annotated one pointing to it)
+          ref=$(api "$API_URL/git/ref/tags/$PROMOTE_TAG")
+          sha=$(echo "$ref" | jq -r '.object.sha')
+          if [ "$(echo "$ref" | jq -r '.object.type')" = "tag" ]; then
+            sha=$(api "$API_URL/git/tags/$sha" | jq -r '.object.sha')
+          fi
+          echo "Promoting $PROMOTE_TAG (release $release_id, commit $sha) to $RELEASE_TAG"
+
+          {
+            echo "# Moonlight S90C ${RELEASE_TAG}"
+            echo
+            echo "- Ensure your setup meets the necessary [requirements](https://github.com/brightcraft/moonlight-tizen#%EF%B8%8F-prerequisites) for the best possible streaming experience."
+            echo "- Choose one of the available [installation methods](https://github.com/brightcraft/moonlight-tizen/wiki/Installation-Guide) and follow the instructions to install the application on your TV."
+            echo
+            echo "## What's Changed:"
+            echo
+            cat docs/RELEASE_NOTES_STABLE.md
+            echo
+            echo "- **Commit**: [\`${sha:0:7}\`](${REPO_URL}/commit/${sha})"
+            echo "- **Full Changelog**: [CHANGELOG.md](${REPO_URL}/blob/${sha}/CHANGELOG.md)"
+            if [ -f docs/S90C-Kurzanleitung.md ]; then
+              echo "- **Kurzanleitung**: [docs/S90C-Kurzanleitung.md](${REPO_URL}/blob/${sha}/docs/S90C-Kurzanleitung.md)"
+            fi
+            if [ -f docs/S90C-Optimierungsplan.md ]; then
+              echo "- **Optimierungsplan**: [docs/S90C-Optimierungsplan.md](${REPO_URL}/blob/${sha}/docs/S90C-Optimierungsplan.md)"
+            fi
+          } > release_notes.md
+          cat release_notes.md
+
+          # Create the new tag on the commit of the pre-release, unless a rerun already did
+          status=$(curl -sSL -o existing_ref.json -w '%{http_code}' -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" "$API_URL/git/ref/tags/$RELEASE_TAG")
+          if [ "$status" = "200" ]; then
+            if [ "$(jq -r '.object.sha' existing_ref.json)" != "$sha" ]; then
+              echo "The tag $RELEASE_TAG already exists on another commit."
+              exit 1
+            fi
+            echo "The tag $RELEASE_TAG already exists on commit $sha."
+          elif [ "$status" = "404" ]; then
+            jq -n --arg ref "refs/tags/$RELEASE_TAG" --arg sha "$sha" '{ref: $ref, sha: $sha}' \
+              | api -X POST "$API_URL/git/refs" --data @- > /dev/null
+            echo "Created the tag $RELEASE_TAG on commit $sha."
+          else
+            echo "Unexpected status $status while looking up the tag $RELEASE_TAG."
+            exit 1
+          fi
+
+          jq -n --arg tag "$RELEASE_TAG" --arg name "Moonlight S90C ${RELEASE_TAG}" --rawfile body release_notes.md \
+            '{tag_name: $tag, name: $name, body: $body, draft: false, prerelease: false, make_latest: "true"}' \
+            | api -X PATCH "$API_URL/releases/$release_id" --data @- > /dev/null
+          echo "Turned the pre-release into the full release $RELEASE_TAG."
+
+          # The old tag of the pre-release is no longer used by any release
+          api -X DELETE "$API_URL/git/refs/tags/$PROMOTE_TAG" > /dev/null
+          echo "Deleted the tag $PROMOTE_TAG."
+
+          api "$API_URL/releases/$release_id" \
+            | jq '{html_url, tag_name, name, prerelease, draft, assets: [.assets[] | {name, size}]}'

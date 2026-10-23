@@ -5,7 +5,7 @@ Die Details zu jedem Schritt stehen im [Optimierungsplan](S90C-Optimierungsplan.
 ## 1. Einmal einrichten
 
 **TV**
-- `Moonlight-ForceGM.wgt` aus dem neuesten Pre-Release installieren (Tizen 9). Die App heißt auf dem TV **„Moonlight S90C“** und läuft neben der normalen Moonlight-App. Beim ersten Start den PC einmal neu koppeln (PIN in Sunshine eingeben), denn sie hat eigene Einstellungen und eine eigene Kopplung.
+- `Moonlight-ForceGM.wgt` aus dem neuesten **Release** installieren (Tizen 9), auf GitHub mit „Latest“ markiert. Pre-Releases sind Test-Builds und verschwinden mit dem nächsten Test-Build. Die App heißt auf dem TV **„Moonlight S90C“** und läuft neben der normalen Moonlight-App. Beim ersten Start den PC einmal neu koppeln (PIN in Sunshine eingeben), denn sie hat eigene Einstellungen und eine eigene Kopplung.
 - Bildeinstellungen: *Schärfe 0*, *Kontrastverbesserung*, *Picture Clarity* und *Digital Clean View* aus, Eco-Optionen aus.
 - Für Sessions über 4 Stunden *Automatisch ausschalten* deaktivieren (Allgemein → Energie und Energiesparen).
 
