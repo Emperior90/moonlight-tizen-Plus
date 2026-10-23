@@ -33,6 +33,7 @@ All notable changes to this project will be documented in this file.
 - Logged why the TV closed a media track, a reopening of the video track during the stream and the frames discarded meanwhile, and when the app is hidden and shown again
 - Documented a lifecycle test (Home key, TV menus, input switch, RED during the start) in the optimization plan
 - Added a one-page quick guide for setting up and testing the S90C (`docs/S90C-Kurzanleitung.md`)
+- Added German release notes for the first full release (`docs/RELEASE_NOTES_STABLE.md`), which list every change since Moonlight Tizen 1.19.0 and which parts are specific to the S90C
 
 ### Changed
 - Renamed the app to 'Moonlight S90C' with its own package ID (MLightS90C) and an 'S90C' badge on the icon, so that it can be installed next to the regular Moonlight app; it keeps its own settings and pairing
