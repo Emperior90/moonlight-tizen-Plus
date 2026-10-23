@@ -815,8 +815,9 @@ function getRecommendedBitrate(connectionType) {
 function getWifiSignalStrength(callbackFunction) {
   try {
     tizen.systeminfo.getPropertyValue('WIFI_NETWORK', function(wifiNetwork) {
-      if (wifiNetwork && wifiNetwork.status === 'ON' && typeof wifiNetwork.signalStrength === 'number') {
-        callbackFunction(Math.round(wifiNetwork.signalStrength * 100));
+      // Some TVs (e.g. the S90C on Tizen 9) report NaN, which is a number too, so only accept a finite value
+      if (wifiNetwork && wifiNetwork.status === 'ON' && typeof wifiNetwork.signalStrength === 'number' && isFinite(wifiNetwork.signalStrength)) {
+        callbackFunction(Math.max(0, Math.min(100, Math.round(wifiNetwork.signalStrength * 100))));
       } else {
         callbackFunction(null);
       }

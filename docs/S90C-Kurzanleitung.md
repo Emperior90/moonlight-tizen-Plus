@@ -41,6 +41,8 @@ Sie sollen über die ganze Session bei **0** bleiben:
 
 Setzt der Ton aus (*underruns* in der Zeile *Audio session*): Audio Settings → *Audio jitter buffer* um 25 ms erhöhen.
 
+Knackt der Ton nur bei hoher Bitrate und steht *Audio backend* auf **EMSS** (dann zeigt das Overlay keine Audiozeilen): Bitrate eine Stufe senken. Alternativ *Audio backend* auf **Web Audio** stellen. Dessen Puffer fängt Schwankungen ab, der Ton kommt dafür etwas später.
+
 ## 4. Bitrate finden (einmal, ca. 1–1,5 Stunden)
 
 Im Bitrate-Menü (Basic Settings → Video bitrate) ändert Hoch/Runter in 5-Mbit/s-Schritten.

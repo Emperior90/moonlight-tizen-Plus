@@ -71,6 +71,7 @@ All notable changes to this project will be documented in this file.
 - Fixed a stream starting anyway after RED was pressed during 'Starting...', without audio and with RED and YELLOW not working, by cancelling the start and ignoring the late reply of the host
 - Fixed a repeated stop (a double RED press, the gamepad combo or a termination by the host at the same time) starting a second teardown thread and a second return to the app list, and a stop during a termination by the host tearing the connection down twice at the same time
 - Fixed a Smart Hub deep link starting a second stream on top of a running one
+- Fixed the performance stats showing 'signal strength: NaN percent' on TVs that report no Wi-Fi signal strength
 - Fixed every FEC recovery blocking the video receive thread for up to 15 ms or more on a desktop CPU by removing a needless matrix multiply from the Reed-Solomon setup (the output is unchanged)
 - Fixed a freeze of up to 120 frames (2 s at 60 FPS) after a wrongly predicted frame loss without reference frame invalidation, as in upstream moonlight-common-c, and a partially received IDR frame leading to a reference frame invalidation request
 - Fixed each lost audio packet adding 5 ms to the audio delay of the Web Audio backend by concealing it with one negotiated frame instead of 10 ms
