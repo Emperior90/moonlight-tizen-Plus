@@ -163,7 +163,40 @@ jobs:
         run: |
           docker stop temp_container temp_container_forcegm
           docker rm temp_container temp_container_forcegm
-      # Creates a new GitHub pre-release using the extracted version and includes a detailed description.
+      # Builds the description of the pre-release, with the release notes from `docs/RELEASE_NOTES_DEV.md` when the branch has them.
+      - name: Prepare release notes
+        env:
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          {
+            echo "# Moonlight Tizen v${TIMESTAMP}"
+            echo
+            echo "- Ensure your setup meets the necessary [requirements](https://github.com/brightcraft/moonlight-tizen#%EF%B8%8F-prerequisites) for the best possible streaming experience."
+            echo "- Choose one of the available [installation methods](https://github.com/brightcraft/moonlight-tizen/wiki/Installation-Guide) and follow the instructions to install the application on your TV."
+            echo
+            echo "## What's Changed:"
+            echo
+            if [ -s docs/RELEASE_NOTES_DEV.md ]; then
+              cat docs/RELEASE_NOTES_DEV.md
+            else
+              echo "- No release notes have been provided for this pre-release yet."
+            fi
+            echo
+            echo "- **Commit**: [\`${GITHUB_SHA:0:7}\`](${REPO_URL}/commit/${GITHUB_SHA})"
+            if [ -f CHANGELOG.md ]; then
+              echo "- **Full Changelog**: [CHANGELOG.md](${REPO_URL}/blob/${GITHUB_SHA}/CHANGELOG.md)"
+            fi
+            if [ -f docs/S90C-Optimierungsplan.md ]; then
+              echo "- **Optimierungsplan**: [docs/S90C-Optimierungsplan.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/S90C-Optimierungsplan.md)"
+            fi
+            echo
+            echo "> [!WARNING]"
+            echo "> This is a pre-release build intended for development and testing only."
+            echo "> Experimental features, bug fixes, and improvements may be unstable or incomplete."
+            echo "> Please report any unexpected behavior and provide feedback to help improve future releases."
+          } > release_notes.md
+          cat release_notes.md
+      # Creates a new GitHub pre-release using the extracted version and the release notes prepared above.
       - name: Create GitHub pre-release
         id: create_prerelease
         uses: actions/create-release@v1
@@ -172,22 +205,7 @@ jobs:
         with:
           tag_name: v${{ env.TIMESTAMP }}-${{ env.BRANCH }}
           release_name: "v${{ env.TIMESTAMP }}-${{ env.BRANCH }}"
-          body: |
-            # Moonlight Tizen v${{ env.TIMESTAMP }}
-
-            - Ensure your setup meets the necessary [requirements](https://github.com/brightcraft/moonlight-tizen#%EF%B8%8F-prerequisites) for the best possible streaming experience.
-            - Choose one of the available [installation methods](https://github.com/brightcraft/moonlight-tizen/wiki/Installation-Guide) and follow the instructions to install the application on your TV.
-
-            ## What's Changed:
-
-            - No release notes have been provided for this pre-release yet.
-
-            **Full Changelog**: https://github.com/brightcraft/moonlight-tizen/compare/vX.X.X...vX.X.X
-
-            > [!WARNING]
-            > This is a pre-release build intended for development and testing only.
-            > Experimental features, bug fixes, and improvements may be unstable or incomplete.
-            > Please report any unexpected behavior and provide feedback to help improve future releases.
+          body_path: release_notes.md
           draft: false
           prerelease: true
       # Uploads the Moonlight.wgt file as a release asset in the newly created GitHub pre-release.
