@@ -32,6 +32,7 @@ All notable changes to this project will be documented in this file.
 - Added a message and an automatic restart when the WebAssembly module aborts or one of its threads crashes, instead of a silent freeze
 - Logged why the TV closed a media track, a reopening of the video track during the stream and the frames discarded meanwhile, and when the app is hidden and shown again
 - Documented a lifecycle test (Home key, TV menus, input switch, RED during the start) in the optimization plan
+- Added a one-page quick guide for setting up and testing the S90C (`docs/S90C-Kurzanleitung.md`)
 
 ### Changed
 - Reduced the busy wait of the frame pacer from 1 ms to 0.2 ms, as usleep already waits on a futex in worker threads

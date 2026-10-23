@@ -186,6 +186,9 @@ jobs:
             if [ -f CHANGELOG.md ]; then
               echo "- **Full Changelog**: [CHANGELOG.md](${REPO_URL}/blob/${GITHUB_SHA}/CHANGELOG.md)"
             fi
+            if [ -f docs/S90C-Kurzanleitung.md ]; then
+              echo "- **Kurzanleitung**: [docs/S90C-Kurzanleitung.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/S90C-Kurzanleitung.md)"
+            fi
             if [ -f docs/S90C-Optimierungsplan.md ]; then
               echo "- **Optimierungsplan**: [docs/S90C-Optimierungsplan.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/S90C-Optimierungsplan.md)"
             fi

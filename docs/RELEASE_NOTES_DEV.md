@@ -41,6 +41,8 @@ Button „Samsung S90C optimization“, überarbeitetes Frame Pacing, Session-Z�
 
 ### So testest du
 
+Die einseitige **Kurzanleitung** (`docs/S90C-Kurzanleitung.md`, Link unten) fasst Einrichtung, Bitrate-Leiter und Dauertest zusammen. In Kürze:
+
 1. Overlay einschalten (Settings → Advanced Settings → *Performance statistics*, im Stream mit der gelben Taste).
 2. Grundlinie und Bitrate-Leiter nach Phase 1 und 2 im Plan, für jede Stufe den Stream neu starten.
 3. Optional HEVC gegen AV1 (Phase 3): erst mit gleicher, dann mit etwa 20 % weniger Bitrate.

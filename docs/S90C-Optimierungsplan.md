@@ -11,6 +11,9 @@ Dieses Dokument beschreibt:
 5. was in dieser App-Version geändert wurde,
 6. wie man Schritt für Schritt testet, bis der Stream fehlerfrei läuft.
 
+> [!TIP]
+> Nur einrichten und testen? Die **[Kurzanleitung](S90C-Kurzanleitung.md)** fasst das Wichtigste auf einer Seite zusammen. Dieses Dokument erklärt die Hintergründe und hilft, wenn ein Wert auffällig ist.
+
 > [!NOTE]
 > Der allgemeine Teil (Abschnitte 1–9) deckt beide Varianten ab (TV per LAN oder per WLAN). Die Auswertung deines konkreten Setups (Stand 20.10.2026: RTX 5080, Sunshine, FRITZ!Repeater als LAN-Brücke am TV, Tizen 9) steht in **[Abschnitt A](#a-auswertung-deines-setups-stand-20102026)** direkt nach der Kurzfassung.
 
