@@ -1,0 +1,20 @@
+{
+  "name": "moonlight-tizen-tests",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Test tools for the Moonlight Tizen app (see README.md). The app itself has no npm dependencies.",
+  "scripts": {
+    "test": "npm run test:tools && npm run test:unit && npm run test:native && npm run test:browser",
+    "test:tools": "node tools/check-es2018.js && node tools/check-em-asm.js && node tools/i18n-check.js",
+    "test:unit": "node --test \"unit/**/*.test.js\"",
+    "test:native": "bash native/run.sh",
+    "test:browser": "node --test --test-concurrency=2 \"browser/**/*.test.js\""
+  },
+  "devDependencies": {
+    "acorn": "8.15.0",
+    "playwright": "1.56.1"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

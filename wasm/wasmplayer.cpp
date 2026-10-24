@@ -46,8 +46,9 @@ static constexpr uint32_t kSampleRate = 48000;
 static constexpr std::chrono::milliseconds kMediaSetupTimeout{5000};
 
 // Maximum luma sample rate of HEVC and AV1 level 5.1, which covers 4K at up to 64 FPS. Faster
-// streams (e.g. 4K at 90 or 120 FPS) need level 5.2, which the TVs with a 120 Hz panel decode,
-// such as the S90C that supports HEVC and AV1 at 3840x2160 and 120 FPS.
+// streams (e.g. 4K at 90 or 120 FPS) need level 5.2, which the TVs with a 120 Hz panel and a
+// decoder for HEVC and AV1 at 3840x2160 and 120 FPS decode. The warnings of the UI use the same
+// value (LEVEL_51_MAX_LUMA_SAMPLE_RATE in wasm/platform/tv_profile.js).
 static constexpr uint64_t kLevel51MaxLumaSampleRate = 534773760;
 
 static uint32_t s_VideoFormat = 0;

@@ -99,18 +99,18 @@
         <div id="settings-right-pane">
           <div id="basicSettings" class="settings-options">
             <div class="setting-option">
-              <label><span data-i18n="Samsung S90C optimization">Samsung S90C optimization</span>
+              <label><span data-i18n="Optimal settings for this TV">Optimal settings for this TV</span>
                 <span class="badge badge-new" data-i18n="New">New</span>
               </label>
-              <span class="mdl-list__item-text-body" data-i18n="- Applies the best image quality settings for the Samsung S90C (4K, HEVC, HDR) with a bitrate that matches the network connection of the TV.">
-                - Applies the best image quality settings for the Samsung S90C (4K, HEVC, HDR) with a bitrate that matches the network connection of the TV.
+              <span class="mdl-list__item-text-body" data-i18n="- Applies the best image quality this TV supports (its highest resolution up to 4K, HEVC, and HDR if the TV supports it) with a bitrate that matches its network connection.">
+                - Applies the best image quality this TV supports (its highest resolution up to 4K, HEVC, and HDR if the TV supports it) with a bitrate that matches its network connection.
               </span>
-              <div id="s90cProfileMenu">
-                <button type="button" id="s90cProfileBtn" class="mdl-button mdl-js-button mdl-js-ripple-effect" aria-label="Apply S90C Settings">
+              <div id="optimalSettingsMenu">
+                <button type="button" id="optimalSettingsBtn" class="mdl-button mdl-js-button mdl-js-ripple-effect" aria-label="Apply the optimal settings for this TV">
                   <span data-i18n="Apply the optimal streaming settings for this TV">
                     Apply the optimal streaming settings for this TV
                   </span>
-                  <img src="static/res/ic_tv_white_48px.svg" id="s90cProfileIcon">
+                  <img src="static/res/ic_tv_white_48px.svg" id="optimalSettingsIcon">
                 </button>
               </div>
             </div>
@@ -617,6 +617,7 @@
   <script type="text/javascript" src="platform/common.js"></script>
   <script type="text/javascript" src="platform/gamepad.js"></script>
   <script type="text/javascript" src="platform/audio.js"></script>
+  <script type="text/javascript" src="platform/tv_profile.js"></script>
   <script type="text/javascript" src="platform/index.js"></script>
   <script type="text/javascript" src="platform/navigation.js"></script>
   <script type="text/javascript" src="platform/remote_controller.js"></script>

@@ -51,3 +51,6 @@ dir.stamp
 *.vs/
 *.vscode/
 .DS_Store
+
+# Test tools (npm ci --prefix tests) and native test builds (tests/native/build is covered by build/ above)
+node_modules/

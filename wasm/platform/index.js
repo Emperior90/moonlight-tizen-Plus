@@ -1,33 +1,17 @@
 // Initialize global variables and constants
-var appInfo = tizen.application.getAppInfo(); // Retrieve the application information
-var platformVer = tizen.systeminfo.getCapability("http://tizen.org/feature/platform.version"); // Retrieve the device platform version
-var modelSeries = webapis.productinfo.getModel(); // Retrieve the device model series
-var modelName = webapis.productinfo.getRealModel(); // Retrieve the device model name
-var modelGroup = webapis.productinfo.getModelCode(); // Retrieve the device model group
-var is4kPanel = typeof webapis.productinfo.isUdPanelSupported === 'function' && webapis.productinfo.isUdPanelSupported(); // Check if the device supports 4K panel
-var is8kPanel = typeof webapis.productinfo.is8KPanelSupported === 'function' && webapis.productinfo.is8KPanelSupported(); // Check if the device supports 8K panel
-
-var maxSupportedWidth = 1920;
-var maxSupportedHeight = 1080;
-try {
-  if (is8kPanel) {
-    maxSupportedWidth = 7680;
-    maxSupportedHeight = 4320;
-  } else if (is4kPanel) {
-    maxSupportedWidth = 3840;
-    maxSupportedHeight = 2160;
-  } else {
-    // Check if the physical screen resolution happens to be 1440p
-    if (window.screen.width >= 2560 || window.screen.height >= 1440) {
-      maxSupportedWidth = 2560;
-      maxSupportedHeight = 1440;
-    }
-  }
-} catch (e) {
-  console.error("Error fetching panel capabilities: " + e.message);
-}
-var isHdrCapable = webapis.avinfo.isHdrTvSupport(); // Check if the device supports HDR
-var isS90cModel = /S90C/i.test(String(modelName) + ' ' + String(modelSeries)); // Check if the device is a Samsung S90C, which this build is optimized for
+var tvCapabilities = detectTvCapabilities(); // Detect the model, panel, HDR support and Tizen version of the TV (tv_profile.js), with fallbacks for every API that fails
+var appInfo = safeTvCall('application information', function() {
+  return tizen.application.getAppInfo();
+}, { id: '', packageId: '', name: 'Moonlight', version: '' }); // Retrieve the application information
+var platformVer = tvCapabilities.platformVer; // Device platform version
+var modelSeries = tvCapabilities.modelSeries; // Device model series
+var modelName = tvCapabilities.modelName; // Device model name
+var modelGroup = tvCapabilities.modelCode; // Device model group
+var is4kPanel = tvCapabilities.is4k; // Whether the device has a 4K panel
+var is8kPanel = tvCapabilities.is8k; // Whether the device has an 8K panel
+var maxSupportedWidth = tvCapabilities.maxWidth; // Width of the highest resolution the resolution menu offers
+var maxSupportedHeight = tvCapabilities.maxHeight; // Height of the highest resolution the resolution menu offers
+var isHdrCapable = tvCapabilities.isHdr; // Whether the device supports HDR
 var hosts = {}; // Hosts is an associative array of NvHTTP objects, keyed by server UID
 var isHostOpening = false; // Prevents concurrent hostChosen executions, initial value is false
 var isHostsLoaded = false; // Indicates if IndexedDB has finished loading hosts
@@ -45,9 +29,9 @@ var isPairingInProgress = false; // Flag indicating whether a pairing process is
 var wasPairingCanceled = false; // Flag indicating whether the current pairing process was canceled by the user, initial value is false
 var isGamepadActive = false; // Flag indicating whether the gamepad input is active, initial value is false
 var isClickPrevented = false; // Flag indicating whether the click event should be prevented, initial value is false
-var resFpsWarning = false; // Flag indicating whether the video resolution and frame rate warning message has shown, initial value is false
+var resFpsWarning = false; // Message key of the video resolution and frame rate warning that has shown for the current selection (VIDEO_WARNINGS in tv_profile.js), initial value is false
 var fps90Warning = false; // Flag indicating whether the 90 FPS cadence hint has been shown, initial value is false
-var bitrateWarning = false; // Flag indicating whether the video bitrate warning message has shown, initial value is false
+var bitrateWarning = false; // Flag indicating whether the warning about a bitrate above the decoder cap of the TV has shown, initial value is false
 var audioWarning = false; // Flag indicating whether the audio configuration warning message has shown, initial value is false
 var codecWarning = false; // Flag indicating whether the video codec warning message has shown, initial value is false
 var ethernetBitrateWarning = false; // Flag indicating whether the Ethernet bitrate warning message has shown, initial value is false
@@ -80,11 +64,7 @@ const NAVIGATION_DELAY = 150; // Navigation delay set to 150ms (milliseconds)
 const UPDATE_TIMESTAMP = 'lastUpdateCheck'; // Use the update check timestamp key to determine the last update check
 const UPDATE_VERSION = 'latestUpdateVersion'; // // Use the update version key to cache the latest version found
 const UPDATE_INTERVAL = 24 * 60 * 60 * 1000; // Automatic check for updates interval is set to 24 hours
-const ETHERNET_MAX_BITRATE = 80; // Highest bitrate in Mbps that fits the 100 Mbps Ethernet port of Samsung TVs, including FEC and network overhead
-const RECOMMENDED_ETHERNET_BITRATE = 75; // Recommended 4K bitrate in Mbps over the 100 Mbps Ethernet port, leaving headroom for larger frames
-const RECOMMENDED_WIFI_BITRATE = 100; // Recommended 4K bitrate in Mbps over 5 GHz Wi-Fi, matching the 4K HEVC decoder specification of the TV
 const CODEC_MODES_REFRESH_TIMEOUT_MS = 1500; // Longest wait in ms for the codec modes of the host after a launch or resume request
-const RECOMMENDED_DEFAULT_BITRATE = 80; // Recommended 4K bitrate in Mbps when the network connection type of the TV is unknown
 
 // Called by the common.js module
 function attachListeners() {
@@ -114,7 +94,7 @@ function attachListeners() {
   filterUnsupportedResolutions();
 
   $('#addHostContainer').on('click', addHostDialog);
-  $('#s90cProfileBtn').on('click', s90cSettingsDialog);
+  $('#optimalSettingsBtn').on('click', optimalSettingsDialog);
   $('#settingsBtn').on('click', showSettings);
   $('#supportBtn').on('click', appSupportDialog);
   $('#goBackBtn').on('click', showHosts);
@@ -749,25 +729,9 @@ function filterUnsupportedResolutions() {
   });
 }
 
-// Get the active network connection type of the TV, which is either 'ethernet', 'wifi' or 'unknown'
+// Get the active network connection type of the TV, which is either 'ethernet', 'wifi' or 'unknown' (see tv_profile.js)
 function getActiveConnectionType() {
-  try {
-    if (typeof webapis !== 'undefined' && webapis.network && typeof webapis.network.getActiveConnectionType === 'function') {
-      // Compare with the constants of the API, falling back to their documented values (WIFI = 1, ETHERNET = 3)
-      const connectionTypes = webapis.network.NetworkActiveConnectionType || {};
-      const ethernetType = connectionTypes.ETHERNET !== undefined ? connectionTypes.ETHERNET : 3;
-      const wifiType = connectionTypes.WIFI !== undefined ? connectionTypes.WIFI : 1;
-      const activeType = webapis.network.getActiveConnectionType();
-      if (activeType === ethernetType) {
-        return 'ethernet';
-      } else if (activeType === wifiType) {
-        return 'wifi';
-      }
-    }
-  } catch (e) {
-    console.warn('%c[index.js, getActiveConnectionType]', 'color: green;', 'Warning: Failed to get the active network connection type: ' + e);
-  }
-  return 'unknown';
+  return detectConnectionType();
 }
 
 // Turn the screensaver of the TV off while streaming and on again afterwards. Samsung asks apps to turn it off during
@@ -798,25 +762,11 @@ function setTvScreenSaver(enabled) {
   }
 }
 
-// Get the recommended 4K bitrate in Mbps for the given network connection type of the TV. Samsung TVs have
-// a 100 Mbps Ethernet port, whose bursts of packets from the much faster host PC can cause packet loss above
-// that bitrate, while 5 GHz Wi-Fi can carry more than the HEVC decoder specification of the TV for 4K.
-function getRecommendedBitrate(connectionType) {
-  switch (connectionType) {
-    case 'ethernet':
-      return RECOMMENDED_ETHERNET_BITRATE;
-    case 'wifi':
-      return RECOMMENDED_WIFI_BITRATE;
-    default:
-      return RECOMMENDED_DEFAULT_BITRATE;
-  }
-}
-
 // Get the Wi-Fi signal strength of the TV in percent and pass it to the callback function, or null if it's unavailable
 function getWifiSignalStrength(callbackFunction) {
   try {
     tizen.systeminfo.getPropertyValue('WIFI_NETWORK', function(wifiNetwork) {
-      // Some TVs (e.g. the S90C on Tizen 9) report NaN, which is a number too, so only accept a finite value
+      // Some TVs (e.g. a 2023 model on Tizen 9) report NaN, which is a number too, so only accept a finite value
       if (wifiNetwork && wifiNetwork.status === 'ON' && typeof wifiNetwork.signalStrength === 'number' && isFinite(wifiNetwork.signalStrength)) {
         callbackFunction(Math.max(0, Math.min(100, Math.round(wifiNetwork.signalStrength * 100))));
       } else {
@@ -857,7 +807,7 @@ function updateStreamNetworkInfo() {
   lastWifiSignalRefreshMs = Date.now();
   console.log('%c[index.js, updateStreamNetworkInfo]', 'color: green;', 'Active network connection type: ' + connectionType);
   if (connectionType === 'ethernet') {
-    streamNetworkInfo = t('Network connection: Ethernet (TV port limited to 100 Mbps)');
+    streamNetworkInfo = t('Network connection: Ethernet (Samsung TVs usually have a 100 Mbps port)');
   } else if (connectionType === 'wifi') {
     streamNetworkInfo = t('Network connection: Wi-Fi');
     // Add the signal strength as soon as it's available, since it's retrieved asynchronously
@@ -869,16 +819,6 @@ function updateStreamNetworkInfo() {
   } else {
     streamNetworkInfo = '';
   }
-}
-
-// Get the highest resolution option that the TV supports, which is 4K on the S90C
-function getOptimalResolution() {
-  if (maxSupportedWidth >= 3840) {
-    return '3840:2160';
-  } else if (maxSupportedWidth >= 2560) {
-    return '2560:1440';
-  }
-  return '1920:1080';
 }
 
 function isValidPort(port) {
@@ -1984,6 +1924,8 @@ function handleSettingsView(category) {
       navigateSettingsView(Views.AdvancedSettings);
       break;
     case 'aboutSettings': // Navigate to the AboutSettings view
+      // Refresh the system information, whose network connection type may have changed since the start of the app
+      loadSystemInfo();
       navigateSettingsView(Views.AboutSettings);
       break;
     default:
@@ -3555,6 +3497,99 @@ function storeData(key, data, callbackFunction) {
   }
 }
 
+// Read several keys in one transaction, so that their values are consistent with each other, and pass them to the
+// callback function as an object with null for every key that isn't stored, or null if they can't be read
+function getMultipleData(keys, callbackFunction) {
+  let isFinished = false;
+  // Call the callback function only once, since a failed transaction reports both an error and an abort
+  const finish = function(values) {
+    if (!isFinished) {
+      isFinished = true;
+      callbackFunction(values);
+    }
+  };
+  let cb = function() {
+    try {
+      // Open a transaction to the database
+      const transaction = db.transaction(storeName, 'readonly');
+      const store = transaction.objectStore(storeName);
+      const values = {};
+      let isReadable = true;
+      keys.forEach(function(key) {
+        const readRequest = store.get(key);
+        readRequest.onsuccess = function() {
+          try {
+            values[key] = readRequest.result ? JSON.parse(readRequest.result) : null;
+          } catch (err) {
+            console.error('%c[index.js, getMultipleData]', 'color: green;', 'Error: Unable to parse the data at the key: ' + key + ' from IndexedDB: ' + err);
+            isReadable = false;
+          }
+        };
+      });
+
+      // Pass the values on once every key was read
+      transaction.oncomplete = function() {
+        console.log('%c[index.js, getMultipleData]', 'color: green;', 'Reading data from DB keys: ' + keys.join(', ') + ' with values: ' + JSON.stringify(values));
+        finish(isReadable ? values : null);
+      };
+
+      transaction.onerror = function(e) {
+        console.error('%c[index.js, getMultipleData]', 'color: green;', 'Error: Unable to read the keys: ' + keys.join(', ') + ' from IndexedDB: ' + e);
+        finish(null);
+      };
+
+      transaction.onabort = function(e) {
+        console.error('%c[index.js, getMultipleData]', 'color: green;', 'Error: Reading the keys: ' + keys.join(', ') + ' from IndexedDB was aborted: ' + e);
+        finish(null);
+      };
+    } catch (err) {
+      console.error('%c[index.js, getMultipleData]', 'color: green;', 'Error: Something went wrong while reading the keys: ' + keys.join(', ') + ' from IndexedDB: ' + err);
+      finish(null);
+    }
+  };
+
+  if (db) {
+    cb();
+  } else {
+    openIndexDB(cb);
+  }
+}
+
+// Store several keys in one transaction, so that either all of them are stored or none, and call the callback function
+// once they are stored
+function storeMultipleData(entries, callbackFunction) {
+  let cb = function() {
+    try {
+      // Open a transaction to the database
+      const transaction = db.transaction(storeName, 'readwrite');
+      const store = transaction.objectStore(storeName);
+      // Put the text of every entry into the database
+      Object.keys(entries).forEach(function(key) {
+        store.put(JSON.stringify(entries[key]), key);
+      });
+
+      transaction.oncomplete = function(e) {
+        console.log('%c[index.js, storeMultipleData]', 'color: green;', 'Storing data at keys: ' + Object.keys(entries).join(', ') + ' with data: ' + JSON.stringify(entries));
+        if (callbackFunction) {
+          callbackFunction();
+        }
+      };
+
+      transaction.onerror = function(e) {
+        console.error('%c[index.js, storeMultipleData]', 'color: green;', 'Error: Unable to store data in IndexedDB: ' + e);
+      };
+    } catch (err) {
+      console.error('%c[index.js, storeMultipleData]', 'color: green;', 'Error: Something went wrong while storing data at the keys: ' + Object.keys(entries).join(', ') + ' in IndexedDB: ' + err);
+    }
+  };
+
+  if (db) {
+    cb();
+  } else {
+    openIndexDB(cb);
+  }
+}
+
 // Storing data takes the data as an object, and shoves it into JSON to store.
 // Unfortunately, objects with function instances (classes) are stripped of their function instances
 // when converted to a raw object, so we cannot forget to revive the object after we load it.
@@ -3603,53 +3638,98 @@ function saveFramerate() {
   warnResolutionFramerate();
 }
 
+// Show the text of a message key of the warning rules in tv_profile.js (VIDEO_WARNINGS). The texts are written out here,
+// one per key, so that i18n-sync.js finds them for the locale files.
+function showVideoWarning(messageKey) {
+  switch (messageKey) {
+    case VIDEO_WARNINGS.FPS_ABOVE_60_HZ:
+      snackbarLogLong('Warning: Many Samsung TVs have 60 Hz panels, and Tizen apps often show only about 60 FPS, so frame rates above 60 FPS may not look smoother and cost more bitrate!');
+      break;
+    case VIDEO_WARNINGS.NEEDS_LEVEL_52:
+      snackbarLogLong('Warning: This resolution and frame rate need a video decoder with HEVC or AV1 Level 5.2, which most Samsung TVs with a 120 Hz panel have. On other TVs the stream may fail to start!');
+      break;
+    case VIDEO_WARNINGS.EXCEEDS_LEVEL_52:
+      snackbarLogLong('Warning: This resolution and frame rate exceed HEVC and AV1 Level 5.2, the highest decoder level of Samsung TVs, so the stream may stutter or fail to start!');
+      break;
+    case VIDEO_WARNINGS.EXCEEDS_TESTED_DECODER:
+      // The decoder of a tested model with a 120 Hz panel handled 4K at up to 120 FPS in the tests
+      snackbarLogLong('Warning: The video decoder of the TV supports 4K up to 120 FPS, so higher frame rates at 4K may stutter or fail to start!');
+      break;
+    case VIDEO_WARNINGS.HIGH_RESOLUTION_FPS:
+      snackbarLogLong('Warning: This resolution and frame rate may not perform well on lower-end devices or slower connections!');
+      break;
+    case VIDEO_WARNINGS.FPS_90_CADENCE:
+      snackbarLogLong('Warning: 90 FPS does not divide a 60 or 120 Hz output evenly, so motion may be less smooth than at 60 or 120 FPS!');
+      break;
+    case VIDEO_WARNINGS.HDR_NOT_REPORTED:
+      snackbarLogLong('Warning: This TV does not report HDR support, so an HDR stream may show washed-out colors or fail to start!');
+      break;
+    case VIDEO_WARNINGS.ETHERNET_BITRATE:
+      snackbarLogLong('Warning: Samsung TVs usually have a 100 Mbps Ethernet port, so bitrates above %1$s Mbps can cause packet loss. Use 5 GHz Wi-Fi for higher bitrates!', ETHERNET_MAX_BITRATE);
+      break;
+    case VIDEO_WARNINGS.BITRATE_ABOVE_CAP:
+      snackbarLogLong('Warning: Bitrates above %1$s Mbps exceed what is recommended for the video decoder of this TV and may cause playback interruptions and performance issues, please try with caution!', getDecoderCapMbps(tvCapabilities));
+      break;
+    case VIDEO_WARNINGS.H264_RESOLUTION:
+      snackbarLogLong('Warning: Samsung TVs generally decode H.264 only up to 1080p, so use HEVC or AV1 for higher resolutions!');
+      break;
+    default:
+      console.warn('%c[index.js, showVideoWarning]', 'color: green;', 'Warning: No text for the message key: ' + messageKey);
+      break;
+  }
+}
+
 function warnResolutionFramerate() {
-  // Compare as numbers, because comparing the strings would rank e.g. 854 above 1920
-  var chosenResolutionWidth = parseInt($('#selectResolution').data('value').split(':')[0], 10);
-  var chosenResolutionHeight = parseInt($('#selectResolution').data('value').split(':')[1], 10);
+  var chosenResolution = String($('#selectResolution').data('value'));
   var chosenFramerate = parseInt($('#selectFramerate').data('value'), 10);
 
-  // Video resolution and frame rate warning
-  if (!resFpsWarning && chosenResolutionWidth > 1920 && chosenResolutionHeight > 1080 && chosenFramerate > 60) {
-    // Warn only if video resolution is greater than 1080p and frame rate is greater than 60 FPS
-    if (chosenResolutionWidth >= 3840 && chosenFramerate > 120) {
-      // The video decoder of the TV handles 4K up to 120 FPS, so higher frame rates exceed its specification
-      snackbarLogLong('Warning: The video decoder of the TV supports 4K up to 120 FPS, so higher frame rates at 4K may stutter or fail to start!');
-    } else {
-      snackbarLogLong('Warning: This resolution and frame rate may not perform well on lower-end devices or slower connections!');
-    }
-    // Set flag for video resolution and frame rate warning
-    resFpsWarning = true;
-  } else if (resFpsWarning && (chosenResolutionWidth <= 1920 || chosenResolutionHeight <= 1080 || chosenFramerate <= 60)) {
-    // Reset the flag for video resolution and frame rate warning if the condition goes back to normal (1080p and 60 FPS)
-    resFpsWarning = false;
+  // Video resolution and frame rate warning for what the TV can decode and show (resolutionFramerateWarningKey() in
+  // tv_profile.js). It shows once per message, so a change to a selection with another message (e.g. from 4K at 120 FPS
+  // to 4K at 144 FPS) shows that one, and again after a selection without a warning.
+  const warningKey = resolutionFramerateWarningKey(chosenResolution, chosenFramerate, tvCapabilities);
+  if (warningKey && warningKey !== resFpsWarning) {
+    showVideoWarning(warningKey);
   }
+  // Remember the message key, or reset it once the selection needs no warning
+  resFpsWarning = warningKey || false;
 
   // 90 FPS cadence hint, which has its own flag so that it also shows after a switch from 120 to 90 FPS
-  if (!fps90Warning && chosenFramerate === 90) {
+  const cadenceKey = framerateCadenceWarningKey(chosenFramerate);
+  if (!fps90Warning && cadenceKey) {
     // The TV presents at 60 or 120 Hz, neither of which 90 FPS divides evenly
-    snackbarLogLong('Warning: 90 FPS does not divide a 60 or 120 Hz output evenly, so motion may be less smooth than at 60 or 120 FPS!');
+    showVideoWarning(cadenceKey);
     // Set flag for the 90 FPS cadence hint
     fps90Warning = true;
-  } else if (fps90Warning && chosenFramerate !== 90) {
+  } else if (fps90Warning && !cadenceKey) {
     // Reset the flag for the 90 FPS cadence hint once another frame rate is selected
     fps90Warning = false;
   }
 }
 
 function warnH264Resolution() {
-  var chosenResolutionWidth = parseInt($('#selectResolution').data('value').split(':')[0], 10);
+  var chosenResolution = String($('#selectResolution').data('value'));
   var chosenVideoCodec = $('#selectCodec').data('value');
 
-  // H.264 resolution warning
-  if (!h264ResolutionWarning && chosenVideoCodec === 'H264' && chosenResolutionWidth > 1920) {
-    // Warn only if H.264 is selected with a resolution greater than 1080p, which Samsung TVs generally can't decode
-    snackbarLogLong('Warning: Samsung TVs generally decode H.264 only up to 1080p, so use HEVC or AV1 for higher resolutions!');
+  // H.264 resolution warning, for H.264 above 1080p, which Samsung TVs generally can't decode (h264ResolutionWarningKey()
+  // in tv_profile.js)
+  const warningKey = h264ResolutionWarningKey(chosenVideoCodec, chosenResolution);
+  if (!h264ResolutionWarning && warningKey) {
+    showVideoWarning(warningKey);
     // Set flag for H.264 resolution warning
     h264ResolutionWarning = true;
-  } else if (h264ResolutionWarning && (chosenVideoCodec !== 'H264' || chosenResolutionWidth <= 1920)) {
+  } else if (h264ResolutionWarning && !warningKey) {
     // Reset the flag for H.264 resolution warning if the condition goes back to normal (HEVC, AV1 or 1080p)
     h264ResolutionWarning = false;
+  }
+}
+
+// Warn when HDR is switched on for a TV that doesn't report HDR support (hdrWarningKey() in tv_profile.js). It runs on
+// every toggle of HDR with HEVC or AV1 and warns only while HDR is on, so it shows each time HDR is switched on.
+function warnHdrMode() {
+  const chosenHdrMode = $('#hdrModeSwitch').parent().hasClass('is-checked');
+  const warningKey = hdrWarningKey(chosenHdrMode, tvCapabilities);
+  if (warningKey) {
+    showVideoWarning(warningKey);
   }
 }
 
@@ -3694,12 +3774,15 @@ function applyBitratePresets() {
 
 function warnBitrate() {
   var chosenBitrate = $('#bitrateSlider').val();
+  // Which bitrate limit is exceeded, if any: the 100 Mbps Ethernet port that Samsung TVs usually have, or otherwise the
+  // decoder cap of the TV (bitrateWarningKey() in tv_profile.js)
+  const warningKey = bitrateWarningKey(chosenBitrate, getActiveConnectionType(), tvCapabilities);
 
   // Video bitrate warning for the 100 Mbps Ethernet port of the TV
-  if (chosenBitrate > ETHERNET_MAX_BITRATE && getActiveConnectionType() === 'ethernet') {
+  if (warningKey === VIDEO_WARNINGS.ETHERNET_BITRATE) {
     if (!ethernetBitrateWarning) {
       // Warn only if the TV is connected via Ethernet and the video bitrate exceeds what its port can carry
-      snackbarLogLong('Warning: The Ethernet port of the TV is limited to 100 Mbps, so bitrates above %1$s Mbps can cause packet loss. Use 5 GHz Wi-Fi for higher bitrates!', ETHERNET_MAX_BITRATE);
+      showVideoWarning(warningKey);
       // Set flag for Ethernet bitrate warning
       ethernetBitrateWarning = true;
     }
@@ -3709,40 +3792,19 @@ function warnBitrate() {
     ethernetBitrateWarning = false;
   }
 
-  // Video bitrate warning
-  if (!bitrateWarning && chosenBitrate > 100) {
-    // Warn only if video bitrate is greater than 100 Mbps
-    snackbarLogLong('Warning: Higher bitrate may cause playback interruptions and performance issues, please try with caution!');
+  // Video bitrate warning for the decoder cap of the TV (e.g. 100 Mbps for a tested model, 80 Mbps for other 4K TVs)
+  if (!bitrateWarning && warningKey === VIDEO_WARNINGS.BITRATE_ABOVE_CAP) {
+    showVideoWarning(warningKey);
     // Set flag for video bitrate warning
     bitrateWarning = true;
-  } else if (bitrateWarning && chosenBitrate <= 100) {
-    // Reset the flag for video bitrate warning if the condition goes back to normal (100 Mbps)
+  } else if (bitrateWarning && warningKey !== VIDEO_WARNINGS.BITRATE_ABOVE_CAP) {
+    // Reset the flag for video bitrate warning if the condition goes back to normal (at or below the decoder cap)
     bitrateWarning = false;
   }
 }
 
-// Standard bitrate presets in Mbps by resolution and frame rate. 1800p is interpolated by pixel count between the
-// 1440p and 2160p presets.
-var STANDARD_BITRATE_PRESETS = {
-  '854:480': { '30': 2, '60': 4, '90': 5, '120': 6, '144': 8 },
-  '1280:720': { '30': 5, '60': 10, '90': 12, '120': 15, '144': 18 },
-  '1920:1080': { '30': 10, '60': 20, '90': 25, '120': 30, '144': 35 },
-  '2560:1440': { '30': 20, '60': 40, '90': 50, '120': 60, '144': 70 },
-  '3200:1800': { '30': 30, '60': 60, '90': 75, '120': 90, '144': 100 },
-  '3840:2160': { '30': 40, '60': 80, '90': 100, '120': 120, '144': 140 },
-};
-
-// Return the standard preset in Mbps for a resolution and frame rate, or null for a frame rate without a preset
-function getStandardPresetBitrate(res, frameRate) {
-  var presets = STANDARD_BITRATE_PRESETS[res];
-  if (!presets) {
-    // Unrecognized option! In case someone screws with the JS to add custom resolutions.
-    return 10;
-  }
-  var preset = presets[String(frameRate)];
-  return preset !== undefined ? preset : null;
-}
-
+// Apply the standard bitrate preset of the selected resolution and frame rate (STANDARD_BITRATE_PRESETS and
+// getStandardPresetBitrate() are in tv_profile.js)
 function standardBitratePresets() {
   console.log('%c[index.js, standardBitratePresets]', 'color: green;', 'Applying standard bitrate presets...');
   var res = $('#selectResolution').data('value');
@@ -3762,7 +3824,8 @@ function standardBitratePresets() {
 }
 
 // Limit the bitrate of a preset to what the network connection of the TV can carry. A preset above the recommended
-// bitrate for the 100 Mbps Ethernet port (e.g. 120 Mbps for 4K at 120 FPS) would cause packet loss and frame drops.
+// bitrate for the 100 Mbps Ethernet port that Samsung TVs usually have (e.g. 120 Mbps for 4K at 120 FPS) would cause
+// packet loss and frame drops.
 function limitPresetBitrate() {
   var presetBitrate = parseFloat($('#bitrateSlider').val());
   if (presetBitrate > RECOMMENDED_ETHERNET_BITRATE && getActiveConnectionType() === 'ethernet') {
@@ -3770,7 +3833,7 @@ function limitPresetBitrate() {
     $('#bitrateSlider')[0].MaterialSlider.change(String(RECOMMENDED_ETHERNET_BITRATE));
     // Explain the limit only once, since the presets are applied on every resolution and frame rate change
     if (!ethernetPresetNotice) {
-      snackbarLogLong('The bitrate has been limited to %1$s Mbps, because the Ethernet port of the TV is limited to 100 Mbps.', RECOMMENDED_ETHERNET_BITRATE);
+      snackbarLogLong('The bitrate has been limited to %1$s Mbps, because Samsung TVs usually have a 100 Mbps Ethernet port.', RECOMMENDED_ETHERNET_BITRATE);
       ethernetPresetNotice = true;
     }
   }
@@ -4089,10 +4152,14 @@ function saveHdrMode() {
       // Select the HDR profile of the HEVC codec (HEVC Main10)
       // Toggle the HDR mode switch and save the state
       updateHdrMode();
+      // Warn when HDR was switched on for a TV that doesn't report HDR support
+      warnHdrMode();
     } else if (selectedVideoCodec === chosenAv1Codec) { // AV1
       // Select the HDR profile of the AV1 codec (AV1 Main10)
       // Toggle the HDR mode switch and save the state
       updateHdrMode();
+      // Warn when HDR was switched on for a TV that doesn't report HDR support
+      warnHdrMode();
     } else { // Undefined
       // Unknown codec format does not support HDR profile
       snackbarLog('Selected codec does not support the HDR profile.');
@@ -4190,6 +4257,8 @@ function handleUnlockAllFps() {
       storeData('frameRate', '60', null);
       // Update the bitrate value based on the selected frame rate, unless it was picked by hand
       applyBitratePresets();
+      // Reset the resolution and frame rate warning, so that it shows again after the next switch to a higher frame rate
+      warnResolutionFramerate();
     }
   }
 }
@@ -4251,66 +4320,76 @@ function saveHdrMetadata() {
   }, 100);
 }
 
-// Apply the optimal streaming settings for the Samsung S90C, which this build uses as the defaults of the video settings.
-// The S90C decodes HEVC up to 4K at 120 FPS, but Tizen apps commonly render at around 60 FPS, so 4K at 60 FPS with HEVC
-// and HDR at the highest bitrate that the network connection of the TV can reliably carry gives the best image quality.
-function applyOptimalStreamingSettings(connectionType) {
+// Apply the optimal streaming settings for this TV and its network connection (deriveOptimalSettings() in tv_profile.js),
+// which are also the defaults of the video settings: the highest resolution of the panel up to 4K at 60 FPS with HEVC,
+// HDR when the TV supports it and a bitrate for the network connection, with all frame rates unlocked only for a tested
+// model with a high refresh rate panel (VERIFIED_PROFILES).
+// With followPresets, the bitrate follows later changes of the resolution and frame rate (Restore Defaults). Without it,
+// the recommended bitrate is kept until the user picks another one (the optimal streaming settings button).
+function applyOptimalStreamingSettings(connectionType, followPresets) {
   console.log('%c[index.js, applyOptimalStreamingSettings]', 'color: green;', 'Applying the optimal streaming settings for the network connection: ' + connectionType);
+  const optimalSettings = deriveOptimalSettings(tvCapabilities, connectionType);
 
-  const optimalResolution = getOptimalResolution();
+  const optimalResolution = optimalSettings.resolution;
   const optimalResolutionItem = $('.videoResolutionMenu li[data-value="' + optimalResolution + '"]');
   $('#selectResolution').text(optimalResolutionItem.text()).attr('data-value', optimalResolution).data('value', optimalResolution);
   storeData('resolution', optimalResolution, null);
 
-  // Unlock the higher frame rates to allow experimenting with them, since the panel of the S90C supports up to 144 Hz
-  document.querySelector('#unlockAllFpsBtn').MaterialSwitch.on();
-  storeData('unlockAllFps', true, null);
-  handleUnlockAllFps();
-
-  const optimalFramerate = 60;
-  $('#selectFramerate').text('60 FPS').attr('data-value', optimalFramerate).data('value', optimalFramerate);
+  // Select the frame rate before the higher frame rates may be locked below, which would otherwise reset a selected
+  // higher frame rate on its own and apply the bitrate presets on the way
+  const optimalFramerate = optimalSettings.frameRate;
+  $('#selectFramerate').text(optimalFramerate + ' FPS').attr('data-value', optimalFramerate).data('value', optimalFramerate);
   storeData('frameRate', optimalFramerate, null);
 
+  // Unlock the higher frame rates only for a tested model whose panel shows them (e.g. a tested model with a 144 Hz panel)
+  if (optimalSettings.unlockAllFps) {
+    document.querySelector('#unlockAllFpsBtn').MaterialSwitch.on();
+  } else {
+    document.querySelector('#unlockAllFpsBtn').MaterialSwitch.off();
+  }
+  storeData('unlockAllFps', optimalSettings.unlockAllFps, null);
+  handleUnlockAllFps();
+
   // HEVC is the most efficient codec that every host GPU with HDR support can encode
-  $('#selectCodec').text($('#hevc').text()).attr('data-value', 'HEVC').data('value', 'HEVC');
-  storeData('videoCodec', 'HEVC', null);
+  $('#selectCodec').text($('#hevc').text()).attr('data-value', optimalSettings.videoCodec).data('value', optimalSettings.videoCodec);
+  storeData('videoCodec', optimalSettings.videoCodec, null);
 
   // Enable HDR on HDR-capable TVs, which streams HDR10 when HDR is enabled on the host and 10-bit SDR otherwise
-  if (isHdrCapable) {
+  if (optimalSettings.hdrMode) {
     document.querySelector('#hdrModeBtn').MaterialSwitch.on();
   } else {
     document.querySelector('#hdrModeBtn').MaterialSwitch.off();
   }
-  storeData('hdrMode', !!isHdrCapable, null);
+  storeData('hdrMode', optimalSettings.hdrMode, null);
 
   // Keep the limited color range, which is the standard for video and preserves the detail in dark and bright areas
   document.querySelector('#fullRangeBtn').MaterialSwitch.off();
-  storeData('fullRange', false, null);
+  storeData('fullRange', optimalSettings.fullRange, null);
 
   document.querySelector('#framePacingBtn').MaterialSwitch.on();
-  storeData('framePacing', true, null);
+  storeData('framePacing', optimalSettings.framePacing, null);
 
   // Use the bitrate for the network connection instead of the optimized presets, which aim for a lower bitrate
   document.querySelector('#optimizeBitrateBtn').MaterialSwitch.off();
-  storeData('optimizeBitrate', false, null);
+  storeData('optimizeBitrate', optimalSettings.optimizeBitrate, null);
 
-  // Set the game mode based on the Tizen platform version
-  if (parseFloat(platformVer) >= 9.0) {
+  // Set the game mode based on the Tizen platform version (see getGameModeDefault() in tv_profile.js)
+  if (optimalSettings.gameMode === false) {
     // Turn off for Tizen 9.0 and newer to avoid compatibility issues, where the ForceGM variant enables the game mode instead
     document.querySelector('#gameModeBtn').MaterialSwitch.off();
     storeData('gameMode', false, null);
-  } else if (parseFloat(platformVer) !== 5.5) {
+  } else if (optimalSettings.gameMode === true) {
     // Turn on for compatible Tizen versions (e.g., 6.0, 6.5, 7.0, 8.0), and keep it turned off and disabled for Tizen 5.5
     document.querySelector('#gameModeBtn').MaterialSwitch.on();
     storeData('gameMode', true, null);
   }
 
-  const recommendedBitrate = getRecommendedBitrate(connectionType);
-  $('#bitrateSlider')[0].MaterialSlider.change(String(recommendedBitrate));
+  $('#bitrateSlider')[0].MaterialSlider.change(String(optimalSettings.bitrate));
   saveBitrate();
-  // Keep the recommended bitrate for the network connection when the resolution or frame rate changes later
-  autoAdjustBitrate = false;
-  storeData('autoAdjustBitrate', false, null);
+  // Either let the bitrate presets follow later changes of the resolution and frame rate, or keep the recommended
+  // bitrate for the network connection when they change
+  autoAdjustBitrate = !!followPresets;
+  storeData('autoAdjustBitrate', autoAdjustBitrate, null);
 
   // Re-run the one-shot warning checks so their flags match the applied resolution, frame rate and codec
   warnResolutionFramerate();
@@ -4318,30 +4397,78 @@ function applyOptimalStreamingSettings(connectionType) {
   warnVideoCodec();
 }
 
-// Show the optimal streaming settings for the Samsung S90C along with advice for the network connection, and apply them
-// once the user confirms, because they replace the stored video settings
-function s90cSettingsDialog() {
-  const connectionType = getActiveConnectionType();
-  const optimalResolution = getOptimalResolution();
-  const optimalResolutionText = $('.videoResolutionMenu li[data-value="' + optimalResolution + '"]').text().trim();
-  const recommendedBitrate = getRecommendedBitrate(connectionType);
+// Describe what the app detected about the TV for the optimal settings dialog, e.g. '4K panel, HDR, Tizen 9.0, Wi-Fi',
+// which also tells a screenshot of the dialog what the settings are based on (see detectTvCapabilities() in
+// tv_profile.js). A product API that failed counts as a Full HD panel without HDR, like everywhere else in the app.
+function describeDetectedTv(connectionType) {
+  const parts = [];
+  if (is8kPanel) {
+    parts.push(t('8K panel'));
+  } else if (is4kPanel) {
+    parts.push(t('4K panel'));
+  } else {
+    parts.push(t('Full HD panel'));
+  }
+  parts.push(isHdrCapable ? t('HDR') : t('no HDR'));
+  parts.push(platformVer ? t('Tizen %1$s', escapeHTML(platformVer)) : t('unknown Tizen version'));
+  if (connectionType === 'ethernet') {
+    parts.push(t('Ethernet'));
+  } else if (connectionType === 'wifi') {
+    parts.push(t('Wi-Fi'));
+  } else {
+    parts.push(t('unknown connection'));
+  }
+  return parts.join(', ');
+}
 
-  let message = t('The following streaming settings will be applied for the Samsung S90C:') + '<br>' +
-    '&#8226; ' + t('Video resolution') + ': ' + escapeHTML(optimalResolutionText) + ', 60 FPS<br>' +
-    '&#8226; ' + t('Video codec') + ': ' + (isHdrCapable ? t('HEVC Main10 with HDR') : t('HEVC')) + '<br>' +
-    '&#8226; ' + t('Video bitrate') + ': ' + recommendedBitrate + ' Mbps<br>' +
-    '&#8226; ' + t('Video frame pacing on, limited color range, unlock all frame rates on, optimize bitrate presets off') + '<br>';
+// Show the optimal streaming settings for this TV along with what was detected and advice for the network connection,
+// and apply them once the user confirms, because they replace the stored video settings. The listed values come from
+// the same function that applies them (deriveOptimalSettings() in tv_profile.js), so the text always matches what is
+// applied.
+function optimalSettingsDialog() {
+  const connectionType = getActiveConnectionType();
+  const optimalSettings = deriveOptimalSettings(tvCapabilities, connectionType);
+  const optimalResolutionText = $('.videoResolutionMenu li[data-value="' + optimalSettings.resolution + '"]').text().trim();
+
+  // Start with what the settings are based on, and whether they were tested on this model (VERIFIED_PROFILES)
+  let message = t('Detected: %1$s', describeDetectedTv(connectionType)) + '<br>';
+  if (tvCapabilities.profile) {
+    message += t('Tested model: these settings were tested on this TV model.') + '<br>';
+  }
+  message += '<br>';
+
+  message += t('The following streaming settings will be applied:') + '<br>' +
+    '&#8226; ' + t('Video resolution') + ': ' + escapeHTML(optimalResolutionText) + ', ' + optimalSettings.frameRate + ' FPS<br>' +
+    '&#8226; ' + t('Video codec') + ': ' + (optimalSettings.hdrMode ? t('HEVC Main10 with HDR') : t('HEVC')) + '<br>' +
+    '&#8226; ' + t('Video bitrate') + ': ' + optimalSettings.bitrate + ' Mbps<br>' +
+    '&#8226; ' + (optimalSettings.unlockAllFps
+      ? t('Video frame pacing on, limited color range, unlock all frame rates on, optimize bitrate presets off')
+      : t('Video frame pacing on, limited color range, unlock all frame rates off, optimize bitrate presets off')) + '<br>';
   // Name the game mode state, which depends on the Tizen version (the note below covers Tizen 9.0 and newer)
-  if (parseFloat(platformVer) < 9.0 && parseFloat(platformVer) !== 5.5) {
+  if (optimalSettings.gameMode === true) {
     message += '&#8226; ' + t('Game mode on') + '<br>';
   }
   message += '<br>';
 
+  // Point the owners of a 4K or 8K TV with a 120 Hz panel to the higher frame rates, which stay locked without a tested
+  // profile, because the refresh rate of the panel can't be detected and many TVs show 60 Hz (plan decision D7)
+  if (!optimalSettings.unlockAllFps && (is4kPanel || is8kPanel)) {
+    message += t('If this TV has a 120 Hz panel, you can turn on \'Unlock all frame rates\' in the Advanced Settings to stream at up to 120 FPS.') + '<br><br>';
+  }
+
   // Explain the bitrate limits of the network connection and how to stream without frame drops
   if (connectionType === 'ethernet') {
-    message += t('The TV is connected via Ethernet, whose port is limited to 100 Mbps. To avoid packet loss from the traffic bursts of the much faster host PC, set its network adapter to 100 Mbps Full Duplex or enable flow control on your switch. Use 5 GHz Wi-Fi for higher bitrates.');
+    message += t('The TV is connected via Ethernet. Samsung TVs usually have a 100 Mbps Ethernet port, so to avoid packet loss from the traffic bursts of the much faster host PC, set its network adapter to 100 Mbps Full Duplex or enable flow control on your switch. Use 5 GHz Wi-Fi for higher bitrates.');
   } else if (connectionType === 'wifi') {
-    message += t('The TV is connected via Wi-Fi. Use a 5 GHz network with a strong signal and connect the host PC by cable. If the performance statistics show no dropped frames, you can raise the bitrate up to 150 Mbps.');
+    message += t('The TV is connected via Wi-Fi. Use a 5 GHz network with a strong signal and connect the host PC by cable.') + ' ';
+    // Suggest how far the bitrate can go for this resolution, up to the decoder cap of the TV (bitrateRaiseLimit() in
+    // tv_profile.js), where the bitrate warning starts
+    const raiseLimit = bitrateRaiseLimit(optimalSettings.resolution, optimalSettings.frameRate, tvCapabilities);
+    if (raiseLimit > optimalSettings.bitrate) {
+      message += t('If the performance statistics show no dropped frames, you can raise the bitrate up to %1$s Mbps.', raiseLimit);
+    } else {
+      message += t('This is the highest bitrate recommended for the video decoder of this TV, so raise it only if the performance statistics show no dropped frames.');
+    }
   } else {
     message += t('The network connection type of the TV could not be detected, so a moderate bitrate will be applied.');
   }
@@ -4356,16 +4483,13 @@ function s90cSettingsDialog() {
     }
   }
 
-  // Mention that the settings target the S90C when they are applied on another TV
-  if (!isS90cModel) {
-    message += '<br><br>' + t('Note: This TV (%1$s) is not a Samsung S90C, so these settings may not be optimal.', escapeHTML(modelName));
-  }
-
   var warningDialogOverlay = document.querySelector('#warningDialogOverlay');
   var warningDialog = document.querySelector('#warningDialog');
 
-  // Set the title and message
-  document.getElementById('warningDialogTitle').innerHTML = t('Samsung S90C optimization');
+  // Set the title, which names the model when the TV reports it, and the message
+  document.getElementById('warningDialogTitle').innerHTML = modelName
+    ? t('Optimal settings for this TV (%1$s)', escapeHTML(modelName))
+    : t('Optimal settings for this TV');
   document.getElementById('warningDialogText').innerHTML = message;
 
   // Show the dialog and push the view
@@ -4382,7 +4506,7 @@ function s90cSettingsDialog() {
   // Cancel — close the dialog and keep the current settings
   $('#closeWarning').off('click');
   $('#closeWarning').on('click', function() {
-    console.log('%c[index.js, s90cSettingsDialog]', 'color: green;', 'Closing the S90C optimization dialog without applying the settings.');
+    console.log('%c[index.js, optimalSettingsDialog]', 'color: green;', 'Closing the optimal settings dialog without applying the settings.');
     warningDialogOverlay.style.display = 'none';
     warningDialog.close();
     isDialogOpen = false;
@@ -4395,23 +4519,25 @@ function s90cSettingsDialog() {
   // Continue — apply the settings
   $('#continueWarning').off('click');
   $('#continueWarning').on('click', function() {
-    console.log('%c[index.js, s90cSettingsDialog]', 'color: green;', 'User confirmed the S90C optimization. Applying the settings for the network connection: ' + connectionType);
+    console.log('%c[index.js, optimalSettingsDialog]', 'color: green;', 'User confirmed the optimal settings. Applying the settings for the network connection: ' + connectionType);
     warningDialogOverlay.style.display = 'none';
     warningDialog.close();
     isDialogOpen = false;
     // Restore the default state for future standard warnings
     $('#continueWarning').hide();
     Navigation.pop();
-    applyOptimalStreamingSettings(connectionType);
+    // Keep the recommended bitrate when the resolution or frame rate changes later, as the dialog applied it on purpose
+    applyOptimalStreamingSettings(connectionType, false);
     Navigation.switch();
-    snackbarLog('The optimal streaming settings for the Samsung S90C have been applied.');
+    snackbarLog('The optimal streaming settings for this TV have been applied.');
   });
 }
 
 // Reset all settings to their default state and save the value data
 function restoreDefaultsSettingsValues() {
-  // Restore the video settings to the optimal streaming settings for the Samsung S90C and its network connection
-  applyOptimalStreamingSettings(getActiveConnectionType());
+  // Restore the video settings to the optimal streaming settings for this TV and its network connection, like a fresh
+  // install, whose bitrate follows the resolution and frame rate until the user picks one by hand
+  applyOptimalStreamingSettings(getActiveConnectionType(), true);
 
   const defaultIpAddressFieldMode = true;
   document.querySelector('#ipAddressFieldModeBtn').MaterialSwitch.on();
@@ -4547,6 +4673,13 @@ function loadSystemInfo() {
   const systemInfoPlaceholder = document.getElementById('systemInfoBtn');
   const isForceGMVariant = checkForceGMVariant(); // Check if the currently installed app is the ForceGM variant
   const buildVer = getBuildVersion(appInfo.version);
+  // What the app detected about the TV (detectTvCapabilities() in tv_profile.js), which the optimal streaming settings
+  // are based on, and the current network connection type
+  const connectionType = getActiveConnectionType();
+  const panelText = is8kPanel ? '8K' : (is4kPanel ? '4K' : 'Full HD');
+  const connectionText = connectionType === 'ethernet' ? 'Ethernet' : (connectionType === 'wifi' ? 'Wi-Fi' : '');
+  const testedProfile = tvCapabilities.profile ? tvCapabilities.profile.id : '';
+  const modelYearHint = tvCapabilities.modelYearHint;
 
   // Get the system information from the TV
   if (systemInfoPlaceholder) {
@@ -4555,15 +4688,24 @@ function loadSystemInfo() {
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'TV Model Series: ' + (modelSeries ? modelSeries : 'Unknown'));
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'TV Model Name: ' + (modelName ? modelName : 'Unknown'));
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'TV Model Group: ' + (modelGroup ? modelGroup : 'Unknown'));
-    console.log('%c[index.js, loadSystemInfo]', 'color: green;', '4K Panel: ' + (is4kPanel ? 'Yes' : 'No'));
-    console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'HDR Capable: ' + (isHdrCapable ? 'Yes' : 'No'));
-    // Insert the system information into the placeholder
+    console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Model Year (from the model group): ' + (modelYearHint ? modelYearHint : 'Unknown'));
+    console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Panel: ' + panelText);
+    console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'HDR Support: ' + (isHdrCapable ? 'Yes' : 'No'));
+    console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Network Connection Type: ' + (connectionText ? connectionText : 'Unknown'));
+    console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Tested Profile: ' + (testedProfile ? testedProfile : 'None'));
+    // Insert the system information into the placeholder. The model year is only a hint from the model group, since
+    // Samsung sells the models of one year for longer, so it never decides a setting.
     systemInfoPlaceholder.innerText =
       t('App Version: %1$s v%2$s', appInfo.name + (isForceGMVariant ? '-ForceGM' : ''), buildVer) + '\n' +
       t('Platform Version: Tizen %1$s', platformVer ? platformVer : t('Unknown')) + '\n' +
       t('TV Model Series: %1$s', modelSeries ? modelSeries : t('Unknown')) + '\n' +
       t('TV Model Name: %1$s', modelName ? modelName : t('Unknown')) + '\n' +
-      t('TV Model Group: %1$s', modelGroup ? modelGroup : t('Unknown'));
+      t('TV Model Group: %1$s', modelGroup ? modelGroup : t('Unknown')) + '\n' +
+      t('Model Year (from the model group): %1$s', modelYearHint ? modelYearHint : t('Unknown')) + '\n' +
+      t('Panel: %1$s', panelText) + '\n' +
+      t('HDR Support: %1$s', isHdrCapable ? t('Yes') : t('No')) + '\n' +
+      t('Network Connection Type: %1$s', connectionText ? connectionText : t('Unknown')) + '\n' +
+      t('Tested Profile: %1$s', testedProfile ? testedProfile : t('None'));
   } else {
     console.error('%c[index.js, loadSystemInfo]', 'color: green;', 'Error: Failed to load system information!');
     systemInfoPlaceholder.innerText = t('Failed to load system information!');
@@ -4576,6 +4718,54 @@ function loadUserData() {
 }
 
 function loadUserDataCb() {
+  // Take the one-time settings snapshot of an existing install before any stored setting is loaded
+  migrateSettingsSchema(loadStoredSettings);
+}
+
+// Bring the stored settings to the current settings schema (SETTINGS_SCHEMA_VERSION in tv_profile.js), then call the
+// callback function. Up to settings schema 1, the default of a video setting was worked out again at every start and
+// never stored, so a new default in a later build would also change every existing install where the user never
+// touched that setting. So an existing install, which created its unique ID at an earlier start, stores the defaults of
+// settings schema 1 once for every video setting that is still unset (legacySettingsSnapshot() in tv_profile.js), and
+// shows exactly what it showed before. A fresh install only stores the schema version and gets the defaults derived
+// for its TV. The unique ID of a fresh install is stored together with the schema version (loadHTTPCertsCb()), and both
+// are read here in one transaction, so a fresh install is never mistaken for an existing one, whichever runs first.
+function migrateSettingsSchema(callbackFunction) {
+  getMultipleData(['uniqueid', SETTINGS_SCHEMA_KEY].concat(LEGACY_SNAPSHOT_KEYS), function(storedValues) {
+    if (storedValues === null) {
+      // Leave everything as it is when the settings can't be read, and try again at the next start
+      console.warn('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Warning: Failed to read the stored settings, so the settings schema stays as it is.');
+      callbackFunction();
+      return;
+    }
+    if (storedValues[SETTINGS_SCHEMA_KEY] != null) {
+      console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Settings schema: ' + storedValues[SETTINGS_SCHEMA_KEY]);
+      callbackFunction();
+      return;
+    }
+
+    let migratedValues = {};
+    if (storedValues.uniqueid != null) {
+      migratedValues = legacySettingsSnapshot(storedValues, tvCapabilities, getActiveConnectionType());
+      console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Existing install without a settings schema, storing the previous defaults of the unset video settings: ' + JSON.stringify(migratedValues));
+    } else {
+      console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Fresh install, using the optimal streaming settings for this TV as the defaults.');
+    }
+    migratedValues[SETTINGS_SCHEMA_KEY] = SETTINGS_SCHEMA_VERSION;
+    storeMultipleData(migratedValues, null);
+    // Load the settings right away: IndexedDB runs the reading transactions of the loaders only after the writing
+    // transaction above, which was created before them on the same store, has finished, so they see the stored values
+    callbackFunction();
+  });
+}
+
+// Load the stored settings into the settings screen. A setting that isn't stored gets its default, which for the video
+// settings are the optimal streaming settings for this TV and its network connection (deriveOptimalSettings() in
+// tv_profile.js). The settings are requested in this order, and IndexedDB answers in the same order, which some of the
+// defaults below rely on (e.g. the codec is loaded before HDR, and the resolution and frame rate before the bitrate).
+function loadStoredSettings() {
+  const optimalSettings = deriveOptimalSettings(tvCapabilities, getActiveConnectionType());
+
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored resolution preferences.');
   getData('resolution', function(previousValue) {
     if (previousValue.resolution != null) {
@@ -4591,8 +4781,8 @@ function loadUserDataCb() {
         }
       });
     } else {
-      // Set the default state to the highest supported resolution, which is 4K on the S90C
-      const optimalResolution = getOptimalResolution();
+      // Set the default state to the highest resolution of the panel, up to 4K
+      const optimalResolution = optimalSettings.resolution;
       const optimalResolutionItem = $('.videoResolutionMenu li[data-value="' + optimalResolution + '"]');
       $('#selectResolution').text(optimalResolutionItem.text()).attr('data-value', optimalResolution).data('value', optimalResolution);
     }
@@ -4601,7 +4791,12 @@ function loadUserDataCb() {
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored unlockAllFps preferences.');
   getData('unlockAllFps', function(previousValue) {
     if (previousValue.unlockAllFps == null) {
-      document.querySelector('#unlockAllFpsBtn').MaterialSwitch.on(); // Set the default state, since the panel of the S90C supports up to 144 Hz
+      // Set the default state, which unlocks the higher frame rates only for a tested model whose panel shows them
+      if (optimalSettings.unlockAllFps) {
+        document.querySelector('#unlockAllFpsBtn').MaterialSwitch.on();
+      } else {
+        document.querySelector('#unlockAllFpsBtn').MaterialSwitch.off();
+      }
     } else if (previousValue.unlockAllFps == false) {
       document.querySelector('#unlockAllFpsBtn').MaterialSwitch.off();
     } else {
@@ -4613,20 +4808,22 @@ function loadUserDataCb() {
 
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored frameRate preferences.');
   getData('frameRate', function(previousValue) {
-    if (previousValue.frameRate != null) {
-      $('.videoFramerateMenu li').each(function() {
-        if ($(this).data('value') === previousValue.frameRate) {
-          // Update the video frame rate field based on the given value
-          $('#selectFramerate').text($(this).text()).attr('data-value', previousValue.frameRate).data('value', previousValue.frameRate);
-        }
-      });
-    }
+    // Set the default state to the optimal frame rate (60 FPS), which every frame rate menu offers
+    const frameRate = previousValue.frameRate != null ? previousValue.frameRate : optimalSettings.frameRate;
+    $('.videoFramerateMenu li').each(function() {
+      if ($(this).data('value') === frameRate) {
+        // Update the video frame rate field based on the given value
+        $('#selectFramerate').text($(this).text()).attr('data-value', frameRate).data('value', frameRate);
+      }
+    });
   });
 
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored bitrate preferences.');
   getData('bitrate', function(previousValue) {
-    // Set the default state to the recommended 4K bitrate for the network connection of the TV
-    $('#bitrateSlider')[0].MaterialSlider.change(previousValue.bitrate != null ? previousValue.bitrate : String(getRecommendedBitrate(getActiveConnectionType())));
+    // Set the default state to the recommended bitrate for the resolution and frame rate loaded above and the network
+    // connection of the TV, which is the optimal bitrate on a fresh install
+    const defaultBitrate = recommendedBitrate(String($('#selectResolution').data('value')), $('#selectFramerate').data('value'), getActiveConnectionType(), tvCapabilities);
+    $('#bitrateSlider')[0].MaterialSlider.change(previousValue.bitrate != null ? previousValue.bitrate : String(defaultBitrate));
     // Update the video bitrate field based on the given value
     $('#selectBitrate').html($('#bitrateSlider').val() + ' Mbps');
   });
@@ -4634,7 +4831,8 @@ function loadUserDataCb() {
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored framePacing preferences.');
   getData('framePacing', function(previousValue) {
     if (previousValue.framePacing == null) {
-      document.querySelector('#framePacingBtn').MaterialSwitch.on(); // Set the default state
+      // Set the default state, which is on
+      optimalSettings.framePacing ? document.querySelector('#framePacingBtn').MaterialSwitch.on() : document.querySelector('#framePacingBtn').MaterialSwitch.off();
     } else if (previousValue.framePacing == false) {
       document.querySelector('#framePacingBtn').MaterialSwitch.off();
     } else {
@@ -4809,7 +5007,7 @@ function loadUserDataCb() {
       });
     } else {
       // Set the default state to HEVC, because Samsung TVs generally decode H.264 only up to 1080p
-      $('#selectCodec').text($('#hevc').text()).attr('data-value', 'HEVC').data('value', 'HEVC');
+      $('#selectCodec').text($('#hevc').text()).attr('data-value', optimalSettings.videoCodec).data('value', optimalSettings.videoCodec);
     }
     // Warn when a previously stored H.264 codec meets the 4K default of the resolution, which is restored before the codec
     warnH264Resolution();
@@ -4820,7 +5018,7 @@ function loadUserDataCb() {
     if (previousValue.hdrMode == null) {
       // Set the default state to HDR on HDR-capable TVs, matching the optimal streaming settings, unless the stored
       // codec is H.264, which has no HDR profile (the codec is restored before this, see the request order above)
-      if (isHdrCapable && $('#selectCodec').data('value') !== 'H264') {
+      if (optimalSettings.hdrMode && $('#selectCodec').data('value') !== 'H264') {
         document.querySelector('#hdrModeBtn').MaterialSwitch.on();
       } else {
         document.querySelector('#hdrModeBtn').MaterialSwitch.off();
@@ -4835,7 +5033,8 @@ function loadUserDataCb() {
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored fullRange preferences.');
   getData('fullRange', function(previousValue) {
     if (previousValue.fullRange == null) {
-      document.querySelector('#fullRangeBtn').MaterialSwitch.off(); // Set the default state
+      // Set the default state, which is the limited color range
+      optimalSettings.fullRange ? document.querySelector('#fullRangeBtn').MaterialSwitch.on() : document.querySelector('#fullRangeBtn').MaterialSwitch.off();
     } else if (previousValue.fullRange == false) {
       document.querySelector('#fullRangeBtn').MaterialSwitch.off();
     } else {
@@ -4846,9 +5045,10 @@ function loadUserDataCb() {
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored gameMode preferences.');
   getData('gameMode', function(previousValue) {
     if (previousValue.gameMode == null) {
-      if (parseFloat(platformVer) >= 9.0) {
+      // Set the default state based on the Tizen platform version (see getGameModeDefault() in tv_profile.js)
+      if (optimalSettings.gameMode === false) {
         document.querySelector('#gameModeBtn').MaterialSwitch.off(); // Turn off for Tizen 9.0 and newer to avoid compatibility issues
-      } else if (parseFloat(platformVer) === 5.5) {
+      } else if (optimalSettings.gameMode === null) {
         document.querySelector('#gameModeBtn').MaterialSwitch.off(); // Turn off for Tizen 5.5 due to lack of support
         document.querySelector('#gameModeBtn').MaterialSwitch.disable(); // Disable the switch to prevent user interaction
       } else {
@@ -4886,7 +5086,8 @@ function loadUserDataCb() {
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored optimizeBitrate preferences.');
   getData('optimizeBitrate', function(previousValue) {
     if (previousValue.optimizeBitrate == null) {
-      document.querySelector('#optimizeBitrateBtn').MaterialSwitch.off(); // Set the default state
+      // Set the default state, which uses the standard bitrate presets
+      optimalSettings.optimizeBitrate ? document.querySelector('#optimizeBitrateBtn').MaterialSwitch.on() : document.querySelector('#optimizeBitrateBtn').MaterialSwitch.off();
     } else if (previousValue.optimizeBitrate == false) {
       document.querySelector('#optimizeBitrateBtn').MaterialSwitch.off();
     } else {
@@ -4900,21 +5101,21 @@ function loadUserDataCb() {
         console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Auto adjust bitrate state: ' + autoAdjustBitrate);
         return;
       }
-      // Without a stored value (a fresh install, or an update from a version without this setting), decide once
-      // whether the stored bitrate came from the presets, which earlier versions applied on every resolution and frame
-      // rate change. Then they keep following the settings. A bitrate that differs from the preset was picked by hand
-      // (or set by the optimal streaming settings), and a fresh install has the recommended bitrate, so these are kept.
+      // Without a stored value, decide once whether the bitrate presets follow the video settings. A fresh install has
+      // no stored bitrate, so its recommended bitrate follows the resolution and frame rate until the user picks one by
+      // hand. Otherwise (an update from a version without this setting, whose settings snapshot already stores the
+      // decision, so this only remains as a fallback) the presets keep following the settings if the stored bitrate
+      // came from them (followsBitratePresets() in tv_profile.js), and a bitrate that was picked by hand or set by the
+      // optimal streaming settings is kept.
       getData('bitrate', function(storedBitrate) {
         getData('resolution', function(storedResolution) {
           getData('frameRate', function(storedFramerate) {
-            var followsPresets = storedOptimizeBitrate;
-            if (!followsPresets && storedBitrate.bitrate != null && storedResolution.resolution != null && storedFramerate.frameRate != null) {
-              var preset = getStandardPresetBitrate(storedResolution.resolution, storedFramerate.frameRate);
-              if (preset !== null && preset > RECOMMENDED_ETHERNET_BITRATE && getActiveConnectionType() === 'ethernet') {
-                preset = RECOMMENDED_ETHERNET_BITRATE;
-              }
-              followsPresets = preset !== null && parseFloat(storedBitrate.bitrate) === preset;
-            }
+            var followsPresets = storedBitrate.bitrate == null || followsBitratePresets({
+              bitrate: storedBitrate.bitrate,
+              resolution: storedResolution.resolution,
+              frameRate: storedFramerate.frameRate,
+              optimizeBitrate: storedOptimizeBitrate,
+            }, getActiveConnectionType());
             autoAdjustBitrate = followsPresets;
             storeData('autoAdjustBitrate', autoAdjustBitrate, null);
             console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Auto adjust bitrate state (first decision): ' + autoAdjustBitrate);
@@ -4964,7 +5165,12 @@ function loadHTTPCertsCb() {
         myUniqueid = savedUniqueid.uniqueid;
       } else {
         myUniqueid = uniqueid();
-        storeData('uniqueid', myUniqueid, null);
+        // A new unique ID marks a fresh install, so store the current settings schema in the same transaction. The
+        // settings snapshot (migrateSettingsSchema()) reads both together, so it never takes this install for an
+        // existing one, even if this runs before it.
+        const freshInstallData = { uniqueid: myUniqueid };
+        freshInstallData[SETTINGS_SCHEMA_KEY] = SETTINGS_SCHEMA_VERSION;
+        storeMultipleData(freshInstallData, null);
       }
 
       if (!pairingCert) { // We couldn't load a cert. Let's attempt to generate a new one.

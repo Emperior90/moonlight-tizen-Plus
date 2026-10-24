@@ -980,7 +980,7 @@ const Views = {
   },
   BasicSettings: {
     view: new ListView(() => [
-      's90cProfileBtn',
+      'optimalSettingsBtn',
       'selectResolution',
       'selectFramerate',
       'selectBitrate',
