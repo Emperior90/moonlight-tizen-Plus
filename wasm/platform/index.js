@@ -12,6 +12,8 @@ var is8kPanel = tvCapabilities.is8k; // Whether the device has an 8K panel
 var maxSupportedWidth = tvCapabilities.maxWidth; // Width of the highest resolution the resolution menu offers
 var maxSupportedHeight = tvCapabilities.maxHeight; // Height of the highest resolution the resolution menu offers
 var isHdrCapable = tvCapabilities.isHdr; // Whether the device supports HDR
+var wasmPlayerFeatures = tvCapabilities.wasmPlayer; // Whether the WASM player offers the Ultra Low Latency mode that the game mode asks for
+var videoDecoderProbe = tvCapabilities.videoDecoders; // Answers of the browser about the video codecs of the WASM player, only shown and used for hints
 var hosts = {}; // Hosts is an associative array of NvHTTP objects, keyed by server UID
 var isHostOpening = false; // Prevents concurrent hostChosen executions, initial value is false
 var isHostsLoaded = false; // Indicates if IndexedDB has finished loading hosts
@@ -74,10 +76,11 @@ function attachListeners() {
   changeUiModeForWasmLoad();
 
   // Register loadSystemInfo to run when language is initialized, and every time it changes, and add the [Unsupported]
-  // label to the resolution menu again after each translation pass rewrote it
+  // label to the resolution menu and the note to the video codec menu again after each translation pass rewrote them
   if (window.i18n && typeof window.i18n.onRefresh === 'function') {
     window.i18n.onRefresh(loadSystemInfo);
     window.i18n.onRefresh(labelUnsupportedResolutions);
+    window.i18n.onRefresh(labelVideoCodecSupport);
   } else {
     // Fallback if i18n is not present
     loadSystemInfo();
@@ -97,6 +100,7 @@ function attachListeners() {
 
   initIpAddressFields();
   filterUnsupportedResolutions();
+  labelVideoCodecSupport();
 
   $('#addHostContainer').on('click', addHostDialog);
   $('#optimalSettingsBtn').on('click', optimalSettingsDialog);
@@ -770,6 +774,25 @@ function labelUnsupportedResolutions() {
   $('.videoResolutionMenu li.unsupported-resolution').each(function() {
     var resolutionLabel = $(this).attr('data-i18n') ? t($(this).attr('data-i18n')) : $(this).text().trim();
     $(this).text(t('%1$s [Unsupported]', resolutionLabel));
+  });
+}
+
+// Return the text of a menu item without a note added to it (e.g. by labelVideoCodecSupport()), from its data-i18n key
+function getMenuItemLabel(item) {
+  return $(item).attr('data-i18n') ? t($(item).attr('data-i18n')) : $(item).text().trim();
+}
+
+// Add a note to the AV1 entry of the video codec menu when the decoder check says clearly that the TV can't decode AV1
+// (isAv1ReportedUnsupported() in tv_profile.js). It's only a note and AV1 stays selectable, since the check of the
+// browser may not mirror the WASM player. Every translation pass of i18n.js rewrites the text of the menu items from
+// their data-i18n key, which drops the note, so this also runs after each one (registered in attachListeners()).
+function labelVideoCodecSupport() {
+  if (!isAv1ReportedUnsupported(videoDecoderProbe)) {
+    return;
+  }
+  console.log('%c[index.js, labelVideoCodecSupport]', 'color: green;', 'The decoder check says that this TV may not decode AV1, labelling its menu entry.');
+  $('.videoCodecMenu li[data-value="AV1"]').each(function() {
+    $(this).text(t('%1$s (may not be supported by this TV)', getMenuItemLabel(this)));
   });
 }
 
@@ -3263,6 +3286,8 @@ function startGame(host, appID) {
               return;
             }
             wasmSessionStarted = true;
+            // A video format that the TV rejected during an earlier stream doesn't belong to this one (messages.js)
+            rejectedVideoTrack = null;
             sendMessage('startRequest', [
               host.address, host.httpPort, streamWidth, streamHeight, frameRate, bitrate.toString(), rikey, rikeyid.toString(),
               host.appVersion, host.gfeVersion, sessionUrl, codecModes,
@@ -3331,6 +3356,8 @@ function startGame(host, appID) {
             return;
           }
           wasmSessionStarted = true;
+          // A video format that the TV rejected during an earlier stream doesn't belong to this one (messages.js)
+          rejectedVideoTrack = null;
           sendMessage('startRequest', [
             host.address, host.httpPort, streamWidth, streamHeight, frameRate, bitrate.toString(), rikey, rikeyid.toString(),
             host.appVersion, host.gfeVersion, sessionUrl, codecModes,
@@ -4254,7 +4281,8 @@ function saveVideoCodec() {
 }
 
 function updateVideoCodec(chosenCodecId, chosenCodecValue) {
-  $('#selectCodec').text($(chosenCodecId).text()).attr('data-value', chosenCodecValue).data('value', chosenCodecValue);
+  // Show the name of the codec without the note that the menu entry may have (labelVideoCodecSupport())
+  $('#selectCodec').text(getMenuItemLabel(chosenCodecId)).attr('data-value', chosenCodecValue).data('value', chosenCodecValue);
   console.log('%c[index.js, updateVideoCodec]', 'color: green;', 'Saving video codec value: ' + chosenCodecValue);
   storeData('videoCodec', chosenCodecValue, null);
 
@@ -4521,9 +4549,10 @@ function applyOptimalStreamingSettings(connectionType, followPresets) {
   document.querySelector('#optimizeBitrateBtn').MaterialSwitch.off();
   storeData('optimizeBitrate', optimalSettings.optimizeBitrate, null);
 
-  // Set the game mode based on the Tizen platform version (see getGameModeDefault() in tv_profile.js)
+  // Set the game mode based on the Tizen platform version and the WASM player (see getGameModeDefault() in tv_profile.js)
   if (optimalSettings.gameMode === false) {
-    // Turn off for Tizen 9.0 and newer to avoid compatibility issues, where the ForceGM variant enables the game mode instead
+    // Turn off for Tizen 9.0 and newer to avoid compatibility issues, where the ForceGM variant enables the game mode
+    // instead, and for Tizen 5.5 with a WASM player that offers the mode
     document.querySelector('#gameModeBtn').MaterialSwitch.off();
     storeData('gameMode', false, null);
   } else if (optimalSettings.gameMode === true) {
@@ -4531,8 +4560,9 @@ function applyOptimalStreamingSettings(connectionType, followPresets) {
     document.querySelector('#gameModeBtn').MaterialSwitch.on();
     storeData('gameMode', true, null);
   } else {
-    // Turn off and disable for Tizen 5.5 due to lack of support, like on a fresh install, and remove a stored value,
-    // since any stored value enables the switch again at the next start
+    // Turn off and disable for Tizen 5.5 due to lack of support, or for a WASM player that says that it doesn't offer
+    // the mode, like on a fresh install, and remove a stored value, since any stored value enables the switch again at
+    // the next start on Tizen 5.5
     document.querySelector('#gameModeBtn').MaterialSwitch.off();
     document.querySelector('#gameModeBtn').MaterialSwitch.disable();
     removeData('gameMode', null);
@@ -4598,9 +4628,12 @@ function optimalSettingsDialog() {
     '&#8226; ' + (optimalSettings.unlockAllFps
       ? t('Video frame pacing on, limited color range, unlock all frame rates on, optimize bitrate presets off')
       : t('Video frame pacing on, limited color range, unlock all frame rates off, optimize bitrate presets off')) + '<br>';
-  // Name the game mode state, which depends on the Tizen version (the note below covers Tizen 9.0 and newer)
+  // Name the game mode state, which depends on the Tizen version (the note below covers Tizen 9.0 and newer) and on
+  // whether the WASM player offers the Ultra Low Latency mode
   if (optimalSettings.gameMode === true) {
     message += '&#8226; ' + t('Game mode on') + '<br>';
+  } else if (isGameModeUnavailable(tvCapabilities)) {
+    message += '&#8226; ' + t('Game mode off, because the video player of this TV doesn\'t offer the Ultra Low Latency mode') + '<br>';
   }
   message += '<br>';
 
@@ -4826,6 +4859,30 @@ function initSpecialKeys() {
   });
 }
 
+// Translate an answer of the checks of tv_profile.js ('yes', 'no' or 'unknown') for System information
+function describeCheckAnswer(answer) {
+  if (answer === 'yes') {
+    return t('Yes');
+  }
+  return answer === 'no' ? t('No') : t('Unknown');
+}
+
+// Describe the answers of the decoder check (probeVideoDecoders() in tv_profile.js) as the lines of System information:
+// the codecs at the level that streams up to 4K at 60 FPS use, e.g. 'H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: No,
+// AV1 Main10: No', and the codecs at level 5.2, which faster 4K streams use. Answers that don't count give one line.
+function describeVideoDecoderProbe() {
+  if (!videoDecoderProbe.reliable) {
+    return [t('Video decoders (MediaSource check): %1$s', videoDecoderProbe.reason === 'unavailable'
+      ? t('Unknown (not available)')
+      : t('Unknown (the answers of the TV are not reliable)'))];
+  }
+  const describe = (probes) => probes.map((probe) => probe.codec + ': ' + describeCheckAnswer(videoDecoderProbe.results[probe.mimeType])).join(', ');
+  return [
+    t('Video decoders (MediaSource check): %1$s', describe(VIDEO_DECODER_PROBES.filter((probe) => probe.level !== '5.2'))),
+    t('Video decoders at level 5.2 (4K above 60 FPS): %1$s', describe(VIDEO_DECODER_PROBES.filter((probe) => probe.level === '5.2'))),
+  ];
+}
+
 function loadSystemInfo() {
   console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Loading system information...');
   const systemInfoPlaceholder = document.getElementById('systemInfoBtn');
@@ -4838,6 +4895,12 @@ function loadSystemInfo() {
   const connectionText = connectionType === 'ethernet' ? 'Ethernet' : (connectionType === 'wifi' ? 'Wi-Fi' : '');
   const testedProfile = tvCapabilities.profile ? tvCapabilities.profile.id : '';
   const modelYearHint = tvCapabilities.modelYearHint;
+  // Whether the WASM player offers the Ultra Low Latency mode of the game mode, and what the browser answered about
+  // the video codecs of the WASM player (detectWasmPlayerFeatures() and probeVideoDecoders() in tv_profile.js), so a
+  // screenshot shows what the TV reports next to what it accepted
+  const ultraLowLatencyText = describeCheckAnswer(wasmPlayerFeatures.ultraLowLatency);
+  const apiLevelsText = wasmPlayerFeatures.apiLevels && wasmPlayerFeatures.apiLevels.length > 0 ? wasmPlayerFeatures.apiLevels.join(', ') : '';
+  const videoDecoderLines = describeVideoDecoderProbe();
   // The connected gamepads (Controller in gamepad.js), so a user can see whether the TV found a controller, whether it
   // has the standard layout that the menus and the stream expect, and which controller type the stream announces
   const connectedGamepads = Controller.getConnectedGamepads();
@@ -4859,6 +4922,8 @@ function loadSystemInfo() {
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'HDR Support: ' + (isHdrCapable ? 'Yes' : 'No'));
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Network Connection Type: ' + (connectionText ? connectionText : 'Unknown'));
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Tested Profile: ' + (testedProfile ? testedProfile : 'None'));
+    console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'WASM Player: ' + JSON.stringify(wasmPlayerFeatures));
+    console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Video Decoders (MediaSource check): ' + videoDecoderProbe.reason + ', answers ' + JSON.stringify(videoDecoderProbe.answers));
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Gamepads: ' + (connectedGamepads.length === 0 ? 'None' : connectedGamepads.map((info) => info.index + ' (' + Controller.formatGamepadInfo(info) + ')').join(', ')));
     // Insert the system information into the placeholder. The model year is only a hint from the model group, since
     // Samsung sells the models of one year for longer, so it never decides a setting.
@@ -4873,6 +4938,9 @@ function loadSystemInfo() {
       t('HDR Support: %1$s', isHdrCapable ? t('Yes') : t('No')) + '\n' +
       t('Network Connection Type: %1$s', connectionText ? connectionText : t('Unknown')) + '\n' +
       t('Tested Profile: %1$s', testedProfile ? testedProfile : t('None')) + '\n' +
+      t('Ultra Low Latency mode (Game mode): %1$s', ultraLowLatencyText) + '\n' +
+      t('WASM player API levels: %1$s', apiLevelsText ? apiLevelsText : t('Unknown')) + '\n' +
+      videoDecoderLines.map((line) => line + '\n').join('') +
       gamepadsText;
   } else {
     // Without its element there is nowhere to show the system information, so only log it
@@ -5182,8 +5250,8 @@ function loadStoredSettings() {
     if (previousValue.videoCodec != null) {
       $('.videoCodecMenu li').each(function() {
         if ($(this).data('value') === previousValue.videoCodec) {
-          // Update the video codec field based on the given value
-          $('#selectCodec').text($(this).text()).attr('data-value', previousValue.videoCodec).data('value', previousValue.videoCodec);
+          // Update the video codec field based on the given value, without the note that the menu entry may have
+          $('#selectCodec').text(getMenuItemLabel(this)).attr('data-value', previousValue.videoCodec).data('value', previousValue.videoCodec);
         }
       });
     } else {
@@ -5225,10 +5293,17 @@ function loadStoredSettings() {
 
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored gameMode preferences.');
   getData('gameMode', function(previousValue) {
-    if (previousValue.gameMode == null) {
-      // Set the default state based on the Tizen platform version (see getGameModeDefault() in tv_profile.js)
+    if (isGameModeUnavailable(tvCapabilities)) {
+      // The WASM player says that it doesn't offer the Ultra Low Latency mode, so the stream uses the Low Latency mode
+      // anyway: keep the switch off and disabled whatever is stored, and keep the stored value (see
+      // detectWasmPlayerFeatures() in tv_profile.js)
+      document.querySelector('#gameModeBtn').MaterialSwitch.off();
+      document.querySelector('#gameModeBtn').MaterialSwitch.disable();
+    } else if (previousValue.gameMode == null) {
+      // Set the default state based on the Tizen platform version and the WASM player (see getGameModeDefault() in
+      // tv_profile.js)
       if (optimalSettings.gameMode === false) {
-        document.querySelector('#gameModeBtn').MaterialSwitch.off(); // Turn off for Tizen 9.0 and newer to avoid compatibility issues
+        document.querySelector('#gameModeBtn').MaterialSwitch.off(); // Turn off for Tizen 9.0 and newer to avoid compatibility issues, and for Tizen 5.5 with a WASM player that offers the mode
       } else if (optimalSettings.gameMode === null) {
         document.querySelector('#gameModeBtn').MaterialSwitch.off(); // Turn off for Tizen 5.5 due to lack of support
         document.querySelector('#gameModeBtn').MaterialSwitch.disable(); // Disable the switch to prevent user interaction

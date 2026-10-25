@@ -18,6 +18,10 @@
 // - failApis: comma-separated API paths that fail, e.g. 'webapis.avinfo.isHdrTvSupport,tizen.systeminfo.getCapability'.
 //   A function throws when called, any other object (e.g. 'webapis.avinfo') is removed.
 // - wasmStartMs: how long the stub of the WebAssembly module takes to start, in milliseconds (default 50)
+// - wasmPlayer: the `tizentvwasm` object of the WASM player (see createWasmPlayerApi() below): 'none' (default, no
+//   tizentvwasm as in a desktop browser), 'ull', 'noUll', 'apiLevels', 'legacy', 'disagree' or 'throws'
+// - codecs: what MediaSource.isTypeSupported() answers (see createMediaSource() below): 'all' (default), 'noAv1',
+//   'noAv1Main10', 'noLevel52', 'acceptsBogus', 'noH264', 'throws' or 'none' (no MediaSource)
 //
 // The model strings of the presets are illustrative, not read from real devices. Only the S90C model name matches the
 // TV that the app was tuned for, and the S90C preset is the golden case of the generalization plan.
@@ -44,11 +48,13 @@
     appVersion: '1.19.100',
     ip: '192.168.0.50',
     failApis: '',
-    wasmStartMs: 50
+    wasmStartMs: 50,
+    wasmPlayer: 'none',
+    codecs: 'all'
   };
 
   var BOOLEAN_KEYS = ['hdr', 'forceGM'];
-  var CONFIG_KEYS = ['tv', 'model', 'series', 'modelCode', 'panel', 'hdr', 'tizen', 'conn', 'wifiSignal', 'forceGM', 'appVersion', 'ip', 'failApis', 'wasmStartMs'];
+  var CONFIG_KEYS = ['tv', 'model', 'series', 'modelCode', 'panel', 'hdr', 'tizen', 'conn', 'wifiSignal', 'forceGM', 'appVersion', 'ip', 'failApis', 'wasmStartMs', 'wasmPlayer', 'codecs'];
 
   // Convert a query string value to a boolean, accepting 1/0, true/false, yes/no and on/off
   function toBoolean(value) {
@@ -112,7 +118,115 @@
       return entry.length > 0;
     });
     config.wasmStartMs = Number(config.wasmStartMs);
+    config.wasmPlayer = String(config.wasmPlayer);
+    if (WASM_PLAYER_MODES.indexOf(config.wasmPlayer) < 0) {
+      throw new Error('Unknown WASM player: ' + config.wasmPlayer + ' (known: ' + WASM_PLAYER_MODES.join(', ') + ')');
+    }
+    config.codecs = String(config.codecs);
+    if (CODEC_MODES.indexOf(config.codecs) < 0) {
+      throw new Error('Unknown codecs: ' + config.codecs + ' (known: ' + CODEC_MODES.join(', ') + ')');
+    }
     return config;
+  }
+
+  var WASM_PLAYER_MODES = ['none', 'ull', 'noUll', 'apiLevels', 'legacy', 'disagree', 'throws'];
+  var CODEC_MODES = ['all', 'noAv1', 'noAv1Main10', 'noLevel52', 'acceptsBogus', 'noH264', 'throws', 'none'];
+
+  // Create the `tizentvwasm` object of the WASM player in the shapes that the glue code of Samsung's Emscripten SDK
+  // (in the built moonlight-wasm.js) distinguishes, or undefined for 'none'. The versions and API levels are
+  // illustrative, not read from real devices:
+  // - 'ull': availableApis and isApiFeatureSupported(), with the feature 'ultra-low-latency'
+  // - 'noUll': the same without that feature
+  // - 'apiLevels': availableApis with API levels only and no isApiFeatureSupported(), as on older players
+  // - 'legacy': only the classes of the player, without availableApis
+  // - 'disagree': availableApis lists the feature, while isApiFeatureSupported() answers false
+  // - 'throws': reading availableApis throws
+  function createWasmPlayerApi(mode) {
+    if (mode === 'none') {
+      return undefined;
+    }
+    var ElementaryMediaStreamSource = function() {};
+    var ElementaryMediaTrack = function() {};
+    var api = { ElementaryMediaStreamSource: ElementaryMediaStreamSource, ElementaryMediaTrack: ElementaryMediaTrack };
+    if (mode === 'legacy') {
+      return api;
+    }
+    if (mode === 'throws') {
+      Object.defineProperty(api, 'availableApis', {
+        get: function() {
+          throw new Error('Simulated failure of tizentvwasm.availableApis');
+        }
+      });
+      return api;
+    }
+    var sockets = { name: 'TizenSockets', version: '1.0', apiLevels: [1], features: [] };
+    if (mode === 'apiLevels') {
+      api.availableApis = [sockets, { name: 'ElementaryMediaStreamSource', version: '1.1', apiLevels: [0, 1, 2, 3] }];
+      return api;
+    }
+    var features = ['base-emss', 'video-texture', 'software-decoding', 'construct-with-modes'];
+    if (mode === 'ull' || mode === 'disagree') {
+      features.push('ultra-low-latency');
+    }
+    var emss = { name: 'ElementaryMediaStreamSource', version: '1.4', apiLevels: mode === 'noUll' ? [0, 1, 2, 3, 4] : [0, 1, 2, 3, 4, 5], features: features };
+    api.availableApis = [sockets, emss];
+    api.isApiFeatureSupported = function(apiName, feature) {
+      if (mode === 'disagree') {
+        return false;
+      }
+      return api.availableApis.some(function(entry) {
+        return entry.name === apiName && entry.features.indexOf(feature) >= 0;
+      });
+    };
+    api.isApiSupported = function(apiName, apiLevel) {
+      return api.availableApis.some(function(entry) {
+        return entry.name === apiName && entry.apiLevels.indexOf(apiLevel) >= 0;
+      });
+    };
+    return api;
+  }
+
+  // Return the isTypeSupported() of a simulated MediaSource for a codecs mode, which answers for the codec strings of the
+  // video track of the WASM player (VIDEO_DECODER_PROBES in tv_profile.js) and rejects every other codec:
+  // - 'all': every codec of the WASM player
+  // - 'noAv1', 'noAv1Main10': no AV1, or no AV1 in 10 bits
+  // - 'noLevel52': HEVC and AV1 only at level 5.1
+  // - 'acceptsBogus': every MIME type, also a codec that doesn't exist
+  // - 'noH264': no H.264
+  // - 'throws': every call throws
+  function createIsTypeSupported(mode) {
+    var known = /^(avc1\.64002A|hev1\.[12]\.[46]\.L15[36]\.B0|av01\.0\.1[34]M\.(08|10))$/;
+    return function(mimeType) {
+      if (mode === 'throws') {
+        throw new Error('Simulated failure of MediaSource.isTypeSupported');
+      }
+      if (mode === 'acceptsBogus') {
+        return true;
+      }
+      var match = /codecs="([^"]*)"/.exec(String(mimeType));
+      var codec = match ? match[1] : '';
+      if (!known.test(codec)) {
+        return false;
+      }
+      if (mode === 'noAv1' && codec.indexOf('av01') === 0) {
+        return false;
+      }
+      if (mode === 'noAv1Main10' && /^av01\..*\.10$/.test(codec)) {
+        return false;
+      }
+      if (mode === 'noLevel52' && /L156|14M/.test(codec)) {
+        return false;
+      }
+      if (mode === 'noH264' && codec.indexOf('avc1') === 0) {
+        return false;
+      }
+      return true;
+    };
+  }
+
+  // Create a simulated MediaSource for a codecs mode (see createIsTypeSupported()), or undefined for 'none'
+  function createMediaSource(mode) {
+    return mode === 'none' ? undefined : { isTypeSupported: createIsTypeSupported(mode) };
   }
 
   // Make the API paths of the configuration fail: a function throws when called, any other object is removed
@@ -319,8 +433,12 @@
   var api = {
     TV_PRESETS: TV_PRESETS,
     DEFAULTS: DEFAULTS,
+    WASM_PLAYER_MODES: WASM_PLAYER_MODES,
+    CODEC_MODES: CODEC_MODES,
     parseConfig: parseConfig,
-    createTizenApis: createTizenApis
+    createTizenApis: createTizenApis,
+    createWasmPlayerApi: createWasmPlayerApi,
+    createMediaSource: createMediaSource
   };
 
   if (typeof module === 'object' && module.exports) {
@@ -330,5 +448,18 @@
     var apis = createTizenApis(config);
     root.__tvMock = { config: config, calls: apis.calls, apis: apis, presets: TV_PRESETS };
     root.tizen = apis.tizen;
+    // The WASM player of the TV, which a desktop browser doesn't have
+    var wasmPlayerApi = createWasmPlayerApi(config.wasmPlayer);
+    if (wasmPlayerApi !== undefined) {
+      root.tizentvwasm = wasmPlayerApi;
+    }
+    // The answers of MediaSource about the codecs of the WASM player, instead of those of the desktop browser
+    if (config.codecs === 'none') {
+      root.MediaSource = undefined;
+    } else if (root.MediaSource) {
+      Object.defineProperty(root.MediaSource, 'isTypeSupported', { value: createIsTypeSupported(config.codecs), configurable: true, writable: true });
+    } else {
+      root.MediaSource = createMediaSource(config.codecs);
+    }
   }
 })(typeof window !== 'undefined' ? window : this);

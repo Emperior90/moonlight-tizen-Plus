@@ -1,0 +1,12 @@
+# Video formats whose video track the TV may reject, with the message that wasm/wasmplayer.cpp then sends to the front
+# end. Both sides read this file: FormatVideoTrackRejectedMessage() in wasm/video_track_rejection.hpp
+# (tests/native/video_track_rejection_test.cpp) writes the message, and handleMessage() in wasm/platform/messages.js
+# (tests/unit/video-track-rejection.test.js) reads it for the message of the error -200, so the two stay the same.
+# Format, separated by tabs: the video format of moonlight-common-c (VIDEO_FORMAT_* in Limelight.h) in hex, the width,
+# the height, the frame rate, the message.
+
+0x0001	1920	1080	60	VideoTrackRejected: H.264,1920,1080,60
+0x0100	3840	2160	120	VideoTrackRejected: HEVC,3840,2160,120
+0x0200	3840	2160	60	VideoTrackRejected: HEVC Main10,3840,2160,60
+0x1000	2560	1440	90	VideoTrackRejected: AV1,2560,1440,90
+0x2000	3840	2160	60	VideoTrackRejected: AV1 Main10,3840,2160,60

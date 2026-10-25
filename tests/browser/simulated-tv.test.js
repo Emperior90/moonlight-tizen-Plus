@@ -148,6 +148,8 @@ function readSystemInfo(page) {
   return page.evaluate(() => document.getElementById('systemInfoBtn').innerHTML.replace(/<br\s*\/?>/g, '\n'));
 }
 
+// The simulated TVs have no tizentvwasm and answer yes for every codec of the WASM player by default (see
+// runtime-checks.test.js for the other answers of plan WP8)
 test('System information shows the app, the model strings and what the app detected about the TV (plan WP3)', async () => {
   const expected = [
     {
@@ -163,6 +165,10 @@ test('System information shows the app, the model strings and what the app detec
         'HDR Support: Yes',
         'Network Connection Type: Ethernet',
         'Tested Profile: S90C',
+        'Ultra Low Latency mode (Game mode): Unknown',
+        'WASM player API levels: Unknown',
+        'Video decoders (MediaSource check): H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
+        'Video decoders at level 5.2 (4K above 60 FPS): HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
         'Gamepads: None',
       ],
     },
@@ -179,6 +185,10 @@ test('System information shows the app, the model strings and what the app detec
         'HDR Support: No',
         'Network Connection Type: Wi-Fi',
         'Tested Profile: None',
+        'Ultra Low Latency mode (Game mode): Unknown',
+        'WASM player API levels: Unknown',
+        'Video decoders (MediaSource check): H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
+        'Video decoders at level 5.2 (4K above 60 FPS): HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
         'Gamepads: None',
       ],
     },
@@ -195,6 +205,10 @@ test('System information shows the app, the model strings and what the app detec
         'HDR Support: Yes',
         'Network Connection Type: Unknown',
         'Tested Profile: None',
+        'Ultra Low Latency mode (Game mode): Unknown',
+        'WASM player API levels: Unknown',
+        'Video decoders (MediaSource check): H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
+        'Video decoders at level 5.2 (4K above 60 FPS): HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
         'Gamepads: None',
       ],
     },

@@ -1,6 +1,7 @@
 // TV capability profile and the video settings derived from it. index.html loads this file before index.js, which uses
 // it for the defaults of a fresh install, for Restore Defaults, for the optimal streaming settings button and its
-// dialog, for the warnings of the video settings, and for the one-time settings snapshot of existing installs. Keeping
+// dialog, for the warnings of the video settings, for the one-time settings snapshot of existing installs, and for the
+// checks of the WASM player (Ultra Low Latency mode) and of the video decoders that System information shows. Keeping
 // these rules in one place means that the defaults, the button, the text of its dialog and the warnings can't drift
 // apart.
 //
@@ -136,14 +137,187 @@ function getModelYearHint(modelCode) {
   return match ? 2000 + parseInt(match[1], 10) : null;
 }
 
+// Name of the WASM player API in the list of tizentvwasm.availableApis, and its feature of the Ultra Low Latency mode,
+// which the game mode asks for (main.cpp)
+const EMSS_API_NAME = 'ElementaryMediaStreamSource';
+const ULTRA_LOW_LATENCY_FEATURE = 'ultra-low-latency';
+
+// Copy an array, or an array-like object of the TV (e.g. a list of the Tizen web runtime), into an array, or return
+// null for anything else
+function toArrayOrNull(value) {
+  if (Array.isArray(value)) {
+    return value.slice();
+  }
+  return value && typeof value === 'object' && typeof value.length === 'number' ? Array.prototype.slice.call(value) : null;
+}
+
+// Detect whether the WASM player of the TV offers the Ultra Low Latency mode that the game mode asks for. It follows the
+// glue code of Samsung's Emscripten SDK in the built moonlight-wasm.js, which decides it when it creates the media
+// source: it uses the mode only when the ElementaryMediaStreamSource entry of tizentvwasm.availableApis lists the
+// feature 'ultra-low-latency', and otherwise falls back to the Low Latency mode with only a console warning. On a TV
+// whose tizentvwasm has availableApis but no isApiFeatureSupported(), the glue code replaces the features of that entry
+// with ones derived from its API levels, which never include the Ultra Low Latency mode. The tizentvwasm object can be
+// passed in for the tests, otherwise the global one of the TV is used. Returns:
+// - ultraLowLatency: 'yes', 'no', or 'unknown' when the TV doesn't say it clearly: without tizentvwasm (e.g. in a
+//   desktop browser), with an older player without availableApis, without an ElementaryMediaStreamSource entry, or
+//   when the feature list and isApiFeatureSupported() disagree
+// - source: what the answer is based on: 'features' (availableApis with isApiFeatureSupported()), 'apiLevels'
+//   (availableApis without isApiFeatureSupported()), 'legacy' (no availableApis), 'none' (no tizentvwasm) or 'error'
+//   (reading tizentvwasm failed)
+// - apiLevels: the API levels of the WASM player, or null
+function detectWasmPlayerFeatures(tizentvwasmObject) {
+  const wasmApi = tizentvwasmObject !== undefined ? tizentvwasmObject : getTvGlobal('tizentvwasm');
+  const result = { ultraLowLatency: 'unknown', source: 'none', apiLevels: null };
+  if (!wasmApi || (typeof wasmApi !== 'object' && typeof wasmApi !== 'function')) {
+    return result;
+  }
+  try {
+    if (wasmApi.availableApis === undefined) {
+      // An older player, which the TV describes only by its classes, so the rules by Tizen version stay
+      result.source = 'legacy';
+      return result;
+    }
+    // The glue code only checks whether isApiFeatureSupported is defined, so a value that isn't a function still keeps
+    // the feature list of the TV (calling it then fails, which leaves the decision to the feature list)
+    result.source = wasmApi.isApiFeatureSupported !== undefined ? 'features' : 'apiLevels';
+    const availableApis = toArrayOrNull(wasmApi.availableApis) || [];
+    const emssInfo = availableApis.find(function(apiInfo) {
+      return apiInfo && apiInfo.name === EMSS_API_NAME;
+    });
+    if (!emssInfo) {
+      return result;
+    }
+    const apiLevels = toArrayOrNull(emssInfo.apiLevels);
+    result.apiLevels = apiLevels;
+    if (result.source === 'apiLevels') {
+      // The glue code gives this entry the features 'base-emss', 'video-texture' and 'software-decoding' at most
+      result.ultraLowLatency = 'no';
+      return result;
+    }
+    const features = toArrayOrNull(emssInfo.features);
+    const listed = features ? features.indexOf(ULTRA_LOW_LATENCY_FEATURE) >= 0 : null;
+    const answer = safeTvCall('Ultra Low Latency mode support of the WASM player', function() {
+      return wasmApi.isApiFeatureSupported(EMSS_API_NAME, ULTRA_LOW_LATENCY_FEATURE);
+    }, null);
+    // The glue code decides by the feature list alone, so isApiFeatureSupported() only has to agree with it
+    if (listed === true && answer !== false) {
+      result.ultraLowLatency = 'yes';
+    } else if (listed === false && answer === false) {
+      result.ultraLowLatency = 'no';
+    }
+  } catch (error) {
+    console.warn('%c[tv_profile.js, detectWasmPlayerFeatures]', 'color: purple;', 'Warning: Failed to read the features of the WASM player: ' + (error && error.message ? error.message : error));
+    result.ultraLowLatency = 'unknown';
+    result.source = 'error';
+  }
+  return result;
+}
+
+// The video codecs that wasmplayer.cpp offers to the TV when it adds the video track (the MIME types of
+// StartupVidDecSetup()), which the decoder check asks the TV about: H.264 at level 4.2, and HEVC and AV1 at level 5.1
+// and, for streams above the luma sample rate of level 5.1 (e.g. 4K at 90 or 120 FPS), at level 5.2.
+// tests/unit/runtime-checks.test.js checks that they are exactly the ones of wasmplayer.cpp.
+const VIDEO_DECODER_PROBES = Object.freeze([
+  Object.freeze({ codec: 'H.264', level: '4.2', mimeType: 'video/mp4; codecs="avc1.64002A"' }),
+  Object.freeze({ codec: 'HEVC', level: '5.1', mimeType: 'video/mp4; codecs="hev1.1.6.L153.B0"' }),
+  Object.freeze({ codec: 'HEVC', level: '5.2', mimeType: 'video/mp4; codecs="hev1.1.6.L156.B0"' }),
+  Object.freeze({ codec: 'HEVC Main10', level: '5.1', mimeType: 'video/mp4; codecs="hev1.2.4.L153.B0"' }),
+  Object.freeze({ codec: 'HEVC Main10', level: '5.2', mimeType: 'video/mp4; codecs="hev1.2.4.L156.B0"' }),
+  Object.freeze({ codec: 'AV1', level: '5.1', mimeType: 'video/mp4; codecs="av01.0.13M.08"' }),
+  Object.freeze({ codec: 'AV1', level: '5.2', mimeType: 'video/mp4; codecs="av01.0.14M.08"' }),
+  Object.freeze({ codec: 'AV1 Main10', level: '5.1', mimeType: 'video/mp4; codecs="av01.0.13M.10"' }),
+  Object.freeze({ codec: 'AV1 Main10', level: '5.2', mimeType: 'video/mp4; codecs="av01.0.14M.10"' }),
+]);
+
+// A codec that doesn't exist. A browser that accepts it doesn't really check the codecs, so its answers don't count.
+const BOGUS_CODEC_PROBE = 'video/mp4; codecs="bogus.0.0"';
+// H.264 at level 4.2 (1080p at 60 FPS), which every Samsung TV decodes. A browser that rejects it doesn't answer for
+// the decoders of the TV, so its answers don't count either.
+const H264_CONTROL_PROBE = 'video/mp4; codecs="avc1.64002A"';
+
+// Ask the MediaSource of the browser of the TV which of the video codecs of the WASM player (VIDEO_DECODER_PROBES) it
+// supports. The WASM player decodes through its own path, which MediaSource may not mirror exactly, so the answers are
+// only shown and used for a hint, never to block a setting. They count only when the browser rejects a codec that
+// doesn't exist (BOGUS_CODEC_PROBE) and accepts H.264 at level 4.2 (H264_CONTROL_PROBE), and otherwise every answer is
+// 'unknown'. The MediaSource object can be passed in for the tests, otherwise the global one is used. Returns:
+// - reliable: whether the answers count
+// - reason: 'ok', 'unavailable' (no MediaSource.isTypeSupported()), 'bogusAccepted' (the codec that doesn't exist was
+//   accepted), 'h264Rejected' (H.264 at level 4.2 was rejected) or 'controlFailed' (a check of the two failed)
+// - results: 'yes', 'no' or 'unknown' for each MIME type of VIDEO_DECODER_PROBES
+// - answers: what isTypeSupported() returned for each MIME type and the codec that doesn't exist: true, false, or null
+//   when the call failed, for the logs
+function probeVideoDecoders(mediaSourceObject) {
+  const mediaSource = mediaSourceObject !== undefined ? mediaSourceObject : getTvGlobal('MediaSource');
+  const result = { reliable: false, reason: 'unavailable', results: {}, answers: {} };
+  const mimeTypes = VIDEO_DECODER_PROBES.map(function(probe) {
+    return probe.mimeType;
+  });
+  mimeTypes.forEach(function(mimeType) {
+    result.results[mimeType] = 'unknown';
+  });
+  if (!mediaSource || typeof mediaSource.isTypeSupported !== 'function') {
+    return result;
+  }
+  // Ask once per MIME type, keeping only true and false
+  const ask = function(mimeType) {
+    if (!Object.prototype.hasOwnProperty.call(result.answers, mimeType)) {
+      const answer = safeTvCall('decoder support for ' + mimeType, function() {
+        return mediaSource.isTypeSupported(mimeType);
+      }, null);
+      result.answers[mimeType] = typeof answer === 'boolean' ? answer : null;
+    }
+    return result.answers[mimeType];
+  };
+  mimeTypes.forEach(ask);
+  const bogusAnswer = ask(BOGUS_CODEC_PROBE);
+  const h264Answer = ask(H264_CONTROL_PROBE);
+  if (bogusAnswer === true) {
+    result.reason = 'bogusAccepted';
+  } else if (h264Answer === false) {
+    result.reason = 'h264Rejected';
+  } else if (bogusAnswer !== false || h264Answer !== true) {
+    result.reason = 'controlFailed';
+  } else {
+    result.reliable = true;
+    result.reason = 'ok';
+    mimeTypes.forEach(function(mimeType) {
+      const answer = result.answers[mimeType];
+      result.results[mimeType] = answer === true ? 'yes' : (answer === false ? 'no' : 'unknown');
+    });
+  }
+  return result;
+}
+
+// Return the answer of the decoder check (probeVideoDecoders()) for a codec of VIDEO_DECODER_PROBES at a level, e.g.
+// ('AV1 Main10', '5.1'): 'yes', 'no' or 'unknown'
+function getVideoDecoderSupport(probe, codec, level) {
+  for (let i = 0; i < VIDEO_DECODER_PROBES.length; i++) {
+    const entry = VIDEO_DECODER_PROBES[i];
+    if (entry.codec === codec && entry.level === level) {
+      return probe && probe.results && probe.results[entry.mimeType] ? probe.results[entry.mimeType] : 'unknown';
+    }
+  }
+  return 'unknown';
+}
+
+// Whether the decoder check says clearly that the TV can't decode AV1, which only labels the AV1 entry of the video
+// codec menu and never blocks it: the answers count, and AV1 at level 5.1 is 'no' both in 8 and in 10 bits, since a
+// decoder for 10 bits also decodes 8 bits and differing answers aren't clear
+function isAv1ReportedUnsupported(probe) {
+  return !!(probe && probe.reliable) && getVideoDecoderSupport(probe, 'AV1', '5.1') === 'no' &&
+    getVideoDecoderSupport(probe, 'AV1 Main10', '5.1') === 'no';
+}
+
 // Detect what the TV can do, through its Tizen and Samsung product APIs. The API objects can be passed in for the tests
-// ({ tizen, webapis, screen }), otherwise the global ones of the TV are used. Returns:
+// ({ tizen, webapis, screen, tizentvwasm, mediaSource }), otherwise the global ones of the TV are used. Returns:
 // - platformVer, modelName, modelSeries, modelCode: what the TV reports, or null if it can't be read
 // - is4k, is8k, isHdr: the panel and HDR support, false if it can't be read
 // - maxWidth, maxHeight: the largest resolution the resolution menu offers
 // - connection: the active network connection type at the time of the detection ('ethernet', 'wifi' or 'unknown')
 // - profile: the tested profile of this model (VERIFIED_PROFILES), or null
 // - modelYearHint: the model year suggested by the model code, or null (only shown, never used for a decision)
+// - wasmPlayer: whether the WASM player offers the Ultra Low Latency mode (detectWasmPlayerFeatures())
+// - videoDecoders: the answers of the decoder check (probeVideoDecoders()), only shown and used for hints
 function detectTvCapabilities(apis) {
   const given = apis || {};
   const tizenApi = given.tizen !== undefined ? given.tizen : getTvGlobal('tizen');
@@ -203,6 +377,8 @@ function detectTvCapabilities(apis) {
     connection: detectConnectionType(webApi === undefined ? null : webApi),
     profile: findVerifiedProfile(modelName, modelSeries),
     modelYearHint: getModelYearHint(modelCode),
+    wasmPlayer: detectWasmPlayerFeatures(given.tizentvwasm),
+    videoDecoders: probeVideoDecoders(given.mediaSource),
   };
 }
 
@@ -265,18 +441,32 @@ function bitrateRaiseLimit(res, frameRate, caps) {
   return Math.min(2 * preset, MAX_BITRATE_MBPS, getDecoderCapMbps(caps));
 }
 
-// Return the default of the game mode (Ultra Low Latency mode of the WASM player) for a Tizen platform version: false on
-// Tizen 9.0 and newer, where it can freeze the video on the first frame (the ForceGM variant asks the TV for its Game
-// Mode instead), null on Tizen 5.5, whose WASM player doesn't support it (the switch stays off and disabled, and no
-// value is stored, so that it stays disabled), and true on every other version (e.g. 6.0, 6.5, 7.0 and 8.0)
-function getGameModeDefault(platformVer) {
+// Return the default of the game mode (Ultra Low Latency mode of the WASM player) for a Tizen platform version and the
+// answer of the WASM player whether it offers that mode ('yes', 'no' or 'unknown', see detectWasmPlayerFeatures()):
+// - null when the WASM player says that it doesn't offer the mode, whose glue code would fall back to the Low Latency
+//   mode anyway (the switch stays off and disabled, and no value is stored)
+// - false on Tizen 9.0 and newer, where it can freeze the video on the first frame (the ForceGM variant asks the TV for
+//   its Game Mode instead)
+// - on Tizen 5.5, whose WASM player didn't offer it: false (off, but the switch can be turned on) when the WASM player
+//   says that it does offer it, and otherwise null
+// - true on every other version (e.g. 6.0, 6.5, 7.0 and 8.0)
+function getGameModeDefault(platformVer, ultraLowLatency) {
+  if (ultraLowLatency === 'no') {
+    return null;
+  }
   const version = parseFloat(platformVer);
   if (version >= 9.0) {
     return false;
   } else if (version === 5.5) {
-    return null;
+    return ultraLowLatency === 'yes' ? false : null;
   }
   return true;
+}
+
+// Whether the game mode switch stays off and disabled on this TV whatever is stored: when the WASM player says that it
+// doesn't offer the Ultra Low Latency mode (see detectWasmPlayerFeatures())
+function isGameModeUnavailable(caps) {
+  return !!(caps && caps.wasmPlayer && caps.wasmPlayer.ultraLowLatency === 'no');
 }
 
 // Derive the optimal video settings for a TV (see detectTvCapabilities()) and the network connection type. They are the
@@ -286,7 +476,8 @@ function getGameModeDefault(platformVer) {
 //   which streams HDR10 when HDR is enabled on the host and 10-bit SDR otherwise
 // - the recommended bitrate for the resolution, frame rate and connection (recommendedBitrate())
 // - 'Unlock all frame rates' only for a tested profile with a high refresh rate panel, since most TVs show 60 Hz
-// - the game mode by Tizen version (getGameModeDefault()), with null meaning off, disabled and not stored
+// - the game mode by Tizen version and by what the WASM player offers (getGameModeDefault()), with null meaning off,
+//   disabled and not stored
 // - frame pacing on, the limited color range (the standard for video, which keeps the detail in dark and bright areas),
 //   and the standard bitrate presets instead of the optimized ones, which aim for a lower bitrate
 function deriveOptimalSettings(caps, connectionType) {
@@ -301,7 +492,7 @@ function deriveOptimalSettings(caps, connectionType) {
     hdrMode: !!capabilities.isHdr,
     bitrate: recommendedBitrate(resolution, frameRate, connectionType, capabilities),
     unlockAllFps: profile ? !!profile.unlockAllFps : false,
-    gameMode: getGameModeDefault(capabilities.platformVer),
+    gameMode: getGameModeDefault(capabilities.platformVer, capabilities.wasmPlayer ? capabilities.wasmPlayer.ultraLowLatency : 'unknown'),
     framePacing: true,
     fullRange: false,
     optimizeBitrate: false,
@@ -517,16 +708,26 @@ if (typeof module === 'object' && module && module.exports) {
     STANDARD_BITRATE_PRESETS: STANDARD_BITRATE_PRESETS,
     LEGACY_DEFAULT_BITRATES: LEGACY_DEFAULT_BITRATES,
     LEGACY_SNAPSHOT_KEYS: LEGACY_SNAPSHOT_KEYS,
+    EMSS_API_NAME: EMSS_API_NAME,
+    ULTRA_LOW_LATENCY_FEATURE: ULTRA_LOW_LATENCY_FEATURE,
+    VIDEO_DECODER_PROBES: VIDEO_DECODER_PROBES,
+    BOGUS_CODEC_PROBE: BOGUS_CODEC_PROBE,
+    H264_CONTROL_PROBE: H264_CONTROL_PROBE,
     safeTvCall: safeTvCall,
     detectConnectionType: detectConnectionType,
     findVerifiedProfile: findVerifiedProfile,
     getModelYearHint: getModelYearHint,
+    detectWasmPlayerFeatures: detectWasmPlayerFeatures,
+    probeVideoDecoders: probeVideoDecoders,
+    getVideoDecoderSupport: getVideoDecoderSupport,
+    isAv1ReportedUnsupported: isAv1ReportedUnsupported,
     detectTvCapabilities: detectTvCapabilities,
     getStandardPresetBitrate: getStandardPresetBitrate,
     getDecoderCapMbps: getDecoderCapMbps,
     recommendedBitrate: recommendedBitrate,
     bitrateRaiseLimit: bitrateRaiseLimit,
     getGameModeDefault: getGameModeDefault,
+    isGameModeUnavailable: isGameModeUnavailable,
     deriveOptimalSettings: deriveOptimalSettings,
     parseResolution: parseResolution,
     hasTested120HzProfile: hasTested120HzProfile,

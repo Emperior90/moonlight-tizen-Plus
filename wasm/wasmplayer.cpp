@@ -1,4 +1,5 @@
 #include "moonlight_wasm.hpp"
+#include "video_track_rejection.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -427,6 +428,12 @@ int MoonlightInstance::StartupVidDecSetup(int videoFormat, int width, int height
       ClLogMessage("The TV rejected the video track (%s, %dx%d at %d FPS)\n", videoProfile.first, width, height, redrawRate);
     }
     if (!videoTrackAdded) {
+      // Tell the front end which video format the TV rejected, so that the message of the error code names it. This
+      // runs on the connection thread before LiStartConnection() fails, so the front end gets it before the stream
+      // termination message. A start that was cancelled shows no error, so nothing is sent for it.
+      if (!g_Instance->m_ConnectionCancelled) {
+        PostToJs(FormatVideoTrackRejectedMessage(videoFormat, width, height, redrawRate));
+      }
       // Fail now, because a track that was never added will never open
       return ERROR_VIDEO_SETUP_FAILED;
     }

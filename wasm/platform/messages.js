@@ -340,6 +340,38 @@ function leaveStreamView(host) {
   });
 }
 
+// Video format that the TV rejected when the current stream added its video track (the 'VideoTrackRejected: ' message
+// of wasm/video_track_rejection.hpp), for the message of the stream termination with error -200 that follows it, or
+// null. The start of a stream clears it (startGame() in index.js).
+var rejectedVideoTrack = null;
+
+// Read the video format of a 'VideoTrackRejected: ' message, e.g. 'AV1 Main10,3840,2160,60', into
+// { codec, width, height, fps }, or return null for a text in another format
+function parseVideoTrackRejection(text) {
+  const match = /^([^,]+),(\d+),(\d+),(\d+)$/.exec(String(text).trim());
+  if (!match) {
+    return null;
+  }
+  return { codec: match[1], width: parseInt(match[2], 10), height: parseInt(match[3], 10), fps: parseInt(match[4], 10) };
+}
+
+// Tell the user which video format the TV rejected when the stream added its video track, and what to change: HEVC
+// instead of AV1, or instead of H.264, which Samsung TVs generally decode only up to 1080p, and otherwise a lower
+// resolution or frame rate, and HDR off for a 10-bit stream
+function showVideoTrackRejection(rejection) {
+  const codec = rejection.codec;
+  console.warn('%c[messages.js, showVideoTrackRejection]', 'color: gray;', 'Warning: The TV rejected the video track: ' + codec + ' at ' + rejection.width + 'x' + rejection.height + '@' + rejection.fps);
+  if (codec.indexOf('AV1') === 0) {
+    snackbarLogLong('The TV rejected %1$s at %2$sx%3$s@%4$s FPS. Choose HEVC as the video codec.', codec, rejection.width, rejection.height, rejection.fps);
+  } else if (codec === 'H.264') {
+    snackbarLogLong('The TV rejected %1$s at %2$sx%3$s@%4$s FPS. Choose HEVC as the video codec, or a resolution up to 1080p.', codec, rejection.width, rejection.height, rejection.fps);
+  } else if (codec.indexOf('Main10') >= 0) {
+    snackbarLogLong('The TV rejected %1$s at %2$sx%3$s@%4$s FPS. Turn off HDR, or lower the resolution or frame rate.', codec, rejection.width, rejection.height, rejection.fps);
+  } else {
+    snackbarLogLong('The TV rejected %1$s at %2$sx%3$s@%4$s FPS. Lower the resolution or frame rate.', codec, rejection.width, rejection.height, rejection.fps);
+  }
+}
+
 /**
  * handleMessage - Handles messages from the Wasm module
  *
@@ -360,6 +392,9 @@ function handleMessage(msg) {
     leaveStreamView(streamLaunchHost || api);
     // Show a termination snackbar message if the termination was unexpected
     var errorCode = parseInt(msg.replace('streamTerminated: ', ''));
+    // A video format that the TV rejected belongs to this stream only
+    var videoTrackRejection = rejectedVideoTrack;
+    rejectedVideoTrack = null;
     switch (errorCode) {
       case 0: // ML_ERROR_GRACEFUL_TERMINATION
         break;
@@ -379,7 +414,12 @@ function handleMessage(msg) {
         snackbarLogLong('The host PC reported a fatal video encoding error. Try disabling HDR mode, changing the streaming resolution, or changing your host PC\'s display resolution.');
         break;
       case -200: // ERROR_VIDEO_SETUP_FAILED
-        snackbarLogLong('The TV was unable to start the streaming with the selected video settings. Try reducing the resolution or frame rate and consider changing the codec.');
+        if (videoTrackRejection) {
+          // Name the video format that the TV rejected and what to change
+          showVideoTrackRejection(videoTrackRejection);
+        } else {
+          snackbarLogLong('The TV was unable to start the streaming with the selected video settings. Try reducing the resolution or frame rate and consider changing the codec.');
+        }
         break;
       case -201: // ERROR_VIDEO_PLAYER_FAILED
         snackbarLogLong('The video player of the TV stopped with an error during the stream. Start the stream again; if it keeps happening, try a lower bitrate, resolution or frame rate.');
@@ -426,6 +466,10 @@ function handleMessage(msg) {
   } else if (msg.indexOf('DialogMsg: ') === 0) {
     // Show dialog message using the warning dialog
     warningDialog(t('Connection Error'), translateBackendMessage(msg.replace('DialogMsg: ', '')));
+  } else if (msg.indexOf('VideoTrackRejected: ') === 0) {
+    // The TV rejected every profile of the video track. Keep its video format for the stream termination with error
+    // -200 that follows, which then names it.
+    rejectedVideoTrack = parseVideoTrackRejection(msg.replace('VideoTrackRejected: ', ''));
   } else if (msg.indexOf('VideoTrackClosed: ') === 0) {
     // The TV closed the video track of the running stream, e.g. because another app took over the video decoder
     onStreamVideoTrackStateChanged(true, parseInt(msg.replace('VideoTrackClosed: ', ''), 10));

@@ -1,7 +1,8 @@
 'use strict';
 
 // Tests of wasm/platform/tv_profile.js, loaded as a Node module (plan WP1 and WP2):
-// - detectTvCapabilities() with the simulated TV, and with Tizen and Samsung APIs that fail or are missing
+// - detectTvCapabilities() with the simulated TV, and with Tizen and Samsung APIs that fail or are missing (the checks of
+//   the WASM player and the video decoders that it includes are tested in runtime-checks.test.js)
 // - recommendedBitrate() and deriveOptimalSettings() over FHD / UHD / 8K panels x HDR yes / no x Tizen 5.5 to 9.0 x
 //   Ethernet / Wi-Fi / unknown connection, checked against expectations written out here, not computed by the same rules
 // - the golden S90C values of plan section 3, and that no result for a Full HD TV is above 50 Mbps
@@ -44,6 +45,19 @@ function detect(tvOptions, extra) {
   }
 }
 
+// What detectTvCapabilities() reports for the WASM player and the video decoders in Node, which has neither tizentvwasm
+// nor MediaSource: the Ultra Low Latency mode is unknown and the decoder check isn't available
+function checksWithoutTvBrowser() {
+  const results = {};
+  profile.VIDEO_DECODER_PROBES.forEach((probe) => {
+    results[probe.mimeType] = 'unknown';
+  });
+  return {
+    wasmPlayer: { ultraLowLatency: 'unknown', source: 'none', apiLevels: null },
+    videoDecoders: { reliable: false, reason: 'unavailable', results, answers: {} },
+  };
+}
+
 // A generic (untested) TV of the matrix: the model strings of the UHD preset, which match no tested profile
 function genericTv(panel, hdr, tizen, conn) {
   return { tv: 'uhd', panel, hdr, tizen, conn: conn || 'wifi' };
@@ -67,10 +81,10 @@ describe('detectTvCapabilities()', () => {
     delete caps.warnings;
     assert.equal(caps.profile.id, 'S90C');
     caps.profile = caps.profile.id;
-    assert.deepEqual(caps, {
+    assert.deepEqual(caps, Object.assign({
       platformVer: '9.0', modelName: 'QE55S90CAT', modelSeries: '23_PONTUSM_OLED', modelCode: '23_PONTUSM',
       is4k: true, is8k: false, isHdr: true, maxWidth: 3840, maxHeight: 2160, connection: 'wifi', profile: 'S90C', modelYearHint: 2023,
-    });
+    }, checksWithoutTvBrowser()));
   });
 
   test('reads the panel, HDR, Tizen version and connection of the other simulated TVs', () => {
@@ -91,10 +105,10 @@ describe('detectTvCapabilities()', () => {
       } finally {
         console.warn = originalWarn;
       }
-      assert.deepEqual(caps, {
+      assert.deepEqual(caps, Object.assign({
         platformVer: null, modelName: null, modelSeries: null, modelCode: null, is4k: false, is8k: false, isHdr: false,
         maxWidth: 1920, maxHeight: 1080, connection: 'unknown', profile: null, modelYearHint: null,
-      }, JSON.stringify(apis));
+      }, checksWithoutTvBrowser()), JSON.stringify(apis));
       assert.ok(warnings.length >= 5, 'each failed call is logged: ' + JSON.stringify(warnings));
     }
   });

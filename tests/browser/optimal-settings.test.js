@@ -247,6 +247,10 @@ test('a TV whose product APIs fail still starts, with the defaults of a Full HD 
       'HDR Support: No',
       'Network Connection Type: Wi-Fi',
       'Tested Profile: None',
+      'Ultra Low Latency mode (Game mode): Unknown',
+      'WASM player API levels: Unknown',
+      'Video decoders (MediaSource check): H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
+      'Video decoders at level 5.2 (4K above 60 FPS): HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
       'Gamepads: None',
     ].join('\n'));
     // The dialog names no model and no tested profile, and lists what the app falls back to
