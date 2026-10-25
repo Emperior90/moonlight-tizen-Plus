@@ -23,7 +23,7 @@
         <div id="goBackTooltip" class="mdl-tooltip" for="goBackBtn" data-i18n="Back">Back</div>
         <!-- Header logo and title -->
         <img src="static/res/ic_moonlight_logo.svg" id="header-logo">
-        <span id="header-title" class="mdl-layout-title" data-i18n="Moonlight S90C">Moonlight S90C</span>
+        <span id="header-title" class="mdl-layout-title" data-i18n="Moonlight Plus">Moonlight Plus</span>
         <!-- Add spacer to align navigation to the right -->
         <div class="mdl-layout-spacer"></div>
         <!-- Navigation bar -->
@@ -289,6 +289,21 @@
                   </span>
                 </label>
               </div>
+            </div>
+            <div class="setting-option">
+              <label data-i18n="Controller type sent to the PC">Controller type sent to the PC</label>
+              <span class="mdl-list__item-text-body" data-i18n="- Auto picks the type from the name of each gamepad. Choose PlayStation to get PlayStation button prompts and the touchpad button in games, if the host supports it.">
+                - Auto picks the type from the name of each gamepad. Choose PlayStation to get PlayStation button prompts and the touchpad button in games, if the host supports it.
+              </span>
+              <div id="controllerTypeMenu">
+                <button type="button" id="selectControllerType" class="mdl-button mdl-js-button mdl-js-ripple-effect" data-value="Auto" data-i18n="Auto">Auto</button>
+              </div>
+              <ul class="controllerTypeMenu mdl-menu mdl-menu--bottom-left mdl-js-menu mdl-js-ripple-effect" for="selectControllerType">
+                <li class="mdl-menu__item" data-value="Auto" data-i18n="Auto">Auto</li>
+                <li class="mdl-menu__item" data-value="Xbox">Xbox</li>
+                <li class="mdl-menu__item" data-value="PlayStation">PlayStation</li>
+                <li class="mdl-menu__item" data-value="Nintendo">Nintendo</li>
+              </ul>
             </div>
           </div>
           <div id="audioSettings" class="settings-options">
@@ -685,9 +700,9 @@
   </div>
   <div id="deleteHostDialogOverlay" class="dialog-overlay">
     <dialog id="deleteHostDialog" class="mdl-dialog">
-      <h3 id="deleteHostDialogTitle" class="mdl-dialog__title" data-i18n="Delete Host">Delete Host</h3>
+      <h3 id="deleteHostDialogTitle" class="mdl-dialog__title">Delete Host</h3>
       <div class="mdl-dialog__content">
-        <p id="deleteHostDialogText" data-i18n="Are you sure you want to delete this host?">
+        <p id="deleteHostDialogText">
           Are you sure you want to delete this host?
         </p>
       </div>
@@ -715,7 +730,7 @@
     <dialog id="quitAppDialog" class="mdl-dialog">
       <h3 id="quitAppDialogTitle" class="mdl-dialog__title" data-i18n="Quit Running App">Quit Running App</h3>
       <div class="mdl-dialog__content">
-        <p id="quitAppDialogText" data-i18n="Y is already running. Would you like to quit Y?">
+        <p id="quitAppDialogText">
           Y is already running. Would you like to quit Y?
         </p>
       </div>
@@ -758,7 +773,7 @@
         </div>
         <div class="navGuideContainer">
           <span class="navGuideLabel navGuideGamepadColor"></span>
-          <span class="navGuideLabelText" data-i18n="Gamepad">Gamepad</span>&nbsp;(<span data-i18n="Xbox">Xbox</span>)
+          <span class="navGuideLabelText" data-i18n="Gamepad">Gamepad</span>&nbsp;(<span data-i18n="Xbox layout: A = bottom button">Xbox layout: A = bottom button</span>)
         </div>
         <ul id="navGuideDialogText">
           <li class="navGuideDialogControls">
@@ -835,9 +850,9 @@
   </div>
   <div id="warningDialogOverlay" class="dialog-overlay">
     <dialog id="warningDialog" class="mdl-dialog">
-      <h3 id="warningDialogTitle" class="mdl-dialog__title" data-i18n="Warning">Warning</h3>
+      <h3 id="warningDialogTitle" class="mdl-dialog__title">Warning</h3>
       <div class="mdl-dialog__content">
-        <p id="warningDialogText" data-i18n="This is a warning message, proceed with caution!">
+        <p id="warningDialogText">
           This is a warning message, proceed with caution!
         </p>
       </div>
@@ -862,7 +877,7 @@
     <dialog id="restartAppDialog" class="mdl-dialog">
       <h3 id="restartAppDialogTitle" class="mdl-dialog__title" data-i18n="Restart Moonlight">Restart Moonlight</h3>
       <div class="mdl-dialog__content">
-        <p id="restartAppDialogText" data-i18n="Are you sure you want to restart Moonlight?">
+        <p id="restartAppDialogText">
           Are you sure you want to restart Moonlight?
         </p>
       </div>

@@ -4,11 +4,11 @@
 // video-defaults.test.js: the bitrate of a fresh install follows the resolution and frame rate until the user picks one
 // (plan D9), the button and Restore Defaults switch between keeping and following it, the button locks the higher
 // frame rates on a TV without a tested profile without a stray notice, HDR follows what the TV reports (D8), an 8K TV,
-// and a TV whose product APIs fail still starts.
+// a TV whose product APIs fail still starts, and both reset a stored game mode on Tizen 5.5, which doesn't support it.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
-const { openApp, readStorage, readVideoSettings, startHarness, waitForStorage } = require('./harness');
+const { openApp, readStorage, readVideoSettings, reloadApp, startHarness, waitForStorage } = require('./harness');
 
 let harness;
 before(async () => {
@@ -131,6 +131,33 @@ test('the button keeps the recommended bitrate, and Restore Defaults lets it fol
   }
 });
 
+test('Restore Defaults and the button turn a stored game mode off on Tizen 5.5, keep its switch disabled and remove the value', async () => {
+  // Restore Defaults left a stored game mode on Tizen 5.5 as it was, so its switch stayed enabled after the restart
+  for (const entry of [{ storedGameMode: true, apply: restoreDefaults }, { storedGameMode: false, apply: applyButton }]) {
+    const app = await openApp(harness, {
+      tv: { tv: 'fhd', conn: 'wifi' },
+      stored: { uniqueid: '0123456789abcdef', cert: { cert: 'TEST-CERT', privateKey: 'TEST-KEY' }, settingsSchema: 2, gameMode: entry.storedGameMode },
+    });
+    try {
+      // An existing install keeps its stored game mode, and the switch stays enabled so that it can be turned off
+      let shown = await readVideoSettings(app.page);
+      assert.deepEqual([shown.gameMode, shown.gameModeDisabled], [entry.storedGameMode, false], entry.apply.name);
+      await entry.apply(app.page);
+      shown = await readVideoSettings(app.page);
+      assert.deepEqual([shown.gameMode, shown.gameModeDisabled], [false, true], entry.apply.name);
+      await waitForStorage(app.page, (values) => !('gameMode' in values) && values.resolution === '1920:1080');
+      // The next start shows the switch off and disabled, like on a fresh install
+      await reloadApp(app);
+      shown = await readVideoSettings(app.page);
+      assert.deepEqual([shown.gameMode, shown.gameModeDisabled], [false, true], entry.apply.name);
+      assert.equal('gameMode' in (await readStorage(app.page)), false, entry.apply.name);
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
 test('the button locks the higher frame rates on a TV without a tested profile, without a stray bitrate notice', async () => {
   const app = await openApp(harness, {
     tv: { tv: 'uhd', conn: 'wifi' },
@@ -210,7 +237,7 @@ test('a TV whose product APIs fail still starts, with the defaults of a Full HD 
     assert.deepEqual([shown.resolution, shown.hdr, shown.bitrate, shown.unlockAllFps, shown.codec], ['1920:1080', false, '25', false, 'HEVC']);
     const systemInfo = await app.page.evaluate(() => document.getElementById('systemInfoBtn').innerHTML.replace(/<br\s*\/?>/g, '\n'));
     assert.equal(systemInfo, [
-      'App Version: Moonlight S90C v1.19.0',
+      'App Version: Moonlight Plus v1.19.100',
       'Platform Version: Tizen Unknown',
       'TV Model Series: Unknown',
       'TV Model Name: Unknown',
@@ -220,6 +247,7 @@ test('a TV whose product APIs fail still starts, with the defaults of a Full HD 
       'HDR Support: No',
       'Network Connection Type: Wi-Fi',
       'Tested Profile: None',
+      'Gamepads: None',
     ].join('\n'));
     // The dialog names no model and no tested profile, and lists what the app falls back to
     await applyButtonDialog(app.page);

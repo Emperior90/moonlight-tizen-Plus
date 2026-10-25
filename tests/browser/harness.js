@@ -15,7 +15,8 @@ const DB_VERSION = 1;
 const STORE_NAME = 'GameStreamingStore';
 
 // Console texts that mark the end of the start of the app. The tests wait for all of them before they interact, since
-// e.g. the first translation pass rewrites every element with a data-i18n attribute, including dialog titles.
+// e.g. the first translation pass rewrites every element with a data-i18n attribute, such as the menu items and the
+// labels of the dialog buttons.
 const READY_SIGNALS = [
   // loadUserDataCb() loaded the last stored setting (the bitrate preset state)
   'Auto adjust bitrate state',
@@ -125,10 +126,10 @@ async function waitForStorage(page, predicate, timeoutMs) {
   return values;
 }
 
-// Resolve once the app logged every ready signal, i.e. it finished starting
-function appStarted(app) {
+// Resolve once the app logged every ready signal (by default READY_SIGNALS), i.e. it finished starting
+function appStarted(app, readySignals) {
   return new Promise((resolve, reject) => {
-    const missing = READY_SIGNALS.slice();
+    const missing = (readySignals || READY_SIGNALS).slice();
     const timer = setTimeout(() => {
       app.page.off('console', onConsole);
       reject(new Error('The app did not finish starting within ' + READY_TIMEOUT_MS + ' ms, missing: ' + JSON.stringify(missing)));
@@ -159,7 +160,8 @@ function appUrl(baseUrl, tvOptions) {
 }
 
 // Open the app in a fresh browser profile on a simulated TV, optionally with settings stored beforehand.
-// Resolves once the app finished starting. `app.logs` collects the console, `app.errors` the uncaught errors.
+// Resolves once the app finished starting, or once it logged the given `readySignals` instead, e.g. for a start that
+// stops early on purpose. `app.logs` collects the console, `app.errors` the uncaught errors.
 async function openApp(harness, options) {
   const opts = options || {};
   const context = await harness.browser.newContext({ viewport: { width: 1920, height: 1080 } });
@@ -192,7 +194,7 @@ async function openApp(harness, options) {
     await seedStorage(page, opts.stored);
   }
 
-  const started = appStarted(app);
+  const started = appStarted(app, opts.readySignals);
   await page.goto(app.url);
   await started;
   return app;
@@ -243,6 +245,7 @@ function readOtherSettings(page) {
       mouseEmulation: switchState('mouseEmulationSwitch'),
       flipABfaceButtons: switchState('flipABfaceButtonsSwitch'),
       flipXYfaceButtons: switchState('flipXYfaceButtonsSwitch'),
+      controllerType: String($('#selectControllerType').data('value')),
       audioBackend: String($('#selectAudioBackend').data('value')),
       audioConfig: String($('#selectAudio').data('value')),
       audioSync: switchState('audioSyncSwitch'),

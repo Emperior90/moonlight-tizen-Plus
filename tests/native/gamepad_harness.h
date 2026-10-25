@@ -2,14 +2,17 @@
 // Host build of wasm/gamepad.cpp for the native tests. The Emscripten and Samsung headers come from tests/native/stubs,
 // and gamepad.cpp is included directly, so a test can read and reset its file-level state (slotState, sentState,
 // mouseEmulationActive). The functions below stand in for moonlight-common-c and the rest of the app: they record
-// what gamepad.cpp sends to the host, and the EM_ASM hook answers the browser Gamepad API from the simulated slots.
+// what gamepad.cpp sends to the host and logs, and the EM_ASM hook answers the browser Gamepad API from the simulated
+// slots. LiGetMillis() returns a simulated clock that each Poll() advances, which the send-on-change refresh, the
+// mouse emulation toggle and the scroll speed all measure time with.
 
 #include "../../wasm/gamepad.cpp"
 
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <string>
-#include <thread>
+#include <utility>
 #include <vector>
 
 namespace harness {
@@ -45,12 +48,17 @@ struct MouseButton {
 std::vector<PadPacket> padPackets;
 std::vector<Arrival> arrivals;
 std::vector<MouseButton> mouseButtons;
-std::vector<int> scrolls;
-std::vector<int> horizontalScrolls;
+std::vector<std::pair<int, int>> mouseMoves; // the deltas of LiSendMouseMoveEvent()
+std::vector<int> scrolls; // the amounts of LiSendHighResScrollEvent(), 120 per notch, positive scrolls up
+std::vector<int> horizontalScrolls; // the amounts of LiSendHighResHScrollEvent(), positive scrolls right
 std::vector<std::string> postedToJs;
+std::vector<std::string> logMessages; // what gamepad.cpp logged with MoonlightInstance::ClLogMessage()
 int stopStreamCalls = 0;
 int toggleStatsCalls = 0;
 int failNextPackets = 0; // number of upcoming controller packets that fail like a full input queue
+int failNextArrivals = 0; // number of upcoming arrival events that fail like a full input queue
+int failNextMouseButtons = 0; // number of upcoming mouse button events that fail like a full input queue
+int horizontalScrollResult = 0; // what LiSendHighResHScrollEvent() returns: LI_ERR_UNSUPPORTED on a GFE host
 uint64_t nowMs = 1000; // what LiGetMillis() returns
 bool useFallbackPath = false; // answer the batched read with -2, so gamepad.cpp uses the single Emscripten calls
 bool hasRumbleActuator = false; // what the rumble probe of the arrival reports
@@ -65,17 +73,24 @@ inline MoonlightInstance* Instance() {
   return reinterpret_cast<MoonlightInstance*>(storage);
 }
 
-// Clear what was recorded and the state of gamepad.cpp, as at the start of a new stream with the given settings
-inline void Reset(bool rumbleFeedback = false, bool mouseEmulation = false, bool flipAB = false, bool flipXY = false) {
+// Clear what was recorded and the state of gamepad.cpp, as at the start of a new stream with the given settings. The
+// controller type is that of the setting "Controller type sent to the PC", LI_CTYPE_UNKNOWN for Auto.
+inline void Reset(bool rumbleFeedback = false, bool mouseEmulation = false, bool flipAB = false, bool flipXY = false,
+                  uint8_t controllerType = LI_CTYPE_UNKNOWN) {
   padPackets.clear();
   arrivals.clear();
   mouseButtons.clear();
+  mouseMoves.clear();
   scrolls.clear();
   horizontalScrolls.clear();
   postedToJs.clear();
+  logMessages.clear();
   stopStreamCalls = 0;
   toggleStatsCalls = 0;
   failNextPackets = 0;
+  failNextArrivals = 0;
+  failNextMouseButtons = 0;
+  horizontalScrollResult = 0;
   useFallbackPath = false;
   hasRumbleActuator = false;
   numSlots = 4;
@@ -87,9 +102,8 @@ inline void Reset(bool rumbleFeedback = false, bool mouseEmulation = false, bool
   for (auto& sent : sentState) {
     sent = {};
   }
-  mouseEmulationActive = false;
   // What the app does when a stream starts
-  Instance()->HandleGamepadInputState(rumbleFeedback, mouseEmulation, flipAB, flipXY);
+  Instance()->HandleGamepadInputState(rumbleFeedback, mouseEmulation, flipAB, flipXY, controllerType);
 }
 
 // Plug in a controller at a slot. The id is cut to 63 bytes plus NUL like the Emscripten event struct does.
@@ -122,12 +136,10 @@ inline void Poll(uint64_t advanceMs = 5) {
   Instance()->PollGamepads();
 }
 
-// Poll for the given real time, since the mouse emulation toggle measures the Start press with std::chrono::steady_clock
-inline void PollForRealTime(int milliseconds, int stepMs = 5) {
-  const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(milliseconds);
-  while (std::chrono::steady_clock::now() < end) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(stepMs));
-    Poll(static_cast<uint64_t>(stepMs));
+// Poll every 5 ms like the input thread, for the given time of the simulated clock
+inline void PollFor(int milliseconds) {
+  for (int elapsed = 0; elapsed < milliseconds; elapsed += 5) {
+    Poll(5);
   }
 }
 
@@ -199,28 +211,47 @@ int LiSendMultiControllerEvent(short controllerNumber, short activeGamepadMask, 
 }
 int LiSendControllerArrivalEvent(uint8_t controllerNumber, uint16_t activeGamepadMask, uint8_t type, uint32_t supportedButtonFlags,
                                  uint16_t capabilities) {
+  if (harness::failNextArrivals > 0) {
+    harness::failNextArrivals--;
+    return -1;
+  }
   harness::arrivals.push_back({ controllerNumber, activeGamepadMask, type, supportedButtonFlags, capabilities });
   return 0;
 }
 uint64_t LiGetMillis(void) {
   return harness::nowMs;
 }
-int LiSendMouseMoveEvent(short, short) {
+int LiSendMouseMoveEvent(short deltaX, short deltaY) {
+  // moonlight-common-c sends nothing for a move without a delta
+  if (deltaX != 0 || deltaY != 0) {
+    harness::mouseMoves.push_back({ deltaX, deltaY });
+  }
   return 0;
 }
 int LiSendMouseButtonEvent(char action, int button) {
+  if (harness::failNextMouseButtons > 0) {
+    harness::failNextMouseButtons--;
+    return -1;
+  }
   harness::mouseButtons.push_back({ action, button });
   return 0;
 }
-int LiSendScrollEvent(signed char amount) {
+int LiSendHighResScrollEvent(short amount) {
   harness::scrolls.push_back(amount);
   return 0;
 }
-int LiSendHScrollEvent(signed char amount) {
+int LiSendHighResHScrollEvent(short amount) {
   harness::horizontalScrolls.push_back(amount);
-  return 0;
+  return harness::horizontalScrollResult;
 }
-void MoonlightInstance::ClLogMessage(const char*, ...) {}
+void MoonlightInstance::ClLogMessage(const char* format, ...) {
+  char message[1024];
+  va_list args;
+  va_start(args, format);
+  std::vsnprintf(message, sizeof(message), format, args);
+  va_end(args);
+  harness::logMessages.push_back(message);
+}
 void PostToJs(std::string message) {
   harness::postedToJs.push_back(message);
 }

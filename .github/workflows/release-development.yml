@@ -11,7 +11,7 @@ on:
         default: ''
         type: string
       release_tag:
-        description: 'New tag of the full release, e.g. v1.19.0-s90c.1 (only used with promote_tag)'
+        description: 'New tag of the full release: "v" and the version in res/config.xml, e.g. v1.19.100 (only used with promote_tag)'
         required: false
         default: ''
         type: string
@@ -176,15 +176,20 @@ jobs:
           docker stop temp_container temp_container_forcegm
           docker rm temp_container temp_container_forcegm
       # Builds the description of the pre-release, with the release notes from `docs/RELEASE_NOTES_DEV.md` when the branch has them.
+      # It links the guide of this fork (`docs/GUIDE.md`) when the branch has it, and the requirements and installation methods of upstream Moonlight Tizen otherwise.
       - name: Prepare release notes
         env:
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
           {
-            echo "# Moonlight Tizen v${TIMESTAMP}"
+            echo "# Moonlight Plus v${TIMESTAMP}"
             echo
-            echo "- Ensure your setup meets the necessary [requirements](https://github.com/brightcraft/moonlight-tizen#%EF%B8%8F-prerequisites) for the best possible streaming experience."
-            echo "- Choose one of the available [installation methods](https://github.com/brightcraft/moonlight-tizen/wiki/Installation-Guide) and follow the instructions to install the application on your TV."
+            if [ -f docs/GUIDE.md ]; then
+              echo "- Follow the [guide](${REPO_URL}/blob/${GITHUB_SHA}/docs/GUIDE.md) to check the requirements, install the application on your TV and set it up."
+            else
+              echo "- Ensure your setup meets the necessary [requirements](https://github.com/brightcraft/moonlight-tizen#%EF%B8%8F-prerequisites) for the best possible streaming experience."
+              echo "- Choose one of the available [installation methods](https://github.com/brightcraft/moonlight-tizen/wiki/Installation-Guide) and follow the instructions to install the application on your TV."
+            fi
             echo
             echo "## What's Changed:"
             echo
@@ -197,6 +202,9 @@ jobs:
             echo "- **Commit**: [\`${GITHUB_SHA:0:7}\`](${REPO_URL}/commit/${GITHUB_SHA})"
             if [ -f CHANGELOG.md ]; then
               echo "- **Full Changelog**: [CHANGELOG.md](${REPO_URL}/blob/${GITHUB_SHA}/CHANGELOG.md)"
+            fi
+            if [ -f docs/GUIDE.md ]; then
+              echo "- **Guide**: [docs/GUIDE.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/GUIDE.md)"
             fi
             if [ -f docs/S90C-Kurzanleitung.md ]; then
               echo "- **Kurzanleitung**: [docs/S90C-Kurzanleitung.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/S90C-Kurzanleitung.md)"
@@ -219,7 +227,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: v${{ env.TIMESTAMP }}-${{ env.BRANCH }}
-          release_name: "v${{ env.TIMESTAMP }}-${{ env.BRANCH }}"
+          release_name: "Moonlight Plus v${{ env.TIMESTAMP }}-${{ env.BRANCH }}"
           body_path: release_notes.md
           draft: false
           prerelease: true
@@ -250,9 +258,9 @@ jobs:
     permissions:
       contents: write
     # This job turns an existing pre-release into a full release, so that a tested build stays available: the cleanup of
-    # the next pre-release of the branch only deletes pre-releases. It keeps the files of the pre-release and moves it to a
-    # new tag (the in-app update check compares the tag with the app version, and the timestamp of a pre-release tag would
-    # read as a newer version). The description comes from `docs/RELEASE_NOTES_STABLE.md`.
+    # the next pre-release of the branch only deletes pre-releases. It keeps the files of the pre-release and moves it to the
+    # tag "v" + the version in `res/config.xml`, which the in-app update check compares with the installed version (the
+    # timestamp of a pre-release tag would read as a newer version). The description comes from `docs/RELEASE_NOTES_STABLE.md`.
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -284,6 +292,18 @@ jobs:
               exit 1
             fi
           done
+          # The in-app update check compares the tag of the latest release with the version of the installed app, so the
+          # new tag must be "v" + the version in res/config.xml (the same in the commit of the pre-release, see below)
+          app_version=$(python3 -c 'import xml.etree.ElementTree as ET; print(ET.parse("res/config.xml").getroot().get("version") or "")')
+          if ! [[ "$app_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "The version '$app_version' in res/config.xml is not a numeric x.y.z version."
+            exit 1
+          fi
+          if [ "$RELEASE_TAG" != "v$app_version" ]; then
+            echo "The release tag $RELEASE_TAG doesn't match the app version $app_version in res/config.xml."
+            echo "Use the release tag v$app_version, or raise the version in res/config.xml and build a new pre-release."
+            exit 1
+          fi
           if [ ! -s docs/RELEASE_NOTES_STABLE.md ]; then
             echo "The release notes docs/RELEASE_NOTES_STABLE.md are missing."
             exit 1
@@ -304,10 +324,15 @@ jobs:
           echo "Promoting $PROMOTE_TAG (release $release_id, commit $sha) to $RELEASE_TAG"
 
           {
-            echo "# Moonlight S90C ${RELEASE_TAG}"
+            echo "# Moonlight Plus ${RELEASE_TAG}"
             echo
-            echo "- Ensure your setup meets the necessary [requirements](https://github.com/brightcraft/moonlight-tizen#%EF%B8%8F-prerequisites) for the best possible streaming experience."
-            echo "- Choose one of the available [installation methods](https://github.com/brightcraft/moonlight-tizen/wiki/Installation-Guide) and follow the instructions to install the application on your TV."
+            # The guide of this fork when the commit of this run has it, the pages of upstream Moonlight Tizen otherwise
+            if [ -f docs/GUIDE.md ]; then
+              echo "- Follow the [guide](${REPO_URL}/blob/${GITHUB_SHA}/docs/GUIDE.md) to check the requirements, install the application on your TV and set it up."
+            else
+              echo "- Ensure your setup meets the necessary [requirements](https://github.com/brightcraft/moonlight-tizen#%EF%B8%8F-prerequisites) for the best possible streaming experience."
+              echo "- Choose one of the available [installation methods](https://github.com/brightcraft/moonlight-tizen/wiki/Installation-Guide) and follow the instructions to install the application on your TV."
+            fi
             echo
             echo "## What's Changed:"
             echo
@@ -315,7 +340,12 @@ jobs:
             echo
             # The commit link names the build, the documents link the commit these release notes come from
             echo "- **Commit**: [\`${sha:0:7}\`](${REPO_URL}/commit/${sha})"
-            echo "- **Full Changelog**: [CHANGELOG.md](${REPO_URL}/blob/${GITHUB_SHA}/CHANGELOG.md)"
+            if [ -f CHANGELOG.md ]; then
+              echo "- **Full Changelog**: [CHANGELOG.md](${REPO_URL}/blob/${GITHUB_SHA}/CHANGELOG.md)"
+            fi
+            if [ -f docs/GUIDE.md ]; then
+              echo "- **Guide**: [docs/GUIDE.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/GUIDE.md)"
+            fi
             if [ -f docs/S90C-Kurzanleitung.md ]; then
               echo "- **Kurzanleitung**: [docs/S90C-Kurzanleitung.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/S90C-Kurzanleitung.md)"
             fi
@@ -351,7 +381,7 @@ jobs:
             exit 1
           fi
 
-          jq -n --arg tag "$RELEASE_TAG" --arg sha "$GITHUB_SHA" --arg name "Moonlight S90C ${RELEASE_TAG}" --rawfile body release_notes.md \
+          jq -n --arg tag "$RELEASE_TAG" --arg sha "$GITHUB_SHA" --arg name "Moonlight Plus ${RELEASE_TAG}" --rawfile body release_notes.md \
             '{tag_name: $tag, target_commitish: $sha, name: $name, body: $body, draft: false, prerelease: false, make_latest: "true"}' \
             | api -X PATCH "$API_URL/releases/$release_id" --data @- > /dev/null
           echo "Turned the pre-release into the full release $RELEASE_TAG."

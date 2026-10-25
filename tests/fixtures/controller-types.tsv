@@ -1,0 +1,41 @@
+# Gamepad ids and the controller type that the stream announces to the PC for them. Both detections read this file:
+# GetControllerType() in wasm/controller_type.hpp (tests/native/controller_type_test.cpp) and getControllerType() in
+# wasm/platform/gamepad.js, which the menus log and show in System information (tests/unit/gamepad-js.test.js), so the
+# two stay the same. The stream sees only the first 63 bytes of an id (the Emscripten event struct cuts it).
+# Format: the type (PlayStation, Xbox, Nintendo or Unknown), a tab, the id as the browser reports it.
+
+# Ids in the format of Chromium on Linux, which the TV browser is based on
+Xbox	Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)
+Xbox	Generic X-Box pad (STANDARD GAMEPAD Vendor: 045e Product: 028e)
+PlayStation	DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)
+PlayStation	Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 09cc)
+PlayStation	Sony Interactive Entertainment Wireless Controller (Vendor: 054c Product: 05c4)
+Nintendo	Pro Controller (STANDARD GAMEPAD Vendor: 057e Product: 2009)
+Nintendo	Joy-Con L+R (STANDARD GAMEPAD)
+
+# Ids in the vendor-product-name format
+PlayStation	054c-0ce6-DualSense Wireless Controller
+Xbox	045e-0b12-Xbox Wireless Controller
+Nintendo	057e-2009-Pro Controller
+
+# 8BitDo controllers report their own vendor in their X-input mode (Xbox layout) and their D-input mode, and the
+# vendor of the console in their Switch and macOS modes, which decides before the name
+Xbox	8BitDo Ultimate 2C Wireless Controller (STANDARD GAMEPAD Vendor: 2dc8 Product: 310a)
+Xbox	8BitDo SN30 Pro (Vendor: 2dc8 Product: 6001)
+Xbox	Ultimate 2C Wireless Controller (Vendor: 2dc8 Product: 310a)
+Xbox	8BitDo SN30 Pro
+Nintendo	8BitDo Pro 2 (Vendor: 057e Product: 2009)
+
+# A vendor without a type of its own leaves the decision to a name hint, e.g. the name that the Linux driver gives the
+# Xbox-compatible controllers of other vendors
+Xbox	Generic X-Box pad (Vendor: 0e6f Product: 02a0)
+PlayStation	HORIPAD FPS for PlayStation 4 (Vendor: 0f0d Product: 0066)
+
+# Without a known vendor or a known name the type stays unknown
+Unknown	Generic USB Joystick (Vendor: 0079 Product: 0006)
+Unknown	Wireless Controller
+Unknown	Pro Controller
+Unknown	
+
+# A vendor number after the first 63 bytes is cut off before the stream sees it
+Unknown	Third Party Wireless Gamepad For Testing Long Names (STANDARD GAMEPAD Vendor: 054c Product: 05c4)

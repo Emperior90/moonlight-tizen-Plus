@@ -2,7 +2,7 @@
 
 // Pins the key handling of the menus: the Navigation API of wasm/platform/navigation.js, the TV keys that
 // initSamsungKeys() registers, and what remoteControllerHandler() (wasm/platform/remote_controller.js) does for each key.
-// The gamepad mapping of the menus runs in the real page, see tests/browser/gamepad-menu.test.js.
+// The gamepad mapping of the menus is in tests/unit/gamepad-menu-handler.test.js and tests/browser/gamepad-menu.test.js.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -37,7 +37,6 @@ function loadRemoteController(globals) {
       cancelStreamLaunch: () => moduleCalls.push('cancelStreamLaunch'),
       isInGame: false,
       wasmSessionStarted: false,
-      isGamepadActive: true,
     }, globals || {}),
   });
   platform.run('platformOnLoad({})');
@@ -137,18 +136,17 @@ test('YELLOW toggles the performance statistics only while streaming', () => {
   assert.deepEqual(remote.moduleCalls, ['toggleStats']);
 });
 
-test('other keys do nothing, and every key marks the remote as the active input', () => {
+test('other keys do nothing', () => {
   const remote = loadRemoteController();
   remote.press('KEY_BLUE');
   remote.press('KEY_GREEN');
   assert.deepEqual(remote.recorder.operations, []);
   assert.deepEqual(remote.moduleCalls, []);
-  assert.equal(remote.platform.get('isGamepadActive'), false);
+  // The key handler no longer sets the unused flag isGamepadActive (removed in plan WP6), which would create a global
+  assert.equal(remote.platform.get('typeof isGamepadActive'), 'undefined');
 });
 
-test('every Navigation call in the platform scripts names an existing operation', {
-  todo: 'Known bug C6 (plan WP6): the gamepad Select button calls Navigation.move(), which does not exist',
-}, () => {
+test('every Navigation call in the platform scripts names an existing operation', () => {
   const platformDir = path.join(REPO_ROOT, 'wasm', 'platform');
   const unknown = [];
   fs.readdirSync(platformDir).filter((name) => name.endsWith('.js')).forEach((name) => {

@@ -1242,7 +1242,8 @@ const Views = {
       'rumbleFeedbackBtn',
       'mouseEmulationBtn',
       'flipABfaceButtonsBtn',
-      'flipXYfaceButtonsBtn'
+      'flipXYfaceButtonsBtn',
+      'selectControllerType'
     ]),
     up: function() {
       this.view.prevOption();
@@ -1316,6 +1317,38 @@ const Views = {
     switch: function() {
       focusElement(this.view.current());
     },
+    enter: function() {
+      mark(this.view.current());
+    },
+    leave: function() {
+      unmark(this.view.current());
+    },
+  },
+  SelectControllerTypeMenu: {
+    isActive: () => isPopupMenuActive('controllerTypeMenu'),
+    view: new ListView(() =>
+      document.getElementById('controllerTypeMenu')
+      .parentNode.children[3].children[1].children),
+    up: function() {
+      this.view.prevOption();
+    },
+    down: function() {
+      this.view.nextOption();
+    },
+    left: function() {},
+    right: function() {},
+    accept: function() {
+      clickElement(this.view.current());
+      closeActiveVisibleMenu();
+      setTimeout(() => focusElement('selectControllerType'), 250);
+    },
+    back: function() {
+      closePopupMenu('selectControllerType');
+      closeActiveVisibleMenu();
+      focusElement('selectControllerType');
+    },
+    press: function() {},
+    switch: function() {},
     enter: function() {
       mark(this.view.current());
     },

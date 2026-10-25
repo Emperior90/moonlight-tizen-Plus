@@ -2,7 +2,9 @@
 
 // Checks the test setup itself (the simulated TV and the stub of the WebAssembly module, see mocks/), and pins what the
 // UI derives directly from the TV: the System information text (which since plan WP3 also shows what the app detected:
-// panel, HDR, connection type, tested profile and the model year hint) and the resolutions marked as unsupported.
+// panel, HDR, connection type, tested profile and the model year hint, and since plan WP6 the connected gamepads, none
+// here; see gamepad-controllers.test.js) and the resolutions marked as unsupported, also after a translation pass of
+// i18n.js.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -90,13 +92,18 @@ test('the WebAssembly stub starts the UI: a fresh install creates a certificate 
   }
 });
 
-// Return the resolutions that the menu marks as unsupported, with their disabled state and label
+// Read the resolutions that the menu marks as unsupported, with their disabled state and label
+function readUnsupportedResolutions(page) {
+  return page.evaluate(() => $('.videoResolutionMenu li.unsupported-resolution').map(function() {
+    return { value: String($(this).data('value')), disabled: $(this).attr('disabled') === 'disabled', label: $(this).text().trim() };
+  }).get());
+}
+
+// Return the resolutions that the menu marks as unsupported on a simulated TV
 async function unsupportedResolutionsOn(tvOptions) {
   const app = await openApp(harness, { tv: tvOptions });
   try {
-    return await app.page.evaluate(() => $('.videoResolutionMenu li.unsupported-resolution').map(function() {
-      return { value: String($(this).data('value')), disabled: $(this).attr('disabled') === 'disabled', label: $(this).text().trim() };
-    }).get());
+    return await readUnsupportedResolutions(app.page);
   } finally {
     await app.context.close();
   }
@@ -109,15 +116,31 @@ test('resolutions above the panel are marked unsupported and disabled', async ()
   assert.deepEqual(fhd.map((item) => [item.value, item.disabled]), [['2560:1440', true], ['3200:1800', true], ['3840:2160', true]]);
 });
 
-test('the unsupported resolutions keep their [Unsupported] label', {
-  todo: 'Found while writing the tests: the first translation pass of i18n.js rewrites the menu items and drops the label',
-}, async () => {
-  const fhd = await unsupportedResolutionsOn({ tv: 'fhd' });
-  assert.deepEqual(fhd.map((item) => item.label), [
-    '2560 x 1440 (1440p) [Unsupported]',
-    '3200 x 1800 (1800p) [Unsupported]',
-    '3840 x 2160 (4K) [Unsupported]',
-  ]);
+test('the unsupported resolutions keep their [Unsupported] label after every translation pass', async () => {
+  // The first translation pass of i18n.js rewrote the menu items from their data-i18n key and dropped the label
+  const app = await openApp(harness, { tv: { tv: 'fhd' } });
+  try {
+    assert.deepEqual((await readUnsupportedResolutions(app.page)).map((item) => item.label), [
+      '2560 x 1440 (1440p) [Unsupported]',
+      '3200 x 1800 (1800p) [Unsupported]',
+      '3840 x 2160 (4K) [Unsupported]',
+    ]);
+    // A change of the language translates the label too, and the supported resolutions get none
+    await app.page.evaluate(() => window.i18n.setLanguage('pt-BR'));
+    assert.deepEqual((await readUnsupportedResolutions(app.page)).map((item) => item.label), [
+      '2560 x 1440 (1440p) [Não suportada]',
+      '3200 x 1800 (1800p) [Não suportada]',
+      '3840 x 2160 (4K) [Não suportada]',
+    ]);
+    assert.deepEqual(await app.page.evaluate(() => $('.videoResolutionMenu li:not(.unsupported-resolution)').map(function() {
+      return $(this).text().trim();
+    }).get()), ['854 x 480 (480p)', '1280 x 720 (720p)', '1920 x 1080 (1080p)']);
+    // The selected resolution keeps its label without the suffix
+    assert.equal(await app.page.evaluate(() => $('#selectResolution').text().trim()), '1920 x 1080 (1080p)');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
 });
 
 // Read the System information as text (innerText turned the line breaks into <br> elements)
@@ -130,7 +153,7 @@ test('System information shows the app, the model strings and what the app detec
     {
       tv: { tv: 's90c', conn: 'ethernet' },
       lines: [
-        'App Version: Moonlight S90C v1.19.0',
+        'App Version: Moonlight Plus v1.19.100',
         'Platform Version: Tizen 9.0',
         'TV Model Series: 23_PONTUSM_OLED',
         'TV Model Name: QE55S90CAT',
@@ -140,12 +163,13 @@ test('System information shows the app, the model strings and what the app detec
         'HDR Support: Yes',
         'Network Connection Type: Ethernet',
         'Tested Profile: S90C',
+        'Gamepads: None',
       ],
     },
     {
       tv: { tv: 'fhd', conn: 'wifi' },
       lines: [
-        'App Version: Moonlight S90C v1.19.0',
+        'App Version: Moonlight Plus v1.19.100',
         'Platform Version: Tizen 5.5',
         'TV Model Series: 20_KANTM2_FHD',
         'TV Model Name: UE43T5300AU',
@@ -155,12 +179,13 @@ test('System information shows the app, the model strings and what the app detec
         'HDR Support: No',
         'Network Connection Type: Wi-Fi',
         'Tested Profile: None',
+        'Gamepads: None',
       ],
     },
     {
       tv: { tv: '8k', conn: 'unknown', modelCode: 'NOYEAR' },
       lines: [
-        'App Version: Moonlight S90C v1.19.0',
+        'App Version: Moonlight Plus v1.19.100',
         'Platform Version: Tizen 6.5',
         'TV Model Series: 22_PONTUSM_8K',
         'TV Model Name: QE65QN900BT',
@@ -170,6 +195,7 @@ test('System information shows the app, the model strings and what the app detec
         'HDR Support: Yes',
         'Network Connection Type: Unknown',
         'Tested Profile: None',
+        'Gamepads: None',
       ],
     },
   ];
@@ -196,6 +222,31 @@ test('System information shows the current connection type when the About settin
     await app.page.waitForTimeout(600);
     await app.page.evaluate(() => handleSettingsView('aboutSettings'));
     assert.ok((await readSystemInfo(app.page)).indexOf('Network Connection Type: Wi-Fi') >= 0);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('System information without its element only logs an error instead of throwing', async () => {
+  // The else branch of loadSystemInfo() wrote the error text into the missing element, which threw a TypeError
+  const app = await openApp(harness, { tv: { tv: 'fhd' } });
+  try {
+    const result = await app.page.evaluate(() => {
+      document.getElementById('systemInfoBtn').remove();
+      try {
+        loadSystemInfo();
+        return 'no exception';
+      } catch (error) {
+        return String(error);
+      }
+    });
+    assert.equal(result, 'no exception');
+    assert.ok(app.logs.some((line) => line.indexOf('Failed to load system information, since its element is missing!') >= 0));
+    // A later translation pass runs its callbacks without an exception, including the one after loadSystemInfo() that
+    // labels the unsupported resolutions
+    await app.page.evaluate(() => window.i18n.refreshUI());
+    assert.equal((await readUnsupportedResolutions(app.page))[0].label, '2560 x 1440 (1440p) [Unsupported]');
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

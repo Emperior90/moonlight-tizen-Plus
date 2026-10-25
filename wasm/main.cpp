@@ -1,4 +1,5 @@
 #include "moonlight_wasm.hpp"
+#include "controller_type.hpp"
 
 #include <pthread.h>
 #include <stdio.h>
@@ -354,7 +355,7 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, bool flipABfaceButtons, bool flipXYfaceButtons,
   std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
   std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, bool performanceStats,
-  bool refFrameInvalidation, bool hdrMetadata) {
+  bool refFrameInvalidation, bool hdrMetadata, std::string controllerType) {
   
   if (m_StopThread != 0) {
     pthread_join(m_StopThread, NULL);
@@ -382,6 +383,7 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   PostToJs("Setting the Mouse emulation to: " + std::to_string(mouseEmulation));
   PostToJs("Setting the Flip A/B face buttons to: " + std::to_string(flipABfaceButtons));
   PostToJs("Setting the Flip X/Y face buttons to: " + std::to_string(flipXYfaceButtons));
+  PostToJs("Setting the Controller type sent to the PC to: " + controllerType);
   PostToJs("Setting the Audio backend to: " + audioBackend);
   PostToJs("Setting the Audio configuration to: " + audioConfig);
   PostToJs("Setting the Audio synchronization to: " + std::to_string(audioSync));
@@ -531,7 +533,7 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   memcpy(m_StreamConfig.remoteInputAesIv, &rikeyiv, sizeof(rikeyiv));
 
   // Manage gamepad input states based on selected settings
-  HandleGamepadInputState(rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons);
+  HandleGamepadInputState(rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons, GetControllerTypeFromSetting(controllerType));
 
   // Apply the desired latency mode ​based on the toggle switch state
   EmssLatencyMode selectedLatencyMode = gameMode ? EmssLatencyMode::kUltraLow : EmssLatencyMode::kLow;
@@ -769,12 +771,12 @@ MessageResult startStream(std::string host, int httpPort, std::string width, std
   bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, bool flipABfaceButtons, bool flipXYfaceButtons,
   std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
   std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, bool performanceStats,
-  bool refFrameInvalidation, bool hdrMetadata) {
+  bool refFrameInvalidation, bool hdrMetadata, std::string controllerType) {
   PostToJs("Starting the streaming session...");
   return g_Instance->StartStream(host, httpPort, width, height, fps, bitrate, rikey, rikeyid, appversion, gfeversion, rtspurl, serverCodecModeSupport,
   framePacing, optimizeGames, rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons, audioBackend, audioConfig, audioSync,
   audioJitterMs, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange, gameMode, disableWarnings, performanceStats,
-  refFrameInvalidation, hdrMetadata);
+  refFrameInvalidation, hdrMetadata, controllerType);
 }
 
 MessageResult stopStream() {

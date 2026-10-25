@@ -2,7 +2,7 @@
   "description": "Keys whose pt-BR text may stay the same as the English text: texts that are the same in both languages (codec names, key names, numbers), and the texts that were not translated yet when tests/tools/i18n-check.js was added. Every key added later needs a Brazilian Portuguese translation. Remove a key from this list once it is translated.",
   "keys": [
     "Moonlight Game Streaming",
-    "Moonlight S90C",
+    "Moonlight Plus",
     "New",
     "Apply the optimal streaming settings for this TV",
     "1280 x 720 (720p)",
@@ -28,7 +28,6 @@
     "Send the HDR metadata of the host to the TV (HEVC)",
     "TV",
     "Gamepad",
-    "Xbox",
     "X",
     "Y",
     "A",

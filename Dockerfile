@@ -96,10 +96,20 @@ COPY --chown=moonlight .gi[t]/ ./moonlight-tizen/.git/
 
 # The following steps inject build metadata into the application such as build type, short commit SHA, and repository information by replacing placeholders in the `wasm/platform/index.js` file.
 # This allows the application to display build information on development builds while keeping release builds clean.
+# The in-app update check reads the releases of the repository named here. A release or development build therefore fails when REPO_OWNER or REPO_NAME is missing (e.g. `--build-arg REPO_OWNER=<owner> --build-arg REPO_NAME=<repo>`), instead of building an app that checks the upstream repository for updates.
 ARG BUILD_TYPE=release
 ARG REPO_OWNER
 ARG REPO_NAME
 RUN \
+    # Require the repository owner and name for a release or development build, in the characters GitHub allows, so that the sed replacements below can't break
+    if [ "$BUILD_TYPE" = "release" ] || [ "$BUILD_TYPE" = "development" ]; then \
+        if [ -z "$REPO_OWNER" ] || [ -z "$REPO_NAME" ]; then \
+            echo "Error: a $BUILD_TYPE build needs the repository whose releases the in-app update check reads. Pass --build-arg REPO_OWNER=<owner> --build-arg REPO_NAME=<repo> (repo owner: '$REPO_OWNER', repo name: '$REPO_NAME')." >&2; \
+            exit 1; \
+        fi; \
+        case "$REPO_OWNER" in *[!A-Za-z0-9-]*) echo "Error: invalid repo owner '$REPO_OWNER' (letters, digits and dashes only)." >&2; exit 1;; esac; \
+        case "$REPO_NAME" in *[!A-Za-z0-9._-]*) echo "Error: invalid repo name '$REPO_NAME' (letters, digits, dots, dashes and underscores only)." >&2; exit 1;; esac; \
+    fi && \
     # Always inject the build type, repo owner, and repo name regardless of the build type
 	sed -i "s/__BUILD_TYPE__/$BUILD_TYPE/g" moonlight-tizen/wasm/platform/index.js && \
     if [ -n "$REPO_OWNER" ]; then \
@@ -108,7 +118,7 @@ RUN \
     if [ -n "$REPO_NAME" ]; then \
         sed -i "s/__REPO_NAME__/$REPO_NAME/g" moonlight-tizen/wasm/platform/index.js; \
     fi && \
-	echo "Injected base metadata: build type ($BUILD_TYPE), repo owner ($REPO_OWNER), repo name ($REPO_NAME)"; \
+	echo "Injected base metadata: build type ($BUILD_TYPE), repo owner ($REPO_OWNER), repo name ($REPO_NAME)" && \
     \
     # Conditionally inject the short commit SHA only if it's a development build
     if [ "$BUILD_TYPE" = "development" ]; then \

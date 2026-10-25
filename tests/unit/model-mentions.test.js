@@ -1,10 +1,12 @@
 'use strict';
 
-// Checks that the app (everything under wasm/) mentions the S90C only where the generalization plan keeps it (plan WP3,
-// decision D2 and section 5): the internal IDs that let existing installs update in place, the tested profile in
-// VERIFIED_PROFILES, and the display name until it changes in plan WP5 (decision D1). Every other place names "this TV"
-// and takes its values from the TV profile (wasm/platform/tv_profile.js). Like `grep -ri s90c wasm/`, but every line it
-// finds must be on the allow-list below, and every entry of the allow-list must still be needed.
+// Checks that the app (everything under wasm/ and res/) mentions the S90C only where the generalization plan keeps it
+// (plan WP3 and WP5, decisions D1 and D2, section 5): the internal IDs that let existing installs update in place (the
+// widget, package, app and service IDs in res/config.xml and the preview file prefix) and the tested profile in
+// VERIFIED_PROFILES. Every other place names "this TV" and takes its values from the TV profile
+// (wasm/platform/tv_profile.js), and the display name is 'Moonlight Plus' (decision D1), so the earlier display name
+// 'Moonlight S90C' appears nowhere. Like `grep -ri s90c wasm/ res/`, but every line it finds must be on the allow-list
+// below, and every entry of the allow-list must still be needed.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -12,8 +14,10 @@ const fs = require('fs');
 const path = require('path');
 const { REPO_ROOT } = require('../lib/dev-modules');
 
-const SCANNED_DIR = 'wasm';
+const SCANNED_DIRS = ['wasm', 'res'];
 const MODEL_PATTERN = /s90c/i;
+// The display name before plan WP5, also with another separator or none
+const OLD_DISPLAY_NAME_PATTERN = /moonlight[\s_-]*s90c/i;
 
 // Each entry allows the lines of one file that match its pattern. Remove an entry once its reason is gone.
 const ALLOW_LIST = [
@@ -33,19 +37,19 @@ const ALLOW_LIST = [
     reason: 'the file prefix of the Smart Hub preview images, an internal ID kept by decision D2',
   },
   {
-    file: 'wasm/index.html',
-    pattern: /<span id="header-title" class="mdl-layout-title" data-i18n="Moonlight S90C">Moonlight S90C<\/span>/,
-    reason: 'the display name in the header, which plan WP5 changes (decision D1)',
+    file: 'res/config.xml',
+    pattern: /^<widget xmlns:tizen="http:\/\/tizen\.org\/ns\/widgets" xmlns="http:\/\/www\.w3\.org\/ns\/widgets" id="http:\/\/samsung\.tv\/MoonlightWasmS90C" version="\d+\.\d+\.\d+" viewmodes="fullscreen">$/,
+    reason: 'the widget ID, an internal ID kept by decision D2 so that an update installs in place',
   },
   {
-    file: 'wasm/static/locales/en-US.json',
-    pattern: /^\s*"Moonlight S90C": "Moonlight S90C",$/,
-    reason: 'the locale key of the display name in the header, which plan WP5 changes (decision D1)',
+    file: 'res/config.xml',
+    pattern: /^\s*<tizen:application id="MLightS90C\.MoonlightWasm" package="MLightS90C" required_version="5\.5" launch_mode="caller"\/>$/,
+    reason: 'the app and package IDs, internal IDs kept by decision D2 so that an update keeps its settings and pairing',
   },
   {
-    file: 'wasm/static/locales/pt-BR.json',
-    pattern: /^\s*"Moonlight S90C": "Moonlight S90C",$/,
-    reason: 'the locale key of the display name in the header, which plan WP5 changes (decision D1)',
+    file: 'res/config.xml',
+    pattern: /^\s*<tizen:service id="MLightS90C\.service" on-boot="true" auto-restart="true">$/,
+    reason: 'the service ID of the Smart Hub preview, an internal ID kept by decision D2',
   },
 ];
 
@@ -78,21 +82,31 @@ function readText(relativePath) {
   return content.includes(0) ? null : content.toString('utf8');
 }
 
-// Find every line that mentions the model, as { file, line, text }
-function findMentions() {
-  const mentions = [];
-  listFiles(SCANNED_DIR).forEach((file) => {
+// List the files of all scanned directories
+function listScannedFiles() {
+  return SCANNED_DIRS.reduce((files, dir) => files.concat(listFiles(dir)), []);
+}
+
+// Find every line of the scanned text files that matches a pattern, as { file, line, text }
+function findLines(pattern) {
+  const found = [];
+  listScannedFiles().forEach((file) => {
     const text = readText(file);
     if (text === null) {
       return;
     }
     text.split(/\r?\n/).forEach((lineText, index) => {
-      if (MODEL_PATTERN.test(lineText)) {
-        mentions.push({ file, line: index + 1, text: lineText });
+      if (pattern.test(lineText)) {
+        found.push({ file, line: index + 1, text: lineText });
       }
     });
   });
-  return mentions;
+  return found;
+}
+
+// Find every line that mentions the model
+function findMentions() {
+  return findLines(MODEL_PATTERN);
 }
 
 test('the app mentions the S90C only where the allow-list keeps it', () => {
@@ -108,13 +122,27 @@ test('every entry of the allow-list is still needed', () => {
 });
 
 test('no file or folder of the app is named after the S90C', () => {
-  assert.deepEqual(listFiles(SCANNED_DIR).filter((file) => MODEL_PATTERN.test(file)), []);
+  assert.deepEqual(listScannedFiles().filter((file) => MODEL_PATTERN.test(file)), []);
+});
+
+test('the earlier display name Moonlight S90C appears nowhere in the app', () => {
+  // The allow-list never covers it: the display name is 'Moonlight Plus' (plan WP5, decision D1)
+  assert.deepEqual(findLines(OLD_DISPLAY_NAME_PATTERN).map((found) => `${found.file}:${found.line}: ${found.text.trim()}`), []);
+  assert.equal(ALLOW_LIST.some((entry) => entry.pattern.test('<name>Moonlight S90C</name>')), false);
+  assert.equal(ALLOW_LIST.some((entry) => entry.pattern.test('  "Moonlight S90C": "Moonlight S90C",')), false);
 });
 
 test('the scan itself works: it finds the allowed mentions, and the allow-list rejects other ones', () => {
   // Guard against a scan that silently finds nothing (e.g. a wrong folder): the allowed mentions must be found
   const mentions = findMentions();
   assert.ok(mentions.some((mention) => mention.file === 'wasm/platform/tv_profile.js'), JSON.stringify(mentions));
+  assert.ok(mentions.some((mention) => mention.file === 'res/config.xml'), JSON.stringify(mentions));
   assert.ok(MODEL_PATTERN.test('isS90cModel') && MODEL_PATTERN.test('Samsung S90C optimization'));
   assert.equal(ALLOW_LIST.some((entry) => entry.pattern.test("$('#s90cProfileBtn').on('click', s90cSettingsDialog);")), false);
+  // The entries of the IDs allow no other text on their lines, e.g. a description of the old build
+  assert.equal(ALLOW_LIST.some((entry) => entry.pattern.test('    <description>Moonlight Game Streaming (Samsung S90C build)</description>')), false);
+  assert.equal(ALLOW_LIST.some((entry) => entry.pattern.test(
+    '    <tizen:service id="MLightS90C.service" on-boot="true" auto-restart="true"> <!-- Moonlight S90C -->')), false);
+  assert.ok(OLD_DISPLAY_NAME_PATTERN.test('Moonlight S90C') && OLD_DISPLAY_NAME_PATTERN.test('moonlight-s90c'));
+  assert.equal(OLD_DISPLAY_NAME_PATTERN.test('MoonlightWasmS90C'), false);
 });

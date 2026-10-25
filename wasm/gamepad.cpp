@@ -1,4 +1,5 @@
 #include "moonlight_wasm.hpp"
+#include "controller_type.hpp"
 
 #include <iostream>
 #include <array>
@@ -12,6 +13,7 @@
 #include <cctype>
 #include <string>
 #include <algorithm>
+#include <limits>
 #include <vector>
 
 #include <Limelight.h>
@@ -21,10 +23,10 @@
 static constexpr int kMaxControllers = 16;
 
 // Bitmask for gamepad combo buttons to stop the streaming session
-const short STOP_STREAM_BUTTONS = BACK_FLAG | PLAY_FLAG | LB_FLAG | RB_FLAG;
+const int STOP_STREAM_BUTTONS = BACK_FLAG | PLAY_FLAG | LB_FLAG | RB_FLAG;
 
 // Bitmask for gamepad combo buttons to toggle the performance stats overlay
-const short PERF_STATS_BUTTONS = BACK_FLAG | LB_FLAG | RB_FLAG | X_FLAG;
+const int PERF_STATS_BUTTONS = BACK_FLAG | LB_FLAG | RB_FLAG | X_FLAG;
 
 // Flag for gamepad to track controller rumble state
 bool rumbleFeedbackSwitch = false;
@@ -37,6 +39,10 @@ bool mouseEmulationActive = false;
 bool flipABfaceButtonsSwitch = false;
 bool flipXYfaceButtonsSwitch = false;
 
+// Controller type of the setting "Controller type sent to the PC", or LI_CTYPE_UNKNOWN to detect it from the id of
+// each controller (Auto, see controller_type.hpp)
+uint8_t controllerTypeSetting = LI_CTYPE_UNKNOWN;
+
 // For explanation on ordering, see: https://www.w3.org/TR/gamepad/#remapping
 // Enumeration for gamepad buttons
 enum GamepadButton {
@@ -47,6 +53,9 @@ enum GamepadButton {
   LeftStick, RightStick,
   Up, Down, Left, Right,
   Special,
+  // The extra button that Chromium maps after the standard ones: the touchpad click of PlayStation controllers, the
+  // Share button of Xbox Series controllers and the Capture button of Nintendo controllers
+  Misc,
   Count,
 };
 
@@ -64,6 +73,7 @@ struct ControllerSlotState {
   bool seenTimestamp = false; // true once a non-zero timestamp was observed for this id
   bool announced = false; // true after LiSendControllerArrivalEvent succeeded
   std::string id; // last known Gamepad.id (used to detect replacements)
+  uint8_t type = LI_CTYPE_UNKNOWN; // controller type announced to the host (detected or from the setting)
 };
 
 static ControllerSlotState slotState[kMaxControllers];
@@ -75,7 +85,7 @@ struct SentControllerState {
   bool valid = false; // false until a state was sent for the current device
   uint64_t timeMs = 0; // when the state was last sent
   short activeGamepadMask = 0;
-  short buttonFlags = 0;
+  int buttonFlags = 0;
   unsigned char leftTrigger = 0;
   unsigned char rightTrigger = 0;
   short leftStickX = 0;
@@ -89,159 +99,134 @@ static SentControllerState sentState[kMaxControllers];
 // Interval to resend an unchanged controller state, so the host is refreshed while idle
 static constexpr uint64_t kControllerRefreshIntervalMs = 100;
 
-// Detect controller family from Gamepad.id (PS / Xbox / Nintendo / Unknown)
-static uint8_t GetControllerType(const char* id) {
-  // Guard against null or empty id strings
-  if (!id || !*id) {
-    return LI_CTYPE_UNKNOWN;
-  }
+// Mouse emulation: holding Start for kMouseEmulationHoldMs turns it on or off. While it is on, the left sticks move the
+// mouse, the right sticks scroll and the face buttons and bumpers hold the mouse buttons, and the host gets no
+// controller states.
+static constexpr uint64_t kMouseEmulationHoldMs = 1000;
 
-  // Lower-case the id once so all substring checks are case-insensitive
-  std::string lower(id);
-  for (char& c : lower) {
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  }
+// The hold of Start of one controller, which can toggle the mouse emulation once
+struct MouseEmulationHold {
+  bool held = false; // Start is held
+  uint64_t pressMs = 0; // when Start was pressed
+  bool used = false; // this hold toggled already, or Back, LB or RB joined it for a button combo, so it can't toggle
+  bool toggled = false; // this hold toggled, so the host doesn't get Start until it is released
+};
 
-  // Helper for simple substring search on the lower-cased id
-  const auto contains = [&](const char* needle) {
-    return lower.find(needle) != std::string::npos;
-  };
+static MouseEmulationHold mouseEmulationHold[kMaxControllers];
 
-  // PlayStation (DualSense, DualShock, Sony vendor 054c)
-  if (contains("vendor: 054c") || contains("vendor:054c") ||
-      lower.find("054c-") == 0 ||
-      contains("dualsense") || contains("dualshock") ||
-      contains("playstation") ||
-      contains("sony interactive entertainment") ||
-      contains("sony computer entertainment")) {
-    return LI_CTYPE_PS;
-  }
+// Button combos that are held per controller, so that a held combo triggers only once
+static bool comboTriggered[kMaxControllers];
 
-  // Xbox (vendor 045e)
-  if (contains("vendor: 045e") || contains("vendor:045e") ||
-      lower.find("045e-") == 0 || contains("xbox")) {
-    return LI_CTYPE_XBOX;
-  }
+// Mouse buttons that the host holds because of the mouse emulation, as a combination of these bits
+static constexpr int kMouseLeft = 1;
+static constexpr int kMouseMiddle = 2;
+static constexpr int kMouseRight = 4;
+static int sentMouseButtons = 0;
 
-  // Nintendo (vendor 057e, Joy-Con, Pro Controller)
-  if (contains("vendor: 057e") || contains("vendor:057e") ||
-      lower.find("057e-") == 0 ||
-      contains("nintendo") || contains("joy-con")) {
-    return LI_CTYPE_NINTENDO;
-  }
+// Scrolling with the right stick in the mouse emulation, in the high-resolution units of the scroll events, where 120 is
+// one notch of a mouse wheel (WHEEL_DELTA). A stick within kScrollRestZone doesn't scroll; past it, the speed follows a
+// quadratic curve up to kMaxScrollNotchesPerSecond at full deflection. The amount adds up across polls and is sent once
+// it reaches kScrollStepUnits, a quarter notch, so a partly deflected stick scrolls evenly without an event on every poll.
+static constexpr double kWheelDelta = 120.0;
+static constexpr double kScrollRestZone = 0.15;
+static constexpr double kMaxScrollNotchesPerSecond = 15.0;
+static constexpr double kScrollStepUnits = kWheelDelta / 4;
+// Poll interval of the input thread (InputThreadFunc() in main.cpp), counted for the first poll in mouse mode, and the
+// longest time that one poll scrolls for after a stall
+static constexpr uint64_t kPollIntervalMs = 5;
+static constexpr uint64_t kMaxScrollIntervalMs = 50;
+static double pendingScrollX = 0.0;
+static double pendingScrollY = 0.0;
+static uint64_t lastScrollMs = 0; // 0 until the first poll in mouse mode
 
-  return LI_CTYPE_UNKNOWN;
-}
-
-// Build the supported-buttons mask advertised in the arrival event (respects face-button flips)
-static uint32_t GetSupportedButtons(int numButtons, bool flipAB, bool flipXY) {
+// Flag that the host gets for a button of the standard layout, with the A/B and X/Y swaps applied. The extra button 17
+// is the touchpad button for a PlayStation controller, which Sunshine passes on to its emulated DualShock 4, and the
+// misc button (Share or Capture) for the others; a GFE host gets the Guide button for the misc button instead
+// (moonlight-common-c).
+static int GetButtonFlag(int index, uint8_t type, bool flipAB, bool flipXY) {
   // Standard Gamepad layout; triggers are analog so they contribute no flags
-  static constexpr uint32_t kButtons[] = {
+  static constexpr int kButtons[] = {
     A_FLAG, B_FLAG, X_FLAG, Y_FLAG,
     LB_FLAG, RB_FLAG,
     0, 0, // triggers are analog, not flags
     BACK_FLAG, PLAY_FLAG,
     LS_CLK_FLAG, RS_CLK_FLAG,
     UP_FLAG, DOWN_FLAG, LEFT_FLAG, RIGHT_FLAG,
-    SPECIAL_FLAG
+    SPECIAL_FLAG,
   };
 
+  if (index == GamepadButton::Misc) {
+    return type == LI_CTYPE_PS ? TOUCHPAD_FLAG : MISC_FLAG;
+  } else if (index < 0 || index > GamepadButton::Special) {
+    return 0;
+  } else if (flipAB && index < 2) {
+    return kButtons[1 - index]; // swap A ↔ B
+  } else if (flipXY && index >= 2 && index < 4) {
+    return kButtons[5 - index]; // swap X ↔ Y
+  }
+  return kButtons[index];
+}
+
+// Build the supported-buttons mask advertised in the arrival event (respects face-button flips). Button 17 is only
+// advertised for a controller that reports it, i.e. with 18 buttons or more.
+static uint32_t GetSupportedButtons(int numButtons, uint8_t type, bool flipAB, bool flipXY) {
   uint32_t flags = 0;
-  const int limit = std::min(numButtons, 17);
+  const int limit = std::min(numButtons, static_cast<int>(GamepadButton::Count));
 
   // Iterate through the buttons and set the appropriate flags
   for (int i = 0; i < limit; ++i) {
-    auto flag = kButtons[i];
-    // Mirror the same swaps used by GetButtonFlags()
-    if (flipAB && i < 2) {
-      flag = kButtons[1 - i];       // swap A ↔ B
-    } else if (flipXY && i >= 2 && i < 4) {
-      flag = kButtons[5 - i];       // swap X ↔ Y
-    }
-    flags |= flag;
+    flags |= static_cast<uint32_t>(GetButtonFlag(i, type, flipAB, flipXY));
   }
 
   return flags;
 }
 
-// Function to map gamepad buttons to flags
-static short GetButtonFlags(const EmscriptenGamepadEvent& gamepad) {
+// Function to map gamepad buttons to flags. They take an int, since the touchpad and misc buttons lie above 16 bits.
+static int GetButtonFlags(const EmscriptenGamepadEvent& gamepad, uint8_t type, bool flipAB, bool flipXY) {
   // Triggers are considered analog buttons in the "Emscripten API", however they need
   // to be passed in separate arguments for "Limelight" (it even lacks flags for them).
-
-  const int* buttonMasks = nullptr;
-  int buttonMasksSize = 0;
-
-  // Define button mapping with A/B and X/Y swapped
-  static const int buttonMasksABXY[] = {
-    B_FLAG, A_FLAG, Y_FLAG, X_FLAG,
-    LB_FLAG, RB_FLAG,
-    0 /* LT */, 0 /* RT */,
-    BACK_FLAG, PLAY_FLAG,
-    LS_CLK_FLAG, RS_CLK_FLAG,
-    UP_FLAG, DOWN_FLAG, LEFT_FLAG, RIGHT_FLAG,
-    SPECIAL_FLAG,
-  };
-  // Define button mapping with A/B swapped
-  static const int buttonMasksAB[] = {
-    B_FLAG, A_FLAG, X_FLAG, Y_FLAG,
-    LB_FLAG, RB_FLAG,
-    0 /* LT */, 0 /* RT */,
-    BACK_FLAG, PLAY_FLAG,
-    LS_CLK_FLAG, RS_CLK_FLAG,
-    UP_FLAG, DOWN_FLAG, LEFT_FLAG, RIGHT_FLAG,
-    SPECIAL_FLAG,
-  };
-  // Define button mapping with X/Y swapped
-  static const int buttonMasksXY[] = {
-    A_FLAG, B_FLAG, Y_FLAG, X_FLAG,
-    LB_FLAG, RB_FLAG,
-    0 /* LT */, 0 /* RT */,
-    BACK_FLAG, PLAY_FLAG,
-    LS_CLK_FLAG, RS_CLK_FLAG,
-    UP_FLAG, DOWN_FLAG, LEFT_FLAG, RIGHT_FLAG,
-    SPECIAL_FLAG,
-  };
-  // Define default button mapping
-  static const int buttonMasksDefault[] = {
-    A_FLAG, B_FLAG, X_FLAG, Y_FLAG,
-    LB_FLAG, RB_FLAG,
-    0 /* LT */, 0 /* RT */,
-    BACK_FLAG, PLAY_FLAG,
-    LS_CLK_FLAG, RS_CLK_FLAG,
-    UP_FLAG, DOWN_FLAG, LEFT_FLAG, RIGHT_FLAG,
-    SPECIAL_FLAG,
-  };
-
-  // Check if the A/B or X/Y face buttons switches are checked
-  if (flipABfaceButtonsSwitch && flipXYfaceButtonsSwitch) {
-    // Swap both A/B and X/Y buttons
-    buttonMasks = buttonMasksABXY;
-    buttonMasksSize = sizeof(buttonMasksABXY) / sizeof(buttonMasksABXY[0]);
-  } else if (flipABfaceButtonsSwitch) { // Check if the A/B face buttons switch is checked
-    // Swap A and B buttons
-    buttonMasks = buttonMasksAB;
-    buttonMasksSize = sizeof(buttonMasksAB) / sizeof(buttonMasksAB[0]);
-  } else if (flipXYfaceButtonsSwitch) { // Check if the X/Y face buttons switch is checked
-    // Swap X and Y buttons
-    buttonMasks = buttonMasksXY;
-    buttonMasksSize = sizeof(buttonMasksXY) / sizeof(buttonMasksXY[0]);
-  } else {
-    // Default buttons layout
-    buttonMasks = buttonMasksDefault;
-    buttonMasksSize = sizeof(buttonMasksDefault) / sizeof(buttonMasksDefault[0]);
-  }
-
-  short result = 0;
+  int result = 0;
+  const int limit = std::min(gamepad.numButtons, static_cast<int>(GamepadButton::Count));
 
   // Iterate through the gamepad buttons and set the corresponding flags
-  for (int i = 0; i < gamepad.numButtons && i < buttonMasksSize; ++i) {
+  for (int i = 0; i < limit; ++i) {
     if (gamepad.digitalButton[i] == EM_TRUE) {
-      result |= buttonMasks[i];
+      result |= GetButtonFlag(i, type, flipAB, flipXY);
     }
   }
 
   return result;
+}
+
+// The input of one controller on this poll, in the ranges of the protocol
+struct ControllerInput {
+  int buttonFlags = 0; // with the A/B and X/Y swaps of the settings, as the host gets them
+  int physicalFlags = 0; // without the swaps, for the button combos and the mouse emulation toggle
+  double leftTrigger = 0.0;
+  double rightTrigger = 0.0;
+  double leftStickX = 0.0;
+  double leftStickY = 0.0;
+  double rightStickX = 0.0;
+  double rightStickY = 0.0;
+};
+
+static ControllerInput ReadControllerInput(const EmscriptenGamepadEvent& gamepad, uint8_t type) {
+  ControllerInput input;
+  input.buttonFlags = GetButtonFlags(gamepad, type, flipABfaceButtonsSwitch, flipXYfaceButtonsSwitch);
+  input.physicalFlags = GetButtonFlags(gamepad, type, false, false);
+  input.leftTrigger = gamepad.analogButton[GamepadButton::LeftTrigger]
+    * std::numeric_limits<unsigned char>::max();
+  input.rightTrigger = gamepad.analogButton[GamepadButton::RightTrigger]
+    * std::numeric_limits<unsigned char>::max();
+  input.leftStickX = gamepad.axis[GamepadAxis::LeftX]
+    * std::numeric_limits<short>::max();
+  input.leftStickY = -gamepad.axis[GamepadAxis::LeftY]
+    * std::numeric_limits<short>::max();
+  input.rightStickX = gamepad.axis[GamepadAxis::RightX]
+    * std::numeric_limits<short>::max();
+  input.rightStickY = -gamepad.axis[GamepadAxis::RightY]
+    * std::numeric_limits<short>::max();
+  return input;
 }
 
 // Check if two controller states would send the same packet to the host
@@ -310,18 +295,171 @@ static int ReadGamepadSlots(EmscriptenGamepadEvent* events, int* slotPresent) {
   return limit;
 }
 
-// Called when gamepad settings change; clears announced flags so arrival is re-sent with updated data
-void MoonlightInstance::HandleGamepadInputState(bool rumbleFeedback, bool mouseEmulation, bool flipABfaceButtons, bool flipXYfaceButtons) {
+// Turn the mouse emulation on or off. When it ends, every controller sends its full state again on the next poll, and
+// SendMouseButtons(0) releases the mouse buttons that the host still holds.
+static void SetMouseEmulationActive(bool active) {
+  mouseEmulationActive = active;
+  pendingScrollX = 0.0;
+  pendingScrollY = 0.0;
+  lastScrollMs = 0;
+  if (!active) {
+    for (auto& state : sentState) {
+      state.valid = false;
+    }
+  }
+}
+
+// Follow the hold of Start of a controller, and toggle the mouse emulation (with its switch on) once Start was held for
+// kMouseEmulationHoldMs: only once per hold, so a longer hold doesn't switch it back, and not when Back, LB or RB are
+// held with Start, which belong to the button combos, so a slowly pressed stop combo doesn't turn it on first.
+static void UpdateMouseEmulationToggle(int controller, int physicalFlags, uint64_t nowMs) {
+  MouseEmulationHold& hold = mouseEmulationHold[controller];
+  if (!(physicalFlags & PLAY_FLAG)) {
+    // Released: the next press starts a new hold
+    hold = {};
+    return;
+  }
+  if (!hold.held) {
+    hold.held = true;
+    hold.pressMs = nowMs;
+  }
+  if (physicalFlags & (BACK_FLAG | LB_FLAG | RB_FLAG)) {
+    hold.used = true;
+  }
+  if (!mouseEmulationSwitch || hold.used || nowMs - hold.pressMs < kMouseEmulationHoldMs) {
+    return;
+  }
+
+  hold.used = true;
+  hold.toggled = true;
+  // Toggle mouse emulation state and notify the user
+  SetMouseEmulationActive(!mouseEmulationActive);
+  PostToJs(std::string(mouseEmulationActive ? "mouseEmulationOn" : "mouseEmulationOff"));
+}
+
+// Send the state of a controller with nothing pressed and the sticks centred, unless the host has it already. The host
+// keeps the last state it got while the mouse emulation sends none, and that state holds at least Start, which turned
+// the mouse emulation on, and often a stick. A state that couldn't be queued is sent again on the next poll.
+static void SendNeutralState(int controller, short activeGamepadMask, uint64_t nowMs) {
+  SentControllerState neutral;
+  neutral.activeGamepadMask = activeGamepadMask;
+  SentControllerState& lastState = sentState[controller];
+  if (lastState.valid && IsSameControllerState(lastState, neutral)) {
+    return;
+  }
+  if (LiSendMultiControllerEvent(controller, activeGamepadMask, 0, 0, 0, 0, 0, 0, 0) == 0) {
+    neutral.valid = true;
+    neutral.timeMs = nowMs;
+    lastState = neutral;
+  }
+}
+
+// Mouse buttons that a controller holds in the mouse emulation: A or LB the left button, X or Y the middle button, and
+// B or RB the right button
+static int GetMouseButtons(int buttonFlags) {
+  int buttons = 0;
+  if (buttonFlags & (A_FLAG | LB_FLAG)) {
+    buttons |= kMouseLeft;
+  }
+  if (buttonFlags & (X_FLAG | Y_FLAG)) {
+    buttons |= kMouseMiddle;
+  }
+  if (buttonFlags & (B_FLAG | RB_FLAG)) {
+    buttons |= kMouseRight;
+  }
+  return buttons;
+}
+
+// Send a press or release for each mouse button that changed since it was last sent: the buttons that any controller
+// holds in the mouse emulation, or none once it ended. All controllers share one mouse, so an idle controller doesn't
+// release the button that another one holds, and nothing is sent while nothing changes. A button whose event couldn't
+// be queued is sent again on the next poll.
+static void SendMouseButtons(int buttons) {
+  struct MouseButtonBit {
+    int bit;
+    int button;
+  };
+  static constexpr MouseButtonBit kMouseButtons[] = {
+    { kMouseLeft, BUTTON_LEFT },
+    { kMouseMiddle, BUTTON_MIDDLE },
+    { kMouseRight, BUTTON_RIGHT },
+  };
+
+  for (const MouseButtonBit& entry : kMouseButtons) {
+    if (!((buttons ^ sentMouseButtons) & entry.bit)) {
+      continue;
+    }
+    const char action = (buttons & entry.bit) ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE;
+    if (LiSendMouseButtonEvent(action, entry.button) == 0) {
+      sentMouseButtons ^= entry.bit;
+    }
+  }
+}
+
+// Scroll speed of one stick axis (-1 to 1) in the mouse emulation, in high-resolution units per second
+static double GetScrollSpeed(double axis) {
+  const double magnitude = std::fabs(axis);
+  if (magnitude <= kScrollRestZone) {
+    return 0.0;
+  }
+  const double deflection = std::min(1.0, (magnitude - kScrollRestZone) / (1.0 - kScrollRestZone));
+  const double speed = deflection * deflection * kMaxScrollNotchesPerSecond * kWheelDelta;
+  return axis < 0 ? -speed : speed;
+}
+
+// Add the scroll of one direction for the given time, and send it once it reaches a step. The fraction below a whole
+// unit stays for the next poll. A stick back at rest drops what is left, so it doesn't add to the next scroll, and an
+// event that couldn't be queued (or a horizontal scroll, which GFE hosts don't support) is dropped instead of adding up.
+static void AddScroll(double* pending, double speed, double seconds, int (*sendScroll)(short)) {
+  if (speed == 0.0) {
+    *pending = 0.0;
+    return;
+  }
+  *pending += speed * seconds;
+  if (std::fabs(*pending) < kScrollStepUnits) {
+    return;
+  }
+  const short amount = static_cast<short>(*pending);
+  *pending -= amount;
+  if (sendScroll(amount) != 0) {
+    *pending = 0.0;
+  }
+}
+
+// Scroll with the summed right sticks of all controllers for the time since the previous poll in mouse mode, at most
+// kMaxScrollIntervalMs after a stall. The high-resolution scroll events carry fractions of a notch, which the
+// LiSendScrollEvent() and LiSendHScrollEvent() of moonlight-common-c can't, so a partly deflected stick can scroll.
+static void SendScroll(double speedX, double speedY, uint64_t nowMs) {
+  const uint64_t elapsedMs = lastScrollMs == 0 ? kPollIntervalMs : std::min(nowMs - lastScrollMs, kMaxScrollIntervalMs);
+  lastScrollMs = nowMs;
+  const double seconds = static_cast<double>(elapsedMs) / 1000.0;
+  AddScroll(&pendingScrollX, speedX, seconds, LiSendHighResHScrollEvent);
+  AddScroll(&pendingScrollY, speedY, seconds, LiSendHighResScrollEvent);
+}
+
+// Called at the start of every stream with its gamepad settings, before the input polling starts (the native tests also
+// call it to change a setting). It clears the announced flags so arrival is re-sent with updated data, and starts the
+// stream without the mouse emulation, held combos and mouse buttons of the previous stream.
+void MoonlightInstance::HandleGamepadInputState(bool rumbleFeedback, bool mouseEmulation, bool flipABfaceButtons, bool flipXYfaceButtons,
+                                                uint8_t controllerType) {
   // Force re-announce on next poll so the host gets the updated button map / capabilities
   for (int i = 0; i < kMaxControllers; ++i) {
     slotState[i].announced = false;
+    mouseEmulationHold[i] = {};
+    comboTriggered[i] = false;
   }
+
+  // A stream that ended in mouse mode must not start the next one in mouse mode, where the controllers would seem dead.
+  // The host of a new stream holds no mouse buttons.
+  SetMouseEmulationActive(false);
+  sentMouseButtons = 0;
 
   // Store the new settings for use during polling
   rumbleFeedbackSwitch = rumbleFeedback;
   mouseEmulationSwitch = mouseEmulation;
   flipABfaceButtonsSwitch = flipABfaceButtons;
   flipXYfaceButtonsSwitch = flipXYfaceButtons;
+  controllerTypeSetting = controllerType;
 }
 
 // Function to poll gamepad input
@@ -337,9 +475,6 @@ void MoonlightInstance::PollGamepads() {
   if (limit < 0) {
     return;
   }
-
-  // Prevent repeated trigger while the button combo is held down
-  static std::map<int, bool> comboTriggered;
 
   // Snapshot slots, build physical-index mask, and collect removals / arrivals
   short activeGamepadMask = 0;
@@ -382,23 +517,28 @@ void MoonlightInstance::PollGamepads() {
     }
   }
 
-  // Send zeroed events for removed / replaced controllers so the host cleans up
+  // Send zeroed events for removed / replaced controllers so the host cleans up, and forget their held Start and combos
   for (int i : removed) {
     LiSendMultiControllerEvent(i, activeGamepadMask & ~(1 << i), 0, 0, 0, 0, 0, 0, 0);
     sentState[i] = {};
+    mouseEmulationHold[i] = {};
+    comboTriggered[i] = false;
   }
 
   // Announce new (or re-arrived) controllers so Sunshine can pick the right profile
   for (int i : arrived) {
     const auto& gamepad = events[i];
-    const uint8_t type = GetControllerType(gamepad.id);
-    const uint32_t buttons = GetSupportedButtons(gamepad.numButtons, flipABfaceButtonsSwitch, flipXYfaceButtonsSwitch);
+    // The type from the setting "Controller type sent to the PC", or the one detected from the id with Auto
+    const uint8_t detectedType = GetControllerType(gamepad.id);
+    const uint8_t type = controllerTypeSetting != LI_CTYPE_UNKNOWN ? controllerTypeSetting : detectedType;
+    const uint32_t buttons = GetSupportedButtons(gamepad.numButtons, type, flipABfaceButtonsSwitch, flipXYfaceButtonsSwitch);
 
     // Only advertise capabilities the browser actually provides
     uint16_t capabilities = (gamepad.numButtons > 7) ? LI_CCAP_ANALOG_TRIGGERS : 0;
 
     // The browser Gamepad API does not expose motion, battery, RGB or touchpad
     // data. Only advertise rumble when our existing feedback path can use it.
+    const char* rumbleState = "off";
     if (rumbleFeedbackSwitch) {
       const int hasRumble = MAIN_THREAD_EM_ASM_INT({
         var gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
@@ -409,46 +549,52 @@ void MoonlightInstance::PollGamepads() {
       if (hasRumble) {
         capabilities |= LI_CCAP_RUMBLE;
       }
+      rumbleState = hasRumble ? "yes" : "no";
     }
 
     // On failure leave un-announced; next poll will retry
     if (LiSendControllerArrivalEvent(i, activeGamepadMask, type, buttons, capabilities) == 0) {
       slotState[i].announced = true;
+      slotState[i].type = type;
       // Send the full state of the new controller on this poll
       sentState[i] = {};
+      // Log what the controller reports as separate fields, so a support log shows how the browser maps it (a mapping
+      // other than "standard" means the raw layout of the driver, which the fixed button and axis indices above may
+      // read wrongly) and which type the host was told. Rumble is "off" while the rumble setting is off, and a type
+      // from the setting names the detected one as well.
+      std::string typeText = GetControllerTypeName(type);
+      if (type != detectedType) {
+        typeText += std::string(" (setting, detected ") + GetControllerTypeName(detectedType) + ")";
+      }
+      MoonlightInstance::ClLogMessage("Controller %d announced: id=\"%s\", mapping=\"%s\", buttons=%d, axes=%d, rumble=%s, type=%s\n",
+        i, gamepad.id, gamepad.mapping, gamepad.numButtons, gamepad.numAxes, rumbleState, typeText.c_str());
     }
   }
 
-  // Process live input for every real, already-announced controller
+  const uint64_t nowMs = LiGetMillis();
+
+  // Read the input of every real, already-announced controller, and run its button combos and the mouse emulation
+  // toggle before anything is sent, so the mouse emulation that one controller turns on applies to all of them at once
+  ControllerInput inputs[kMaxControllers];
+  bool hasInput[kMaxControllers] = { false };
   for (int gamepadID = 0; gamepadID < limit; ++gamepadID) {
     // Skip slots that are inactive or still waiting for a successful arrival
     if (!(activeGamepadMask & (1 << gamepadID)) || !slotState[gamepadID].announced) {
       continue;
     }
 
-    const auto& gamepad = events[gamepadID];
-
     // Process input for active gamepad
-    const auto buttonFlags = GetButtonFlags(gamepad);
-    const auto leftTrigger = gamepad.analogButton[GamepadButton::LeftTrigger]
-      * std::numeric_limits<unsigned char>::max();
-    const auto rightTrigger = gamepad.analogButton[GamepadButton::RightTrigger]
-      * std::numeric_limits<unsigned char>::max();
-    const auto leftStickX = gamepad.axis[GamepadAxis::LeftX]
-      * std::numeric_limits<short>::max();
-    const auto leftStickY = -gamepad.axis[GamepadAxis::LeftY]
-      * std::numeric_limits<short>::max();
-    const auto rightStickX = gamepad.axis[GamepadAxis::RightX]
-      * std::numeric_limits<short>::max();
-    const auto rightStickY = -gamepad.axis[GamepadAxis::RightY]
-      * std::numeric_limits<short>::max();
+    inputs[gamepadID] = ReadControllerInput(events[gamepadID], slotState[gamepadID].type);
+    hasInput[gamepadID] = true;
+    const int physicalFlags = inputs[gamepadID].physicalFlags;
 
-    // Check if the current button flags match the defined button combination on the gamepad
-    if (buttonFlags == STOP_STREAM_BUTTONS) {
+    // Check the button combinations on the physical buttons, before the A/B and X/Y swaps, so they are the same with
+    // every swap setting (the Navigation Guide documents them in the Xbox layout: A bottom, X left)
+    if (physicalFlags == STOP_STREAM_BUTTONS) {
       // Terminate the connection
       stopStream();
       return;
-    } else if (buttonFlags == PERF_STATS_BUTTONS) {
+    } else if (physicalFlags == PERF_STATS_BUTTONS) {
       if (!comboTriggered[gamepadID]) {
         // Toggle performance stats overlay
         toggleStats();
@@ -460,101 +606,73 @@ void MoonlightInstance::PollGamepads() {
       comboTriggered[gamepadID] = false;
     }
 
-    // Check if the mouse emulation switch is checked
-    if (mouseEmulationSwitch) {
-      static std::map<int, std::chrono::time_point<std::chrono::steady_clock>> activatePressTimes;
-      // Toggle mouse emulation on and off based on how long the PLAY/START button is pressed
-      if (buttonFlags & PLAY_FLAG) {
-        if (activatePressTimes.find(gamepadID) == activatePressTimes.end()) {
-          activatePressTimes[gamepadID] = std::chrono::steady_clock::now();
-        }
-        auto currentTime = std::chrono::steady_clock::now();
-        // Calculate the duration in milliseconds since the PLAY/START button was pressed
-        auto durationTime = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - activatePressTimes[gamepadID]).count();
-        // If the button has been pressed for at least 1000 milliseconds (1 second)
-        if (durationTime >= 1000) {
-          // Toggle mouse emulation state
-          if (!mouseEmulationActive) {
-            // Activate mouse emulation and notify the user
-            mouseEmulationActive = true;
-            PostToJs(std::string("mouseEmulationOn"));
-          } else {
-            // Deactivate mouse emulation and notify the user
-            mouseEmulationActive = false;
-            PostToJs(std::string("mouseEmulationOff"));
-          }
-          // Reset the PLAY/START press time to the current time after toggling
-          activatePressTimes[gamepadID] = std::chrono::steady_clock::now();
-        }
-      } else {
-        // If the PLAY/START button is not pressed, reset PLAY/START press time
-        activatePressTimes[gamepadID] = std::chrono::steady_clock::now();
-      }
-    } else {
-      // Deactivate mouse emulation if the mouse emulation switch is unchecked
-      mouseEmulationActive = false;
-    }
+    // Toggle mouse emulation on and off based on how long the PLAY/START button is pressed
+    UpdateMouseEmulationToggle(gamepadID, physicalFlags, nowMs);
+  }
 
+  // Deactivate mouse emulation if the mouse emulation switch is unchecked
+  if (!mouseEmulationSwitch && mouseEmulationActive) {
+    SetMouseEmulationActive(false);
+  }
+
+  if (mouseEmulationActive) {
     // If mouse emulation is active, then send mouse input to the desired handler (acts as a mouse)
-    if (mouseEmulationActive) {
+    int mouseButtons = 0;
+    double scrollSpeedX = 0.0;
+    double scrollSpeedY = 0.0;
+    for (int gamepadID = 0; gamepadID < limit; ++gamepadID) {
+      if (!hasInput[gamepadID]) {
+        continue;
+      }
+      const ControllerInput& input = inputs[gamepadID];
+
+      // Release the buttons and sticks of the controller on the host once
+      SendNeutralState(gamepadID, activeGamepadMask, nowMs);
+
       // Left Stick values are mapped to horizontal and vertical mouse movements
       const float baseMouseSpeed = 10.0f;
-      const float leftStickMagnitude = std::sqrt(leftStickX * leftStickX + leftStickY * leftStickY) / std::numeric_limits<short>::max();
+      const float leftStickMagnitude = std::sqrt(input.leftStickX * input.leftStickX + input.leftStickY * input.leftStickY) / std::numeric_limits<short>::max();
       const float mouseSpeed = baseMouseSpeed * leftStickMagnitude;
-      const float mouseXDelta = static_cast<float>(leftStickX) / std::numeric_limits<short>::max() * mouseSpeed;
-      const float mouseYDelta = -static_cast<float>(leftStickY) / std::numeric_limits<short>::max() * mouseSpeed;
+      const float mouseXDelta = static_cast<float>(input.leftStickX) / std::numeric_limits<short>::max() * mouseSpeed;
+      const float mouseYDelta = -static_cast<float>(input.leftStickY) / std::numeric_limits<short>::max() * mouseSpeed;
 
       // Send a mouse move event with the specified delta values for both horizontal (X-axis) and vertical (Y-axis) coordinates
       LiSendMouseMoveEvent(static_cast<int>(mouseXDelta), static_cast<int>(mouseYDelta));
 
-      // Right Stick values are mapped to horizontal and vertical mouse scrolls
-      const float baseScrollSpeed = 1.0f;
-      const float rightStickMagnitude = std::sqrt(rightStickX * rightStickX + rightStickY * rightStickY) / std::numeric_limits<short>::max();
-      const float scrollSpeed = baseScrollSpeed * rightStickMagnitude;
-      const float scrollXDelta = static_cast<float>(rightStickX) / std::numeric_limits<short>::max() * scrollSpeed;
-      const float scrollYDelta = static_cast<float>(rightStickY) / std::numeric_limits<short>::max() * scrollSpeed;
+      // Right Stick values are mapped to horizontal and vertical mouse scrolls, summed over the controllers
+      scrollSpeedX += GetScrollSpeed(input.rightStickX / std::numeric_limits<short>::max());
+      scrollSpeedY += GetScrollSpeed(input.rightStickY / std::numeric_limits<short>::max());
 
-      // Send mouse scroll events with the specified delta values for both horizontal (X-axis) and vertical (Y-axis) coordinates
-      LiSendHScrollEvent(static_cast<int>(scrollXDelta));
-      LiSendScrollEvent(static_cast<int>(scrollYDelta));
+      // Face Buttons values are mapped to control mouse buttons, combined over the controllers
+      mouseButtons |= GetMouseButtons(input.buttonFlags);
+    }
+    SendScroll(scrollSpeedX, scrollSpeedY, nowMs);
+    SendMouseButtons(mouseButtons);
+  } else {
+    // Release the mouse buttons that the mouse emulation left held on the host
+    SendMouseButtons(0);
 
-      // Face Buttons values are mapped to control mouse buttons
-      if (buttonFlags & (A_FLAG | LB_FLAG)) {
-        // Send a mouse button press event for the left button
-        LiSendMouseButtonEvent(BUTTON_ACTION_PRESS, BUTTON_LEFT);
-      } else {
-        // Send a mouse button release event for the left button
-        LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
+    // If mouse emulation is inactive, then send gamepad input to the desired handler (acts as a gamepad)
+    for (int gamepadID = 0; gamepadID < limit; ++gamepadID) {
+      if (!hasInput[gamepadID]) {
+        continue;
       }
-      if (buttonFlags & (X_FLAG | Y_FLAG)) {
-        // Send a mouse button press event for the Middle button
-        LiSendMouseButtonEvent(BUTTON_ACTION_PRESS, BUTTON_MIDDLE);
-      } else {
-        // Send a mouse button release event for the Middle button
-        LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, BUTTON_MIDDLE);
-      }
-      if (buttonFlags & (B_FLAG | RB_FLAG)) {
-        // Send a mouse button press event for the Right button
-        LiSendMouseButtonEvent(BUTTON_ACTION_PRESS, BUTTON_RIGHT);
-      } else {
-        // Send a mouse button release event for the Right button
-        LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, BUTTON_RIGHT);
-      }
-    } else {
-      // If mouse emulation is inactive, then send gamepad input to the desired handler (acts as a gamepad)
+      const ControllerInput& input = inputs[gamepadID];
+
       SentControllerState state;
       state.activeGamepadMask = activeGamepadMask;
-      state.buttonFlags = buttonFlags;
-      state.leftTrigger = static_cast<unsigned char>(leftTrigger);
-      state.rightTrigger = static_cast<unsigned char>(rightTrigger);
-      state.leftStickX = static_cast<short>(leftStickX);
-      state.leftStickY = static_cast<short>(leftStickY);
-      state.rightStickX = static_cast<short>(rightStickX);
-      state.rightStickY = static_cast<short>(rightStickY);
+      // The host doesn't get the hold of Start that toggled the mouse emulation until Start is released, so turning the
+      // mouse emulation off doesn't press Start in the game
+      state.buttonFlags = mouseEmulationHold[gamepadID].toggled ? (input.buttonFlags & ~PLAY_FLAG) : input.buttonFlags;
+      state.leftTrigger = static_cast<unsigned char>(input.leftTrigger);
+      state.rightTrigger = static_cast<unsigned char>(input.rightTrigger);
+      state.leftStickX = static_cast<short>(input.leftStickX);
+      state.leftStickY = static_cast<short>(input.leftStickY);
+      state.rightStickX = static_cast<short>(input.rightStickX);
+      state.rightStickY = static_cast<short>(input.rightStickY);
 
       // Skip polls that read the same state again, but refresh the host periodically
       SentControllerState& lastState = sentState[gamepadID];
-      const uint64_t nowMs = LiGetMillis();
       if (!lastState.valid || !IsSameControllerState(lastState, state) ||
           nowMs - lastState.timeMs >= kControllerRefreshIntervalMs) {
         // Remember the state only once it was queued, so a dropped event is retried on the next poll

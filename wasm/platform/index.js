@@ -27,7 +27,6 @@ var wasmSessionStarted = false; // Flag indicating whether the start request of 
 var isDialogOpen = false; // Flag indicating whether the dialog is open, initial value is false
 var isPairingInProgress = false; // Flag indicating whether a pairing process is in progress, initial value is false
 var wasPairingCanceled = false; // Flag indicating whether the current pairing process was canceled by the user, initial value is false
-var isGamepadActive = false; // Flag indicating whether the gamepad input is active, initial value is false
 var isClickPrevented = false; // Flag indicating whether the click event should be prevented, initial value is false
 var resFpsWarning = false; // Message key of the video resolution and frame rate warning that has shown for the current selection (VIDEO_WARNINGS in tv_profile.js), initial value is false
 var fps90Warning = false; // Flag indicating whether the 90 FPS cadence hint has been shown, initial value is false
@@ -44,8 +43,12 @@ var streamNetworkInfo = ''; // Network connection summary shown in the performan
 var streamConnectionType = 'unknown'; // Network connection type of the current streaming session, initial value is unknown
 var lastWifiSignalRefreshMs = 0; // Time of the last Wi-Fi signal strength refresh of the network connection summary, initial value is 0
 var repeatAction = null; // Flag indicating whether the repeat action is set, initial value is null
+var repeatSource = null; // Gamepad input that started the repeat action (e.g. '0 button 13' or '0 axis 1'), which alone may stop it on its release, initial value is null
 var lastInvokeTime = 0; // Flag indicating the last invoke time, initial value is 0
 var repeatTimeout = null; // Flag indicating whether the repeat timeout is set, initial value is null
+var repeatFrame = null; // Animation frame request of the running repeat action, initial value is null
+var gamepadAxisDirections = {}; // Direction (-1, 0 or 1) of each gamepad stick axis of the menus past the action threshold, keyed like repeatSource, initial value is empty
+var nonStandardGamepadNotices = new Set(); // Ids of the gamepads with a non-standard layout that the notice has shown for since the app started, initial value is empty
 var navigationTimeout = null; // Flag indicating whether the navigation timeout is set, initial value is null
 const BUILD_TYPE = '__BUILD_TYPE__'; // Placeholder for build type, which should be replaced during the build process
 const BUILD_COMMIT = '__BUILD_COMMIT__'; // Placeholder for build commit, which should be replaced during the build process
@@ -70,9 +73,11 @@ const CODEC_MODES_REFRESH_TIMEOUT_MS = 1500; // Longest wait in ms for the codec
 function attachListeners() {
   changeUiModeForWasmLoad();
 
-  // Register loadSystemInfo to run when language is initialized, and every time it changes
+  // Register loadSystemInfo to run when language is initialized, and every time it changes, and add the [Unsupported]
+  // label to the resolution menu again after each translation pass rewrote it
   if (window.i18n && typeof window.i18n.onRefresh === 'function') {
     window.i18n.onRefresh(loadSystemInfo);
+    window.i18n.onRefresh(labelUnsupportedResolutions);
   } else {
     // Fallback if i18n is not present
     loadSystemInfo();
@@ -117,6 +122,7 @@ function attachListeners() {
   $('#mouseEmulationSwitch').on('click', saveMouseEmulation);
   $('#flipABfaceButtonsSwitch').on('click', saveFlipABfaceButtons);
   $('#flipXYfaceButtonsSwitch').on('click', saveFlipXYfaceButtons);
+  $('.controllerTypeMenu li').on('click', saveControllerType);
   $('.audioBackendMenu li').on('click', saveAudioBackend);
   $('.audioConfigMenu li').on('click', saveAudioConfiguration);
   $('#audioSyncSwitch').on('click', saveAudioSync);
@@ -152,6 +158,7 @@ function attachListeners() {
   registerMenu('selectFramerate', Views.SelectFramerateMenu);
   registerMenu('selectBitrate', Views.SelectBitrateMenu);
   registerMenu('selectLanguage', Views.SelectLanguageMenu);
+  registerMenu('selectControllerType', Views.SelectControllerTypeMenu);
   registerMenu('selectAudioBackend', Views.SelectAudioBackendMenu);
   registerMenu('selectAudio', Views.SelectAudioMenu);
   registerMenu('selectAudioJitter', Views.SelectAudioJitterMenu);
@@ -160,70 +167,96 @@ function attachListeners() {
   $(window).resize(fullscreenWasmModule);
 
   Controller.startWatching();
-  window.addEventListener('gamepadinputchanged', (e) => {
-    isGamepadActive = true;
-    const changes = e.detail.changes;
-    // Iterate through each change in the gamepad input
-    changes.forEach((change) => {
-      const { type, index, pressed, value } = change;
-      if (type === 'button') {
-        // Handle button mapping
-        const buttonMapping = {
-          0: () => delayedNavigation(() => Navigation.accept()),
-          1: () => delayedNavigation(() => Navigation.back()),
-          8: () => delayedNavigation(() => Navigation.move()),
-        };
-        // Handle D-Pad mapping
-        const dPadMapping = {
-          12: () => Navigation.up(),
-          13: () => Navigation.down(),
-          14: () => Navigation.left(),
-          15: () => Navigation.right(),
-        };
-        // Handle button press
-        if (pressed) {
-          if (buttonMapping[index]) {
-            buttonMapping[index]();
-            // Clear repeat action and timeout for non-navigation buttons
-            repeatAction = null;
-            clearTimeout(repeatTimeout);
-          } else if (dPadMapping[index]) {
-            dPadMapping[index]();
-            // Set repeat action and timeout to the mapped D-Pad button
-            repeatAction = dPadMapping[index];
-            lastInvokeTime = Date.now();
-            repeatTimeout = setTimeout(() => requestAnimationFrame(repeatActionHandler), REPEAT_DELAY);
-          }
-        } else {
-          // Clear repeat action and timeout if button is released
-          repeatAction = null;
-          clearTimeout(repeatTimeout);
+  window.addEventListener('gamepadinputchanged', handleGamepadMenuInput);
+}
+
+// Map the gamepad input of the menus, which gamepad.js reports as 'gamepadinputchanged' events, to Navigation operations
+// (W3C standard layout, see wasm/gamepad.cpp). A accepts, B goes back, Select presses and Start switches like CH+ and
+// CH- of the remote, each after the navigation delay. The D-pad moves right away and the left stick past the action
+// threshold after the navigation delay, and both repeat while held. A release, or a stick back below the threshold, only
+// stops the repeat that the same input started, so a jittering resting stick or another released button no longer
+// cancels a held D-pad. An action button still ends a repeat, since its operation runs on the focused item.
+function handleGamepadMenuInput(e) {
+  const gamepadIndex = e.detail.gamepad;
+  // Iterate through each change in the gamepad input
+  e.detail.changes.forEach((change) => {
+    const { type, index, pressed, value } = change;
+    const source = gamepadIndex + ' ' + type + ' ' + index;
+    if (type === 'button') {
+      // Handle button mapping
+      const buttonMapping = {
+        0: () => Navigation.accept(),
+        1: () => Navigation.back(),
+        8: () => Navigation.press(),
+        9: () => Navigation.switch(),
+      };
+      // Handle D-Pad mapping
+      const dPadMapping = {
+        12: () => Navigation.up(),
+        13: () => Navigation.down(),
+        14: () => Navigation.left(),
+        15: () => Navigation.right(),
+      };
+      // Handle button press
+      if (pressed) {
+        if (buttonMapping[index]) {
+          delayedNavigation(buttonMapping[index]);
+          // Clear repeat action and timeout for non-navigation buttons
+          stopRepeatAction();
+        } else if (dPadMapping[index]) {
+          dPadMapping[index]();
+          // Set repeat action and timeout to the mapped D-Pad button
+          startRepeatAction(dPadMapping[index], source);
         }
-      } else if (type === 'axis') {
-        // Handle axis mapping
-        const axisMapping = {
-          0: (value) => value < -ACTION_THRESHOLD ? (delayedNavigation(() => Navigation.left()), () => Navigation.left()) : 
-            value > ACTION_THRESHOLD ? (delayedNavigation(() => Navigation.right()), () => Navigation.right()) : null,
-          1: (value) => value < -ACTION_THRESHOLD ? (delayedNavigation(() => Navigation.up()), () => Navigation.up()) : 
-            value > ACTION_THRESHOLD ? (delayedNavigation(() => Navigation.down()), () => Navigation.down()) : null,
-        };
-        // Handle axis value
-        if (axisMapping[index]) {
-          const axisValue = axisMapping[index](value);
-          if (axisValue && Math.abs(value) > ACTION_THRESHOLD) {
-            // Set repeat action and timeout to the mapped axis
-            repeatAction = axisValue;
-            lastInvokeTime = Date.now();
-            repeatTimeout = setTimeout(() => requestAnimationFrame(repeatActionHandler), REPEAT_DELAY);
-          } else {
-            // Clear repeat action and timeout if axis is released
-            repeatAction = null;
-            clearTimeout(repeatTimeout);
-          }
-        }
+      } else if (repeatSource === source) {
+        // Clear repeat action and timeout if the button that started it is released
+        stopRepeatAction();
       }
-    });
+    } else if (type === 'axis') {
+      // Handle axis mapping: the operations for the negative and the positive direction
+      const axisMapping = {
+        0: [() => Navigation.left(), () => Navigation.right()],
+        1: [() => Navigation.up(), () => Navigation.down()],
+      };
+      if (!axisMapping[index]) {
+        return;
+      }
+      const direction = value < -ACTION_THRESHOLD ? -1 : (value > ACTION_THRESHOLD ? 1 : 0);
+      // A stick that stays on the same side of the threshold only moved a little, or jitters, so it changes nothing
+      if (direction === (gamepadAxisDirections[source] || 0)) {
+        return;
+      }
+      gamepadAxisDirections[source] = direction;
+      if (direction !== 0) {
+        const operation = axisMapping[index][direction < 0 ? 0 : 1];
+        delayedNavigation(operation);
+        // Set repeat action and timeout to the mapped axis
+        startRepeatAction(operation, source);
+      } else if (repeatSource === source) {
+        // Clear repeat action and timeout if the axis that started it is released
+        stopRepeatAction();
+      }
+    }
   });
+}
+
+// Start repeating a navigation operation of a held gamepad input after the repeat delay, replacing the repeat that runs
+function startRepeatAction(operation, source) {
+  stopRepeatAction();
+  repeatAction = operation;
+  repeatSource = source;
+  lastInvokeTime = Date.now();
+  repeatTimeout = setTimeout(() => {
+    repeatFrame = requestAnimationFrame(repeatActionHandler);
+  }, REPEAT_DELAY);
+}
+
+// Stop the repeat action, its pending start and its animation frame loop
+function stopRepeatAction() {
+  repeatAction = null;
+  repeatSource = null;
+  clearTimeout(repeatTimeout);
+  cancelAnimationFrame(repeatFrame);
 }
 
 function changeUiModeForWasmLoad() {
@@ -274,7 +307,7 @@ function repeatActionHandler() {
   }
   // Check if repeat action is still set, then schedule the next execution frame
   if (repeatAction) {
-    requestAnimationFrame(repeatActionHandler);
+    repeatFrame = requestAnimationFrame(repeatActionHandler);
   }
 }
 
@@ -715,6 +748,7 @@ function initIpAddressFields() {
   });
 }
 
+// Mark the resolutions above the panel as unsupported, disable them and add the [Unsupported] label
 function filterUnsupportedResolutions() {
   $('.videoResolutionMenu li').each(function() {
     var resData = $(this).data('value');
@@ -723,9 +757,19 @@ function filterUnsupportedResolutions() {
       if (resWidth > maxSupportedWidth) {
         $(this).addClass('mdl-menu__item--full-bleed-divider unsupported-resolution');
         $(this).attr('disabled', 'disabled');
-        $(this).text($(this).text() + ' [Unsupported]');
       }
     }
+  });
+  labelUnsupportedResolutions();
+}
+
+// Add the [Unsupported] label to the resolutions marked as unsupported. Every translation pass of i18n.js rewrites the
+// text of the menu items from their data-i18n key, which drops the label, so this also runs after each one (registered
+// in attachListeners()).
+function labelUnsupportedResolutions() {
+  $('.videoResolutionMenu li.unsupported-resolution').each(function() {
+    var resolutionLabel = $(this).attr('data-i18n') ? t($(this).attr('data-i18n')) : $(this).text().trim();
+    $(this).text(t('%1$s [Unsupported]', resolutionLabel));
   });
 }
 
@@ -1957,11 +2001,20 @@ function navigationGuideDialog() {
   });
 }
 
+// Check whether a repository constant still holds its placeholder, i.e. the app was not built with the Dockerfile. The
+// pattern must not spell out the placeholders: the build replaces every occurrence of them in this file, which turned
+// the former comparison with the placeholder into a comparison with the injected value, so that every build checked
+// the upstream repository for updates.
+function isRepoPlaceholder(value) {
+  return /^__REPO_[A-Z]+__$/.test(value);
+}
+
 // Fetch the latest version and release notes from GitHub API
 function fetchLatestRelease() {
-  // Check if the REPO_OWNER and REPO_NAME are set to placeholders and apply fallback values
-  const repoOwner = (REPO_OWNER === '__REPO_OWNER__') ? 'brightcraft' : REPO_OWNER;
-  const repoName = (REPO_NAME === '__REPO_NAME__') ? 'moonlight-tizen' : REPO_NAME;
+  // Check if the REPO_OWNER and REPO_NAME are set to placeholders and apply fallback values (an app that was not built
+  // with the Dockerfile, which requires them for release and development builds)
+  const repoOwner = isRepoPlaceholder(REPO_OWNER) ? 'brightcraft' : REPO_OWNER;
+  const repoName = isRepoPlaceholder(REPO_NAME) ? 'moonlight-tizen' : REPO_NAME;
 
   // GitHub API endpoint to get the latest released version
   const apiUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/releases/latest`;
@@ -1981,27 +2034,50 @@ function fetchLatestRelease() {
   });
 }
 
-// Compare the current version with the latest version to determine if an update is available
+// Split a version into its numbers: the numeric x.y.z part as [x, y, z], and the number at the end of a suffix after
+// it, e.g. 2 for '1.19.0-beta.2' or 1 for '1.19.0.1' (null without a suffix or when the suffix doesn't end in a
+// number). Returns null for a missing or malformed version that doesn't start with x.y.z, e.g. '1.19' or 'latest'.
+function parseAppVersion(version) {
+  if (typeof version !== 'string') {
+    return null;
+  }
+  // The suffix is a list of letters and digits, each after a separator (-, +, . or _)
+  const match = /^v?(\d+)\.(\d+)\.(\d+)((?:[-+._][0-9A-Za-z]+)*)$/.exec(version.trim());
+  if (!match) {
+    return null;
+  }
+  const suffixNumber = /(\d+)$/.exec(match[4]);
+  return {
+    parts: [Number(match[1]), Number(match[2]), Number(match[3])],
+    suffixNumber: suffixNumber ? Number(suffixNumber[1]) : null
+  };
+}
+
+// Compare the current version with the latest version to determine if an update is available. The numeric x.y.z part
+// decides first, so that a release of this fork such as 1.19.100 (tag v1.19.100) is announced to an installed 1.19.0.
+// With the same x.y.z, the numbers at the end of the suffixes decide when both versions have one (1.19.0-beta.1 before
+// 1.19.0-beta.2). A suffix on the same x.y.z alone is no update: the earlier releases of this fork had tags such as
+// v1.19.0-<suffix>.2 for a build that installs as 1.19.0, since the app version on the TV is always a plain x.y.z
+// (res/config.xml).
 function checkVersionUpdate(currentVersion, latestVersion) {
-  // Return false if either version is missing or invalid
-  if (!currentVersion || !latestVersion) {
+  const current = parseAppVersion(currentVersion);
+  const latest = parseAppVersion(latestVersion);
+  // Return false if either version is missing or malformed, so that the app never announces an update it can't prove
+  if (!current || !latest) {
     return false;
   }
 
-  const currentVerParts = currentVersion.split('.').map(Number);
-  const latestVerParts = latestVersion.split('.').map(Number);
-
-  // Compare each part of the version numbers
-  for (let i = 0; i < latestVerParts.length; i++) {
-    if (latestVerParts[i] > currentVerParts[i]) {
-      // If latest version has a higher number in any part, an update is available
-      return true;
-    } else if (latestVerParts[i] < currentVerParts[i]) {
-      // If the current version has a higher number, no update is needed
-      return false;
+  // Compare the major, minor and patch numbers in turn
+  for (let i = 0; i < 3; i++) {
+    if (latest.parts[i] !== current.parts[i]) {
+      // A higher number in the latest version is an update, a lower one is none
+      return latest.parts[i] > current.parts[i];
     }
   }
-  // If all parts are equal, no update is available
+  // With the same x.y.z, only a higher suffix number of the latest version is an update, and only when both have one
+  if (latest.suffixNumber !== null && current.suffixNumber !== null) {
+    return latest.suffixNumber > current.suffixNumber;
+  }
   return false;
 }
 
@@ -2376,6 +2452,7 @@ function onNativeModuleFailure(details) {
       isInGame = false;
       wasmSessionStarted = false;
       streamLaunchId++;
+      Rumble.stopAll();
       setTvScreenSaver(true);
       stopAudioScheduler();
       $('#connection-warnings, #performance-stats').css('display', 'none');
@@ -2944,9 +3021,10 @@ function showStreamMode() {
   // The Wasm module polls the gamepads on its own input thread while streaming, so pause the
   // UI polling to keep the main thread free for the audio scheduler and the video player
   Controller.stopWatching();
-  // Cancel a held D-Pad or stick repeat, since its release can no longer be detected
-  repeatAction = null;
-  clearTimeout(repeatTimeout);
+  // Cancel a held D-Pad or stick repeat, since its release can no longer be detected, and forget the stick directions,
+  // since the menus take a fresh snapshot of the gamepads when they resume
+  stopRepeatAction();
+  gamepadAxisDirections = {};
 }
 
 // Maximize the size of the Wasm module by scaling and resizing appropriately
@@ -3092,6 +3170,7 @@ function startGame(host, appID) {
       const mouseEmulation = $('#mouseEmulationSwitch').parent().hasClass('is-checked') ? 1 : 0;
       const flipABfaceButtons = $('#flipABfaceButtonsSwitch').parent().hasClass('is-checked') ? 1 : 0;
       const flipXYfaceButtons = $('#flipXYfaceButtonsSwitch').parent().hasClass('is-checked') ? 1 : 0;
+      var controllerType = $('#selectControllerType').data('value').toString();
       var audioBackend = $('#selectAudioBackend').data('value').toString();
       var audioConfig = $('#selectAudio').data('value').toString();
       const audioSync = $('#audioSyncSwitch').parent().hasClass('is-checked') ? 1 : 0;
@@ -3134,7 +3213,8 @@ function startGame(host, appID) {
       '\n Disable connection warnings: ' + disableWarnings + 
       '\n Performance statistics: ' + performanceStats + 
       '\n Reference frame invalidation: ' + refFrameInvalidation +
-      '\n HDR static metadata: ' + hdrMetadata);
+      '\n HDR static metadata: ' + hdrMetadata +
+      '\n Controller type sent to the PC: ' + controllerType);
 
       // Hide on-screen overlays until the streaming session begins
       $('#connection-warnings, #performance-stats').css('background', 'transparent').text('');
@@ -3188,7 +3268,7 @@ function startGame(host, appID) {
               host.appVersion, host.gfeVersion, sessionUrl, codecModes,
               framePacing, optimizeGames, rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons,
               audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
-              gameMode, disableWarnings, performanceStats, refFrameInvalidation, hdrMetadata
+              gameMode, disableWarnings, performanceStats, refFrameInvalidation, hdrMetadata, controllerType
             ]);
           });
         }, function(failedResumeApp) {
@@ -3256,7 +3336,7 @@ function startGame(host, appID) {
             host.appVersion, host.gfeVersion, sessionUrl, codecModes,
             framePacing, optimizeGames, rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons,
             audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
-            gameMode, disableWarnings, performanceStats, refFrameInvalidation, hdrMetadata
+            gameMode, disableWarnings, performanceStats, refFrameInvalidation, hdrMetadata, controllerType
           ]);
         });
       }, function(failedLaunchApp) {
@@ -3427,13 +3507,26 @@ function openIndexDB(callback) {
   };
 }
 
-function callCb(key, value, callbackFunction) {
+function callCb(key, value, callbackFunction, isReadFailed) {
   let obj = {};
   obj[key] = value;
-  callbackFunction(obj);
+  callbackFunction(obj, isReadFailed);
 }
 
+// Read the data at the key and pass it to the callback function as an object with the key, e.g. { bitrate: '80' }, with
+// null for a key that isn't stored. A key that can't be read is passed as null too, with true as the second argument of
+// the callback function, so that a caller which stores something in place of a missing value can leave the stored
+// value as it is instead.
 function getData(key, callbackFunction) {
+  let isFinished = false;
+  // Call the callback function only once, since a failed transaction reports both an error and an abort, and an
+  // exception thrown by the callback function in the success handler also aborts the transaction
+  const finish = function(value, isReadFailed) {
+    if (!isFinished) {
+      isFinished = true;
+      callCb(key, value, callbackFunction, isReadFailed);
+    }
+  };
   let cb = function() {
     try {
       // Open a transaction to the database
@@ -3445,18 +3538,33 @@ function getData(key, callbackFunction) {
         console.log('%c[index.js, getData]', 'color: green;', 'Reading data from DB key: ' + key + ' with value: ' + readRequest.result);
         let value = null;
         if (readRequest.result) {
-          value = JSON.parse(readRequest.result);
+          try {
+            value = JSON.parse(readRequest.result);
+          } catch (err) {
+            console.error('%c[index.js, getData]', 'color: green;', 'Error: Unable to parse the data at the key: ' + key + ' from IndexedDB: ' + err);
+            finish(null, true);
+            return;
+          }
         }
-        callCb(key, value, callbackFunction);
+        finish(value, false);
       };
 
       transaction.onerror = function(e) {
-        console.error('%c[index.js, getData]', 'color: green;', 'Error: Unable to read data at the: ' + key + ' from IndexedDB: ' + e);
-        callCb(key, value, callbackFunction);
+        console.error('%c[index.js, getData]', 'color: green;', 'Error: Unable to read data at the key: ' + key + ' from IndexedDB: ' + e);
+        finish(null, true);
+      };
+
+      transaction.onabort = function(e) {
+        console.error('%c[index.js, getData]', 'color: green;', 'Error: Reading data at the key: ' + key + ' from IndexedDB was aborted: ' + e);
+        finish(null, true);
       };
     } catch (err) {
       console.error('%c[index.js, getData]', 'color: green;', 'Error: Something went wrong while reading data at the key: ' + key + ' from IndexedDB: ' + err);
-      callCb(key, value, callbackFunction);
+      // Call back asynchronously like IndexedDB does, since the callers expect it: e.g. the settings start to load during
+      // the window load event, before the switches of the settings screen are set up
+      setTimeout(function() {
+        finish(null, true);
+      }, 0);
     }
   };
 
@@ -3487,6 +3595,37 @@ function storeData(key, data, callbackFunction) {
       };
     } catch (err) {
       console.error('%c[index.js, storeData]', 'color: green;', 'Error: Something went wrong while storing data at the key: ' + key + ' from IndexedDB: ' + err);
+    }
+  };
+
+  if (db) {
+    cb();
+  } else {
+    openIndexDB(cb);
+  }
+}
+
+// Remove the data at the key, so that the setting gets its default again, like a setting that was never stored
+function removeData(key, callbackFunction) {
+  let cb = function() {
+    try {
+      // Open a transaction to the database
+      const transaction = db.transaction(storeName, 'readwrite');
+      // Delete the key from the database (nothing happens if it isn't stored)
+      transaction.objectStore(storeName).delete(key);
+
+      transaction.oncomplete = function(e) {
+        console.log('%c[index.js, removeData]', 'color: green;', 'Removed data at key: ' + key);
+        if (callbackFunction) {
+          callbackFunction();
+        }
+      };
+
+      transaction.onerror = function(e) {
+        console.error('%c[index.js, removeData]', 'color: green;', 'Error: Unable to remove data from IndexedDB: ' + e);
+      };
+    } catch (err) {
+      console.error('%c[index.js, removeData]', 'color: green;', 'Error: Something went wrong while removing data at the key: ' + key + ' from IndexedDB: ' + err);
     }
   };
 
@@ -3966,6 +4105,15 @@ function saveFlipXYfaceButtons() {
   }, 100);
 }
 
+// Save the controller type that the stream announces to the PC for every gamepad: Auto (detected from the id of each
+// gamepad, see controller_type.hpp), Xbox, PlayStation or Nintendo
+function saveControllerType() {
+  var chosenControllerType = $(this).data('value');
+  $('#selectControllerType').text($(this).text()).attr('data-value', chosenControllerType).data('value', chosenControllerType);
+  console.log('%c[index.js, saveControllerType]', 'color: green;', 'Saving controllerType value: ' + chosenControllerType);
+  storeData('controllerType', chosenControllerType, null);
+}
+
 function saveAudioBackend() {
   var chosenAudioBackend = $(this).data('value');
   $('#selectAudioBackend').text($(this).text()).attr('data-value', chosenAudioBackend).data('value', chosenAudioBackend);
@@ -4379,9 +4527,15 @@ function applyOptimalStreamingSettings(connectionType, followPresets) {
     document.querySelector('#gameModeBtn').MaterialSwitch.off();
     storeData('gameMode', false, null);
   } else if (optimalSettings.gameMode === true) {
-    // Turn on for compatible Tizen versions (e.g., 6.0, 6.5, 7.0, 8.0), and keep it turned off and disabled for Tizen 5.5
+    // Turn on for compatible Tizen versions (e.g., 6.0, 6.5, 7.0, 8.0)
     document.querySelector('#gameModeBtn').MaterialSwitch.on();
     storeData('gameMode', true, null);
+  } else {
+    // Turn off and disable for Tizen 5.5 due to lack of support, like on a fresh install, and remove a stored value,
+    // since any stored value enables the switch again at the next start
+    document.querySelector('#gameModeBtn').MaterialSwitch.off();
+    document.querySelector('#gameModeBtn').MaterialSwitch.disable();
+    removeData('gameMode', null);
   }
 
   $('#bitrateSlider')[0].MaterialSlider.change(String(optimalSettings.bitrate));
@@ -4569,6 +4723,10 @@ function restoreDefaultsSettingsValues() {
   document.querySelector('#flipXYfaceButtonsBtn').MaterialSwitch.off();
   storeData('flipXYfaceButtons', defaultFlipXYfaceButtons, null);
 
+  const defaultControllerType = 'Auto';
+  $('#selectControllerType').text(t('Auto')).attr('data-value', defaultControllerType).data('value', defaultControllerType);
+  storeData('controllerType', defaultControllerType, null);
+
   const defaultAudioBackend = 'EMSS';
   $('#selectAudioBackend').text('EMSS').attr('data-value', defaultAudioBackend).data('value', defaultAudioBackend);
   storeData('audioBackend', defaultAudioBackend, null);
@@ -4680,9 +4838,17 @@ function loadSystemInfo() {
   const connectionText = connectionType === 'ethernet' ? 'Ethernet' : (connectionType === 'wifi' ? 'Wi-Fi' : '');
   const testedProfile = tvCapabilities.profile ? tvCapabilities.profile.id : '';
   const modelYearHint = tvCapabilities.modelYearHint;
+  // The connected gamepads (Controller in gamepad.js), so a user can see whether the TV found a controller, whether it
+  // has the standard layout that the menus and the stream expect, and which controller type the stream announces
+  const connectedGamepads = Controller.getConnectedGamepads();
 
   // Get the system information from the TV
   if (systemInfoPlaceholder) {
+    const gamepadsText = connectedGamepads.length === 0 ? t('Gamepads: %1$s', t('None')) : connectedGamepads.map((info) =>
+      t('Gamepad %1$s: %2$s (%3$s, %4$s buttons, %5$s axes, rumble: %6$s, type: %7$s)', info.index, info.name ? info.name : t('Unknown'),
+        info.mapping === 'standard' ? t('standard layout') : t('non-standard layout'), info.buttons, info.axes,
+        info.rumble ? t('Yes') : t('No'), info.type === 'Unknown' ? t('Unknown') : info.type)
+    ).join('\n');
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'App Version: ' + appInfo.name + (isForceGMVariant ? '-ForceGM' : '') + ' v' + buildVer);
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Platform Version: Tizen ' + (platformVer ? platformVer : 'Unknown'));
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'TV Model Series: ' + (modelSeries ? modelSeries : 'Unknown'));
@@ -4693,6 +4859,7 @@ function loadSystemInfo() {
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'HDR Support: ' + (isHdrCapable ? 'Yes' : 'No'));
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Network Connection Type: ' + (connectionText ? connectionText : 'Unknown'));
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Tested Profile: ' + (testedProfile ? testedProfile : 'None'));
+    console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Gamepads: ' + (connectedGamepads.length === 0 ? 'None' : connectedGamepads.map((info) => info.index + ' (' + Controller.formatGamepadInfo(info) + ')').join(', ')));
     // Insert the system information into the placeholder. The model year is only a hint from the model group, since
     // Samsung sells the models of one year for longer, so it never decides a setting.
     systemInfoPlaceholder.innerText =
@@ -4705,10 +4872,11 @@ function loadSystemInfo() {
       t('Panel: %1$s', panelText) + '\n' +
       t('HDR Support: %1$s', isHdrCapable ? t('Yes') : t('No')) + '\n' +
       t('Network Connection Type: %1$s', connectionText ? connectionText : t('Unknown')) + '\n' +
-      t('Tested Profile: %1$s', testedProfile ? testedProfile : t('None'));
+      t('Tested Profile: %1$s', testedProfile ? testedProfile : t('None')) + '\n' +
+      gamepadsText;
   } else {
-    console.error('%c[index.js, loadSystemInfo]', 'color: green;', 'Error: Failed to load system information!');
-    systemInfoPlaceholder.innerText = t('Failed to load system information!');
+    // Without its element there is nowhere to show the system information, so only log it
+    console.error('%c[index.js, loadSystemInfo]', 'color: green;', 'Error: Failed to load system information, since its element is missing!');
   }
 }
 
@@ -4919,6 +5087,19 @@ function loadStoredSettings() {
     }
   });
 
+  console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored controllerType preferences.');
+  getData('controllerType', function(previousValue) {
+    // Without a stored value (also one that can't be read), the menu keeps Auto
+    if (previousValue.controllerType != null) {
+      $('.controllerTypeMenu li').each(function() {
+        if ($(this).data('value') === previousValue.controllerType) {
+          // Update the controller type field based on the given value
+          $('#selectControllerType').text($(this).text()).attr('data-value', previousValue.controllerType).data('value', previousValue.controllerType);
+        }
+      });
+    }
+  });
+
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored audioBackend preferences.');
   getData('audioBackend', function(previousValue) {
     if (previousValue.audioBackend != null) {
@@ -5095,7 +5276,7 @@ function loadStoredSettings() {
     }
     const storedOptimizeBitrate = previousValue.optimizeBitrate == true;
     // Load whether the bitrate presets follow the video settings
-    getData('autoAdjustBitrate', function(storedValue) {
+    getData('autoAdjustBitrate', function(storedValue, isPresetStateReadFailed) {
       if (storedValue.autoAdjustBitrate != null) {
         autoAdjustBitrate = storedValue.autoAdjustBitrate == true;
         console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Auto adjust bitrate state: ' + autoAdjustBitrate);
@@ -5107,9 +5288,16 @@ function loadStoredSettings() {
       // decision, so this only remains as a fallback) the presets keep following the settings if the stored bitrate
       // came from them (followsBitratePresets() in tv_profile.js), and a bitrate that was picked by hand or set by the
       // optimal streaming settings is kept.
-      getData('bitrate', function(storedBitrate) {
-        getData('resolution', function(storedResolution) {
-          getData('frameRate', function(storedFramerate) {
+      getData('bitrate', function(storedBitrate, isBitrateReadFailed) {
+        getData('resolution', function(storedResolution, isResolutionReadFailed) {
+          getData('frameRate', function(storedFramerate, isFramerateReadFailed) {
+            // When one of the values can't be read, keep the bitrate for this start and decide again at the next one,
+            // instead of storing a decision that a read error made, which could replace a stored preset state
+            if (isPresetStateReadFailed || isBitrateReadFailed || isResolutionReadFailed || isFramerateReadFailed) {
+              autoAdjustBitrate = false;
+              console.warn('%c[index.js, loadUserDataCb]', 'color: green;', 'Warning: Auto adjust bitrate state not decided, since a stored value could not be read: ' + autoAdjustBitrate);
+              return;
+            }
             var followsPresets = storedBitrate.bitrate == null || followsBitratePresets({
               bitrate: storedBitrate.bitrate,
               resolution: storedResolution.resolution,
@@ -5155,12 +5343,22 @@ function loadHTTPCerts() {
 
 function loadHTTPCertsCb() {
   console.log('%c[index.js, loadHTTPCertsCb]', 'color: green;', 'Load the HTTP certificate and unique ID if they are already available.');
-  getData('cert', function(savedCert) {
+  getData('cert', function(savedCert, isCertReadFailed) {
     if (savedCert.cert != null) { // We have a saved cert
       pairingCert = savedCert.cert;
     }
 
-    getData('uniqueid', function(savedUniqueid) {
+    getData('uniqueid', function(savedUniqueid, isUniqueidReadFailed) {
+      // A certificate or unique ID that can't be read may still be stored, so it must not be replaced: a new certificate
+      // would end the pairing with every host, and a new unique ID would make an existing install look like a fresh one
+      // to the settings snapshot. So leave both as they are, stay on the loading screen, and read them again at the next
+      // start.
+      if (isCertReadFailed || isUniqueidReadFailed) {
+        console.error('%c[index.js, loadHTTPCertsCb]', 'color: green;', 'Error: Failed to read the stored ' + (isCertReadFailed ? 'certificate' : 'unique ID') + ', so nothing is replaced and the app has to be restarted!');
+        $('#wasmSpinnerMessage').text(t('Unable to read the stored pairing data. Please restart Moonlight.'));
+        return;
+      }
+
       if (savedUniqueid && savedUniqueid.uniqueid != null) { // We have a saved uniqueid
         myUniqueid = savedUniqueid.uniqueid;
       } else {
@@ -5750,27 +5948,40 @@ document.addEventListener('visibilitychange', function() {
   }
 });
 
+// Tell the user once per controller (by its id) after the app started when a gamepad reports no standard layout. The
+// browser then exposes the raw layout of the controller driver, and the menus and the stream, which expect the standard
+// layout, may map its buttons and sticks wrongly: e.g. an 8BitDo controller in D-input mode, or a newer controller on a
+// TV whose browser engine predates the mapping of that controller.
+function showNonStandardGamepadNotice(gamepadInfo) {
+  if (gamepadInfo.mapping === 'standard' || nonStandardGamepadNotices.has(gamepadInfo.id)) {
+    return;
+  }
+  nonStandardGamepadNotices.add(gamepadInfo.id);
+  console.warn('%c[index.js, showNonStandardGamepadNotice]', 'color: green;', 'Warning: Gamepad ' + gamepadInfo.index + ' reports a non-standard layout (mapping="' + gamepadInfo.mapping + '"), so its buttons may be mapped wrongly.');
+  snackbarLogLong('Gamepad %1$s (%2$s) has a non-standard button layout, so some buttons may be wrong. Try its XInput or Xbox mode, or another connection.',
+    gamepadInfo.index, gamepadInfo.name ? gamepadInfo.name : t('Unknown'));
+}
+
 // Gamepad connected events
 window.addEventListener('gamepadconnected', function(e) {
   const connectedGamepad = e.gamepad;
   const gamepadIndex = connectedGamepad.index;
+  const gamepadInfo = Controller.describeGamepad(connectedGamepad);
   const rumbleFeedbackSwitch = document.getElementById('rumbleFeedbackSwitch');
-  console.log('%c[index.js, gamepadconnected]', 'color: green;', 'Gamepad connected:\n' + JSON.stringify(connectedGamepad), connectedGamepad);
+  // Log what the gamepad reports as separate fields, so a support log shows which controller it is, how the browser maps
+  // it and which controller type the stream announces to the PC
+  console.log('%c[index.js, gamepadconnected]', 'color: green;', 'Gamepad ' + gamepadIndex + ' connected: ' + Controller.formatGamepadInfo(gamepadInfo), connectedGamepad);
   snackbarLog('Gamepad %1$s has been connected.', gamepadIndex);
+  showNonStandardGamepadNotice(gamepadInfo);
   // Check if the rumble feedback switch is checked
-  if (rumbleFeedbackSwitch.checked) {
-    // Check if the connected gamepad has a vibrationActuator associated with it
-    if (connectedGamepad.vibrationActuator) {
-      console.log('%c[index.js, gamepadconnected]', 'color: green;', 'Playing rumble on the connected gamepad ' + gamepadIndex + '...');
-      connectedGamepad.vibrationActuator.playEffect('dual-rumble', {
-        startDelay: 0,
-        duration: 500,
-        weakMagnitude: 0.5,
-        strongMagnitude: 0.5,
-      });
-    } else {
-      console.warn('%c[index.js, gamepadconnected]', 'color: green;', 'Warning: Connected gamepad ' + gamepadIndex + ' does not support the rumble feature!');
-    }
+  if (rumbleFeedbackSwitch && rumbleFeedbackSwitch.checked) {
+    // Play a short rumble on the connected gamepad, or tell once that it can't rumble
+    console.log('%c[index.js, gamepadconnected]', 'color: green;', 'Playing rumble on the connected gamepad ' + gamepadIndex + '...');
+    Rumble.test(connectedGamepad);
+  }
+  // List the gamepad in System information. While streaming it is hidden, and the About settings refresh it when they open.
+  if (!isInGame) {
+    loadSystemInfo();
   }
 });
 
@@ -5778,7 +5989,13 @@ window.addEventListener('gamepadconnected', function(e) {
 window.addEventListener('gamepaddisconnected', function(e) {
   const disconnectedGamepad = e.gamepad;
   const gamepadIndex = disconnectedGamepad.index;
-  console.log('%c[index.js, gamepaddisconnected]', 'color: green;', 'Gamepad disconnected:\n' + JSON.stringify(disconnectedGamepad), disconnectedGamepad);
+  console.log('%c[index.js, gamepaddisconnected]', 'color: green;', 'Gamepad ' + gamepadIndex + ' disconnected: ' + Controller.formatGamepadInfo(Controller.describeGamepad(disconnectedGamepad)), disconnectedGamepad);
   snackbarLog('Gamepad %1$s has been disconnected.', gamepadIndex);
   console.warn('%c[index.js, gamepaddisconnected]', 'color: green;', 'Warning: Lost connection to gamepad ' + gamepadIndex + '. Please reconnect your gamepad!');
+  // Stop replaying a rumble for the slot, so that the next gamepad in it doesn't start rumbling
+  Rumble.stop(gamepadIndex);
+  // Remove the gamepad from System information
+  if (!isInGame) {
+    loadSystemInfo();
+  }
 });

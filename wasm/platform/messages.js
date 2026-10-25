@@ -8,7 +8,7 @@ const SyncFunctions = {
   /* host, httpPort, width, height, fps, bitrate, rikey, rikeyid, appversion, gfeversion, rtspurl, serverCodecModeSupport,
   framePacing, optimizeGames, rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons, audioBackend,
   audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange, gameMode,
-  disableWarnings, performanceStats, refFrameInvalidation, hdrMetadata */
+  disableWarnings, performanceStats, refFrameInvalidation, hdrMetadata, controllerType */
   'startRequest': (...args) => Module.startStream(...args),
   // no parameters
   'stopRequest': (...args) => Module.stopStream(...args),
@@ -294,6 +294,8 @@ var handlePromiseMessage = function(callbackId, type, msg) {
  * @return {void}
  */
 function leaveStreamView(host) {
+  // Stop the rumble that the host left on, which would otherwise keep being played
+  Rumble.stopAll();
   // Let the screensaver of the TV work again, since the menus are static
   setTvScreenSaver(true);
   // Release the audio scheduler of the Web Audio backend, which is a no-op for the EMSS backend
@@ -471,20 +473,9 @@ function handleMessage(msg) {
     const gamepadIdx = parseInt(eventData[0]);
     const weakMagnitude = parseFloat(eventData[1]);
     const strongMagnitude = parseFloat(eventData[2]);
-    const gamepads = navigator.getGamepads();
-    const gamepad = gamepads[gamepadIdx];
-    // Check if the gamepad exists and if it has a vibrationActuator associated with it
-    if (gamepad && gamepad.vibrationActuator) {
-      console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Playing rumble on gamepad ' + gamepadIdx + ' with weak magnitude ' + weakMagnitude + ' and strong magnitude ' + strongMagnitude + '...');
-      gamepad.vibrationActuator.playEffect('dual-rumble', {
-        startDelay: 0,
-        duration: 5000, // Moonlight should be sending another rumble event when stopping
-        weakMagnitude: weakMagnitude,
-        strongMagnitude: strongMagnitude,
-      });
-    } else {
-      console.warn('%c[messages.js, handleMessage]', 'color: gray;', 'Warning: Gamepad ' + gamepadIdx + ' does not support the rumble feature!');
-    }
+    // Play the rumble on the gamepad until the host sends 0 for both motors (see Rumble in gamepad.js)
+    console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Playing rumble on gamepad ' + gamepadIdx + ' with weak magnitude ' + weakMagnitude + ' and strong magnitude ' + strongMagnitude + '...');
+    Rumble.play(gamepadIdx, weakMagnitude, strongMagnitude);
   } else if (msg.indexOf('mouseEmulationOn') === 0) {
     // Show mouse emulation enable status as a notification
     snackbarLogLong('Mouse emulation is activated');

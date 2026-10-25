@@ -1,9 +1,10 @@
 'use strict';
 
-// Pins how a gamepad drives the menus in the real page: the 'gamepadinputchanged' handler of attachListeners()
-// (wasm/platform/index.js) maps buttons and sticks to Navigation operations, and the Controller of gamepad.js polls
-// navigator.getGamepads() only while the menus are shown. The Select and Start buttons are known bugs (plan finding
-// C6): the in-app guide promises Select = press and Start = switch, but Select throws and Start does nothing.
+// Pins how a gamepad drives the menus in the real page: the 'gamepadinputchanged' handler that attachListeners()
+// registers (handleGamepadMenuInput() in wasm/platform/index.js) maps buttons and sticks to Navigation operations, and
+// the Controller of gamepad.js polls navigator.getGamepads() only while the menus are shown. Since plan WP6 Select
+// presses and Start switches, as the in-app guide promises (before, Select threw and Start did nothing). The exact
+// repeat counts are in tests/unit/gamepad-menu-handler.test.js, the simulated controllers in gamepad-controllers.test.js.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -140,19 +141,60 @@ test('a held D-pad repeats after 350 ms and stops on release', async () => {
   }
 });
 
-test('Select (button 8) presses without errors', {
-  todo: 'Known bug C6 (plan WP6): Select calls Navigation.move(), which does not exist, and throws',
-}, async () => {
-  const result = await runChanges([[press(8)], [release(8)]]);
-  assert.deepEqual(result.errors, []);
-  assert.deepEqual(result.ops, ['press']);
+test('Select (button 8) presses without errors, after the navigation delay', async () => {
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
+  try {
+    await recordNavigation(app.page);
+    assert.deepEqual(await sendChanges(app.page, [press(8)]), [], 'nothing before the delay');
+    await sendChanges(app.page, [release(8)]);
+    await app.page.waitForTimeout(AFTER_DELAY_MS);
+    assert.deepEqual(await operations(app.page), ['press']);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
 });
 
-test('Start (button 9) switches', {
-  todo: 'Known bug C6 (plan WP6): Start is not mapped, although the Navigation Guide promises Start = switch',
-}, async () => {
+test('Start (button 9) switches', async () => {
   const result = await runChanges([[press(9)], [release(9)]]);
   assert.deepEqual(result.ops, ['switch']);
+  assert.deepEqual(result.errors, []);
+});
+
+test('Select and Start run press and switch of the current view, like CH+ and CH- of the remote', async () => {
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
+  try {
+    const send = (button) => app.page.evaluate((index) => {
+      const dispatch = (pressed) => window.dispatchEvent(new CustomEvent('gamepadinputchanged', { detail: { gamepad: 0, changes: [{ type: 'button', index, pressed }] } }));
+      dispatch(true);
+      dispatch(false);
+    }, button);
+    // Spy on press and switch without replacing them, so the hosts view of navigation.js runs them
+    await app.page.evaluate(() => {
+      window.__viewCalls = [];
+      ['press', 'switch'].forEach((name) => {
+        const original = Navigation[name];
+        Navigation[name] = function() {
+          window.__viewCalls.push(name);
+          return original.apply(this, arguments);
+        };
+      });
+    });
+    const focused = () => app.page.evaluate(() => document.activeElement.id);
+    // Without a host the Add Host container is the current item: press does nothing there, and switch sets the focus on
+    // the current item, as the Navigation Guide says for CH- and Start
+    assert.equal(await focused(), '');
+    await send(8);
+    await app.page.waitForTimeout(AFTER_DELAY_MS);
+    assert.equal(await focused(), '');
+    await send(9);
+    await app.page.waitForTimeout(AFTER_DELAY_MS);
+    assert.deepEqual(await app.page.evaluate(() => window.__viewCalls), ['press', 'switch']);
+    assert.equal(await focused(), 'addHostContainer');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
 });
 
 // Simulated gamepad for the page, installed before the app starts: navigator.getGamepads() returns window.__pad,
@@ -202,9 +244,10 @@ test('the menu polling reports pad input, pauses while streaming and does not re
     let changes = await page.evaluate(() => window.__changes);
     assert.ok(changes.some((c) => c.index === 13 && c.pressed) && changes.some((c) => c.index === 13 && !c.pressed), JSON.stringify(changes));
 
-    // Stream mode stops the polling of the menus and cancels a held repeat
+    // Stream mode stops the polling of the menus, cancels a held repeat and forgets the stick directions
     await page.evaluate(() => {
       repeatAction = () => {};
+      gamepadAxisDirections['0 axis 1'] = 1;
       showStreamMode();
     });
     const callsAtPause = await page.evaluate(() => window.__getGamepadsCalls);
@@ -214,10 +257,11 @@ test('the menu polling reports pad input, pauses while streaming and does not re
       window.__pad.axes[0] = 0.9;
     });
     await page.waitForTimeout(300);
-    const paused = await page.evaluate(() => ({ calls: window.__getGamepadsCalls, changes: window.__changes, repeat: repeatAction }));
+    const paused = await page.evaluate(() => ({ calls: window.__getGamepadsCalls, changes: window.__changes, repeat: repeatAction, directions: gamepadAxisDirections }));
     assert.equal(paused.calls, callsAtPause, 'no getGamepads() calls from the menus while streaming');
     assert.deepEqual(paused.changes, []);
     assert.equal(paused.repeat, null);
+    assert.deepEqual(paused.directions, {}, 'the stick directions are forgotten');
 
     // Back in the menus the polling resumes, and the input held during the stream is the new resting state
     await page.evaluate(() => showAppsMode());

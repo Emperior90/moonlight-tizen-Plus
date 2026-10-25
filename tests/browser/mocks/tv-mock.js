@@ -40,7 +40,8 @@
     conn: 'ethernet',
     wifiSignal: 0.78,
     forceGM: false,
-    appVersion: '1.19.0',
+    // The version of res/config.xml, which unit/app-identity.test.js keeps in step
+    appVersion: '1.19.100',
     ip: '192.168.0.50',
     failApis: '',
     wasmStartMs: 50
@@ -152,10 +153,11 @@
       calls.push({ name: name, args: Array.prototype.slice.call(args || []) });
     };
     var connectionTypes = { DISCONNECTED: 0, WIFI: 1, CELLULAR: 2, ETHERNET: 3 };
+    // The IDs and the display name of res/config.xml, which unit/app-identity.test.js keeps in step
     var appInfo = {
       id: 'MLightS90C.MoonlightWasm',
       packageId: 'MLightS90C',
-      name: 'Moonlight S90C',
+      name: 'Moonlight Plus',
       version: config.appVersion
     };
 
