@@ -261,3 +261,35 @@ describe('the remote reaches the button', { concurrency: 2 }, () => {
     }
   });
 });
+
+test('in pt-BR the dialog has no English line: tested S90C on Tizen 9.0, an HDR TV on Tizen 6.5, an unknown connection', async () => {
+  // English texts that stayed untranslated next to translated lines before
+  const ENGLISH = ['with HDR', 'Video frame pacing on', 'Game mode on', 'Game mode stays disabled', 'could not be detected', 'Detected:', 'The following'];
+  for (const tv of [{ tv: 's90c', conn: 'wifi' }, { tv: 'uhd', conn: 'unknown' }, { tv: 'fhd', conn: 'ethernet', wasmPlayer: 'ull' }]) {
+    const app = await openApp(harness, { tv });
+    try {
+      await app.page.evaluate(() => window.i18n.setLanguage('pt-BR'));
+      if (tv.wasmPlayer) {
+        // Tizen 5.5 with the Ultra Low Latency mode: a game mode that is on gets the line that Continue turns it off
+        await app.page.evaluate(() => $('#gameModeSwitch').trigger('click'));
+        await waitForStorage(app.page, (values) => values.gameMode === true);
+      }
+      const dialog = await openDialog(app.page);
+      const label = JSON.stringify(tv) + ': ' + dialog.text;
+      ENGLISH.forEach((text) => assert.ok(dialog.text.indexOf(text) < 0, text + ' in ' + label));
+      if (tv.tv === 's90c') {
+        assert.ok(dialog.lines.indexOf('Ajuste de ritmo de quadros ativado, faixa de cores limitada, desbloquear todas as taxas de quadros ativado, otimizar predefinições de taxa de bits desativado') >= 0, label);
+        assert.ok(dialog.text.indexOf('HEVC Main10 com HDR') >= 0, label);
+        assert.ok(dialog.text.indexOf('O Modo jogo fica desativado no Tizen 9.0, então instale a variante ForceGM para a menor latência.') >= 0, label);
+      } else if (tv.tv === 'uhd') {
+        assert.ok(dialog.lines.indexOf('Modo jogo ligado') >= 0, label);
+        assert.ok(dialog.text.indexOf('Não foi possível detectar o tipo de conexão de rede da TV') >= 0, label);
+      } else {
+        assert.ok(dialog.lines.indexOf('Modo jogo desligado') >= 0, label);
+      }
+      assert.deepEqual(app.errors, [], label);
+    } finally {
+      await app.context.close();
+    }
+  }
+});

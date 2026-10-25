@@ -74,8 +74,15 @@ function recordSnackbar(page) {
   });
 }
 
+// Run in the page: the state of index.js during a stream whose start request reached the WebAssembly module, which
+// the rumble of the host needs ('streamTerminated' clears it)
+function streamRunning() {
+  isInGame = true;
+  wasmSessionStarted = true;
+}
+
 // The id of the focused element, and waiting until an element has the focus
-const focused = (page) => page.evaluate(() => (document.activeElement ? document.activeElement.id : ''));
+const focused =(page) => page.evaluate(() => (document.activeElement ? document.activeElement.id : ''));
 const waitForFocus = (page, id) => page.waitForFunction((elementId) => document.activeElement && document.activeElement.id === elementId, id, { timeout: 3000 });
 
 // What the controller type field shows
@@ -202,13 +209,18 @@ test('rumble during a stream is played, stopped at the end of the stream, and a 
     assert.deepEqual(await page.evaluate(() => window.__rumble.splice(0)), [{ pad: 0, type: 'dual-rumble', duration: 500, weak: 0.5, strong: 0.5 }]);
 
     // The rumble of the host is played as an effect of 5 seconds, which is replayed until the host stops it
+    await page.evaluate(streamRunning);
     await page.evaluate(() => handleMessage('controllerRumble: 0,0.25,0.75'));
     assert.deepEqual(await page.evaluate(() => window.__rumble.splice(0)), [{ pad: 0, type: 'dual-rumble', duration: 5000, weak: 0.25, strong: 0.75 }]);
     // The end of the stream stops it
     await page.evaluate(() => handleMessage('streamTerminated: 0'));
     assert.deepEqual(await page.evaluate(() => window.__rumble.splice(0)), [{ pad: 0, type: 'reset' }]);
+    // A rumble that the connection still delivers after the end of the stream is not played in the menus
+    await page.evaluate(() => handleMessage('controllerRumble: 0,0.5,0.5'));
+    assert.deepEqual(await page.evaluate(() => window.__rumble.splice(0)), []);
 
     // A controller without a vibration actuator: one notice, at the connection, and none for the rumble of a stream
+    await page.evaluate(streamRunning);
     await page.evaluate((id) => window.__connectPad(1, id, false), GENERIC_ID);
     await page.evaluate(() => handleMessage('controllerRumble: 1,0.5,0.5'));
     await page.evaluate(() => handleMessage('controllerRumble: 1,0,0'));

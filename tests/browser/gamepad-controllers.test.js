@@ -3,8 +3,8 @@
 // Simulated controllers in the real page (plan WP6): a controller with the standard layout and controllers that report
 // a non-standard one (an 8BitDo in D-input mode, a DualShock 4 with the raw layout of its driver). The page logs what a
 // controller reports as separate fields, shows a notice once per controller id when its layout is not the standard one,
-// lists the connected controllers in System information, and the menus work with controllers that woke up with a press,
-// never fired gamepadconnected, or changed their layout.
+// lists the connected controllers in System information (with the controller type that the stream announces), and the
+// menus work with controllers that woke up with a press, never fired gamepadconnected, or changed their layout.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -180,6 +180,38 @@ test('controllers with a non-standard layout get one notice per controller id, a
     // A controller of an unknown type
     assert.equal((await readGamepadLines(page)).slice(-1)[0],
       'Gamepad 3: Generic USB Joystick (layout não padrão, 13 botões, 8 eixos, vibração: Não, tipo: Desconhecido)');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('System information names the controller type that the stream announces, also when the setting overrides it', async () => {
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, stored: { controllerType: 'PlayStation' }, initScripts: [simulatedGamepads] });
+  const { page } = app;
+  try {
+    await connect(page, 0, xbox(0));
+    await connect(page, 1, dualShockRaw());
+    // The setting PlayStation is sent for every controller (gamepad.cpp), so a controller detected as another type
+    // names both, like the log of the stream
+    assert.deepEqual(await readGamepadLines(page), [
+      'Gamepad 0: Xbox Wireless Controller (standard layout, 17 buttons, 4 axes, rumble: No, type: PlayStation (setting, detected: Xbox))',
+      'Gamepad 1: Wireless Controller (non-standard layout, 13 buttons, 8 axes, rumble: No, type: PlayStation)',
+    ]);
+    assert.ok(app.logs.some((line) => line.indexOf('(controller type setting: PlayStation)') >= 0));
+    // Back on Auto, the detected type is the one sent
+    await page.evaluate(() => saveControllerType.call($('.controllerTypeMenu li[data-value="Auto"]')[0]));
+    await page.evaluate(() => loadSystemInfo());
+    assert.deepEqual(await readGamepadLines(page), [
+      'Gamepad 0: Xbox Wireless Controller (standard layout, 17 buttons, 4 axes, rumble: No, type: Xbox)',
+      'Gamepad 1: Wireless Controller (non-standard layout, 13 buttons, 8 axes, rumble: No, type: PlayStation)',
+    ]);
+    // A controller of an unknown type with the setting Nintendo, translated
+    await page.evaluate(() => saveControllerType.call($('.controllerTypeMenu li[data-value="Nintendo"]')[0]));
+    await connect(page, 2, dualShockRaw({ id: 'Generic USB Joystick (Vendor: 0079 Product: 0006)' }));
+    await page.evaluate(() => window.i18n.setLanguage('pt-BR'));
+    assert.equal((await readGamepadLines(page)).slice(-1)[0],
+      'Gamepad 2: Generic USB Joystick (layout não padrão, 13 botões, 8 eixos, vibração: Não, tipo: Nintendo (configuração, detectado: Desconhecido))');
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

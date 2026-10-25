@@ -1,4 +1,4 @@
-# This workflow runs the tests of the app on every push and pull request: the ES2018 syntax, EM_ASM and locale checks, the Node unit tests, the native tests with sanitizers and the browser tests in Chromium (see `tests/README.md`).
+# This workflow runs the tests of the app on every push and pull request: the ES2018 syntax, EM_ASM, locale and documentation link checks, the Node unit tests, the native tests with sanitizers and the browser tests in Chromium (see `tests/README.md`).
 # It needs no build of the WebAssembly module, since the browser tests replace it with a stub and the native tests build single source files with g++. The full Docker build stays in the release workflows.
 name: Tests
 # Configure this workflow to be triggered by every push to any branch and by every pull request.
@@ -41,8 +41,8 @@ jobs:
       - name: Install Chromium for Playwright
         id: chromium
         run: npx playwright install --with-deps chromium
-      # This step checks that the scripts running on the TV stay within ES2018 (Chromium M69 on Tizen 5.5), that no EM_ASM block has a comma that Emscripten 1.39 can't handle, and that the locale files are in sync and translated.
-      - name: Run the syntax and locale checks
+      # This step checks that the scripts running on the TV stay within ES2018 (Chromium M69 on Tizen 5.5), that no EM_ASM block has a comma that Emscripten 1.39 can't handle, that the locale files are in sync and translated, and that the local links of the README and the documents exist.
+      - name: Run the syntax, locale and link checks
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         run: npm run test:tools
       # This step runs the Node unit tests of the pure functions of the platform scripts.

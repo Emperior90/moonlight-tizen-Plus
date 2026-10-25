@@ -266,3 +266,43 @@ test('System information without its element only logs an error instead of throw
     await app.context.close();
   }
 });
+
+test('the Support dialog leads to the guide and the issue tracker of Moonlight Plus, also in pt-BR', async () => {
+  const app = await openApp(harness, { tv: { tv: 'uhd', conn: 'wifi' } });
+  const { page } = app;
+  try {
+    await page.evaluate(() => $('#supportBtn').trigger('click'));
+    const dialog = await page.evaluate(() => ({
+      open: document.getElementById('appSupportDialog').open,
+      title: document.getElementById('appSupportDialogTitle').textContent.trim(),
+      text: document.getElementById('appSupportDialogText').textContent.replace(/\s+/g, ' ').trim(),
+      qrWidth: document.getElementById('supportQrCode').naturalWidth,
+    }));
+    assert.equal(dialog.open, true);
+    assert.equal(dialog.title, 'Moonlight Plus Support');
+    assert.ok(dialog.text.indexOf('Please report problems with Moonlight Plus on its issue tracker on GitHub, not to Moonlight Tizen.') >= 0, dialog.text);
+    assert.ok(dialog.text.indexOf('Scan the QR code below to open the guide of Moonlight Plus') >= 0, dialog.text);
+    assert.ok(dialog.qrWidth > 0, 'the QR code loads');
+    await page.evaluate(() => window.i18n.setLanguage('pt-BR'));
+    const translated = await page.evaluate(() => document.getElementById('appSupportDialogTitle').textContent.trim());
+    assert.equal(translated, 'Suporte do Moonlight Plus');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('turning the game mode on on Tizen 9.0 points to the guide of Moonlight Plus instead of the upstream wiki', async () => {
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
+  const { page } = app;
+  try {
+    await page.evaluate(() => $('#gameModeSwitch').trigger('click'));
+    await page.waitForFunction(() => isDialogOpen && document.getElementById('warningDialogTitle').textContent === 'Compatibility Warning', null, { timeout: 3000 });
+    const text = await page.evaluate(() => document.getElementById('warningDialogText').innerHTML);
+    assert.ok(text.indexOf('see <b>ForceGM variant and game mode</b> in the guide of Moonlight Plus, which the Support button at the top of the screen links to.') >= 0, text);
+    assert.ok(!/wiki/i.test(text), text);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});

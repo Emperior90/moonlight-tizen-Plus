@@ -110,11 +110,81 @@ test('a recommended or hand-picked bitrate is kept when the video settings chang
     shown = await readVideoSettings(app.page);
     assert.deepEqual([shown.bitrate, shown.frameRate, shown.resolution], ['100', '60', '3200:1800']);
     assert.equal(count(app, 'Keeping your bitrate of'), 1);
-    assert.ok(app.logs.some((line) => line.indexOf('Keeping your bitrate of %1$s Mbps') >= 0 && / 100$/.test(line)));
+    // The notice names the presets of the selection it appeared for (4K at 120 FPS, HEVC with HDR)
     const messages = await app.page.evaluate(() => window.__snackbarMessages);
-    assert.equal(messages.filter((message) => message.indexOf('Keeping your bitrate of 100 Mbps.') === 0).length, 1, JSON.stringify(messages));
+    assert.deepEqual(messages.filter((message) => message.indexOf('Keeping your bitrate of') === 0), [
+      'Keeping your bitrate of 100 Mbps. For the selected video settings, turning \'Optimize bitrate presets\' on applies 90 Mbps, turning it off applies the standard preset of 120 Mbps.',
+    ]);
   } finally {
     await app.context.close();
+  }
+});
+
+test('the notice about a kept bitrate names the presets that apply on this TV, also on a Full HD TV', async () => {
+  const app = await openApp(harness, { tv: { tv: 'fhd', conn: 'wifi' } });
+  try {
+    await app.page.evaluate(() => $('#optimalSettingsBtn').trigger('click'));
+    await app.page.evaluate(() => $('#continueWarning').trigger('click'));
+    let shown = await readVideoSettings(app.page);
+    assert.deepEqual([shown.autoAdjustBitrate, shown.bitrate, shown.resolution], [false, '25', '1920:1080']);
+    await app.page.evaluate(() => {
+      const snackbar = document.querySelector('#snackbar').MaterialSnackbar;
+      const show = snackbar.showSnackbar.bind(snackbar);
+      window.__snackbarMessages = [];
+      snackbar.showSnackbar = (data) => {
+        window.__snackbarMessages.push(data.message);
+        show(data);
+      };
+    });
+    await pickFrameRate(app.page, 30);
+    const messages = await app.page.evaluate(() => window.__snackbarMessages);
+    assert.deepEqual(messages.filter((message) => message.indexOf('Keeping your bitrate of') === 0), [
+      'Keeping your bitrate of 25 Mbps. For the selected video settings, turning \'Optimize bitrate presets\' on applies 4.5 Mbps, turning it off applies the standard preset of 10 Mbps.',
+    ]);
+    // Turning the optimized presets on and off applies exactly these bitrates
+    await app.page.evaluate(() => {
+      document.querySelector('#optimizeBitrateBtn').MaterialSwitch.on();
+      saveOptimizeBitrate();
+    });
+    await app.page.waitForTimeout(300);
+    assert.equal((await readVideoSettings(app.page)).bitrate, '4.5');
+    await app.page.evaluate(() => {
+      document.querySelector('#optimizeBitrateBtn').MaterialSwitch.off();
+      saveOptimizeBitrate();
+    });
+    await app.page.waitForTimeout(300);
+    shown = await readVideoSettings(app.page);
+    assert.deepEqual([shown.autoAdjustBitrate, shown.bitrate], [true, '10']);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('on a TV without a tested profile a preset stays within the recommended bitrate, with one notice', async () => {
+  for (const conn of ['wifi', 'unknown']) {
+    const app = await openApp(harness, { tv: { tv: 'uhd', conn } });
+    try {
+      await app.page.evaluate(() => {
+        setAutoAdjustBitrate(true);
+        document.querySelector('#unlockAllFpsBtn').MaterialSwitch.on();
+        handleUnlockAllFps();
+      });
+      await pickFrameRate(app.page, 90);
+      let shown = await readVideoSettings(app.page);
+      assert.deepEqual([shown.bitrate, shown.frameRate], ['80', '90'], conn + ': the 4K 90 FPS preset of 100 Mbps is limited to the decoder cap');
+      await pickFrameRate(app.page, 144);
+      await pickResolution(app.page, '3200:1800');
+      shown = await readVideoSettings(app.page);
+      assert.deepEqual([shown.bitrate, shown.resolution], ['80', '3200:1800'], conn + ': 1800p at 144 FPS');
+      await pickResolution(app.page, '2560:1440');
+      assert.equal((await readVideoSettings(app.page)).bitrate, '70', conn + ': the 1440p 144 FPS preset is within the cap');
+      assert.equal(count(app, 'The bitrate has been limited to %1$s Mbps, the highest bitrate that the app recommends for this TV and network connection.'), 1, conn);
+      assert.equal(count(app, 'exceed what is recommended for the video decoder of this TV'), 0, conn + ': no bitrate warning');
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.context.close();
+    }
   }
 });
 

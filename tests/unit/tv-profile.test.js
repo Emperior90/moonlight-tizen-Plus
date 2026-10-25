@@ -269,6 +269,67 @@ describe('recommendedBitrate()', () => {
   });
 });
 
+describe('the limit and the values of the bitrate presets', () => {
+  test('a TV without a tested profile limits a preset to the decoder cap and the recommendation for its connection', () => {
+    const limits = (caps) => CONNECTIONS.map((conn) => profile.presetBitrateLimit(conn, caps));
+    assert.deepEqual(limits(detect({ tv: 'uhd' })), [{ mbps: 75, reason: 'ethernet' }, { mbps: 80, reason: 'recommended' }, { mbps: 80, reason: 'recommended' }]);
+    assert.deepEqual(limits(detect({ tv: '8k' })), [{ mbps: 75, reason: 'ethernet' }, { mbps: 80, reason: 'recommended' }, { mbps: 80, reason: 'recommended' }]);
+    assert.deepEqual(limits(detect({ tv: 'fhd' })), [{ mbps: 50, reason: 'recommended' }, { mbps: 50, reason: 'recommended' }, { mbps: 50, reason: 'recommended' }]);
+    // The tested S90C keeps the standard presets above its decoder cap, limited over Ethernet only (as before)
+    assert.deepEqual(limits(detect({ tv: 's90c' })), [{ mbps: 75, reason: 'ethernet' }, null, null]);
+  });
+
+  test('no preset goes above the highest recommended bitrate of a TV without a tested profile', () => {
+    for (const tv of ['uhd', 'fhd', '8k']) {
+      const caps = detect({ tv });
+      for (const conn of CONNECTIONS) {
+        const highestRecommended = Math.max.apply(null, RESOLUTIONS.map((res) => Math.max.apply(null,
+          FRAME_RATES.map((fps) => profile.recommendedBitrate(res, fps, conn, caps)))));
+        assert.equal(profile.presetBitrateLimit(conn, caps).mbps, highestRecommended, tv + ' ' + conn);
+        for (const res of RESOLUTIONS) {
+          for (const fps of FRAME_RATES) {
+            for (const codec of ['H264', 'HEVC', 'AV1']) {
+              for (const hdr of [false, true]) {
+                const presets = profile.presetBitrates(res, fps, codec, hdr, conn, caps);
+                const label = [tv, conn, res, fps, codec, hdr].join(' ');
+                assert.ok(presets.standard <= highestRecommended && presets.optimized <= highestRecommended, label + ': ' + JSON.stringify(presets));
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  test('gives the presets that the bitrate slider gets, limited for the TV and its connection', () => {
+    const uhd = detect({ tv: 'uhd' });
+    const s90c = detect({ tv: 's90c' });
+    const fhd = detect({ tv: 'fhd' });
+    // 4K at 60 FPS, HEVC with HDR: the standard preset of 80 Mbps, limited to 75 Mbps over Ethernet
+    assert.deepEqual(profile.presetBitrates('3840:2160', '60', 'HEVC', true, 'wifi', uhd), { standard: 80, optimized: 45 });
+    assert.deepEqual(profile.presetBitrates('3840:2160', '60', 'HEVC', true, 'ethernet', uhd), { standard: 75, optimized: 45 });
+    // 4K at 120 FPS: limited to the decoder cap of 80 Mbps on a TV without a tested profile, kept on the S90C
+    assert.deepEqual(profile.presetBitrates('3840:2160', '120', 'HEVC', true, 'wifi', uhd), { standard: 80, optimized: 80 });
+    assert.deepEqual(profile.presetBitrates('3840:2160', '120', 'HEVC', true, 'unknown', uhd), { standard: 80, optimized: 80 });
+    assert.deepEqual(profile.presetBitrates('3840:2160', '120', 'HEVC', true, 'wifi', s90c), { standard: 120, optimized: 90 });
+    assert.deepEqual(profile.presetBitrates('3840:2160', '144', 'H264', false, 'wifi', s90c), { standard: 140, optimized: 143.5 });
+    // A Full HD TV at 1080p: rounded to the 0.5 Mbps steps of the slider
+    assert.deepEqual(profile.presetBitrates('1920:1080', '30', 'HEVC', false, 'wifi', fhd), { standard: 10, optimized: 4.5 });
+    assert.deepEqual(profile.presetBitrates('1920:1080', '60', 'AV1', false, 'wifi', fhd), { standard: 20, optimized: 6 });
+    // A frame rate without a standard preset leaves the bitrate as it is
+    assert.equal(profile.presetBitrates('3840:2160', '75', 'HEVC', false, 'wifi', uhd).standard, null);
+  });
+
+  test('the optimized preset follows the formula of the optimized bitrate presets, and the slider rounds it', () => {
+    assert.equal(profile.getOptimizedPresetBitrate('3840:2160', '60', 'HEVC', true), Math.round(3840 * 2160 * 60 / 6630.5 * 0.6) / 1000);
+    assert.equal(profile.getOptimizedPresetBitrate('3840:2160', 60, 'HEVC', false), Math.round(3840 * 2160 * 60 / 8309 * 0.6) / 1000);
+    assert.equal(profile.getOptimizedPresetBitrate('1920:1080', '60', 'H264', false), Math.round(1920 * 1080 * 60 / 8309) / 1000);
+    assert.equal(profile.getOptimizedPresetBitrate('1920:1080', '60', 'AV1', true), Math.round(1920 * 1080 * 60 / 6630.5 * 0.4) / 1000);
+    assert.equal(profile.getOptimizedPresetBitrate('1:1', '30', 'AV1', false), 0.01, 'a result that rounds to 0 gives 10 kbps');
+    assert.deepEqual([0.01, 4.492, 4.75, 35.936, 149.9, 300].map(profile.sliderBitrate), [0.5, 4.5, 5, 36, 150, 150]);
+  });
+});
+
 describe('deriveOptimalSettings() over FHD / UHD / 8K x HDR x Tizen 5.5 to 9.0 x connection (plan WP2)', () => {
   for (const panel of PANELS) {
     for (const hdr of [true, false]) {

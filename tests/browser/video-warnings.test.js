@@ -2,11 +2,13 @@
 
 // The warnings of the video settings on the settings screen (plan WP4), which come from the rules in
 // wasm/platform/tv_profile.js (tests/unit/video-warnings.test.js checks the rules themselves):
-// - a TV without a tested 120 Hz profile is told that many Samsung TVs have 60 Hz panels, that 4K at 90 or 120 FPS needs
-//   a level 5.2 decoder, and that 4K at 144 FPS exceeds level 5.2; the S90C keeps its texts (plan section 3)
+// - a TV without a tested 120 Hz profile is told that many Samsung TVs have 60 Hz panels (below 4K), that 4K at 90 or
+//   120 FPS needs a level 5.2 decoder (an 8K TV gets the 60 Hz panel warning there), and that 4K at 144 FPS exceeds
+//   level 5.2; the S90C keeps its texts (plan section 3)
 // - each warning shows once per selection, a selection with another warning shows that one right away
 // - HDR switched on for a TV that doesn't report HDR warns, an HDR TV doesn't
-// - the bitrate warning starts at the decoder cap of the TV and names it, also for a preset above the cap
+// - the bitrate warning starts at the decoder cap of the TV and names it; a preset stays within the cap of a TV without
+//   a tested profile, while on the S90C a preset above its cap warns as before
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -79,7 +81,8 @@ function setBitrateByHand(page, bitrate) {
 }
 
 // Pick a low bitrate by hand, so that it stays when the resolution and frame rate change. Otherwise the bitrate of a
-// fresh install follows the presets (plan D9), whose 120 or 140 Mbps at 4K above 60 FPS add the bitrate warning.
+// fresh install follows the presets (plan D9), which change the bitrate with every pick (and on the S90C, whose presets
+// go above its decoder cap, add the bitrate warning at 4K above 60 FPS).
 function keepBitrate(page) {
   return setBitrateByHand(page, 40);
 }
@@ -100,6 +103,23 @@ test('a 4K TV without a tested profile: 60 Hz panels, level 5.2, and 4K at 144 F
     await pickFrameRate(app.page, 60);
     await pickFrameRate(app.page, 120);
     assert.deepEqual(counts(app), only({ needsLevel52: 1, exceedsLevel52: 1, fpsAbove60Hz: 2 }), 'again after 60 FPS');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('an 8K TV, whose decoder goes beyond level 5.2, is told about 60 Hz panels at 4K above 60 FPS', async () => {
+  const app = await openApp(harness, { tv: { tv: '8k', conn: 'wifi' } });
+  try {
+    await keepBitrate(app.page);
+    await unlockAllFrameRates(app.page);
+    await pickFrameRate(app.page, 120);
+    assert.deepEqual(counts(app), only({ fpsAbove60Hz: 1 }), '4K at 120 FPS');
+    // 4K at 144 FPS still exceeds level 5.2, the highest level that the app asks the TV for
+    await pickFrameRate(app.page, 144);
+    assert.deepEqual(counts(app), only({ fpsAbove60Hz: 1, exceedsLevel52: 1 }), '4K at 144 FPS');
+    assert.ok(app.logs.some((line) => line.indexOf('Level 5.2, the highest decoder level that the app asks the TV for') >= 0));
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
@@ -183,14 +203,28 @@ test('the bitrate warning starts at the decoder cap of the TV and names it (case
   }
 });
 
-test('a preset above the decoder cap of the TV warns about the bitrate too', async () => {
-  // After a fresh install the bitrate follows the presets (plan D9): 4K at 120 FPS gets the preset of 120 Mbps
+test('a preset stays within the decoder cap of a TV without a tested profile, so it does not warn about the bitrate', async () => {
+  // After a fresh install the bitrate follows the presets (plan D9): the preset of 120 Mbps for 4K at 120 FPS is limited
+  // to the decoder cap of 80 Mbps, the bitrate that the app recommends for this TV
   const app = await openApp(harness, { tv: { tv: 'uhd', conn: 'wifi' } });
   try {
     await unlockAllFrameRates(app.page);
     await pickFrameRate(app.page, 120);
+    assert.equal(await app.page.evaluate(() => $('#bitrateSlider').val()), '80');
+    assert.deepEqual(counts(app), only({ needsLevel52: 1 }));
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('on the S90C a preset above its decoder cap is kept and warns about the bitrate, as before', async () => {
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
+  try {
+    await app.page.evaluate(() => setAutoAdjustBitrate(true));
+    await pickFrameRate(app.page, 120);
     assert.equal(await app.page.evaluate(() => $('#bitrateSlider').val()), '120');
-    assert.deepEqual(counts(app), only({ needsLevel52: 1, decoderCap: 1 }));
+    assert.deepEqual(counts(app), only({ lowerEnd: 1, decoderCap: 1 }));
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

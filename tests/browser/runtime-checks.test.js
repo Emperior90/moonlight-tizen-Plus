@@ -118,6 +118,9 @@ test('a WASM player without the Ultra Low Latency mode keeps the game mode off a
     { tv: { tv: 'uhd', wasmPlayer: 'noUll' }, levels: '0, 1, 2, 3, 4' },
     // Without isApiFeatureSupported() the glue code of the WASM player never uses the mode
     { tv: { tv: 'uhd', wasmPlayer: 'apiLevels' }, levels: '0, 1, 2, 3' },
+    // Nor on an older player without availableApis, whose API level the glue code derives from its classes
+    { tv: { tv: 'uhd', wasmPlayer: 'legacy' }, levels: '0' },
+    { tv: { tv: 'fhd', wasmPlayer: 'legacy' }, levels: '0' },
     { tv: { tv: 's90c', wasmPlayer: 'noUll' }, levels: '0, 1, 2, 3, 4' },
     { tv: { tv: 'fhd', wasmPlayer: 'noUll' }, levels: '0, 1, 2, 3, 4' },
   ];
@@ -194,12 +197,10 @@ test('with the Ultra Low Latency mode or without a clear answer, the game mode f
     // Tizen 6.5: on by default
     { tv: { tv: 'uhd', wasmPlayer: 'ull' }, expected: [true, false], answer: 'Yes', levels: '0, 1, 2, 3, 4, 5' },
     { tv: { tv: 'uhd', wasmPlayer: 'none' }, expected: [true, false], answer: 'Unknown', levels: 'Unknown' },
-    { tv: { tv: 'uhd', wasmPlayer: 'legacy' }, expected: [true, false], answer: 'Unknown', levels: 'Unknown' },
     { tv: { tv: 'uhd', wasmPlayer: 'disagree' }, expected: [true, false], answer: 'Unknown', levels: '0, 1, 2, 3, 4, 5' },
     { tv: { tv: 'uhd', wasmPlayer: 'throws' }, expected: [true, false], answer: 'Unknown', levels: 'Unknown' },
     // Tizen 5.5: off and disabled, unless the WASM player offers the mode, where the switch can be turned on
     { tv: { tv: 'fhd', wasmPlayer: 'none' }, expected: [false, true], answer: 'Unknown', levels: 'Unknown' },
-    { tv: { tv: 'fhd', wasmPlayer: 'legacy' }, expected: [false, true], answer: 'Unknown', levels: 'Unknown' },
     { tv: { tv: 'fhd', wasmPlayer: 'ull' }, expected: [false, false], answer: 'Yes', levels: '0, 1, 2, 3, 4, 5' },
     // Tizen 9.0: off, the switch can be turned on with the compatibility warning
     { tv: { tv: 's90c', wasmPlayer: 'ull' }, expected: [false, false], answer: 'Yes', levels: '0, 1, 2, 3, 4, 5' },
@@ -232,6 +233,39 @@ test('on Tizen 5.5 with the Ultra Low Latency mode, the game mode can be turned 
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
+  }
+});
+
+test('on Tizen 5.5 with the Ultra Low Latency mode, the optimal settings say that they turn a game mode that is on off', async () => {
+  const app = await openApp(harness, { tv: { tv: 'fhd', conn: 'wifi', wasmPlayer: 'ull' } });
+  const { page } = app;
+  try {
+    await page.evaluate(() => $('#gameModeSwitch').trigger('click'));
+    await waitForStorage(page, (values) => values.gameMode === true);
+    await page.evaluate(() => $('#optimalSettingsBtn').trigger('click'));
+    const text = await page.evaluate(() => document.getElementById('warningDialogText').innerHTML);
+    assert.ok(text.indexOf('• Game mode off<br>') >= 0, text);
+    assert.ok(text.indexOf('Game mode on') < 0, text);
+    await page.evaluate(() => $('#continueWarning').trigger('click'));
+    const stored = await waitForStorage(page, (values) => values.gameMode === false);
+    assert.equal(stored.gameMode, false);
+    const shown = await readVideoSettings(page);
+    assert.deepEqual([shown.gameMode, shown.gameModeDisabled], [false, false], 'off, but the switch can still be turned on');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+  // Where the game mode can't be turned on, or on Tizen 9.0 with its own note, the dialog has no such line
+  for (const tv of [{ tv: 'fhd', wasmPlayer: 'none' }, { tv: 's90c', wasmPlayer: 'ull' }, { tv: 'uhd', wasmPlayer: 'ull' }]) {
+    const other = await openApp(harness, { tv: Object.assign({ conn: 'wifi' }, tv) });
+    try {
+      await other.page.evaluate(() => $('#optimalSettingsBtn').trigger('click'));
+      const text = await other.page.evaluate(() => document.getElementById('warningDialogText').innerHTML);
+      assert.ok(text.indexOf('• Game mode off<br>') < 0, JSON.stringify(tv) + ': ' + text);
+      assert.deepEqual(other.errors, []);
+    } finally {
+      await other.context.close();
+    }
   }
 });
 

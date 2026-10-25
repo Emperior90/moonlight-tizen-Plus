@@ -126,3 +126,30 @@ test('the simulated TV of the tests reports the IDs, name and version of config.
   assert.equal(appInfo.name, xmlText(xml, 'name'));
   assert.equal(appInfo.version, xmlAttribute(xml, 'widget', 'version'));
 });
+
+// The support path of the fork (plan gap A8 and decision D11): the Support dialog and the help texts of the app lead to
+// the guide and the issue tracker of Moonlight Plus, not to the wiki of upstream Moonlight Tizen
+const FORK_GUIDE_URL = 'https://github.com/Emperior90/moonlight-tizen-S90c/blob/HEAD/docs/GUIDE.md';
+
+test('the Support dialog names Moonlight Plus and its issue tracker, and its QR code leads to the guide of the fork', () => {
+  const html = read('wasm/index.html');
+  const dialog = /<dialog id="appSupportDialog"[\s\S]*?<\/dialog>/.exec(html);
+  assert.ok(dialog, 'the Support dialog');
+  assert.match(dialog[0], /data-i18n="Moonlight Plus Support"/);
+  assert.match(dialog[0], /Please report problems with Moonlight Plus on its issue tracker on GitHub, not to Moonlight Tizen\./);
+  assert.match(dialog[0], /<img src="static\/res\/support_qr_code\.svg" id="supportQrCode">/);
+  // The SVG names the URL that its modules encode (decoded once with a QR reader when it was generated); the issue
+  // template links the same guide
+  const svg = read('wasm/static/res/support_qr_code.svg');
+  assert.ok(svg.indexOf('<!-- QR code of ' + FORK_GUIDE_URL + ' ') >= 0, 'the QR code names the guide of the fork');
+  assert.match(svg, /<svg [^>]*width="\d+" height="\d+" viewBox="0 0 \d+ \d+"/, 'the QR code has an intrinsic size');
+  assert.ok(read('.github/ISSUE_TEMPLATE/config.yml').indexOf(FORK_GUIDE_URL) >= 0);
+});
+
+test('no text of the app points to the wiki of upstream Moonlight Tizen', () => {
+  const locale = JSON.parse(read('wasm/static/locales/en-US.json'));
+  const wikiTexts = Object.keys(locale).filter((key) => /\bwiki\b/i.test(key));
+  assert.deepEqual(wikiTexts, []);
+  assert.ok(!/brightcraft\/moonlight-tizen\/wiki/.test(read('wasm/index.html')));
+  assert.ok(!/brightcraft\/moonlight-tizen\/wiki/.test(read('wasm/platform/index.js')));
+});

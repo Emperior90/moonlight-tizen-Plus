@@ -37,6 +37,7 @@ var audioWarning = false; // Flag indicating whether the audio configuration war
 var codecWarning = false; // Flag indicating whether the video codec warning message has shown, initial value is false
 var ethernetBitrateWarning = false; // Flag indicating whether the Ethernet bitrate warning message has shown, initial value is false
 var ethernetPresetNotice = false; // Flag indicating whether the Ethernet bitrate preset limit message has shown, initial value is false
+var recommendedPresetNotice = false; // Flag indicating whether the message about a bitrate preset limited to the recommendation for the TV has shown, initial value is false
 var h264ResolutionWarning = false; // Flag indicating whether the H.264 resolution warning message has shown, initial value is false
 var autoAdjustBitrate = false; // Flag indicating whether resolution, frame rate, codec and HDR changes apply the bitrate presets, which stops once the bitrate is picked by hand, initial value is false
 var keptBitrateNotice = false; // Flag indicating whether the notice about a kept hand-picked bitrate has shown, initial value is false
@@ -1832,7 +1833,7 @@ function hostDetailsDialog(host) {
   setTimeout(() => Navigation.switch(), 5);
 }
 
-// Show the Moonlight Support dialog
+// Show the Moonlight Plus Support dialog, whose QR code leads to the guide of Moonlight Plus (docs/GUIDE.md)
 function appSupportDialog() {
   // Find the existing overlay and dialog elements
   var appSupportDialogOverlay = document.querySelector('#appSupportDialogOverlay');
@@ -2104,27 +2105,116 @@ function checkVersionUpdate(currentVersion, latestVersion) {
   return false;
 }
 
-// Extract only the release notes section from the released update
+// The update dialog has no scroll bar and is 30 % of the screen wide, so it shows the release notes up to about this
+// many rows of text, counting RELEASE_NOTES_ROW_CHARS characters as one row, and points to the release page for the rest
+const RELEASE_NOTES_MAX_ROWS = 20;
+const RELEASE_NOTES_ROW_CHARS = 45;
+
+// Turn the inline Markdown of a release note line into plain text: images are dropped, links keep their text, and bold,
+// italic and inline code lose their marks. The content of inline code and characters escaped with a backslash are set
+// aside first and put back at the end, so that their marks stay as they are.
+function releaseNoteMarkdownToText(text) {
+  const keptTexts = [];
+  const keep = (value) => {
+    keptTexts.push(value);
+    return '' + (keptTexts.length - 1) + '';
+  };
+  return text
+    .replace(/`([^`]*)`/g, (match, code) => keep(code))
+    .replace(/\\([\\`*_{}[\]()#+\-.!>|])/g, (match, character) => keep(character))
+    // Images, also the badges inside links
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    // Links keep their text, autolinks their address
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/<(https?:\/\/[^>\s]+)>/g, '$1')
+    // HTML tags, e.g. <br> or <details>
+    .replace(/<\/?[A-Za-z][^>]*>/g, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?=[^*\w]|$)/g, '$1$2')
+    .replace(/(^|[^_\w])_([^_\s][^_]*?)_(?=[^_\w]|$)/g, '$1$2')
+    .replace(/(\d+)/g, (match, index) => keptTexts[Number(index)])
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Extract the "What's Changed" section of a release and turn its Markdown into plain text lines for the update dialog,
+// joined with <br> and escaped as HTML. The section ends at the "**Full Changelog**" line of upstream releases, at the
+// "- **Commit**:" line that the release workflows of this fork add after the notes (release-development.yml and
+// release-stable.yml), or at the next heading of level 1 or 2. Returns null without a "What's Changed" section.
+// - headings become a line of their own without a trailing period
+// - bullets become '•', nested bullets an indented '–', numbered items keep their number
+// - quotes lose their marks, and GitHub alert markers ('> [!NOTE]') and rules ('---') are dropped
+// - other lines get a trailing period if they end without punctuation
+// - notes longer than RELEASE_NOTES_MAX_ROWS rows end with a pointer to the release page
 function extractReleaseNotes(releaseNotes) {
-  // Extract the "What's Changed" section and exclude everything after "Full Changelog"
-  const match = releaseNotes.match(/## What's Changed:\r?\n\r?\n([\s\S]+?)(?:\r?\n\r?\n\*\*Full Changelog\*\*|$)/);
+  const lines = String(releaseNotes || '').split(/\r?\n/);
+  const start = lines.findIndex((line) => /^##\s+What's Changed:?\s*$/i.test(line.trim()));
   // Return null if release notes section is not found or does not match expected format
-  if (!match) {
+  if (start < 0) {
     return null;
   }
-  // Clean and format each release note line into a user-friendly bullet list
-  return match[1].split('\n').map(line => {
-	  let cleaned = line.trim();
-	  // Remove contributor attribution and PR references
-	  cleaned = cleaned.replace(/\s+by\s+@[^]+$/i, '');
-	  // Convert list item to bullet point
-	  cleaned = cleaned.replace(/^-\s*/, '• ');
-	  // Add trailing period if missing
-	  if (cleaned && !cleaned.endsWith('.')) {
-	    cleaned += '.';
-	  }
-	  return cleaned;
-  }).filter(line => line !== '').join('<br>');
+
+  const output = [];
+  let rows = 0;
+  let truncated = false;
+  for (let i = start + 1; i < lines.length; i++) {
+    const rawLine = lines[i].replace(/\t/g, '    ');
+    let line = rawLine.trim();
+    if (/^\*\*Full Changelog\*\*/i.test(line) || /^[-*+]\s+\*\*Commit\*\*:/i.test(line) || /^#{1,2}\s/.test(line)) {
+      break;
+    }
+    // Quotes and GitHub alerts keep their text without the marks
+    line = line.replace(/^(>\s?)+/, '').trim();
+    if (line === '' || /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i.test(line) || /^([-*_])(\s*\1){2,}$/.test(line)) {
+      continue;
+    }
+    // Remove contributor attribution and PR references
+    line = line.replace(/\s+by\s+@[^]+$/i, '');
+
+    let prefix = '';
+    let isHeading = false;
+    let match;
+    const indent = rawLine.length - rawLine.replace(/^\s+/, '').length;
+    const nestingPrefix = indent >= 2 ? '    ' : '';
+    if ((match = /^#{3,6}\s+(.*?)\s*#*$/.exec(line))) {
+      isHeading = true;
+      line = match[1];
+    } else if ((match = /^[-*+]\s+(.*)$/.exec(line))) {
+      prefix = nestingPrefix + (nestingPrefix ? '– ' : '• ');
+      line = match[1];
+    } else if ((match = /^(\d+)[.)]\s+(.*)$/.exec(line))) {
+      prefix = nestingPrefix + match[1] + '. ';
+      line = match[2];
+    }
+
+    let text = releaseNoteMarkdownToText(line);
+    if (text === '') {
+      continue;
+    }
+    // Add trailing period if missing
+    if (!isHeading && !/[.:!?]$/.test(text)) {
+      text += '.';
+    }
+    text = prefix + text;
+
+    // Keep the dialog on the screen: stop before the line that would exceed the rows, but show at least one line
+    const lineRows = Math.max(1, Math.ceil(text.length / RELEASE_NOTES_ROW_CHARS));
+    if (output.length > 0 && rows + lineRows > RELEASE_NOTES_MAX_ROWS) {
+      truncated = true;
+      break;
+    }
+    rows += lineRows;
+    output.push(escapeHTML(text));
+  }
+
+  if (output.length === 0) {
+    return null;
+  }
+  if (truncated) {
+    output.push(escapeHTML(t('… More changes are listed on the release page on GitHub.')));
+  }
+  return output.join('<br>');
 }
 
 // Format the update timestamp into a readable string as "dd/mm/yyyy hh:mm"
@@ -3815,7 +3905,7 @@ function showVideoWarning(messageKey) {
       snackbarLogLong('Warning: This resolution and frame rate need a video decoder with HEVC or AV1 Level 5.2, which most Samsung TVs with a 120 Hz panel have. On other TVs the stream may fail to start!');
       break;
     case VIDEO_WARNINGS.EXCEEDS_LEVEL_52:
-      snackbarLogLong('Warning: This resolution and frame rate exceed HEVC and AV1 Level 5.2, the highest decoder level of Samsung TVs, so the stream may stutter or fail to start!');
+      snackbarLogLong('Warning: This resolution and frame rate exceed HEVC and AV1 Level 5.2, the highest decoder level that the app asks the TV for, so the stream may stutter or fail to start!');
       break;
     case VIDEO_WARNINGS.EXCEEDS_TESTED_DECODER:
       // The decoder of a tested model with a 120 Hz panel handled 4K at up to 120 FPS in the tests
@@ -3926,9 +4016,13 @@ function setAutoAdjustBitrate(enabled) {
 function applyBitratePresets() {
   if (!autoAdjustBitrate) {
     console.log('%c[index.js, applyBitratePresets]', 'color: green;', 'Keeping the bitrate of ' + $('#bitrateSlider').val() + ' Mbps');
-    // Explain once how to get the presets back, since nothing else changes on screen
+    // Explain once how to get the presets back, since nothing else changes on screen, with the bitrates that the
+    // presets set for the selected video settings on this TV (presetBitrates() in tv_profile.js)
     if (!keptBitrateNotice) {
-      snackbarLogLong('Keeping your bitrate of %1$s Mbps. Turning \'Optimize bitrate presets\' on applies low presets (about 45 Mbps for 4K at 60 FPS), turning it off applies the standard presets (80 Mbps for 4K at 60 FPS).', $('#bitrateSlider').val());
+      const presets = presetBitrates(String($('#selectResolution').data('value')), $('#selectFramerate').data('value').toString(),
+        $('#selectCodec').data('value').toString(), $('#hdrModeSwitch').parent().hasClass('is-checked'), getActiveConnectionType(), tvCapabilities);
+      snackbarLogLong('Keeping your bitrate of %1$s Mbps. For the selected video settings, turning \'Optimize bitrate presets\' on applies %2$s Mbps, turning it off applies the standard preset of %3$s Mbps.',
+        $('#bitrateSlider').val(), presets.optimized, presets.standard !== null ? presets.standard : $('#bitrateSlider').val());
       keptBitrateNotice = true;
     }
     // Re-check the bitrate warnings, e.g. for the Ethernet port of the TV
@@ -3982,61 +4076,50 @@ function standardBitratePresets() {
     $('#bitrateSlider')[0].MaterialSlider.change(String(preset));
   }
 
-  // Keep the bitrate within what the network connection of the TV can carry
+  // Keep the bitrate within what the network connection and the video decoder of the TV can carry
   limitPresetBitrate();
 
   // Update the bitrate value
   saveBitrate();
 }
 
-// Limit the bitrate of a preset to what the network connection of the TV can carry. A preset above the recommended
-// bitrate for the 100 Mbps Ethernet port that Samsung TVs usually have (e.g. 120 Mbps for 4K at 120 FPS) would cause
-// packet loss and frame drops.
+// Limit the bitrate of a preset to what the network connection and the video decoder of the TV can carry
+// (presetBitrateLimit() in tv_profile.js). A preset above the recommended bitrate for the 100 Mbps Ethernet port that
+// Samsung TVs usually have (e.g. 120 Mbps for 4K at 120 FPS) would cause packet loss and frame drops, and on a TV
+// without a tested profile a preset stays within the highest bitrate that the app recommends for it.
 function limitPresetBitrate() {
   var presetBitrate = parseFloat($('#bitrateSlider').val());
-  if (presetBitrate > RECOMMENDED_ETHERNET_BITRATE && getActiveConnectionType() === 'ethernet') {
-    console.log('%c[index.js, limitPresetBitrate]', 'color: green;', 'Limiting the preset bitrate from ' + presetBitrate + ' to ' + RECOMMENDED_ETHERNET_BITRATE + ' Mbps for Ethernet');
-    $('#bitrateSlider')[0].MaterialSlider.change(String(RECOMMENDED_ETHERNET_BITRATE));
-    // Explain the limit only once, since the presets are applied on every resolution and frame rate change
+  const limit = presetBitrateLimit(getActiveConnectionType(), tvCapabilities);
+  if (!limit || !(presetBitrate > limit.mbps)) {
+    return;
+  }
+  console.log('%c[index.js, limitPresetBitrate]', 'color: green;', 'Limiting the preset bitrate from ' + presetBitrate + ' to ' + limit.mbps + ' Mbps (' + limit.reason + ')');
+  $('#bitrateSlider')[0].MaterialSlider.change(String(limit.mbps));
+  // Explain the limit only once, since the presets are applied on every resolution and frame rate change
+  if (limit.reason === 'ethernet') {
     if (!ethernetPresetNotice) {
-      snackbarLogLong('The bitrate has been limited to %1$s Mbps, because Samsung TVs usually have a 100 Mbps Ethernet port.', RECOMMENDED_ETHERNET_BITRATE);
+      snackbarLogLong('The bitrate has been limited to %1$s Mbps, because Samsung TVs usually have a 100 Mbps Ethernet port.', limit.mbps);
       ethernetPresetNotice = true;
     }
+  } else if (!recommendedPresetNotice) {
+    snackbarLogLong('The bitrate has been limited to %1$s Mbps, the highest bitrate that the app recommends for this TV and network connection. You can still raise it with the bitrate slider.', limit.mbps);
+    recommendedPresetNotice = true;
   }
 }
 
+// Apply the optimized bitrate preset of the selected resolution, frame rate, codec and HDR mode
+// (getOptimizedPresetBitrate() is in tv_profile.js)
 function optimizeBitratePresets() {
   console.log('%c[index.js, optimizeBitratePresets]', 'color: green;', 'Applying optimize bitrate presets...');
-  var width = parseInt($('#selectResolution').data('value').split(':')[0]);
-  var height = parseInt($('#selectResolution').data('value').split(':')[1]);
+  var res = $('#selectResolution').data('value');
   var frameRate = $('#selectFramerate').data('value').toString();
   var videoCodec = $('#selectCodec').data('value').toString();
-  var hdrMode = $('#hdrModeSwitch').parent().hasClass('is-checked') ? 1 : 0;
-
-  // Multiplier to adjust bitrate based on codec efficiency
-  // Sweet-spot formula reference: https://www.reddit.com/r/MoonlightStreaming/comments/1gg2cdy/sweet_spot_bitrate/
-  var codecMultiplier = {
-    "H264": 1.0,
-    "HEVC": 0.6,
-    "AV1": 0.4
-  }[videoCodec];
-
-  // Bitrate factor depends on HDR state
-  var bitrateFactor = hdrMode ? 6630.5 : 8309;
-
-  // Calculate optimized bitrate based on resolution, framerate, codec efficiency, and HDR state
-  var baseBitrate = width * height * frameRate / bitrateFactor;
-  var finalBitrate = Math.round(baseBitrate * codecMultiplier);
-
-  // Apply the default bitrate value in case of invalid calculation
-  if (finalBitrate <= 0) {
-    finalBitrate = 10;
-  }
+  var hdrMode = $('#hdrModeSwitch').parent().hasClass('is-checked');
 
   // Set the bitrate slider value based on the calculated optimized bitrate
-  $('#bitrateSlider')[0].MaterialSlider.change(finalBitrate / 1000);
+  $('#bitrateSlider')[0].MaterialSlider.change(getOptimizedPresetBitrate(res, frameRate, videoCodec, hdrMode));
 
-  // Keep the bitrate within what the network connection of the TV can carry
+  // Keep the bitrate within what the network connection and the video decoder of the TV can carry
   limitPresetBitrate();
 
   // Update the bitrate value
@@ -4380,7 +4463,7 @@ function saveGameMode() {
         warningDialog(t('Compatibility Warning'),
           t('Game Mode (Ultra Low Latency) is not compatible with Tizen %1$s due to platform changes introduced by Samsung.', platformVer) + 
           t('Enabling this option may result in video freezing on the first rendered frame, black screen, unstable performance, and other streaming issues.<br><br>') + 
-          t('For more information about this incompatibility, including available workarounds and potential limitations, please refer to the <b>Known Issues &amp; Limitations</b> page on the Wiki.')
+          t('For more information about this incompatibility and the ForceGM variant, see <b>ForceGM variant and game mode</b> in the guide of Moonlight Plus, which the Support button at the top of the screen links to.')
         );
       }, 250);
     } else if (parseFloat(platformVer) < 9.0 && !chosenGameMode) { // Check if the Tizen version is lower than 9.0 and the Game Mode is turned off
@@ -4634,6 +4717,10 @@ function optimalSettingsDialog() {
     message += '&#8226; ' + t('Game mode on') + '<br>';
   } else if (isGameModeUnavailable(tvCapabilities)) {
     message += '&#8226; ' + t('Game mode off, because the video player of this TV doesn\'t offer the Ultra Low Latency mode') + '<br>';
+  } else if (optimalSettings.gameMode === false && !(parseFloat(platformVer) >= 9.0)) {
+    // Below Tizen 9.0, off means Tizen 5.5 with a WASM player that offers the mode, where the switch can be turned on,
+    // so say that Continue turns it off
+    message += '&#8226; ' + t('Game mode off') + '<br>';
   }
   message += '<br>';
 
@@ -4883,6 +4970,18 @@ function describeVideoDecoderProbe() {
   ];
 }
 
+// Describe the controller type that the stream announces to the PC for a gamepad (describeGamepad() in gamepad.js), as
+// System information shows it: the type that Auto detects from the id of the gamepad, unless the 'Controller type sent
+// to the PC' setting overrides it, which then names the detected type as well, like the stream log does (gamepad.cpp),
+// e.g. 'PlayStation (setting, detected: Xbox)'
+function describeGamepadType(info, controllerTypeSetting) {
+  const detectedType = info.type === 'Unknown' ? t('Unknown') : info.type;
+  if (controllerTypeSetting && controllerTypeSetting !== 'Auto' && controllerTypeSetting !== info.type) {
+    return t('%1$s (setting, detected: %2$s)', controllerTypeSetting, detectedType);
+  }
+  return detectedType;
+}
+
 function loadSystemInfo() {
   console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Loading system information...');
   const systemInfoPlaceholder = document.getElementById('systemInfoBtn');
@@ -4903,14 +5002,16 @@ function loadSystemInfo() {
   const videoDecoderLines = describeVideoDecoderProbe();
   // The connected gamepads (Controller in gamepad.js), so a user can see whether the TV found a controller, whether it
   // has the standard layout that the menus and the stream expect, and which controller type the stream announces
+  // (describeGamepadType())
   const connectedGamepads = Controller.getConnectedGamepads();
 
   // Get the system information from the TV
   if (systemInfoPlaceholder) {
+    const controllerTypeSetting = String($('#selectControllerType').data('value') || 'Auto');
     const gamepadsText = connectedGamepads.length === 0 ? t('Gamepads: %1$s', t('None')) : connectedGamepads.map((info) =>
       t('Gamepad %1$s: %2$s (%3$s, %4$s buttons, %5$s axes, rumble: %6$s, type: %7$s)', info.index, info.name ? info.name : t('Unknown'),
         info.mapping === 'standard' ? t('standard layout') : t('non-standard layout'), info.buttons, info.axes,
-        info.rumble ? t('Yes') : t('No'), info.type === 'Unknown' ? t('Unknown') : info.type)
+        info.rumble ? t('Yes') : t('No'), describeGamepadType(info, controllerTypeSetting))
     ).join('\n');
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'App Version: ' + appInfo.name + (isForceGMVariant ? '-ForceGM' : '') + ' v' + buildVer);
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Platform Version: Tizen ' + (platformVer ? platformVer : 'Unknown'));
@@ -4924,7 +5025,8 @@ function loadSystemInfo() {
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Tested Profile: ' + (testedProfile ? testedProfile : 'None'));
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'WASM Player: ' + JSON.stringify(wasmPlayerFeatures));
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Video Decoders (MediaSource check): ' + videoDecoderProbe.reason + ', answers ' + JSON.stringify(videoDecoderProbe.answers));
-    console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Gamepads: ' + (connectedGamepads.length === 0 ? 'None' : connectedGamepads.map((info) => info.index + ' (' + Controller.formatGamepadInfo(info) + ')').join(', ')));
+    console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Gamepads: ' + (connectedGamepads.length === 0 ? 'None' : connectedGamepads.map((info) => info.index + ' (' + Controller.formatGamepadInfo(info) + ')').join(', ')) +
+      ' (controller type setting: ' + controllerTypeSetting + ')');
     // Insert the system information into the placeholder. The model year is only a hint from the model group, since
     // Samsung sells the models of one year for longer, so it never decides a setting.
     systemInfoPlaceholder.innerText =
@@ -6044,7 +6146,8 @@ window.addEventListener('gamepadconnected', function(e) {
   const gamepadInfo = Controller.describeGamepad(connectedGamepad);
   const rumbleFeedbackSwitch = document.getElementById('rumbleFeedbackSwitch');
   // Log what the gamepad reports as separate fields, so a support log shows which controller it is, how the browser maps
-  // it and which controller type the stream announces to the PC
+  // it and which controller type Auto detects for it (the 'Controller type sent to the PC' setting can override what the
+  // stream announces, which the log of the stream names)
   console.log('%c[index.js, gamepadconnected]', 'color: green;', 'Gamepad ' + gamepadIndex + ' connected: ' + Controller.formatGamepadInfo(gamepadInfo), connectedGamepad);
   snackbarLog('Gamepad %1$s has been connected.', gamepadIndex);
   showNonStandardGamepadNotice(gamepadInfo);

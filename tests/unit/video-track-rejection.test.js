@@ -52,22 +52,40 @@ function loadMessages() {
 
 test('the message of each rejected video format of the fixture names it and what to change', () => {
   const advice = {
-    'H.264': 'Choose HEVC as the video codec, or a resolution up to 1080p.',
-    HEVC: 'Lower the resolution or frame rate.',
-    'HEVC Main10': 'Turn off HDR, or lower the resolution or frame rate.',
-    AV1: 'Choose HEVC as the video codec.',
-    'AV1 Main10': 'Choose HEVC as the video codec.',
+    // H.264 above 1080p, and within 1080p, where only a lower frame rate (or HEVC) helps
+    'H.264': (entry) => (entry.width > 1920 || entry.height > 1080
+      ? 'Choose HEVC as the video codec, or a resolution up to 1080p.'
+      : 'Choose HEVC as the video codec, or lower the frame rate.'),
+    HEVC: () => 'Lower the resolution or frame rate.',
+    'HEVC Main10': () => 'Turn off HDR, or lower the resolution or frame rate.',
+    AV1: () => 'Choose HEVC as the video codec.',
+    'AV1 Main10': () => 'Choose HEVC as the video codec.',
   };
   const cases = readFixture();
-  assert.equal(cases.length, 5);
+  assert.equal(cases.length, 7);
   for (const entry of cases) {
     const { notices, handleMessage, platform } = loadMessages();
     handleMessage(entry.message);
     const codec = entry.message.replace('VideoTrackRejected: ', '').split(',')[0];
     assert.deepEqual(plain(platform.get('rejectedVideoTrack')), { codec, width: entry.width, height: entry.height, fps: entry.fps }, entry.message);
     handleMessage('streamTerminated: -200');
-    assert.deepEqual(notices, ['The TV rejected ' + codec + ' at ' + entry.width + 'x' + entry.height + '@' + entry.fps + ' FPS. ' + advice[codec]], entry.message);
+    assert.deepEqual(notices, ['The TV rejected ' + codec + ' at ' + entry.width + 'x' + entry.height + '@' + entry.fps + ' FPS. ' + advice[codec](entry)], entry.message);
     assert.equal(platform.get('rejectedVideoTrack'), null);
+  }
+});
+
+test('H.264 within 1080p is not told to choose a resolution up to 1080p, which it already has', () => {
+  for (const [format, advice] of [
+    ['H.264,1920,1080,120', 'Choose HEVC as the video codec, or lower the frame rate.'],
+    ['H.264,1280,720,144', 'Choose HEVC as the video codec, or lower the frame rate.'],
+    ['H.264,1920,1200,60', 'Choose HEVC as the video codec, or a resolution up to 1080p.'],
+    ['H.264,2560,1080,60', 'Choose HEVC as the video codec, or a resolution up to 1080p.'],
+  ]) {
+    const { notices, handleMessage } = loadMessages();
+    handleMessage('VideoTrackRejected: ' + format);
+    handleMessage('streamTerminated: -200');
+    const [codec, width, height, fps] = format.split(',');
+    assert.deepEqual(notices, ['The TV rejected ' + codec + ' at ' + width + 'x' + height + '@' + fps + ' FPS. ' + advice], format);
   }
 });
 

@@ -75,8 +75,9 @@ function createActuator(timers, effects, options) {
   return actuator;
 }
 
-// Load gamepad.js and messages.js with one gamepad slot, by default with a vibration actuator. The snackbar notices,
-// translated with the source texts, are recorded, and leaveStreamView() finds the page functions it calls.
+// Load gamepad.js and messages.js with one gamepad slot, by default with a vibration actuator, during a running stream
+// (isInGame and wasmSessionStarted of index.js, which 'streamTerminated' clears). The snackbar notices, translated with
+// the source texts, are recorded, and leaveStreamView() finds the page functions it calls.
 function loadWithGamepad(options) {
   const opts = Object.assign({ hasActuator: true }, options);
   const effects = [];
@@ -110,6 +111,8 @@ function loadWithGamepad(options) {
       streamLaunchHost: null,
       api: null,
       streamLaunchId: 0,
+      isInGame: true,
+      wasmSessionStarted: true,
     },
   });
   return {
@@ -207,6 +210,41 @@ test('the end of the stream resets a rumble that is still on and stops replaying
   // Without a rumble that is on, the end of the stream doesn't touch the actuator
   rumble.handleMessage('streamTerminated: 0');
   assert.equal(rumble.effects.length, 2);
+});
+
+test('a rumble that arrives after the end of the stream is not played, so it cannot go on in the menus', () => {
+  const rumble = loadWithGamepad();
+  rumble.handleMessage('controllerRumble: 0,0.5,0.5');
+  rumble.timers.advance(1000);
+  rumble.handleMessage('streamTerminated: 0');
+  // The connection of the stream still delivers the rumble of the host until the WASM module has torn it down, and the
+  // host sends no 0 for a stream that is over
+  rumble.handleMessage('controllerRumble: 0,0.6,0.6');
+  rumble.timers.advance(60000);
+  assert.deepEqual(rumble.effects.map((effect) => [effect.at, effect.type]), [[0, 'dual-rumble'], [1000, 'reset']]);
+  assert.equal(rumble.timers.pending(), 0, 'no replay is left');
+  assert.ok(rumble.platform.consoleMessages.some((message) => message.text.indexOf('Ignoring the rumble for gamepad 0 that arrived after the end of the stream.') >= 0));
+
+  // Nor while the start request of a stream hasn't reached the WASM module, e.g. after a cancelled start
+  const starting = loadWithGamepad();
+  starting.platform.context.wasmSessionStarted = false;
+  starting.handleMessage('controllerRumble: 0,0.5,0.5');
+  starting.timers.advance(10000);
+  assert.deepEqual(starting.effects, []);
+  assert.equal(starting.timers.pending(), 0);
+});
+
+test('a rumble that is still on stops when the menus take over again', () => {
+  const rumble = loadWithGamepad();
+  rumble.handleMessage('controllerRumble: 0,0.5,0.5');
+  rumble.timers.advance(1000);
+  // The gamepad polling of the menus resumes, e.g. after the stream view was left without the end of the stream
+  rumble.platform.get('Controller').startWatching();
+  rumble.timers.advance(10000);
+  assert.deepEqual(playTimes(rumble.effects), [0]);
+  assert.deepEqual(rumble.effects.filter((effect) => effect.type === 'reset').map((effect) => effect.at), [1000]);
+  rumble.platform.get('Controller').stopWatching();
+  assert.equal(rumble.timers.pending(), 0, 'no replay is left');
 });
 
 test('a gamepad that disconnects stops the replay, so the next gamepad in its slot does not start rumbling', () => {

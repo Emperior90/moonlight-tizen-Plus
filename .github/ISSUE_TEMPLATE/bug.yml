@@ -1,0 +1,139 @@
+name: Bug Report
+description: Report something in Moonlight Plus that isn't working
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the issue tracker of **Moonlight Plus**, an unofficial fork of Moonlight Tizen. Please report problems with the regular Moonlight Tizen app to the Moonlight Tizen project instead.
+
+        Before you report, check the troubleshooting section of the [guide](https://github.com/Emperior90/moonlight-tizen-S90c/blob/HEAD/docs/GUIDE.md#14-troubleshooting) and, for controllers, the [controller page](https://github.com/Emperior90/moonlight-tizen-S90c/blob/HEAD/docs/CONTROLLERS.md).
+
+        ## TV
+  - type: input
+    attributes:
+      label: App version
+      description: The first line of Settings → About → System information.
+      placeholder: "Example: App Version: Moonlight Plus-ForceGM v1.19.100 (pre-1a2b3c4)"
+    validations:
+      required: true
+  - type: dropdown
+    attributes:
+      label: App file
+      description: Which file did you install?
+      options:
+        - Moonlight.wgt
+        - Moonlight-ForceGM.wgt
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: TV model
+      description: The TV Model Name line of System information, or the model on the label of the TV.
+      placeholder: "Example: QE55S90CAT"
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Tizen version
+      description: The Platform Version line of System information.
+      placeholder: "Example: Tizen 9.0"
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: System information
+      description: A screenshot or photo of Settings → About → System information. It shows what the app detected about your TV and your controllers.
+      placeholder: "Drag and drop the screenshot or photo here."
+    validations:
+      required: true
+  - type: dropdown
+    attributes:
+      label: Network connection of the TV
+      options:
+        - Wi-Fi (5 GHz)
+        - Wi-Fi (2.4 GHz)
+        - Ethernet
+        - Other or unknown
+    validations:
+      required: true
+  - type: dropdown
+    attributes:
+      label: Installation method
+      options:
+        - Apps2Samsung
+        - Tizen Studio
+        - Other
+  - type: markdown
+    attributes:
+      value: |
+        ## Host PC
+  - type: input
+    attributes:
+      label: Host GPU and encoder
+      description: The GPU that encodes the stream, and its encoder if you know it (NVENC, AMF, Quick Sync or software).
+      placeholder: "Example: NVIDIA GeForce RTX 4070, NVENC"
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Host software
+      description: The streaming software and its version, and the OS of the host.
+      placeholder: "Example: Sunshine (version from its web interface) on Windows 11"
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Changed host settings
+      description: Sunshine settings you changed from their defaults, if any (e.g. fec_percentage, nvenc_preset).
+      placeholder: "Example: fec_percentage = 10, nvenc_preset = 4"
+  - type: markdown
+    attributes:
+      value: |
+        ## Controller and stream settings
+  - type: input
+    attributes:
+      label: Controller
+      description: The controller you use and how it is connected, or "none".
+      placeholder: "Example: Xbox Wireless Controller over Bluetooth, X-input mode"
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Stream settings
+      description: Resolution, frame rate, bitrate, codec, HDR, audio backend, and whether you used the 'Optimal settings for this TV' button. A screenshot of the settings works too.
+      placeholder: "Example: 3840 x 2160, 60 FPS, 80 Mbps, HEVC, HDR on, EMSS, optimal settings applied"
+  - type: markdown
+    attributes:
+      value: |
+        ## Issue
+  - type: textarea
+    attributes:
+      label: Bug description
+      description: What happened, and what did you expect instead?
+      placeholder: "Example: The stream starts, but the picture freezes after about 10 minutes. I expected it to keep running."
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Steps to reproduce
+      description: The steps that lead to the problem.
+      placeholder: |
+        Example:
+        1. Select the computer.
+        2. Open "Desktop" in the app list.
+        3. Play for about 10 minutes.
+        4. The picture freezes.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Messages and performance statistics
+      description: The exact text of any message, and a photo of the performance statistics (Settings → Advanced Settings → Performance statistics, YELLOW key in the stream) when the problem happens.
+      placeholder: "Drag and drop photos here, or type the message."
+  - type: textarea
+    attributes:
+      label: Log files
+      description: Moonlight or Sunshine log files, if you have them. Please remove or mask your private IP addresses.
+      placeholder: "Drag and drop the log files here or click to upload."

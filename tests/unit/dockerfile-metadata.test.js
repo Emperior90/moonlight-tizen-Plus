@@ -88,6 +88,8 @@ async function updateCheckUrl(indexSource) {
     });
   };
   const platform = createPlatformContext({ globals: { fetch } });
+  // messages.js comes before index.js in the page, as the release notes of the update check use its escapeHTML()
+  platform.load('wasm/platform/messages.js');
   platform.load('wasm/platform/tv_profile.js');
   platform.run(indexSource);
   const release = await platform.get('fetchLatestRelease')();

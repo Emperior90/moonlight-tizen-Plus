@@ -92,8 +92,9 @@ describe('detectWasmPlayerFeatures()', () => {
       noUll: { ultraLowLatency: 'no', source: 'features', apiLevels: [0, 1, 2, 3, 4] },
       // Without isApiFeatureSupported() the glue code derives features from the API levels, never the Ultra Low Latency mode
       apiLevels: { ultraLowLatency: 'no', source: 'apiLevels', apiLevels: [0, 1, 2, 3] },
-      // An older player without availableApis doesn't say it, so the rules by Tizen version stay
-      legacy: { ultraLowLatency: 'unknown', source: 'legacy', apiLevels: null },
+      // An older player without availableApis: the glue code describes it by its classes (API level 0 without the session
+      // ID of the media track) and never uses the Ultra Low Latency mode there
+      legacy: { ultraLowLatency: 'no', source: 'legacy', apiLevels: [0] },
       // The feature list and isApiFeatureSupported() disagree
       disagree: { ultraLowLatency: 'unknown', source: 'features', apiLevels: [0, 1, 2, 3, 4, 5] },
       throws: { ultraLowLatency: 'unknown', source: 'error', apiLevels: null },
@@ -135,6 +136,24 @@ describe('detectWasmPlayerFeatures()', () => {
     for (const value of [null, true]) {
       const player = { availableApis: [{ name: 'ElementaryMediaStreamSource', apiLevels: [1, 5], features: ['ultra-low-latency'] }], isApiFeatureSupported: value };
       assert.deepEqual(withWarnings(() => profile.detectWasmPlayerFeatures(player)).result, { ultraLowLatency: 'yes', source: 'features', apiLevels: [1, 5] }, String(value));
+    }
+  });
+
+  test('an older player without availableApis gets the API level that the glue code derives, and never the mode', () => {
+    // getLegacyApis() of the glue code: API level 1 ('base-emss') when the media track has a session ID, otherwise 0
+    function ElementaryMediaTrack() {}
+    Object.defineProperty(ElementaryMediaTrack.prototype, 'sessionId', { value: 0 });
+    assert.deepEqual(profile.detectWasmPlayerFeatures({ ElementaryMediaStreamSource: function() {}, ElementaryMediaTrack }),
+      { ultraLowLatency: 'no', source: 'legacy', apiLevels: [1] });
+    assert.deepEqual(profile.detectWasmPlayerFeatures({ ElementaryMediaStreamSource: function() {}, ElementaryMediaTrack: function() {} }),
+      { ultraLowLatency: 'no', source: 'legacy', apiLevels: [0] });
+    assert.deepEqual(profile.detectWasmPlayerFeatures({ ElementaryMediaStreamSource: function() {} }),
+      { ultraLowLatency: 'no', source: 'legacy', apiLevels: [0] });
+    // Without the class of the WASM player, which can't stream at all, the rules by Tizen version stay
+    assert.deepEqual(profile.detectWasmPlayerFeatures({}), { ultraLowLatency: 'unknown', source: 'legacy', apiLevels: null });
+    // On Tizen 5.5 to 8.0 the game mode is then off and disabled, as the glue code would use the Low Latency mode anyway
+    for (const tizen of ['5.5', '6.0', '6.5', '7.0', '8.0', '9.0']) {
+      assert.equal(profile.getGameModeDefault(tizen, 'no'), null, 'Tizen ' + tizen);
     }
   });
 
@@ -219,16 +238,18 @@ describe('the game mode with the answer of the WASM player', () => {
       wifi: { resolution: '3840:2160', frameRate: 60, videoCodec: 'HEVC', hdrMode: true, bitrate: 100, unlockAllFps: true, gameMode: false, framePacing: true, fullRange: false, optimizeBitrate: false },
       unknown: { resolution: '3840:2160', frameRate: 60, videoCodec: 'HEVC', hdrMode: true, bitrate: 80, unlockAllFps: true, gameMode: false, framePacing: true, fullRange: false, optimizeBitrate: false },
     };
-    for (const mode of ['none', 'ull', 'legacy', 'disagree']) {
+    for (const mode of ['none', 'ull', 'disagree']) {
       const withPlayer = Object.assign({}, caps, { wasmPlayer: profile.detectWasmPlayerFeatures(wasmPlayerOf(mode)) });
       for (const conn of CONNECTIONS) {
         assert.deepEqual(profile.deriveOptimalSettings(withPlayer, conn), golden[conn], mode + ' ' + conn);
       }
     }
     // Without the mode, the switch is off and disabled instead of off; everything else stays
-    const withoutMode = Object.assign({}, caps, { wasmPlayer: profile.detectWasmPlayerFeatures(wasmPlayerOf('noUll')) });
-    for (const conn of CONNECTIONS) {
-      assert.deepEqual(profile.deriveOptimalSettings(withoutMode, conn), Object.assign({}, golden[conn], { gameMode: null }), 'noUll ' + conn);
+    for (const mode of ['noUll', 'legacy']) {
+      const withoutMode = Object.assign({}, caps, { wasmPlayer: profile.detectWasmPlayerFeatures(wasmPlayerOf(mode)) });
+      for (const conn of CONNECTIONS) {
+        assert.deepEqual(profile.deriveOptimalSettings(withoutMode, conn), Object.assign({}, golden[conn], { gameMode: null }), mode + ' ' + conn);
+      }
     }
   });
 

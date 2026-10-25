@@ -1,232 +1,258 @@
-Moonlight S90C ist eine angepasste Version von [Moonlight Tizen](https://github.com/brightcraft/moonlight-tizen) 1.19.0 von brightcraft. Sie ist auf den Samsung S90C abgestimmt, die Verbesserungen an Bild, Ton, Verbindung, Stabilität und Bedienung kommen aber allen Samsung-Fernsehern mit Tizen zugute. Speziell auf den S90C zugeschnitten sind:
+Moonlight Plus 1.19.100 is the first full release of Moonlight Plus, an unofficial fork of [Moonlight Tizen](https://github.com/brightcraft/moonlight-tizen) 1.19.0 by brightcraft for Samsung TVs with Tizen 5.5 or newer. It installs next to the regular Moonlight app, with its own settings and pairing.
 
-- der App-Name mit Icon
-- der Button *Samsung S90C optimization*
-- die neuen Standardwerte samt einigen Grenzwerten aus den Daten des S90C: 100 Mbit/s im WLAN nach seiner Decoder-Spezifikation und eine Warnung erst bei 4K über 120 FPS
-- die deutschsprachige Dokumentation
+- **Coming from v1.19.0-s90c.1 (Moonlight S90C)?** Its update check looks at the releases of Moonlight Tizen, so it never offers this release, and an update that it announces is the regular Moonlight Tizen app, which installs as a separate app. Install 1.19.100 once by hand. It has the same package ID and installs over the earlier release.
+- **New install?** Pair your PC once on the first start, even if the regular Moonlight app is already paired.
 
-Die App heißt auf dem TV „Moonlight S90C“ und hat eine eigene Paket-ID (MLightS90C). Sie wird deshalb neben der normalen Moonlight-App installiert, mit eigenen Einstellungen und eigener Kopplung. Beim ersten Start den PC einmal koppeln (PIN in Sunshine eingeben).
+### Which file to install?
 
-### Welche Datei installieren?
+- **Tizen 9.0 and newer: `Moonlight-ForceGM.wgt`.** It asks the TV for its Game Mode. Keep the *Game mode* switch of the app off.
+- **Tizen 5.5 to 8.0: `Moonlight.wgt`.**
+- Settings → About → *System information* shows the Tizen version (*Platform Version*).
+- Install the file with Apps2Samsung (*Custom WGT File*) or Tizen Studio, as described in the guide.
 
-- **Tizen 9 und neuer: `Moonlight-ForceGM.wgt`.** Diese Variante fordert vom TV dessen Spielmodus (Game Mode) an. Den Schalter *Game mode* in der App (Settings → Video Settings) dabei aus lassen. Er wählt nur den Latenzmodus des Decoders und kann unter Tizen 9 und neuer das Bild einfrieren lassen.
-- **Ältere Tizen-Versionen: `Moonlight.wgt`.**
-- Welche Tizen-Version der TV hat, zeigt Moonlight unter Settings → About → *System information* (*Platform Version*).
-- Die Dateien heißen wie bei Moonlight Tizen. Auf dem TV erscheint die App trotzdem als „Moonlight S90C“.
+### Highlights
 
-### Alle Änderungen seit Moonlight Tizen 1.19.0
+- *Optimal settings for this TV*: one button applies settings derived from the panel, HDR support, Tizen version and network connection of your TV.
+- Warnings, System information and messages that match your TV.
+- Smoother video, faster error correction, and clear messages instead of frozen or black pictures.
+- Fixes for controllers in the menus and during the stream, rumble and mouse emulation.
+- An update check that reads the releases of this fork.
 
-Kennzeichnung:
+### What is specific to a tested model
 
-- **S90C** heißt: auf den S90C zugeschnitten.
-- **Experimentell** heißt: neue Einstellung, die standardmäßig aus ist und die man selbst einschalten muss.
+Moonlight Plus was first tuned on a Samsung S90C (55-inch OLED, 2023, Tizen 9.0). The app now derives its settings from what your TV reports. Only these parts apply to the S90C alone, through its tested profile, which the app selects when the model name or series contains "S90C":
 
-Alle anderen Änderungen an der App gelten automatisch für alle Samsung-TVs mit Tizen, außer beim Punkt steht eine Bedingung. Beispiele sind „nur mit dem Audio-Backend Web Audio“, „nur über 4K mit 60 FPS“ oder „nur bei LAN“. Die Punkte unter Dokumentation und Build ändern nichts an der App auf dem TV. Ein Schlüsselbild (Keyframe) ist ein vollständiges Bild, auf dem die folgenden Bilder aufbauen.
+- 100 Mbps over Wi-Fi as the recommended bitrate and as the decoder cap, where the bitrate warning starts (other 4K and 8K TVs: 80 Mbps)
+- *Unlock all frame rates* on from the start (other TVs: off)
+- the warnings above 60 FPS: the S90C gets neither the 60 Hz panel warning nor the Level 5.2 warning, only a general hint above 1080p at more than 60 FPS, and a warning at 4K with 144 FPS, which exceeds the 4K at 120 FPS that its decoder handled in the tests
+- the archived German tuning guide (`docs/profiles/S90C/`)
 
-#### Eigene App und Installation
+Everything else applies to every Samsung TV with Tizen 5.5 or newer, unless an item names a condition such as "only with the Web Audio backend". **Tested profile** marks the items above, and **Experimental** marks new settings that are off by default.
 
-- **S90C:** Die App heißt jetzt „Moonlight S90C“ und hat ein blaues „S90C“-Abzeichen im Icon. Eigenständig sind die Paket-ID (MLightS90C), die Widget-ID, die Service-ID und die App-Beschreibung („Moonlight Game Streaming (Samsung S90C build)“). Deshalb lässt sie sich neben der normalen Moonlight-App installieren und hat eigene Einstellungen und eine eigene Kopplung mit dem PC. Die Versionsnummer bleibt 1.19.0.
-- Die Smart-Hub-Vorschau dieser App und die der normalen Moonlight-App kommen sich nicht mehr in die Quere:
-  - Moonlight S90C nutzt dafür einen eigenen Port (8889 statt 8888) und eigene Vorschaubilder.
-  - Das Leeren des Box-Art-Caches lässt die Bilder der normalen Moonlight-App in Ruhe.
-  - Kacheln, die frühere Vorabversionen dieser App gespeichert haben, werden auf den neuen Port umgestellt.
+### All changes since Moonlight Tizen 1.19.0
 
-#### Bild und Video
+#### App and installation
 
-- *Video frame pacing* (standardmäßig an) richtet sich jetzt nach der üblichen Ankunftszeit der Bilder. Bisher zählte nur das eine Bild, das gerade ein Messfenster (1 Sekunde) abschließt und zufällig verspätet sein kann.
-  - Ein einzelnes spätes Bild hält die folgenden Bilder deshalb nicht mehr um bis zu mehrere zehn Millisekunden zurück.
-  - Eine spätere Ankunftszeit übernimmt das Pacing erst, wenn zwei Messfenster hintereinander sie bestätigen. So verzögert der Bilderschwall nach einem kurzen Netzwerkhänger nicht die nächste Sekunde.
-  - Am Ende jeder Wartezeit wartet das Pacing nur noch 0,2 statt 1 ms aktiv. Das spart Rechenzeit.
-- Der PC kodiert jedes Bild jetzt als ein Stück (1 Slice statt 4). Das komprimiert bei gleicher Bitrate besser, und der Decoder des TVs bekommt ohnehin ganze Bilder.
-- SDR-Streams werden jetzt im Farbraum Rec. 709 angefordert, dem Standard für HD- und 4K-Video. Bisher war es Rec. 601 (für SD-Video). HDR-Streams nutzen wie bisher Rec. 2020.
-- Bei der Codec-Wahl richtet sich die App jetzt nach den Codecs, die der PC tatsächlich kodieren kann. Sunshine prüft seine Encoder beim Start eines Spiels erneut, z. B. wenn vorher noch kein Bildschirm angeschlossen war. Deshalb liest die App die Liste danach noch einmal.
-  - Kann der PC HEVC nicht in 10 Bit kodieren, läuft der Stream in HEVC mit 8 Bit ohne HDR, statt am Encoder zu scheitern.
-  - Ist AV1 gewählt und kann der PC kein AV1, gibt es HEVC statt eines 4K-Streams in H.264 ohne HDR.
-  - Ist HDR eingeschaltet und kann der PC AV1 nur in 8 Bit, HEVC aber in 10 Bit, gibt es HEVC Main10 mit HDR statt eines AV1-Streams ohne HDR.
-  - Muss der PC auf einen anderen Codec oder auf SDR statt HDR ausweichen, zeigt die App einen Hinweis.
-  - Meldet der PC weder HEVC noch AV1, etwa weil seine Encoder-Prüfung fehlgeschlagen ist, verlässt sich die App nicht auf diese Liste.
-  - Die AV1-Warnung nennt jetzt, was AV1 braucht: einen AV1-Encoder im PC und einen AV1-Decoder im TV. Kann der PC kein AV1 kodieren, weicht der Stream auf HEVC aus.
-- Bei Streams mit mehr Bildpunkten pro Sekunde als 4K mit 60 FPS meldet die App dem TV jetzt HEVC- bzw. AV1-Level 5.2, damit er seinen Decoder passend einrichtet. Beispiele sind 4K mit 90, 120 oder 144 FPS und 1800p mit 120 FPS. Lehnt der TV das ab, bleibt es wie bisher bei Level 5.1.
-- Neue Auflösung *3200 x 1800 (1800p)* als Zwischenstufe zwischen 1440p und 4K, mit passenden Bitrate-Voreinstellungen. Sie ist nur auf 4K- und 8K-TVs wählbar.
-- **Experimentell:** neue Einstellung *HDR static metadata* (Video Settings).
-  - Sie gibt die HDR10-Metadaten des PC-Bildschirms mit jedem HEVC-Schlüsselbild an den TV weiter. Das sind Farbraum und Helligkeit des Mastering-Displays und, falls der PC sie liefert, die höchste Bild- und Durchschnittshelligkeit (MaxCLL/MaxFALL).
-  - So kann der TV sein HDR-Tone-Mapping daran ausrichten, also die Anpassung des HDR-Bilds an sein Panel.
-  - Sunshine schreibt diese Daten (jedenfalls mit NVIDIA-Encoder) nicht in den Videostrom, sondern schickt sie nur über den Steuerkanal. Die App hat sie bisher verworfen.
-  - Treffen die Metadaten ein oder ändern sie sich, fordert die App ein neues Schlüsselbild an, damit sie sofort wirken.
-  - Die Einstellung wirkt nur bei HDR-Streams mit HEVC. Startet ein HDR-Stream damit nicht oder sieht er falsch aus, die Einstellung wieder ausschalten.
-- Der Bildschirmschoner des TVs wird während des Streams ausgeschaltet und danach wieder eingeschaltet.
+- The app is called **Moonlight Plus**, with a "PLUS" badge on its icon, and is described as an unofficial fork of Moonlight Game Streaming for Samsung Tizen TVs.
+- It has its own package ID, widget ID and service ID, so it installs next to the regular Moonlight app, with its own settings and its own pairing. Builds of this fork from before the rename (*Moonlight S90C*) have the same package ID, so Moonlight Plus installs over them.
+- The version is 1.19.100, the first version of this fork above Moonlight Tizen 1.19.0.
+- The Smart Hub preview of this app and that of the regular Moonlight app no longer get in each other's way:
+  - Moonlight Plus uses its own port (8889 instead of 8888) and its own preview images.
+  - Clearing the box art cache leaves the images of the regular Moonlight app alone.
+  - Tiles that earlier pre-releases of this app saved are moved to the new port.
 
-#### Ton
+#### Settings for your TV
 
-Diese Punkte gelten nur für das Audio-Backend *Web Audio* (Settings → Audio Settings → *Audio backend*). Voreingestellt ist weiterhin EMSS. Web Audio ist die Alternative, z. B. wenn der Ton mit EMSS knackt.
+- The defaults of a fresh install, *Restore Defaults* and the new button *Optimal settings for this TV* all come from one profile of the TV:
+  - the highest resolution of the panel up to 4K, at 60 FPS, with HEVC
+  - HDR when the TV reports HDR support
+  - a bitrate for the resolution, frame rate and network connection: 25 % above the standard preset over Ethernet and Wi-Fi, at most 75 Mbps over Ethernet and 80 Mbps when the connection isn't detected, and never above the decoder cap of the TV class (100 Mbps on the tested S90C, 80 Mbps on other 4K and 8K TVs, 50 Mbps on Full HD TVs). A Full HD TV starts at 20 to 25 Mbps, a 4K TV at 75 to 80 Mbps.
+  - *Game mode* by Tizen version (on for 6.0 to 8.0, off on 9.0 and newer, off and disabled on 5.5 unless the video player of the TV offers the Ultra Low Latency mode) and by what the video player of the TV offers
+  - *Unlock all frame rates* only for a tested model with a high refresh rate panel (**Tested profile**)
+- New button **Optimal settings for this TV** (Settings → Basic Settings):
+  - Its dialog names the model, says what the settings are based on (e.g. "Detected: 4K panel, HDR, Tizen 9.0, Wi-Fi") and whether the model was tested, and lists exactly what it applies.
+  - It gives advice for the connection: over Wi-Fi how far to raise the bitrate (up to twice the standard preset, at most the decoder cap), over Ethernet how to avoid packet loss on the 100 Mbps port.
+  - Owners of a 4K or 8K TV are told how to unlock the higher frame rates for a 120 Hz panel.
+  - On Tizen 9.0 and newer, it points to the ForceGM variant, or says that it is installed.
+  - The settings are only applied after you confirm.
+- Existing installs keep their settings: on its first start, an install of an earlier build of this fork stores the value it showed so far for every video setting you never changed, so the new defaults never change it silently. Press *Optimal settings for this TV* to get the values for your TV. On Tizen 5.5 the game mode stays unstored, so its switch stays disabled, unless the video player of the TV offers the Ultra Low Latency mode.
+- The bitrate is kept when you change the resolution, frame rate, codec or HDR:
+  - This applies to a bitrate you picked and to the one of the button. After a fresh install or *Restore Defaults*, the bitrate follows the standard presets until you pick one yourself.
+  - Before, it jumped to the preset on every change of the resolution or frame rate, even when selecting the current value again.
+  - After switching *Optimize bitrate presets*, the presets apply again until you change the bitrate yourself, as in moonlight-qt.
+  - The first time, a notice explains how to get the presets back, with the bitrates they would set for the selected video settings.
+- On a TV without a tested profile, the bitrate presets stay within the highest bitrate that the app recommends for the TV: its decoder cap, and 80 Mbps when the connection isn't detected. For example, 4K at 120 FPS gets 80 instead of 120 Mbps on a 4K TV over Wi-Fi, with a notice. The S90C keeps its presets (**Tested profile**), and the slider still goes up to 150 Mbps.
+- *System information* shows what the app detected: the panel (Full HD, 4K or 8K), HDR support, the network connection, the tested profile that matches the model, and the model year that the model group suggests (only shown, never used for a decision).
+- If a Tizen or Samsung product API fails or is missing (e.g. a missing privilege or an unusual firmware), the app starts anyway and assumes a Full HD panel without HDR, instead of showing a blank screen.
+- A stored setting that the TV can't read shows its default for that start and keeps its stored value, instead of stopping the settings after it from loading. When the pairing certificate or the unique ID can't be read, the loading screen asks for a restart instead of hanging without a message.
 
-- **Experimentell:** neue Einstellung *Audio clock sync*.
-  - Die Uhren von PC und TV laufen nie ganz gleich schnell. Ohne Ausgleich wächst die Tonverzögerung deshalb bis zum 1,5-Fachen des Jitter-Puffers. Danach werden alle paar Minuten 5 ms Ton übersprungen, oder es entsteht eine Lücke so lang wie der Puffer, wenn er leerläuft.
-  - Mit *Audio clock sync* spielt die App den Ton unhörbar um bis zu 0,05 % schneller oder langsamer. So hält sie die Verzögerung beim Jitter-Puffer.
-  - Die Hilfetexte zu *Audio clock sync* und *Audio jitter buffer* beschreiben das genau. Sie verweisen auch auf die Puffergröße, die die Leistungsstatistik mit *Audio clock sync* nach 10 Minuten vorschlägt.
-- Muss die App die Abtastrate umrechnen, nutzt sie jetzt eine kubische statt einer linearen Interpolation. Die erhält die Höhen besser. Umgerechnet wird, wenn die Tonausgabe des TVs nicht mit 48 kHz läuft oder *Audio clock sync* aktiv ist.
-- Laufen die Uhren von PC und TV auseinander, wächst die Tonverzögerung nur noch bis zum 1,5-Fachen des Jitter-Puffers statt bis zum Doppelten. *Audio jitter buffer* lässt sich jetzt bis auf 25 ms senken (vorher 50 ms).
-- Nach einem Aussetzer kürzt die App den aufgelaufenen Ton auf Jitter-Puffer plus zwei Pakete. Vorher blieb die Tonverzögerung nach einem Aussetzer minutenlang erhöht, bis zur Obergrenze (in Moonlight Tizen 1.19.0 das Doppelte des Jitter-Puffers). Diese gekürzten Pakete zählt die Statistik getrennt von den übersprungenen.
-- Behoben: Jedes verlorene Tonpaket erhöhte die Tonverzögerung um 5 ms. Jetzt wird die Lücke mit genau einer Paketlänge überbrückt statt mit 10 ms.
-- Schweigt der PC und Sunshine schickt deshalb keinen Ton, zählen Statistik und Log das nicht mehr als Aussetzer. Am Ton selbst ändert sich dadurch nichts.
+#### Picture and video
 
-#### Verbindung und Stabilität
+- *Video frame pacing* (on by default) follows the usual arrival time of the frames. Before, only the one frame that ended a measuring window (1 second) counted, and it could be late by chance.
+  - A single late frame no longer holds back the following frames by up to tens of milliseconds.
+  - Pacing follows a later arrival time only once two windows in a row confirm it, so the burst of frames after a short network stall doesn't delay the next second.
+  - At the end of each wait, the pacing busy-waits for only 0.2 instead of 1 ms, which saves processor time.
+- The host encodes each frame as one slice instead of four. That compresses better at the same bitrate, and the decoder of the TV gets whole frames anyway.
+- SDR streams use the Rec. 709 color space, the standard for HD and 4K video, instead of Rec. 601 (SD video). HDR streams use Rec. 2020 as before.
+- The codec choice follows the codecs that the host can really encode. Sunshine checks its encoders again when a game starts, so the app reads the list again then.
+  - If the host can't encode HEVC in 10 bits, the stream runs in 8-bit HEVC without HDR, instead of failing at the encoder.
+  - If AV1 is selected and the host can't encode AV1, the stream uses HEVC instead of 4K H.264 without HDR.
+  - If HDR is on and the host can encode AV1 only in 8 bits but HEVC in 10 bits, the stream uses HEVC Main10 with HDR instead of AV1 without HDR.
+  - When the host has to fall back to another codec or to SDR, the app shows a notice.
+  - If the host reports neither HEVC nor AV1, e.g. because its encoder check failed, the app doesn't rely on that list.
+  - The AV1 warning says what AV1 needs: an AV1 encoder in the host and an AV1 decoder in the TV.
+- For streams with more pixels per second than 4K at 60 FPS (e.g. 4K at 90, 120 or 144 FPS, or 1800p at 120 FPS), the app declares HEVC or AV1 Level 5.2 to the TV, so that it sets up its decoder accordingly. If the TV rejects that, Level 5.1 is used as before.
+- New resolution *3200 x 1800 (1800p)* between 1440p and 4K, with bitrate presets. It can only be selected on 4K and 8K TVs.
+- The app asks the browser of the TV which video codecs it can decode (H.264, HEVC and HEVC Main10, AV1 and AV1 Main10, at Levels 5.1 and 5.2). The answers only count when the browser also rejects a made-up codec and accepts H.264. System information shows them as Yes, No or Unknown, and a counting No for AV1 labels the AV1 entry of the codec menu "may not be supported by this TV". It stays selectable.
+- **Experimental:** new setting *HDR static metadata* (Video Settings).
+  - It passes the HDR10 metadata of the host display to the TV with each HEVC keyframe: the color volume and brightness of the mastering display and, if the host sends them, the content light levels (MaxCLL/MaxFALL).
+  - The TV can then match its HDR tone mapping to it.
+  - Sunshine (at least with an NVIDIA encoder) doesn't write these data into the video stream but sends them over the control channel only, where the app dropped them before.
+  - When the metadata arrive or change, the app requests a keyframe so that they take effect at once.
+  - It only applies to HDR streams with HEVC. If an HDR stream doesn't start or looks wrong with it, turn it off again.
+- The screensaver of the TV is turned off during the stream and on again afterwards.
 
-- Behoben: Die Fehlerkorrektur (FEC) rekonstruiert verlorene Pakete aus Zusatzdaten. Bei jeder Reparatur hielt sie den Empfang der Videodaten auf. Bei großen Blöcken dauerte das schon auf einem PC-Prozessor rund 15 ms, auf dem TV noch länger. Jetzt entfällt eine überflüssige Rechnung. Das Ergebnis ist dasselbe, die Reparatur geht aber schneller.
-- **Experimentell:** neue Einstellung *Reference frame invalidation* (Video Settings, nur HEVC und AV1). Nach einem Paketverlust kann sich das Bild damit erholen, ohne dass der PC ein komplettes Schlüsselbild schicken muss. Das vermeidet Datenspitzen und unscharfe Bilder. Bleiben nach einem Bildverlust Fehler im Bild, die Einstellung wieder ausschalten.
-- Behoben: Nahm die App fälschlich einen Bildverlust an, konnte das Bild bis zu 2 Sekunden stehen bleiben (120 Bilder bei 60 FPS).
-  - Das betraf die Standardeinstellung ohne *Reference frame invalidation*.
-  - Diese Vorhersage läuft jetzt nur noch mit *Reference frame invalidation*, wie in der offiziellen Streaming-Bibliothek moonlight-common-c.
-  - Ist *Reference frame invalidation* an und kommt ein Schlüsselbild nur teilweise an, fordert die App jetzt wie dort ein neues Schlüsselbild an. Bisher versuchte sie die Reparatur per Reference Frame Invalidation.
-- Die App erkennt, ob der TV per LAN oder WLAN verbunden ist. Der LAN-Anschluss von Samsung-Fernsehern schafft in der Regel nur 100 Mbit/s. Deshalb begrenzen die Bitrate-Voreinstellungen die Bitrate bei LAN auf 75 Mbit/s, und über 80 Mbit/s erscheint bei LAN eine Warnung.
-- Die Warnung „Slow connection to PC. Reduce your bitrate!“ erscheint nur noch bei echten Netzwerkverlusten. Verwirft der TV selbst Bilder (volle Warteschlange, nach einem Decoder-Reset), bleibt sie aus.
-- Behoben: Ging Moonlight in den Hintergrund (Home-Taste, andere App), lief der Stream unbegrenzt weiter. Das belastete das Netzwerk und konnte den TV hängen lassen, wenn eine andere App ihr Video startete.
-  - Jetzt endet der Stream nach einer Minute im Hintergrund.
-  - Er endet sofort, wenn der TV der App das Video wegnimmt oder die Verbindung noch aufgebaut wird.
-  - Ein kurz geöffnetes TV-Menü wie das Schnellmenü beendet ihn deshalb nicht sofort. Verdeckt es die App länger als eine Minute, endet der Stream aber auch dann.
-  - Ein Hinweis erklärt, wie man weiterspielt: Das Spiel läuft am PC weiter und lässt sich durch erneutes Auswählen fortsetzen.
-  - Ein Start, der noch unterwegs war, startet keinen Stream mehr, wenn die App inzwischen im Hintergrund ist. Ein Beispiel ist der verzögerte Start nach dem Beenden eines anderen Spiels am PC.
-- Ist der Puffer des TV-Videoplayers kurz voll, versucht die App das Bild bis zu einer Bilddauer lang erneut. Lehnt der Player das Videoformat 3 Sekunden lang ab, endet der Stream mit einer Meldung. Vorher forderte die App bei schwarzem Bild endlos neue Schlüsselbilder an.
-- Fällt die Medienwiedergabe des TVs während des Streams oder schon beim Verbindungsaufbau aus, endet der Stream jetzt mit einer Meldung. Vorher blieb ein eingefrorenes oder schwarzes Bild stehen.
-- Stürzt die Streaming-Engine ab (das WebAssembly-Modul oder einer seiner Threads), erscheint eine Meldung. Nach dem Schließen startet Moonlight neu, statt ohne Hinweis einzufrieren.
-- Behoben: Mehrere Stopps zur selben Zeit bauten die Verbindung doppelt ab, im schlimmsten Fall bis zum Absturz der Streaming-Engine. Auslöser waren z. B. ein doppelter Druck auf die rote Taste, die Gamepad-Kombination und ein Abbruch durch den PC zur selben Zeit. Jetzt baut die App die Verbindung nur einmal ab und kehrt nur einmal zur App-Liste zurück.
-- Für die Fehlersuche schreibt die App mehr ins Log. Am Bild ändert sich dadurch nichts. Neu im Log stehen:
-  - die Größe des UDP-Empfangspuffers, die der TV beim Streamstart tatsächlich gewährt
-  - ob der TV ein Empfangs-Timeout unterstützt (sonst prüft die App vor jedem Empfang, ob Daten angekommen sind)
-  - warum der TV eine Ton- oder Videospur geschlossen hat
-  - wann die Videospur während des Streams neu geöffnet wurde und wie viele Bilder in der Zwischenzeit verworfen wurden
-  - wann die App verdeckt und wieder angezeigt wird
-  - die Ablehnungsgründe des TV-Videoplayers mit Namen
-  - der Speicherstand der Streaming-Engine am Ende jedes Streams
+#### Audio
 
-#### Bedienung
+These items only apply to the *Web Audio* backend (Settings → Audio Settings → *Audio backend*). EMSS stays the default. Web Audio is the alternative, e.g. when the sound crackles with EMSS.
 
-- **S90C:** neuer Button *Samsung S90C optimization* (Settings → Basic Settings → *Apply the optimal streaming settings for this TV*).
-  - Vor dem Übernehmen zeigt er die für den S90C empfohlenen Werte an.
-  - Bild: die höchste Auflösung des TVs bis 4K, mit 60 FPS und HEVC. Auf HDR-fähigen TVs HEVC Main10 mit HDR.
-  - Bitrate passend zur Verbindung: 75 Mbit/s bei LAN, 100 Mbit/s bei WLAN, 80 Mbit/s wenn unbekannt.
-  - Weitere Werte: *Video frame pacing* an, eingeschränkter Farbbereich, *Unlock all frame rates* an und *Optimize bitrate presets* aus. Auf Tizen 6 bis 8 außerdem *Game mode* an.
-  - Der Dialog gibt Tipps zur LAN- oder WLAN-Verbindung.
-  - Unter Tizen 9 und neuer verweist er auf die ForceGM-Variante. Ist sie schon installiert, sagt er das, statt zur Installation aufzufordern.
-  - Die Werte werden erst nach Bestätigung übernommen.
-  - Der Button funktioniert auf jedem Samsung-TV. Auf anderen Modellen als dem S90C weist der Dialog darauf hin, dass die Werte dort nicht optimal sein müssen.
-- Die Bitrate bleibt jetzt erhalten, wenn man Auflösung, Bildrate, Codec oder HDR ändert.
-  - Das gilt für eine von Hand gewählte und für die empfohlene Bitrate.
-  - Vorher sprang sie bei jeder Änderung von Auflösung oder Bildrate auf die Voreinstellung, auch beim erneuten Auswählen des aktuellen Werts. Bei Codec und HDR geschah das nur mit eingeschaltetem *Optimize bitrate presets*.
-  - Nach dem Umschalten von *Optimize bitrate presets* gelten wieder die Voreinstellungen, bis man die Bitrate selbst ändert. So macht es auch moonlight-qt.
-  - Beim ersten Mal erklärt ein Hinweis, wie man die Voreinstellungen zurückbekommt.
-  - Begrenzt die App eine Voreinstellung bei LAN auf 75 Mbit/s, sagt sie das einmal an.
-- Im Bitrate-Menü ändern HOCH und RUNTER die Bitrate jetzt in 5-Mbit/s-Schritten, LINKS und RECHTS weiterhin in 0,5-Mbit/s-Schritten. Die Navigationshilfe ist entsprechend ergänzt.
-- Neue Warnhinweise:
-  - bei H.264 über 1080p, weil Samsung-TVs H.264 in der Regel nur bis 1080p dekodieren. Die Warnung erscheint auch beim Start der App, wenn H.264 mit einer Auflösung über 1080p gespeichert ist.
-  - **S90C:** bei 4K mit mehr als 120 FPS (also 144 FPS), weil das über der Decoder-Spezifikation des S90C liegt. Andere TVs können schon bei niedrigeren Bildraten an ihre Grenze kommen. Die App warnt dort aber auch erst bei 144 FPS.
-  - bei 90 FPS, weil 90 FPS nicht gleichmäßig in die 60- oder 120-Hz-Ausgabe des TVs passen und Bewegungen weniger flüssig wirken können
-- Behoben: Die Warnung zu Auflösung und Bildrate verglich die Werte als Text statt als Zahlen und erschien deshalb in den falschen Fällen.
-- Behoben: *Restore Defaults* schaltete *Video frame pacing* und *Host address field mode* aus, obwohl beide standardmäßig an sind.
-- Behoben: Drückte man während „Starting…“ die rote Taste, konnte der Stream trotzdem anlaufen. Er lief dann ohne Ton, und die rote und die gelbe Taste waren ohne Funktion. Jetzt bricht der Start sauber ab. Eine gedrückt gehaltene rote Taste löst nur einen einzigen Stopp bzw. Abbruch aus.
-- Behoben: Eine Smart-Hub-Kachel konnte einen zweiten Stream über einem laufenden starten. Jetzt erscheint der Hinweis „Stop the current stream first (RED button).“
-- Behoben: Bei gefangenem Mauszeiger drückte die Zurück-Taste die linke Maustaste am PC, ohne sie wieder loszulassen. Beim Fangen des Mauszeigers fordert die App außerdem kein Schlüsselbild mehr an.
-- Gamepad-Tasten, die beim Streamende noch gedrückt sind (z. B. die Stopp-Kombination), lösen im Menü keine Aktion mehr aus. Ein gehaltenes Steuerkreuz scrollt beim Streamstart nicht weiter.
-- Nach dem Ende eines Streams zeigt die App „Loading Apps...“, bis die App-Liste geladen ist.
-- Überarbeitete Hilfetexte:
-  - *Optimize game settings* erklärt, was die Option bei Sunshine bewirkt. Bei aktivierter Display-Konfiguration stellt Sunshine den PC-Bildschirm auf die Auflösung des Streams um. Mit Sunshines Standardeinstellung folgt die Bildwiederholrate ohnehin der gewählten Bildrate. Es gehen nur Modi, die der PC-Bildschirm anbietet.
-  - *Game mode* rät, den Schalter unter Tizen 9 und neuer mit beiden Varianten aus zu lassen.
-  - *Optimize bitrate presets* sagt, dass die Option eine niedrige Bitrate berechnet (etwa 45 Mbit/s für 4K mit 60 FPS in HEVC mit HDR). Für die beste Bildqualität sollte man sie aus lassen und die Bitrate von Hand setzen.
-  - *Video HDR* sagt, dass HDR auch am PC-Bildschirm eingeschaltet sein muss, sonst kommt 10-Bit-SDR an.
+- **Experimental:** new setting *Audio clock sync*.
+  - The clocks of the host and the TV never run at exactly the same speed. Without a correction, the audio delay grows to 1.5 times the jitter buffer. Then 5 ms of sound are skipped every few minutes, or a gap as long as the buffer appears when it runs empty.
+  - With *Audio clock sync*, the app plays the sound up to 0.05 % faster or slower, which is inaudible, and keeps the delay at the jitter buffer.
+  - The help texts of *Audio clock sync* and *Audio jitter buffer* explain this, and point to the buffer size that the performance statistics suggest with *Audio clock sync* after 10 minutes.
+- When the sample rate has to be converted, the app uses a cubic instead of a linear interpolation, which keeps the treble better. It converts when the audio output of the TV doesn't run at 48 kHz or *Audio clock sync* is on.
+- When the clocks drift apart, the audio delay grows only to 1.5 times the jitter buffer instead of twice. *Audio jitter buffer* now goes down to 25 ms (before: 50 ms).
+- After a dropout, the app trims the audio that piled up to the jitter buffer plus two packets. Before, the delay stayed raised for minutes after each dropout. The performance statistics count these trimmed packets apart from the skipped ones.
+- Fixed: each lost audio packet added 5 ms to the audio delay. The gap is now filled with exactly one packet instead of 10 ms.
+- When the host is silent and Sunshine sends no sound, the statistics and the log no longer count that as a dropout. The sound itself doesn't change.
 
-#### Weniger Last für den TV
+#### Connection and stability
 
-- Die Streaming-Engine wird auf Geschwindigkeit statt auf kleine Dateigröße optimiert gebaut (Compiler-Option -O2 statt -Os).
-- Während des Streams fragt die Oberfläche die Gamepads nicht mehr alle 5 ms selbst ab, denn das übernimmt der Stream ohnehin. Das entlastet den Haupt-Thread.
-- Alle Gamepads werden pro Abfrage mit einem einzigen Aufruf gelesen statt mit einem Aufruf pro Gamepad-Platz. Das lässt dem Haupt-Thread mehr Luft, unter anderem für die Tonausgabe mit Web Audio.
-- Der Controller-Zustand geht nur noch bei einer Änderung an den PC, zur Sicherheit zusätzlich alle 100 ms. Vorher geschah das 200-mal pro Sekunde. Das verringert den Datenverkehr vom TV zum PC, vor allem im WLAN.
-- Bei eingeschalteter Leistungsstatistik muss der Videodecoder nicht mehr warten, bis die Oberfläche die Statistik verarbeitet hat.
-- Verbindungswarnungen halten den Empfang der Videodaten nicht mehr auf. Auch die Controller-Vibration wird jetzt ohne Warten an die Oberfläche übergeben.
+- Fixed: every repair of the error correction (FEC), which rebuilds lost packets from extra data, held up the receiving of the video data, for about 15 ms on large blocks already on a PC processor, and longer on the TV. A needless calculation is gone; the result is the same, but the repair is faster.
+- **Experimental:** new setting *Reference frame invalidation* (Video Settings, HEVC and AV1 only). After packet loss, the picture can recover without the host sending a full keyframe, which avoids traffic spikes and blurry frames. If errors remain in the picture after a frame drop, turn it off again.
+- Fixed: when the app wrongly assumed a frame loss, the picture could stop for up to 2 seconds (120 frames at 60 FPS).
+  - This affected the default setting without *Reference frame invalidation*.
+  - This prediction now only runs with *Reference frame invalidation*, as in the official streaming library moonlight-common-c.
+  - With *Reference frame invalidation* on, a keyframe that arrives only in part now leads to a new keyframe request there as well, instead of a repair by reference frame invalidation.
+- The app detects whether the TV is connected by Ethernet or Wi-Fi. Samsung TVs usually have a 100 Mbps Ethernet port, so the bitrate presets stop at 75 Mbps over Ethernet, and a warning appears above 80 Mbps.
+- The warning "Slow connection to PC. Reduce your bitrate!" only appears for real network losses. When the TV drops frames itself (full queue, after a decoder reset), it stays away.
+- Fixed: when Moonlight went to the background (Home key, another app), the stream kept running without limit. That loaded the network and could make the TV hang when another app started its video.
+  - The stream now ends after 1 minute in the background.
+  - It ends at once when the TV takes the video away from the app, or when the connection is still being set up.
+  - A TV menu that is open for a short time, such as the quick settings, therefore doesn't end it at once. If it hides the app for more than a minute, the stream ends as well.
+  - A notice explains how to resume: the game keeps running on the host, and selecting it again resumes it.
+  - A start that was still on its way (e.g. the delayed start after quitting another game on the host) no longer starts a stream when the app is in the background by then.
+- When the buffer of the video player of the TV is full for a moment, the app retries the frame for up to one frame duration. When the player keeps rejecting the video format for 3 seconds, the stream ends with a message. Before, the app requested keyframes forever on a black screen.
+- When the media playback of the TV fails during the stream or while the connection is set up, the stream ends with a message. Before, a frozen or black picture remained.
+- When the TV rejects the video track of a stream (error -200), the message names the codec, resolution and frame rate, with advice for that codec, e.g. "The TV rejected AV1 Main10 at 3840x2160@60 FPS. Choose HEVC as the video codec." The generic message stays for the other causes of error -200.
+- When the streaming engine crashes (the WebAssembly module or one of its threads), a message appears, and Moonlight restarts after it is closed, instead of freezing without a word.
+- Fixed: several stops at the same time tore down the connection twice, in the worst case up to a crash of the streaming engine. Causes were e.g. a double press of the RED key, the controller combo and a termination by the host at the same time. Now the app tears down the connection once and returns to the app list once.
+- The app checks whether the video player of the TV offers the Ultra Low Latency mode that *Game mode* asks for, the way the code of Samsung's Emscripten SDK decides it. When the TV says clearly that it doesn't, the *Game mode* switch stays off and disabled whatever is stored, a dialog explains why when you select it, and the dialog of *Optimal settings for this TV* says so. An older video player without a list of its features counts as not offering the mode, since the video player code in the app never uses it there. When the TV doesn't say clearly, the rules by Tizen version stay. On Tizen 5.5, a video player that offers the mode lets the switch be turned on, and the dialog of *Optimal settings for this TV* then lists that it turns the game mode off. System information shows the answer and the API levels of the video player.
+- The app writes more to the log for troubleshooting, without changing the picture:
+  - the size of the UDP receive buffer that the TV grants at stream start
+  - whether the TV supports a receive timeout
+  - why the TV closed an audio or video track
+  - when the video track was reopened during the stream and how many frames were dropped meanwhile
+  - when the app is hidden and shown again
+  - the rejection reasons of the video player of the TV by name
+  - the memory of the streaming engine at the end of each stream
 
-#### Statistik-Overlay
+#### Controllers
 
-Die Leistungsstatistik erscheint im Stream, wenn *Performance statistics* eingeschaltet ist (Settings → Advanced Settings, standardmäßig aus). Im Stream blendet die gelbe Taste sie ein und aus.
+- Fixed: the Select button of a controller threw an error in the menus, and Start did nothing. Like CH+ and CH- of the remote, Select now switches the host address field mode and opens the host menu, and Start sets the focus on the current item, as the Navigation Guide says.
+- Fixed: holding the D-pad in the menus moved only once when a resting stick jittered or another button was released. Only the input that started a repeat stops it, small stick movements are ignored, and a stick held past half deflection repeats steadily.
+- Fixed: a controller stopped working in the menus after its number of buttons or axes changed (e.g. a controller switched to another mode), which also logged an error 200 times per second. A controller that never fired a connection event is no longer ignored by the menus, and the press that wakes a controller is no longer lost.
+- Fixed: the mouse emulation with two or more controllers, where an idle controller released the mouse button that another one held. The controllers now share one mouse, and a mouse button is only sent when it changes.
+- Fixed: the mouse emulation left Start and the sticks held in the game while it was on, stayed on into the next stream, and switched back after every further second of holding Start. It now switches once per hold, the game gets the controller released, and a hold of Start together with Select, LB or RB, which belong to the button combos, never switches it.
+- The right stick of the mouse emulation scrolls at a speed that follows its deflection (nothing within a rest zone, up to 15 notches per second at full deflection), instead of not at all below full deflection and 200 notches per second at full deflection.
+- Fixed: rumble stopped after 5 seconds while the host kept it on, since the TV ends every effect after 5 seconds. It is now played again every 4 seconds until the host stops it. Rumble also stops at the end of the stream and when the controller disconnects, and a controller that can't rumble no longer leaves errors in the log.
+- A notice appears once per controller when it can't rumble on the TV.
+- New setting **Controller type sent to the PC** (Settings → Input Settings: Auto, Xbox, PlayStation or Nintendo; Auto by default). It tells the host which controller to emulate for every controller, e.g. a DualShock 4 with PlayStation button prompts in games on Sunshine, for a controller whose type the app doesn't detect.
+- The controller type is detected from the vendor of the controller first and from its name after that. 8BitDo controllers and the Xbox-compatible controllers of other vendors ("X-Box" in their name) are announced to the host as Xbox controllers instead of an unknown type.
+- The touchpad click of PlayStation controllers (button 17) is sent to the host as the touchpad button, and the Share or Capture button of other controllers as the misc button. It is announced for controllers that report 18 buttons or more.
+- The button combos (end the stream, performance statistics) use the physical buttons before the A/B and X/Y swaps, so they are the same with every swap setting.
+- A notice appears once per controller when it reports a non-standard button layout, which the TV uses for a controller it has no mapping for (e.g. an 8BitDo controller in D-input mode, or a newer controller on an older TV).
+- System information lists the connected controllers (name, layout, buttons, axes, rumble support and the controller type sent to the PC, with the detected type when the setting overrides it), and the log shows the same fields when a controller connects or disconnects and when the stream announces it to the host, instead of an empty "{}".
+- The Navigation Guide labels the controller "Gamepad (Xbox layout: A = bottom button)".
+- Controller buttons that are still held when a stream ends (e.g. the stop combo) no longer trigger anything in the menus, and a held D-pad doesn't keep scrolling when the stream starts.
 
-- *Configured bitrate* zeigt die eingestellte Bitrate.
-- *Host frame rate (30 s)* zeigt die über 30 Sekunden gemessene Bildrate des PCs. So erkennt man, wenn der PC-Bildschirm mit 59,94 statt 60 Hz läuft.
-- Drei Zeilen zeigen getrennt, wie es den Bildern im TV ergeht:
-  - *Average frame receive time*: wie lange ein Bild für den Empfang braucht
-  - *Average frame wait time*: wie lange es auf die Verarbeitung wartet
-  - *Pending frames*: wie viele Bilder anstehen, mit der Höchstzahl pro Sekunde
-- Die irreführende Zeile *Average decoding time* entfällt. Die Pacing-Zeile heißt jetzt *Average frame pacing delay*.
-- Neue Summen über die ganze Sitzung:
-  - *Session frames dropped by network* zählt Bilder, die im Netzwerk verloren gingen.
-  - *Session frames dropped by the TV* zählt getrennt davon die Bilder, die der TV selbst verworfen hat (volle Warteschlange oder vom Player abgelehnt). Die Zeile nennt auch die Zahl der Resets der Videowiedergabe.
-  - *Session recovery keyframes* zählt nur echte Reparatur-Schlüsselbilder. Nicht mitgezählt werden Schlüsselbilder, die die App selbst beim Öffnen der Videospur oder bei neuen HDR-Metadaten anfordert. Auch die Schlüsselbilder nach einem Reset der Videowiedergabe fehlen hier, weil die Resets in der Zeile *Session frames dropped by the TV* stehen.
-  - Bilder, die ankommen, während die Videowiedergabe des TVs geschlossen ist (z. B. wenn die App verdeckt ist), zählen nicht als Netzwerkverlust.
-- Eine Zeile zeigt, ob der TV per LAN oder WLAN verbunden ist. Im WLAN steht dort die Signalstärke, die alle 5 Sekunden aktualisiert wird. Liefert der TV keinen Wert, fehlt die Signalstärke.
-- Drei Zeilen zur Fehlerkorrektur und zum Empfangspuffer:
-  - *Session FEC recoveries* zeigt, wie oft die Fehlerkorrektur in der Sitzung verlorene Pakete repariert hat. Dazu kommen die längste Reparatur und die Zahl langsamer (ab 8 ms) und fehlgeschlagener Reparaturen.
-  - *Worst FEC block* zeigt, wie knapp der schlimmste Block war.
-  - *UDP receive buffer* zeigt den angeforderten und den vom TV gemeldeten UDP-Empfangspuffer.
-- *TV player rejections* erscheint, sobald der Videoplayer des TVs Bilder abgelehnt hat. Die Zeile zählt sie nach Grund: Puffer voll, Schlüsselbild nötig, Spur nicht bereit, anderes. Bei vollem Puffer zeigt sie auch, wie viele Bilder der erneute Versuch gerettet hat.
-- *WASM heap top* zeigt den Speicherverbrauch der Streaming-Engine. So fällt ein Speicherleck bei langen Sitzungen auf, bevor die App abstürzt.
-- *Moonlight hidden during the stream* zählt, wie oft die App während des Streams verdeckt war und wie oft der TV das Video geschlossen hat.
-- Mit dem Audio-Backend *Web Audio* zeigen neue Zeilen:
-  - Jitter-Puffer, Vorlauf und Browser-Latenz
-  - Aussetzer sowie übersprungene und verlorene Ton-Pakete
-  - die Korrektur von *Audio clock sync* und eine vorgeschlagene Puffergröße
+#### Menus and messages
 
-#### Dokumentation
+- In the bitrate menu, UP and DOWN change the bitrate in 5 Mbps steps, LEFT and RIGHT still in 0.5 Mbps steps.
+- New and reworded warnings, which match the TV:
+  - On a TV without a tested 120 Hz profile, a stream above HEVC and AV1 Level 5.1 (e.g. 4K at 90 or 120 FPS) needs a Level 5.2 decoder, which most Samsung TVs with a 120 Hz panel have.
+  - Other streams above 60 FPS on such a TV (e.g. 1080p or 1440p) are told that many Samsung TVs have 60 Hz panels. An 8K TV, whose decoder goes beyond Level 5.2, gets this warning at 4K too, instead of the Level 5.2 warning.
+  - 4K at 144 FPS exceeds Level 5.2, the highest level that the app asks the TV for, on every TV. On the S90C, the warning names the 4K at 120 FPS that its decoder handled (**Tested profile**).
+  - 90 FPS doesn't divide the 60 or 120 Hz output of the TV evenly.
+  - H.264 above 1080p, which Samsung TVs generally can't decode. It also appears at startup when H.264 is stored with a higher resolution.
+  - HDR switched on for a TV that doesn't report HDR support.
+  - The bitrate warning starts at the decoder cap of the TV, which it names (100 Mbps on the tested S90C, 80 Mbps on other 4K and 8K TVs, 50 Mbps on Full HD TVs), and over Ethernet above 80 Mbps.
+  - A selection with another warning shows it right away, and a warning shows again after the higher frame rates were locked and unlocked.
+- Fixed: the resolution and frame rate warning compared the values as text instead of numbers, and appeared in the wrong cases.
+- Fixed: *Restore Defaults* turned off *Video frame pacing* and *Host address field mode*, although both are on by default.
+- Fixed: *Restore Defaults* and *Optimal settings for this TV* left a stored game mode on Tizen 5.5, which doesn't support it.
+- Fixed: the "[Unsupported]" label of the resolutions above the panel disappeared at startup. It is also translated now.
+- Fixed: a dialog that opened while the app started, before its texts were translated, lost its title and text.
+- Fixed: pressing the RED key during "Starting…" could still start the stream, which then ran without sound, with the RED and YELLOW keys not working. Now the start is cancelled cleanly. A held RED key triggers only one stop or cancellation.
+- Fixed: a Smart Hub tile could start a second stream on top of a running one. Now the notice "Stop the current stream first (RED button)." appears.
+- Fixed: with a locked mouse pointer, the Back key pressed the left mouse button of the host without releasing it. Locking the pointer no longer requests a keyframe either.
+- After a stream ends, the app shows "Loading Apps..." until the app list has loaded.
+- The *Support* dialog names Moonlight Plus, asks to report problems on its issue tracker, and its QR code leads to the guide of Moonlight Plus instead of the wiki of Moonlight Tizen. The warning when the game mode is turned on on Tizen 9.0 and newer points to the same guide.
+- Reworded help texts:
+  - *Optimize game settings* says what the option does with Sunshine: with the display device configuration on, Sunshine switches the host display to the resolution of the stream. With the default setting of Sunshine, the refresh rate follows the selected frame rate anyway, and only modes that the host display offers can be applied.
+  - *Game mode* advises keeping the switch off on Tizen 9.0 and newer with both variants.
+  - *Optimize bitrate presets* says that it calculates a low bitrate (about 45 Mbps for 4K at 60 FPS in HEVC with HDR), and to keep it off and set the bitrate by hand for the best picture.
+  - *Video HDR* says that HDR must also be on for the host display, otherwise the stream is 10-bit SDR.
+  - Samsung TVs "usually" have a 100 Mbps Ethernet port, in every text that mentions it.
 
-- **S90C:** neuer ausführlicher Optimierungsplan auf Deutsch (`docs/S90C-Optimierungsplan.md`). Er gibt Hinweise zu Netzwerk, PC und TV-Einstellungen und beschreibt einen Testablauf. Er enthält unter anderem:
-  - eine Bitrate-Stufenfolge für WLAN (100, 120, 135 und 150 Mbit/s) mit festen Kriterien, wann eine Stufe als bestanden gilt, und einer Regel für den Endwert
-  - Hinweise, wann man die Fehlerkorrektur (FEC) in Sunshine erhöhen sollte
-  - einen Dauertest über 2,5 Stunden
-  - einen Vergleich AV1 gegen HEVC und Hinweise zur richtigen Bildwiederholrate des PC-Bildschirms
-  - die ganze Latenzkette (Spielmodus des TVs, Frame Generation, Frame Pacing, Encoder, Tonpuffer) und Hinweise zur Bildqualität im Stand und in Bewegung
-  - Encoder-Empfehlungen für Sunshine, etwa Split Frame Encoding und eine VBV-Erhöhung nur über WLAN
-  - eine realistische Einschätzung von 4K mit 120 FPS: Das Overlay zählt die an den Player übergebenen Bilder und kann nicht belegen, dass der TV 120 Bilder zeigt
-  - typische Fehlerbilder und ihre Lösungen
-- **S90C:** Der Plan beschreibt außerdem:
-  - wie man im Sunshine-Log prüft, was tatsächlich ausgehandelt wurde (HDR, Bittiefe, Farbbereich, Encoder-Optionen) und welche Bitrate der Encoder bekommt
-  - einen Latenztest mit einer Kamera und einen Schärfetest mit 1 Pixel breiten Linien
-  - die automatische Abschaltung des TVs nach spätestens 4 Stunden ohne Bedienung
-  - einen Test für Verlassen und Rückkehr: Home-Taste, TV-Menüs, Eingangswechsel, rote Taste während des Starts
-  - alle Zeilen der Leistungsstatistik
-- **S90C:** neue einseitige Kurzanleitung zum Einrichten und Testen auf dem S90C (`docs/S90C-Kurzanleitung.md`).
-- Abschnitt A des Plans wertet ein konkretes Setup aus, das des Autors. Auch die Kurzanleitung geht an einigen Stellen davon aus, z. B. bei der FEC-Einstellung. Die übrigen Kapitel des Plans gelten für jeden S90C.
-- Die README weist darauf hin, dass dieser Fork für den Samsung S90C optimiert ist, und verweist auf den Optimierungsplan.
+#### Performance statistics
 
-#### Build
+The performance statistics appear in the stream when *Performance statistics* is on (Settings → Advanced Settings, off by default). The YELLOW key shows and hides them during the stream.
 
-- Die Download-Dateien heißen weiterhin `Moonlight.wgt` und `Moonlight-ForceGM.wgt`. Der Build übernimmt die vom Tizen-Werkzeug erzeugte Datei unabhängig von ihrem neuen Namen.
-- Die Build-Abläufe für Vorab- und stabile Versionen laufen nacheinander. So kann ein Release nicht das ForceGM-Paket eines anderen Stands erhalten.
-- Die Beschreibung von Vorabversionen entsteht automatisch aus den Versionshinweisen. Sie enthält Links zum Commit, zum Changelog, zur Kurzanleitung und zum Optimierungsplan.
-- Der Workflow „Release (Development)“ kann eine getestete Vorabversion mit unveränderten Dateien zu einem vollständigen Release machen. So ist dieses Release entstanden. Es bekommt dabei ein eigenes Tag (hier `v1.19.0-s90c.1`), das die Update-Prüfung der App nicht als neuere Version liest. Das betrifft nur GitHub, nicht die App auf dem TV.
+- *Configured bitrate* shows the bitrate set in the app.
+- *Host frame rate (30 s)* shows the frame rate of the host measured over 30 seconds, which reveals a host display running at 59.94 instead of 60 Hz.
+- Three lines show separately what happens to the frames on the TV: *Average frame receive time*, *Average frame wait time*, and *Pending frames* with the highest count per second.
+- The misleading line *Average decoding time* is gone, and the pacing line is called *Average frame pacing delay*.
+- New totals over the whole session:
+  - *Session frames dropped by network* counts frames lost on the network.
+  - *Session frames dropped by the TV* counts the frames that the TV dropped itself (full queue or rejected by the player), with the number of resets of the video playback.
+  - *Session recovery keyframes* counts only real recovery keyframes, not those the app requests itself when the video track opens or the HDR metadata change, nor those after a reset of the video playback.
+  - Frames that arrive while the video playback of the TV is closed (e.g. while the app is hidden) don't count as network losses.
+- A line shows whether the TV is connected by Ethernet or Wi-Fi, over Wi-Fi with the signal strength, refreshed every 5 seconds. If the TV reports no value, the signal strength is left out instead of showing "NaN".
+- *Session FEC recoveries*, *Worst FEC block* and *UDP receive buffer* show the repairs of the error correction, how close the worst block came to losing a frame, and the requested and reported UDP receive buffer.
+- *TV player rejections* appears once the video player of the TV rejected frames, counted by reason.
+- *WASM heap top* shows the memory of the streaming engine, so that a memory leak in long sessions shows up before the app crashes.
+- *Moonlight hidden during the stream* counts how often the app was hidden during the stream and how often the TV closed the video.
+- With the *Web Audio* backend, new lines show the jitter buffer, schedule lead and browser latency, dropouts and skipped and lost audio packets, and the correction of *Audio clock sync* with a suggested buffer size.
 
-### Neue Standardeinstellungen
+#### Less load on the TV
 
-Weil Moonlight S90C eigene Einstellungen hat, beginnt man mit diesen Werten, auch wer vorher die normale Moonlight-App genutzt hat. Nur wer schon eine Vorabversion von Moonlight S90C installiert hatte, behält seine gespeicherten Werte. Mit *Restore Defaults* lassen sie sich auf diese Werte zurücksetzen. Der Button *Samsung S90C optimization* setzt die Bildwerte genauso.
+- The streaming engine is built for speed instead of small size (compiler option -O2 instead of -Os).
+- During the stream, the menus no longer poll the controllers every 5 ms themselves, since the stream does that anyway. That relieves the main thread.
+- All controllers are read with a single call per poll instead of one call per controller slot, which leaves the main thread more room, e.g. for the sound of Web Audio.
+- The controller state is sent to the host only when it changes, plus every 100 ms, instead of 200 times per second. That reduces the traffic from the TV to the host, above all over Wi-Fi.
+- With the performance statistics on, the video decoder no longer waits until the menus have processed them.
+- Connection warnings no longer hold up the receiving of the video data, and the controller rumble is passed to the menus without waiting.
 
-- *Video resolution*: 1280 x 720 (720p) → die höchste Auflösung des TVs bis 4K. Das ist 3840 x 2160 auf 4K- und 8K-TVs, sonst 2560 x 1440 oder 1920 x 1080.
-- *Video bitrate*: 10 Mbit/s → je nach Verbindung 75 Mbit/s (LAN), 100 Mbit/s (WLAN) oder 80 Mbit/s (Verbindung nicht erkannt).
-  - Der WLAN-Wert folgt der 4K-HEVC-Decoder-Spezifikation des S90C.
-  - Die Werte sind für 4K gedacht, gelten aber auch auf TVs ohne 4K-Panel. Dort die Bitrate am besten von Hand senken.
-- *Video codec*: H.264 → HEVC.
-- *Video HDR*: aus → an, nur auf HDR-fähigen TVs.
-- *Unlock all frame rates*: aus → an (der S90C hat ein 144-Hz-Panel). 90, 120 und 144 FPS stehen damit direkt zur Auswahl, voreingestellt bleiben 60 FPS.
-- Bitrate beim Ändern von Auflösung oder Bildrate (mit *Optimize bitrate presets* auch von Codec und HDR): sprang auf die Voreinstellung → bleibt, bis man *Optimize bitrate presets* umschaltet.
-- *Restore Defaults* schaltet *Video frame pacing* und *Host address field mode* jetzt an. Vorher schaltete es beide fehlerhaft aus.
-- Neue Einstellungen *Reference frame invalidation*, *HDR static metadata* und *Audio clock sync*: aus.
-- Unverändert bleiben:
-  - *Video frame rate* (60 FPS)
-  - *Optimize bitrate presets* (aus)
-  - *Color range* (eingeschränkter Bereich)
-  - *Audio backend* (EMSS)
-  - *Audio jitter buffer* (100 ms)
-  - *Game mode*, der wie bisher von der Tizen-Version abhängt
+#### Documentation
 
-### Hinweise
+- New English documentation: the README, a guide for every TV class (`docs/GUIDE.md`: installation, the optimal settings, finding your bitrate, System information, performance statistics, host settings, HDR, audio, known limits and troubleshooting) and a page about controllers (`docs/CONTROLLERS.md`).
+- The German tuning guide, the quick guide and the release notes of v1.19.0-s90c.1 of the S90C are kept as an archive of the tested S90C profile in `docs/profiles/S90C/` (**Tested profile**).
+- The bug report form of the fork asks for the TV model, the Tizen version, a photo of System information, the host GPU and encoder, and the controller.
 
-- Dieses Release enthält genau die Dateien der getesteten Vorabversion von Commit 95f5b12, sie wurden nicht neu gebaut. Unter Settings → About → *System information* steht deshalb „App Version: Moonlight S90C v1.19.0 (pre-95f5b12)“. Bei der ForceGM-Variante steht dort „Moonlight S90C-ForceGM …“.
-- Diese Version läuft auf dem Samsung S90C des Autors. Andere Modelle hat der Autor nicht getestet, die experimentellen Einstellungen nicht systematisch.
-- Die LAN-Grenzen (75 Mbit/s bei den Voreinstellungen, Warnung über 80 Mbit/s) gehen von einem 100-Mbit/s-LAN-Anschluss des TVs aus.
-- Die Update-Prüfung der App (*Check for updates*) schaut auf die Releases dieses Projekts, nicht auf die von Moonlight Tizen.
-- Manche Vorabversionen dieses Forks stammen aus der Zeit vor der Umbenennung. Sie stehen auf dem TV weiter als „Moonlight“, weil sie die normale Moonlight-App ersetzt haben. Man kann sie deinstallieren oder die normale Moonlight-App darüber installieren. Moonlight S90C wird davon unabhängig daneben installiert.
-- Portugiesisch (pt-BR) ist nur teilweise übersetzt. Etwa die Hälfte der neuen Texte erscheint auf Englisch, darunter der S90C-Dialog, die neuen Warnungen, *Reference frame invalidation*, *HDR static metadata* und einige Zeilen der Leistungsstatistik.
+#### Build and release
+
+- The download files are still called `Moonlight.wgt` and `Moonlight-ForceGM.wgt`.
+- A release or development build of the Dockerfile fails with a message when the repository owner or name is missing. Before, every Docker build checked the repository of Moonlight Tizen for updates instead of the one it was built from.
+- The in-app update check compares the numeric x.y.z version first, so that a release of this fork such as 1.19.100 is announced. A missing or malformed version is never an update.
+- The update dialog shows the release notes as plain text, without Markdown marks, and points to the release page when they are longer than the dialog.
+- The release workflows run one after the other, so that a release can't get the ForceGM file of another commit.
+- Pre-releases and releases are titled "Moonlight Plus" with their tag, and their description comes from the release notes, with links to the commit, the changelog, the guide and the controller page.
+- A tested pre-release can be promoted to a full release with its files unchanged. The new tag must be "v" plus the version in `res/config.xml` of the pre-release.
+- The release workflows warn while the issue tracker of the fork is turned off or its default branch lacks the issue forms and the guide.
+- Automated tests run on every push without a TV: Node unit tests, browser tests of the menus with a simulated TV and simulated controllers, native tests of the controller code, and checks that the scripts stay within the JavaScript of Tizen 5.5 and that the translations are complete.
+
+### New defaults
+
+Moonlight Plus has its own settings, so a fresh install starts with these values, also if you used the regular Moonlight app before. *Restore Defaults* resets to them, and *Optimal settings for this TV* sets the video values in the same way.
+
+- *Video resolution*: 1280 x 720 → the highest resolution of the panel up to 4K
+- *Video bitrate*: 10 Mbps → the recommended bitrate for the TV class and connection (see the table in the guide), which follows the resolution and frame rate until you pick one yourself
+- *Video codec*: H.264 → HEVC
+- *Video HDR*: off → on, on TVs that report HDR support
+- *Unlock all frame rates*: off, as before, except on the tested S90C (**Tested profile**)
+- *Controller type sent to the PC*: Auto
+- New settings *Reference frame invalidation*, *HDR static metadata* and *Audio clock sync*: off
+- *Restore Defaults* turns *Video frame pacing* and *Host address field mode* on (before, it wrongly turned both off).
+- Unchanged: *Video frame rate* (60 FPS), *Optimize bitrate presets* (off), *Color range* (limited), *Audio backend* (EMSS), *Audio jitter buffer* (100 ms), and *Game mode* by Tizen version.
+
+### Notes and known limits
+
+- The S90C-era changes ran on the S90C of the author. The changes for other TVs and controllers since then (the TV profile, the warnings, the checks of the game mode and the video decoders, the controller fixes and the controller type) were tested with simulated TVs and controllers only, not on real TVs. Reports are welcome on the issue tracker of this fork.
+- The Ethernet limits (75 Mbps for the presets, a warning above 80 Mbps) assume the 100 Mbps Ethernet port that most Samsung TVs have.
+- The caps of 80 Mbps for 4K and 8K TVs and 50 Mbps for Full HD TVs follow summaries of Samsung's TV video specifications and are careful starting points. The slider still goes up to 150 Mbps.
+- If the TV refuses to install the update because the author certificate doesn't match, uninstall the earlier build first, which loses its settings and pairing.
+- A release promoted from a tested pre-release keeps its files, so System information shows its version with the commit of the pre-release, e.g. *Moonlight Plus v1.19.100 (pre-1a2b3c4)*. It is the full release all the same.
+- The package ID (MLightS90C) still contains the name of the tested model, since changing it would make the TV install a second app and lose the settings and pairing.
+- Some pre-releases of this fork from before its first rename replaced the regular Moonlight app and still show as "Moonlight" on the TV. Uninstall them or install the regular Moonlight app over them. Moonlight Plus installs next to them.
+- Brazilian Portuguese (pt-BR) is only partly translated, so some texts of this fork appear in English.

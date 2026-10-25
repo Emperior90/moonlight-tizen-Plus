@@ -138,7 +138,8 @@
   // - 'ull': availableApis and isApiFeatureSupported(), with the feature 'ultra-low-latency'
   // - 'noUll': the same without that feature
   // - 'apiLevels': availableApis with API levels only and no isApiFeatureSupported(), as on older players
-  // - 'legacy': only the classes of the player, without availableApis
+  // - 'legacy': only the classes of the player, without availableApis, from which the glue code derives API level 0
+  //   (its media track has no session ID)
   // - 'disagree': availableApis lists the feature, while isApiFeatureSupported() answers false
   // - 'throws': reading availableApis throws
   function createWasmPlayerApi(mode) {

@@ -283,6 +283,8 @@ const Controller = (function() {
     if (!pollingInterval) {
       resetGamepads();
       pollingInterval = setInterval(pollGamepads, 5);
+      // The menus take over again: no rumble of a stream may go on here (the end of the stream already stopped them)
+      Rumble.stopAll();
     }
   }
 

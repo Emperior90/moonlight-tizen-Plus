@@ -1,3 +1,5 @@
+> **Archive (German):** the archived one-page tuning guide of the tested Samsung S90C profile, written for the release v1.19.0-s90c.1, where the button *Optimal settings for this TV* was still called *Samsung S90C optimization*; for every Samsung TV, read the English [guide](../../GUIDE.md).
+
 # Kurzanleitung: Moonlight auf dem S90C einrichten und testen
 
 Die Details zu jedem Schritt stehen im [Optimierungsplan](S90C-Optimierungsplan.md). Für den Alltag reicht diese Seite.

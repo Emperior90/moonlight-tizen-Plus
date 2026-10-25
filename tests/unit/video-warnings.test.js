@@ -4,7 +4,8 @@
 // capabilities of a TV into a message key (VIDEO_WARNINGS), and of showVideoWarning() in index.js, which shows the text
 // of each key:
 // 1. above 60 FPS at any resolution without a tested 120 Hz profile: many Samsung TVs have 60 Hz panels
-// 2. above the luma sample rate of level 5.1 without a tested 120 Hz profile: it needs a level 5.2 decoder
+// 2. above the luma sample rate of level 5.1 on a 4K TV without a tested 120 Hz profile: it needs a level 5.2 decoder
+//    (an 8K TV, whose decoder goes beyond level 5.2, gets the warning of case 1 there)
 // 3. above the luma sample rate of level 5.2 (4K at 144 FPS): a warning on every TV, today's text on the S90C
 // 4. HDR switched on for a TV that doesn't report HDR
 // 5. the bitrate warning starts at the decoder cap of the TV instead of a fixed 100 Mbps (the S90C keeps 100 Mbps)
@@ -93,12 +94,19 @@ describe('resolution and frame rate warnings', () => {
     }
   });
 
-  test('case 2: above level 5.1 without a tested 120 Hz profile needs a level 5.2 decoder', () => {
-    for (const tvName of Object.keys(GENERIC_TVS)) {
+  test('case 2: above level 5.1 on a 4K TV without a tested 120 Hz profile needs a level 5.2 decoder', () => {
+    const LEVEL_52_STREAMS = [['3840:2160', 90], ['3840:2160', 120], ['3200:1800', 120], ['3200:1800', 144]];
+    for (const tvName of ['uhd', 'fhd']) {
       const caps = GENERIC_TVS[tvName];
-      for (const [res, fps] of [['3840:2160', 90], ['3840:2160', 120], ['3200:1800', 120], ['3200:1800', 144]]) {
+      for (const [res, fps] of LEVEL_52_STREAMS) {
         assert.equal(profile.resolutionFramerateWarningKey(res, fps, caps), W.NEEDS_LEVEL_52, tvName + ' ' + res + '@' + fps);
       }
+    }
+    // The decoder of an 8K TV goes beyond level 5.2 (8K at 60 FPS is level 6.1), so it gets the 60 Hz panel warning of
+    // case 1 instead, since its panel may run at 60 Hz as well
+    assert.equal(UHD_8K.is8k, true);
+    for (const [res, fps] of LEVEL_52_STREAMS) {
+      assert.equal(profile.resolutionFramerateWarningKey(res, fps, UHD_8K), W.FPS_ABOVE_60_HZ, '8k ' + res + '@' + fps);
     }
   });
 

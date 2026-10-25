@@ -356,15 +356,18 @@ function parseVideoTrackRejection(text) {
 }
 
 // Tell the user which video format the TV rejected when the stream added its video track, and what to change: HEVC
-// instead of AV1, or instead of H.264, which Samsung TVs generally decode only up to 1080p, and otherwise a lower
-// resolution or frame rate, and HDR off for a 10-bit stream
+// instead of AV1, or instead of H.264, which Samsung TVs generally decode only up to 1080p at 60 FPS (High Level 4.2),
+// so with H.264 also a resolution up to 1080p, or a lower frame rate for a stream that is already within 1080p, and
+// otherwise a lower resolution or frame rate, and HDR off for a 10-bit stream
 function showVideoTrackRejection(rejection) {
   const codec = rejection.codec;
   console.warn('%c[messages.js, showVideoTrackRejection]', 'color: gray;', 'Warning: The TV rejected the video track: ' + codec + ' at ' + rejection.width + 'x' + rejection.height + '@' + rejection.fps);
   if (codec.indexOf('AV1') === 0) {
     snackbarLogLong('The TV rejected %1$s at %2$sx%3$s@%4$s FPS. Choose HEVC as the video codec.', codec, rejection.width, rejection.height, rejection.fps);
-  } else if (codec === 'H.264') {
+  } else if (codec === 'H.264' && (rejection.width > 1920 || rejection.height > 1080)) {
     snackbarLogLong('The TV rejected %1$s at %2$sx%3$s@%4$s FPS. Choose HEVC as the video codec, or a resolution up to 1080p.', codec, rejection.width, rejection.height, rejection.fps);
+  } else if (codec === 'H.264') {
+    snackbarLogLong('The TV rejected %1$s at %2$sx%3$s@%4$s FPS. Choose HEVC as the video codec, or lower the frame rate.', codec, rejection.width, rejection.height, rejection.fps);
   } else if (codec.indexOf('Main10') >= 0) {
     snackbarLogLong('The TV rejected %1$s at %2$sx%3$s@%4$s FPS. Turn off HDR, or lower the resolution or frame rate.', codec, rejection.width, rejection.height, rejection.fps);
   } else {
@@ -517,6 +520,13 @@ function handleMessage(msg) {
     const gamepadIdx = parseInt(eventData[0]);
     const weakMagnitude = parseFloat(eventData[1]);
     const strongMagnitude = parseFloat(eventData[2]);
+    // The WASM module keeps receiving the rumble of the host for a moment after the stream ended, until its connection
+    // is torn down, and the host sends no 0 for a stream that is over. Such a late rumble would be replayed in the menus
+    // without end, since the end of the stream already stopped every rumble, so only a running stream plays one.
+    if (isInGame !== true || !wasmSessionStarted) {
+      console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Ignoring the rumble for gamepad ' + gamepadIdx + ' that arrived after the end of the stream.');
+      return;
+    }
     // Play the rumble on the gamepad until the host sends 0 for both motors (see Rumble in gamepad.js)
     console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Playing rumble on gamepad ' + gamepadIdx + ' with weak magnitude ' + weakMagnitude + ' and strong magnitude ' + strongMagnitude + '...');
     Rumble.play(gamepadIdx, weakMagnitude, strongMagnitude);

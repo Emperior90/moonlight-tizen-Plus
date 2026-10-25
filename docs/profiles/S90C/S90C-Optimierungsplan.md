@@ -1,3 +1,5 @@
+> **Archive (German):** the archived tuning guide of the tested Samsung S90C profile, written for the release v1.19.0-s90c.1, where the button *Optimal settings for this TV* was still called *Samsung S90C optimization*; for every Samsung TV, read the English [guide](../../GUIDE.md).
+
 # Moonlight Tizen – Optimierungsplan für den Samsung S90C (55")
 
 Ziel: **Bestmögliche Bildqualität und Auflösung bei hoher Bitrate, ohne Ruckler, Bildfehler oder Verbindungsabbrüche** – speziell für den Samsung S90C (55", QD-OLED, 2023).

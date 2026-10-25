@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Discussions Board
-    url: https://github.com/brightcraft/moonlight-tizen/discussions
-    about: General questions, ideas, and conversations
+  - name: Moonlight Plus guide
+    url: https://github.com/Emperior90/moonlight-tizen-S90c/blob/HEAD/docs/GUIDE.md
+    about: Installation, settings for your TV, known limits and troubleshooting
+  - name: Regular Moonlight Tizen app
+    url: https://github.com/brightcraft/moonlight-tizen
+    about: Questions about the regular Moonlight Tizen app belong to its project, not to this fork

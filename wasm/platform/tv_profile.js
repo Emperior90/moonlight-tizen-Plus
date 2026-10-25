@@ -33,9 +33,10 @@ const FHD_DECODER_CAP_MBPS = 50; // Highest recommended bitrate in Mbps for a Fu
 const MAX_BITRATE_MBPS = 150; // Highest bitrate in Mbps of the bitrate slider (index.html)
 
 // Highest luma sample rates (width x height x frame rate) of the decoder levels of HEVC and AV1. Level 5.1 covers 4K at
-// up to 64 FPS, and every supported TV decodes it. Level 5.2 covers 4K at up to 128 FPS, which the TVs with a 120 Hz
-// panel decode. The level 5.1 value is the same as kLevel51MaxLumaSampleRate in wasmplayer.cpp, which offers level 5.2
-// to the TV for faster streams.
+// up to 64 FPS, and every supported TV decodes it. Level 5.2 covers 4K at up to 128 FPS, which the 4K TVs with a 120 Hz
+// panel decode, and 8K TVs decode 8K at 60 FPS, which is above it (level 6.1). The level 5.1 value is the same as
+// kLevel51MaxLumaSampleRate in wasmplayer.cpp, which offers level 5.2 to the TV for faster streams, the highest level
+// that the app asks the TV for.
 const LEVEL_51_MAX_LUMA_SAMPLE_RATE = 534773760;
 const LEVEL_52_MAX_LUMA_SAMPLE_RATE = 1069547520;
 
@@ -156,15 +157,18 @@ function toArrayOrNull(value) {
 // source: it uses the mode only when the ElementaryMediaStreamSource entry of tizentvwasm.availableApis lists the
 // feature 'ultra-low-latency', and otherwise falls back to the Low Latency mode with only a console warning. On a TV
 // whose tizentvwasm has availableApis but no isApiFeatureSupported(), the glue code replaces the features of that entry
-// with ones derived from its API levels, which never include the Ultra Low Latency mode. The tizentvwasm object can be
-// passed in for the tests, otherwise the global one of the TV is used. Returns:
+// with ones derived from its API levels, which never include the Ultra Low Latency mode. On an older player without
+// availableApis, the glue code describes the player by its classes (getLegacyApis()): API level 1 with the feature
+// 'base-emss' when its media track has a session ID, otherwise API level 0 with 'legacy-emss', so it never uses the mode
+// there either. The tizentvwasm object can be passed in for the tests, otherwise the global one of the TV is used.
+// Returns:
 // - ultraLowLatency: 'yes', 'no', or 'unknown' when the TV doesn't say it clearly: without tizentvwasm (e.g. in a
-//   desktop browser), with an older player without availableApis, without an ElementaryMediaStreamSource entry, or
+//   desktop browser), without an ElementaryMediaStreamSource entry or class (the WASM player can't stream then), or
 //   when the feature list and isApiFeatureSupported() disagree
 // - source: what the answer is based on: 'features' (availableApis with isApiFeatureSupported()), 'apiLevels'
 //   (availableApis without isApiFeatureSupported()), 'legacy' (no availableApis), 'none' (no tizentvwasm) or 'error'
 //   (reading tizentvwasm failed)
-// - apiLevels: the API levels of the WASM player, or null
+// - apiLevels: the API levels of the WASM player (for an older player the one that the glue code derives), or null
 function detectWasmPlayerFeatures(tizentvwasmObject) {
   const wasmApi = tizentvwasmObject !== undefined ? tizentvwasmObject : getTvGlobal('tizentvwasm');
   const result = { ultraLowLatency: 'unknown', source: 'none', apiLevels: null };
@@ -173,8 +177,14 @@ function detectWasmPlayerFeatures(tizentvwasmObject) {
   }
   try {
     if (wasmApi.availableApis === undefined) {
-      // An older player, which the TV describes only by its classes, so the rules by Tizen version stay
+      // An older player, which the glue code describes by its classes and never gives the Ultra Low Latency mode
       result.source = 'legacy';
+      if (wasmApi.ElementaryMediaStreamSource) {
+        const track = wasmApi.ElementaryMediaTrack;
+        const hasSessionId = !!(track && track.prototype && Object.prototype.hasOwnProperty.call(track.prototype, 'sessionId'));
+        result.apiLevels = [hasSessionId ? 1 : 0];
+        result.ultraLowLatency = 'no';
+      }
       return result;
     }
     // The glue code only checks whether isApiFeatureSupported is defined, so a value that isn't a function still keeps
@@ -441,6 +451,76 @@ function bitrateRaiseLimit(res, frameRate, caps) {
   return Math.min(2 * preset, MAX_BITRATE_MBPS, getDecoderCapMbps(caps));
 }
 
+// Return the highest bitrate that a bitrate preset may set on this TV and network connection, as { mbps, reason }, or
+// null for no limit:
+// - over Ethernet RECOMMENDED_ETHERNET_BITRATE (reason 'ethernet'), since the 100 Mbps port that Samsung TVs usually
+//   have can't carry more without packet loss
+// - on a TV without a tested profile, also the highest bitrate that recommendedBitrate() gives for any resolution and
+//   frame rate on this connection (reason 'recommended'): the decoder cap of the TV (getDecoderCapMbps()), and over an
+//   unknown connection UNKNOWN_CONNECTION_MAX_BITRATE, so that a preset (e.g. 120 Mbps for 4K at 120 FPS) never sets a
+//   bitrate above the recommendation of the app, which the bitrate warning would then warn about
+// A TV with a tested profile keeps the standard presets above its decoder cap (e.g. 120 Mbps for 4K at 120 FPS on the
+// first model of VERIFIED_PROFILES), which its tests went up to. The bitrate slider still goes up to MAX_BITRATE_MBPS on
+// every TV.
+function presetBitrateLimit(connectionType, caps) {
+  let limit = null;
+  if (connectionType === 'ethernet') {
+    limit = { mbps: RECOMMENDED_ETHERNET_BITRATE, reason: 'ethernet' };
+  }
+  if (!(caps && caps.profile)) {
+    let recommendedMax = getDecoderCapMbps(caps);
+    if (connectionType !== 'ethernet' && connectionType !== 'wifi') {
+      recommendedMax = Math.min(recommendedMax, UNKNOWN_CONNECTION_MAX_BITRATE);
+    }
+    if (!limit || recommendedMax < limit.mbps) {
+      limit = { mbps: recommendedMax, reason: 'recommended' };
+    }
+  }
+  return limit;
+}
+
+// Return the bitrate in Mbps as the bitrate slider (index.html) holds it: rounded to its steps of 0.5 Mbps, within 0.5
+// and MAX_BITRATE_MBPS
+function sliderBitrate(mbps) {
+  return Math.min(MAX_BITRATE_MBPS, Math.max(0.5, Math.round(mbps * 2) / 2));
+}
+
+// Return the optimized bitrate preset ('Optimize bitrate presets') in Mbps for a resolution, frame rate, codec and HDR
+// mode, before the bitrate slider rounds it: the luma samples per second divided by 8309 (SDR) or 6630.5 (HDR) give
+// the bitrate in kbps for H.264, of which HEVC needs 60 % and AV1 40 %. A result that isn't positive gives 10 kbps.
+// Sweet-spot formula reference: https://www.reddit.com/r/MoonlightStreaming/comments/1gg2cdy/sweet_spot_bitrate/
+function getOptimizedPresetBitrate(res, frameRate, videoCodec, hdrMode) {
+  const size = parseResolution(res) || { width: NaN, height: NaN };
+  // Multiplier to adjust bitrate based on codec efficiency
+  const codecMultiplier = { H264: 1.0, HEVC: 0.6, AV1: 0.4 }[videoCodec];
+  // Bitrate factor depends on HDR state
+  const bitrateFactor = hdrMode ? 6630.5 : 8309;
+  const baseBitrate = size.width * size.height * Number(frameRate) / bitrateFactor;
+  let finalBitrate = Math.round(baseBitrate * codecMultiplier);
+  // Apply the default bitrate value in case of invalid calculation
+  if (finalBitrate <= 0) {
+    finalBitrate = 10;
+  }
+  return finalBitrate / 1000;
+}
+
+// Return the bitrates in Mbps that the standard and the optimized bitrate presets set for a resolution, frame rate,
+// codec and HDR mode on this TV and network connection, rounded like the bitrate slider and limited like
+// presetBitrateLimit() says, as { standard, optimized }. standard is null for a frame rate without a standard preset,
+// which leaves the bitrate as it is.
+function presetBitrates(res, frameRate, videoCodec, hdrMode, connectionType, caps) {
+  const limit = presetBitrateLimit(connectionType, caps);
+  const limited = function(mbps) {
+    const bitrate = sliderBitrate(mbps);
+    return limit && bitrate > limit.mbps ? limit.mbps : bitrate;
+  };
+  const standard = getStandardPresetBitrate(res, frameRate);
+  return {
+    standard: standard === null ? null : limited(standard),
+    optimized: limited(getOptimizedPresetBitrate(res, frameRate, videoCodec, hdrMode)),
+  };
+}
+
 // Return the default of the game mode (Ultra Low Latency mode of the WASM player) for a Tizen platform version and the
 // answer of the WASM player whether it offers that mode ('yes', 'no' or 'unknown', see detectWasmPlayerFeatures()):
 // - null when the WASM player says that it doesn't offer the mode, whose glue code would fall back to the Low Latency
@@ -505,9 +585,10 @@ function deriveOptimalSettings(caps, connectionType) {
 const VIDEO_WARNINGS = Object.freeze({
   // More than 60 FPS on a TV without a tested 120 Hz profile, whose panel and Tizen app may show only about 60 FPS
   FPS_ABOVE_60_HZ: 'fpsAbove60Hz',
-  // A stream above the luma sample rate of level 5.1 (e.g. 4K at 90 or 120 FPS) on a TV without a tested 120 Hz profile
+  // A stream above the luma sample rate of level 5.1 (e.g. 4K at 90 or 120 FPS) on a 4K TV without a tested 120 Hz
+  // profile
   NEEDS_LEVEL_52: 'needsLevel52',
-  // A stream above the luma sample rate of level 5.2 (4K at 144 FPS), the highest level of Samsung TVs
+  // A stream above the luma sample rate of level 5.2 (4K at 144 FPS), the highest level that the app asks the TV for
   EXCEEDS_LEVEL_52: 'exceedsLevel52',
   // The same on a TV with a tested 120 Hz profile, whose decoder handled 4K at up to 120 FPS in the tests
   EXCEEDS_TESTED_DECODER: 'exceedsTestedDecoder',
@@ -539,11 +620,15 @@ function hasTested120HzProfile(caps) {
   return !!(caps && caps.profile && caps.profile.refresh120);
 }
 
-// Return the message key of the warning for a resolution and frame rate on a TV (VIDEO_WARNINGS), or null:
+// Return the message key of the warning for a resolution and frame rate on a TV (VIDEO_WARNINGS), or null. It returns
+// one key, the first that applies:
 // - above the luma sample rate of level 5.2 (4K at 144 FPS), a warning on every TV, which on a TV with a tested 120 Hz
 //   profile names the 4K at 120 FPS that its decoder handled
-// - without a tested 120 Hz profile: above the luma sample rate of level 5.1 (e.g. 4K at 90 or 120 FPS), that it needs a
-//   level 5.2 decoder, and otherwise above 60 FPS at any resolution, that many Samsung TVs have 60 Hz panels
+// - without a tested 120 Hz profile: on a 4K TV above the luma sample rate of level 5.1 (e.g. 4K at 90 or 120 FPS), that
+//   it needs a level 5.2 decoder, and otherwise above 60 FPS at any resolution, that many Samsung TVs have 60 Hz panels.
+//   So a 4K stream above 60 FPS gets the level 5.2 warning, and the 60 Hz panel warning appears for lower resolutions
+//   above 60 FPS (up to 1440p, or 1800p at 90 FPS). An 8K TV decodes 8K at 60 FPS, beyond level 5.2, so it gets the
+//   60 Hz panel warning there instead, since its panel may run at 60 Hz as well.
 // - with a tested 120 Hz profile: above 1080p and above 60 FPS, that it may not perform well on slower connections
 function resolutionFramerateWarningKey(res, frameRate, caps) {
   const size = parseResolution(res);
@@ -557,7 +642,7 @@ function resolutionFramerateWarningKey(res, frameRate, caps) {
     return tested120Hz ? VIDEO_WARNINGS.EXCEEDS_TESTED_DECODER : VIDEO_WARNINGS.EXCEEDS_LEVEL_52;
   }
   if (!tested120Hz) {
-    if (lumaSampleRate > LEVEL_51_MAX_LUMA_SAMPLE_RATE) {
+    if (lumaSampleRate > LEVEL_51_MAX_LUMA_SAMPLE_RATE && !(caps && caps.is8k)) {
       return VIDEO_WARNINGS.NEEDS_LEVEL_52;
     }
     return fps > 60 ? VIDEO_WARNINGS.FPS_ABOVE_60_HZ : null;
@@ -726,6 +811,10 @@ if (typeof module === 'object' && module && module.exports) {
     getDecoderCapMbps: getDecoderCapMbps,
     recommendedBitrate: recommendedBitrate,
     bitrateRaiseLimit: bitrateRaiseLimit,
+    presetBitrateLimit: presetBitrateLimit,
+    sliderBitrate: sliderBitrate,
+    getOptimizedPresetBitrate: getOptimizedPresetBitrate,
+    presetBitrates: presetBitrates,
     getGameModeDefault: getGameModeDefault,
     isGameModeUnavailable: isGameModeUnavailable,
     deriveOptimalSettings: deriveOptimalSettings,

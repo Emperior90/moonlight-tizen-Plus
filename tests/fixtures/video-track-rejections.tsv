@@ -6,6 +6,8 @@
 # the height, the frame rate, the message.
 
 0x0001	1920	1080	60	VideoTrackRejected: H.264,1920,1080,60
+0x0001	1920	1080	120	VideoTrackRejected: H.264,1920,1080,120
+0x0001	3840	2160	60	VideoTrackRejected: H.264,3840,2160,60
 0x0100	3840	2160	120	VideoTrackRejected: HEVC,3840,2160,120
 0x0200	3840	2160	60	VideoTrackRejected: HEVC Main10,3840,2160,60
 0x1000	2560	1440	90	VideoTrackRejected: AV1,2560,1440,90

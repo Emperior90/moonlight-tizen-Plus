@@ -175,8 +175,20 @@ jobs:
         run: |
           docker stop temp_container temp_container_forcegm
           docker rm temp_container temp_container_forcegm
+      # The notes of a pre-release ask testers to report on the issue tracker of this fork, so the run warns when Issues are
+      # turned off or the default branch lacks the issue forms and the guide, without stopping the test build.
+      - name: Check the issue tracker and the default branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          API_URL: ${{ github.api_url }}/repos/${{ github.repository }}
+          SUPPORT_CHECK_MODE: warn
+        run: |
+          if [ -f .github/scripts/check-support-path.sh ]; then
+            bash .github/scripts/check-support-path.sh
+          fi
       # Builds the description of the pre-release, with the release notes from `docs/RELEASE_NOTES_DEV.md` when the branch has them.
       # It links the guide of this fork (`docs/GUIDE.md`) when the branch has it, and the requirements and installation methods of upstream Moonlight Tizen otherwise.
+      # The links after the notes (commit, changelog, guide, controller page and the archived S90C documents in `docs/profiles/S90C/`) only name the files that exist, and the update dialog of the app stops reading the notes at the commit line (extractReleaseNotes() in wasm/platform/index.js).
       - name: Prepare release notes
         env:
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
@@ -206,11 +218,14 @@ jobs:
             if [ -f docs/GUIDE.md ]; then
               echo "- **Guide**: [docs/GUIDE.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/GUIDE.md)"
             fi
-            if [ -f docs/S90C-Kurzanleitung.md ]; then
-              echo "- **Kurzanleitung**: [docs/S90C-Kurzanleitung.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/S90C-Kurzanleitung.md)"
+            if [ -f docs/CONTROLLERS.md ]; then
+              echo "- **Controllers**: [docs/CONTROLLERS.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/CONTROLLERS.md)"
             fi
-            if [ -f docs/S90C-Optimierungsplan.md ]; then
-              echo "- **Optimierungsplan**: [docs/S90C-Optimierungsplan.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/S90C-Optimierungsplan.md)"
+            if [ -f docs/profiles/S90C/S90C-Kurzanleitung.md ]; then
+              echo "- **S90C quick guide** (archive of the tested S90C profile, German): [docs/profiles/S90C/S90C-Kurzanleitung.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/profiles/S90C/S90C-Kurzanleitung.md)"
+            fi
+            if [ -f docs/profiles/S90C/S90C-Optimierungsplan.md ]; then
+              echo "- **S90C tuning guide** (archive of the tested S90C profile, German): [docs/profiles/S90C/S90C-Optimierungsplan.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/profiles/S90C/S90C-Optimierungsplan.md)"
             fi
             echo
             echo "> [!WARNING]"
@@ -266,6 +281,15 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      # A full release sends its users to the issue tracker and the guide of this fork, so the promotion warns when Issues
+      # are turned off or the default branch lacks the issue forms and the guide. Turning on Issues and choosing the default
+      # branch are decisions of the owner, so the warning doesn't stop the release.
+      - name: Check the issue tracker and the default branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          API_URL: ${{ github.api_url }}/repos/${{ github.repository }}
+          SUPPORT_CHECK_MODE: warn
+        run: bash .github/scripts/check-support-path.sh
       - name: Promote the pre-release to a full release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -292,18 +316,6 @@ jobs:
               exit 1
             fi
           done
-          # The in-app update check compares the tag of the latest release with the version of the installed app, so the
-          # new tag must be "v" + the version in res/config.xml (the same in the commit of the pre-release, see below)
-          app_version=$(python3 -c 'import xml.etree.ElementTree as ET; print(ET.parse("res/config.xml").getroot().get("version") or "")')
-          if ! [[ "$app_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "The version '$app_version' in res/config.xml is not a numeric x.y.z version."
-            exit 1
-          fi
-          if [ "$RELEASE_TAG" != "v$app_version" ]; then
-            echo "The release tag $RELEASE_TAG doesn't match the app version $app_version in res/config.xml."
-            echo "Use the release tag v$app_version, or raise the version in res/config.xml and build a new pre-release."
-            exit 1
-          fi
           if [ ! -s docs/RELEASE_NOTES_STABLE.md ]; then
             echo "The release notes docs/RELEASE_NOTES_STABLE.md are missing."
             exit 1
@@ -322,6 +334,33 @@ jobs:
             sha=$(api "$API_URL/git/tags/$sha" | jq -r '.object.sha')
           fi
           echo "Promoting $PROMOTE_TAG (release $release_id, commit $sha) to $RELEASE_TAG"
+
+          # The new tag goes on the commit of this run, which the release creates itself: GitHub refused (403) to let the
+          # workflow token create it on the commit of the pre-release, whose workflow files differ from this run's. The
+          # files of the release were built from the commit of the pre-release, so this commit must have the same app
+          # sources and differ only in the workflows, documents and tests (the Dockerfile copies none of them). This is
+          # checked first, so that a changed res/config.xml is named as the cause instead of a wrong release tag.
+          app_changes=$(git diff --name-only "$sha" "$GITHUB_SHA" -- . ':(exclude).github' ':(exclude)docs' \
+            ':(exclude)CHANGELOG.md' ':(exclude)README.md' ':(exclude)tests')
+          if [ -n "$app_changes" ]; then
+            echo "The app sources changed since the commit $sha of the pre-release:"
+            echo "$app_changes"
+            echo "Build a new pre-release from this commit and promote that one, or run the promotion from the commit of the pre-release."
+            exit 1
+          fi
+
+          # The in-app update check compares the tag of the latest release with the version of the installed app, so the
+          # new tag must be "v" + the version in res/config.xml of the commit that the files were built from
+          app_version=$(git show "$sha:res/config.xml" | python3 -c 'import sys, xml.etree.ElementTree as ET; print(ET.parse(sys.stdin).getroot().get("version") or "")')
+          if ! [[ "$app_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "The version '$app_version' in res/config.xml of the pre-release is not a numeric x.y.z version."
+            exit 1
+          fi
+          if [ "$RELEASE_TAG" != "v$app_version" ]; then
+            echo "The release tag $RELEASE_TAG doesn't match the app version $app_version in res/config.xml of the pre-release."
+            echo "Use the release tag v$app_version, or raise the version in res/config.xml and build a new pre-release."
+            exit 1
+          fi
 
           {
             echo "# Moonlight Plus ${RELEASE_TAG}"
@@ -346,26 +385,17 @@ jobs:
             if [ -f docs/GUIDE.md ]; then
               echo "- **Guide**: [docs/GUIDE.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/GUIDE.md)"
             fi
-            if [ -f docs/S90C-Kurzanleitung.md ]; then
-              echo "- **Kurzanleitung**: [docs/S90C-Kurzanleitung.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/S90C-Kurzanleitung.md)"
+            if [ -f docs/CONTROLLERS.md ]; then
+              echo "- **Controllers**: [docs/CONTROLLERS.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/CONTROLLERS.md)"
             fi
-            if [ -f docs/S90C-Optimierungsplan.md ]; then
-              echo "- **Optimierungsplan**: [docs/S90C-Optimierungsplan.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/S90C-Optimierungsplan.md)"
+            if [ -f docs/profiles/S90C/S90C-Kurzanleitung.md ]; then
+              echo "- **S90C quick guide** (archive of the tested S90C profile, German): [docs/profiles/S90C/S90C-Kurzanleitung.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/profiles/S90C/S90C-Kurzanleitung.md)"
+            fi
+            if [ -f docs/profiles/S90C/S90C-Optimierungsplan.md ]; then
+              echo "- **S90C tuning guide** (archive of the tested S90C profile, German): [docs/profiles/S90C/S90C-Optimierungsplan.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/profiles/S90C/S90C-Optimierungsplan.md)"
             fi
           } > release_notes.md
           cat release_notes.md
-
-          # The new tag goes on the commit of this run, which the release creates itself: GitHub refused (403) to let the
-          # workflow token create it on the commit of the pre-release, whose workflow files differ from this run's. The
-          # files of the release were built from the commit of the pre-release, so this commit must have the same app
-          # sources and differ only in the workflows and documents.
-          app_changes=$(git diff --name-only "$sha" "$GITHUB_SHA" -- . ':(exclude).github' ':(exclude)docs' \
-            ':(exclude)CHANGELOG.md' ':(exclude)README.md')
-          if [ -n "$app_changes" ]; then
-            echo "The app sources changed since the commit $sha of the pre-release:"
-            echo "$app_changes"
-            exit 1
-          fi
 
           # The new tag must not exist on another commit (a rerun finds it on this commit)
           status=$(curl -sSL -o existing_ref.json -w '%{http_code}' -H "Authorization: token $GITHUB_TOKEN" \

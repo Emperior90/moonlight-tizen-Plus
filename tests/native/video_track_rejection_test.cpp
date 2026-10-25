@@ -56,7 +56,7 @@ static std::vector<RejectionCase> ReadRejectionCases() {
 
 static void TestFixtureMessages() {
   const std::vector<RejectionCase> cases = ReadRejectionCases();
-  CHECK_EQ(cases.size(), 5u);
+  CHECK_EQ(cases.size(), 7u);
   for (const RejectionCase& entry : cases) {
     CHECK_EQ(FormatVideoTrackRejectedMessage(entry.videoFormat, entry.width, entry.height, entry.fps), entry.message);
   }
