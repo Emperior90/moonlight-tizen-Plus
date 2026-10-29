@@ -7,6 +7,14 @@ function isMenuKeyEvent(e) {
 
 function remoteControllerHandler(e) {
   const keyCode = e.keyCode;
+  const target = e.target || {};
+
+  // The arrow keys move the focus of the menus, which scroll it into view (launcher.js): the browser mustn't scroll as
+  // well, except in a text field or a list, which need the keys, and during a stream
+  if (keyCode >= tvKey.KEY_LEFT && keyCode <= tvKey.KEY_DOWN && isInGame !== true && !target.isContentEditable &&
+    (!/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || /^(checkbox|radio|range)$/.test(target.type))) {
+    e.preventDefault();
+  }
 
   switch (keyCode) {
     case tvKey.KEY_UP:

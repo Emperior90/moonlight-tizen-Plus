@@ -115,7 +115,16 @@ function startRequestArgs(page, resume) {
     launch('<root status_code="200" status_message="OK"><sessionUrl0>rtsp://10.0.0.2:48010</sessionUrl0></root>');
     await new Promise((resolve) => setTimeout(resolve, 300));
     const args = window.__startStreamArgs;
-    handleMessage('streamTerminated: 0');
+    // leaveStreamView() (messages.js) returns to the app list of the fake host once its server info is refreshed, a
+    // promise later: restore the real showApps() only after that call, which would otherwise ask the fake host for
+    // its app list (it has none) half a second later, in the middle of the next steps
+    await new Promise((resolve) => {
+      showApps = () => {
+        resolve();
+        return Promise.resolve();
+      };
+      handleMessage('streamTerminated: 0');
+    });
     showApps = originalShowApps;
     return args;
   }, !!resume);

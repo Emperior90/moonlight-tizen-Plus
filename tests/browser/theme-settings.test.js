@@ -126,6 +126,49 @@ test('the help text runs across each row, a switch label shows only without help
   }
 });
 
+test('a badge stays on the line of its title in both languages: the button of the optimal settings wraps instead', async () => {
+  for (const language of [null, 'pt-BR']) {
+    const app = await openApp(harness, { tv: TV });
+    try {
+      await openSettings(app.page, language);
+      const badges = [];
+      for (const category of CATEGORIES) {
+        await app.page.evaluate((name) => handleSettingsView(name), category);
+        await app.page.waitForTimeout(300);
+        badges.push(...await app.page.evaluate((name) => Array.prototype.filter.call(document.querySelectorAll('#' + name + ' .badge'),
+          (badge) => badge.offsetParent !== null).map((badge) => {
+          const row = badge.closest('.setting-option');
+          const lines = badge.parentElement.querySelector('span:not(.badge)').getClientRects();
+          const last = lines[lines.length - 1];
+          const box = badge.getBoundingClientRect();
+          const control = row.querySelector(':scope > div[id]').getBoundingClientRect();
+          return {
+            badge: badge.textContent.trim(),
+            onTitleLine: box.top + box.height / 2 > last.top && box.top + box.height / 2 < last.bottom && box.left >= last.right,
+            // The badge ends before the control, and the control inside the row
+            clear: box.right + 20 <= control.left && control.right <= row.getBoundingClientRect().right,
+          };
+        }), category));
+      }
+      assert.equal(badges.length, 6, JSON.stringify(badges));
+      badges.forEach((badge) => assert.deepEqual([badge.onTitleLine, badge.clear], [true, true], (language || 'en-US') + ' ' +
+        JSON.stringify(badges)));
+      // The button of the optimal settings: one line in English, two in Brazilian Portuguese, inside its row either way
+      const button = await app.page.evaluate(() => {
+        handleSettingsView('basicSettings');
+        const element = document.getElementById('optimalSettingsBtn');
+        const span = element.querySelector('span');
+        return { lines: Math.round(span.getBoundingClientRect().height / parseFloat(getComputedStyle(span).lineHeight)),
+          inside: element.scrollWidth <= element.clientWidth + 1 };
+      });
+      assert.deepEqual(button, { lines: language ? 2 : 1, inside: true });
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
 test('each settings section carries its colour into the header, its tile, the focused row and its switches', async () => {
   const app = await openApp(harness, { tv: TV });
   try {
@@ -161,6 +204,53 @@ test('each settings section carries its colour into the header, its tile, the fo
     await app.page.evaluate(() => resetSettingsView());
     assert.deepEqual(await app.page.evaluate(() => [document.body.hasAttribute('data-section'),
       getComputedStyle(document.getElementById('header-section')).display]), [false, 'none']);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('the switches keep no fades or layers of the framework, only the thumb moves, and the focus paints no box', async () => {
+  const app = await openApp(harness, { tv: TV });
+  try {
+    await openSettings(app.page);
+    await app.page.evaluate(() => handleSettingsView('inputSettings'));
+    await app.page.waitForTimeout(400);
+    // Every switch of the page and its shown parts: what fades (a transition longer than 0 s) and what keeps a layer
+    const motion = await app.page.evaluate(() => {
+      const result = [];
+      document.querySelectorAll('.mdl-switch').forEach((element) => {
+        [element].concat(Array.from(element.querySelectorAll('*'))).forEach((part) => {
+          const style = getComputedStyle(part);
+          if (style.display === 'none') {
+            return;
+          }
+          const fades = style.transitionDuration.split(', ').some((duration) => parseFloat(duration) > 0);
+          result.push((part.className.baseVal === undefined ? part.className : 'svg') + ': ' + (fades ? style.transitionProperty : 'none') +
+            ', will-change ' + style.willChange);
+        });
+      });
+      return result;
+    });
+    assert.ok(motion.length >= 40, JSON.stringify(motion));
+    motion.forEach((line) => {
+      assert.match(line, /: (none|transform), will-change auto$/, line);
+    });
+    assert.ok(motion.some((line) => /^mdl-switch__thumb: transform/.test(line)), JSON.stringify(motion));
+    // DOWN through the switches of the input settings: the focused switch paints no box of its own, its track shows the ring
+    const look = () => app.page.evaluate(() => {
+      const element = document.querySelector('#inputSettings .mdl-switch.hovered');
+      return element && [element.id, getComputedStyle(element).backgroundColor,
+        getComputedStyle(element.querySelector('.mdl-switch__track')).boxShadow.indexOf('rgb(255, 255, 255)') >= 0];
+    });
+    const seen = [];
+    for (let i = 0; i < 4; i++) {
+      seen.push(await look());
+      await app.page.keyboard.press('ArrowDown');
+      await app.page.waitForTimeout(150);
+    }
+    assert.deepEqual(seen, ['rumbleFeedbackBtn', 'mouseEmulationBtn', 'flipABfaceButtonsBtn', 'flipXYfaceButtonsBtn'].map((id) =>
+      [id, 'rgba(0, 0, 0, 0)', true]));
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
@@ -355,6 +445,113 @@ test('the settings rows are opaque, and rows that scroll out at the top of the p
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
+  }
+});
+
+test('the arrow keys move through every row of a long section without scrolling on their own: the focused row stays in view', async () => {
+  const app = await openApp(harness, { tv: TV });
+  try {
+    await openSettings(app.page);
+    // Whether the browser's own action of each key (scrolling the pane) was prevented, seen after the key handler ran
+    await app.page.evaluate(() => {
+      window.__prevented = [];
+      document.addEventListener('keydown', (event) => window.__prevented.push(event.key + ':' + event.defaultPrevented));
+    });
+    // Video Settings (6 rows) and About (4 tall rows) need the pane to scroll for their last rows, Basic Settings (5 rows)
+    // fits on the screen
+    const ROWS = { videoSettings: 6, aboutSettings: 4, basicSettings: 5 };
+    for (const section of Object.keys(ROWS)) {
+      await app.page.evaluate((name) => handleSettingsView(name), section);
+      await app.page.waitForTimeout(400);
+      // The current row, and for every shown row whether it lies fully below the fade at the top of the pane (32 px)
+      // and above its bottom edge
+      const state = () => app.page.evaluate((name) => {
+        const pane = document.getElementById('settings-right-pane');
+        const view = pane.getBoundingClientRect();
+        const rows = Array.prototype.filter.call(document.querySelectorAll('#' + name + ' .setting-option'), (row) => row.offsetParent !== null);
+        const current = rows.findIndex((row) => row.classList.contains('is-current'));
+        const box = rows[current].getBoundingClientRect();
+        return {
+          current,
+          visible: rows.map((row) => {
+            const rect = row.getBoundingClientRect();
+            return rect.top >= view.top + 32 - 0.5 && rect.bottom <= view.bottom + 0.5;
+          }),
+          // The space between the current row and the fade above it, and between the row and the bottom edge
+          gaps: [Math.round(box.top - view.top - 32), Math.round(view.bottom - box.bottom)],
+          scroll: pane.scrollTop,
+        };
+      }, section);
+      let before = await state();
+      const count = before.visible.length;
+      assert.equal(count, ROWS[section], section + ': ' + JSON.stringify(before));
+      assert.deepEqual([before.current, before.scroll], [0, 0], section);
+      // DOWN through every row and on to the first one (the list wraps around), then UP to the last one and back to the
+      // first, twice
+      const keys = Array(count).fill('ArrowDown').concat(Array(count).fill('ArrowUp'));
+      const scrolls = [];
+      for (const key of keys.concat(keys)) {
+        await app.page.keyboard.press(key);
+        await app.page.waitForTimeout(150);
+        const after = await state();
+        const expected = (before.current + (key === 'ArrowDown' ? 1 : count - 1)) % count;
+        const where = section + ' ' + key + ' to row ' + expected + ': ' + JSON.stringify([before, after]);
+        assert.equal(after.current, expected, where);
+        assert.equal(after.visible[expected], true, where);
+        // The pane scrolls only to bring a row into view that wasn't fully in view, so it never drifts, and then only as
+        // far as that row needs: it ends right below the fade or at the bottom edge
+        if (before.visible[expected]) {
+          assert.equal(after.scroll, before.scroll, where);
+        } else {
+          assert.ok(Math.min(Math.abs(after.gaps[0]), Math.abs(after.gaps[1])) <= 1, where);
+        }
+        scrolls.push(after.scroll);
+        before = after;
+      }
+      // Both rounds scroll the same way and end at the top; the rows of Basic Settings need no scrolling at all
+      assert.deepEqual(scrolls.slice(keys.length), scrolls.slice(0, keys.length), section);
+      assert.equal(before.scroll, 0, section);
+      assert.equal(Math.max.apply(null, scrolls) > 0, section !== 'basicSettings', section + ': ' + JSON.stringify(scrolls));
+    }
+    const prevented = await app.page.evaluate(() => window.__prevented);
+    assert.equal(prevented.length, 2 * 2 * (6 + 4 + 5), JSON.stringify(prevented));
+    assert.ok(prevented.every((entry) => /:true$/.test(entry)), JSON.stringify(prevented));
+
+    // During a stream the arrow keys keep their own action, for the PC
+    await app.page.evaluate(() => {
+      window.__prevented = [];
+      isInGame = true;
+    });
+    await app.page.keyboard.press('ArrowDown');
+    await app.page.evaluate(() => {
+      isInGame = false;
+    });
+    assert.deepEqual(await app.page.evaluate(() => window.__prevented), ['ArrowDown:false']);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+
+  // In the text field of the Add Host dialog (the address as text instead of four numbers) the arrow keys move the caret
+  const dialog = await openApp(harness, { tv: TV, stored: { ipAddressFieldMode: false } });
+  try {
+    await dialog.page.evaluate(() => {
+      addHostDialog();
+      window.__prevented = [];
+      document.addEventListener('keydown', (event) => window.__prevented.push(event.key + ':' + event.defaultPrevented));
+    });
+    await dialog.page.waitForTimeout(300);
+    // OK on the text field makes it editable
+    await dialog.page.keyboard.press('Enter');
+    await dialog.page.waitForFunction(() => document.activeElement.id === 'ipAddressTextInput' && !document.activeElement.readOnly);
+    await dialog.page.keyboard.type('10.0.0.25');
+    await dialog.page.keyboard.press('ArrowLeft');
+    await dialog.page.keyboard.press('ArrowLeft');
+    assert.deepEqual(await dialog.page.evaluate(() => [document.activeElement.id, document.activeElement.selectionStart,
+      window.__prevented.filter((entry) => /^Arrow/.test(entry))]), ['ipAddressTextInput', 7, ['ArrowLeft:false', 'ArrowLeft:false']]);
+    assert.deepEqual(dialog.errors, []);
+  } finally {
+    await dialog.context.close();
   }
 });
 

@@ -5,7 +5,7 @@
 // for the host cards, the hero, the network chip and the update button, is a symbol of the sprite and no Material icon
 // is left; the icon of the Rescan network button turns while a scan runs; the hint of the app menu is one quiet line
 // in the header; the running app has one look (a mint ring and the mint Running badge with a play mark) and a hidden
-// app is dimmed with its Hidden badge; the Stream Menu lies on the live video as a nearly opaque panel with white focus,
+// app is dimmed with its Hidden badge; the Stream Menu lies on the live video as an opaque panel with white focus,
 // a group label, a separator and the On/Off value of its switches; the app menu marks the running app and shows Quit
 // as a destructive entry. Running is mint on the hosts screen as well; the host menu is a list like the app menu; the
 // octets of the Add Host dialog have the chevron and the white focus of the theme; the pairing PIN is large; the count
@@ -252,7 +252,7 @@ test('the running app has one look, a mint ring and the mint Running badge, and 
   }
 });
 
-test('the Stream Menu is a nearly opaque panel on the live video, with white focus, its group and its On/Off values', async () => {
+test('the Stream Menu is an opaque panel on the live video, with white focus, its group and its On/Off values', async () => {
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
   try {
     await app.page.evaluate(() => {
@@ -276,7 +276,8 @@ test('the Stream Menu is a nearly opaque panel on the live video, with white foc
         view: document.body.getAttribute('data-view'),
         pageBackdrop: getComputedStyle(document.body, '::before').display,
         scrim: css('streamMenuOverlay').backgroundColor,
-        panel: css('streamMenu').backgroundImage.indexOf('rgba(31, 38, 73, 0.97)') >= 0,
+        // The base of the panel is an opaque gradient (rgb() stops only, no rgba())
+        panel: /linear-gradient\(rgb\(31, 38, 73\) 0%, rgb\(20, 25, 50\) 100%\)$/.test(css('streamMenu').backgroundImage),
         blur: css('streamMenu').filter,
         focused: document.activeElement.id,
         focus: [css('streamMenuStats').backgroundColor, css('streamMenuStats').color],
@@ -294,6 +295,19 @@ test('the Stream Menu is a nearly opaque panel on the live video, with white foc
       values: [['streamMenuStatsValue', 'Off', true], ['streamMenuMouseValue', 'On', true]],
       onPill: true, group: ['uppercase', 'solid'], separator: 'solid', quit: 'rgb(255, 141, 161)',
     });
+    // Nothing of the video shows through the panel: a white and a black page behind it give the same pixels
+    const clip = await app.page.evaluate(() => {
+      const rect = document.getElementById('streamMenu').getBoundingClientRect();
+      return { x: Math.round(rect.left + 40), y: Math.round(rect.top + 40), width: Math.round(rect.width - 80), height: 40 };
+    });
+    const behind = async (colour) => {
+      await app.page.evaluate((value) => {
+        document.body.style.backgroundColor = value;
+      }, colour);
+      return pixels(app.page, clip);
+    };
+    const onWhite = await behind('#ffffff');
+    assert.deepEqual(await behind('#000000'), onWhite);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

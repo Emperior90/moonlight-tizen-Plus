@@ -403,4 +403,4 @@ A *New update* button with a download arrow appears in the header when a newer r
 
 **Settings.** The sections are colored tiles on the left, with a line on what each holds. Each option is a row with its title and control at the top and its help text below. The color of the open section marks its tile, the selected row and the switches that are on.
 
-**Start of a stream.** The box art of the app on the left, and its title, the PC and the progress of the connection on the right.
+**Start of a stream.** The box art of the app, and next to it its title, the PC and the progress of the connection, centred on the screen.

@@ -92,6 +92,30 @@ test('the arrow keys move in the menus', () => {
   assert.deepEqual(recorder.operations, ['up', 'down', 'left', 'right']);
 });
 
+test('the arrow keys keep the browser from scrolling, except in a text field and during a stream', () => {
+  const remote = loadRemoteController();
+  const ARROWS = ['KEY_UP', 'KEY_DOWN', 'KEY_LEFT', 'KEY_RIGHT'];
+  // The page and the controls that the menus move between (a switch is a check box, the bitrate a range slider)
+  [undefined, { tagName: 'DIV' }, { tagName: 'BUTTON', type: 'button' }, { tagName: 'INPUT', type: 'checkbox' },
+    { tagName: 'INPUT', type: 'range' }].forEach((target) => {
+    ARROWS.forEach((key) => assert.equal(remote.press(key, { target }), true, key + ' on ' + JSON.stringify(target)));
+  });
+  // A text field needs them for its caret, a drop-down list for its options
+  [{ tagName: 'INPUT', type: 'text' }, { tagName: 'INPUT', type: 'number' }, { tagName: 'TEXTAREA' }, { tagName: 'SELECT' },
+    { tagName: 'DIV', isContentEditable: true }].forEach((target) => {
+    ARROWS.forEach((key) => assert.equal(remote.press(key, { target }), false, key + ' in ' + JSON.stringify(target)));
+  });
+  // During a stream they keep their own action, for the PC
+  remote.platform.run('isInGame = true; wasmSessionStarted = true;');
+  ARROWS.forEach((key) => assert.equal(remote.press(key, { target: { tagName: 'DIV' } }), false, key + ' during a stream'));
+  // The menus move for every press
+  assert.equal(remote.recorder.operations.length, 4 * 11);
+  // The other keys keep their own action as before
+  remote.platform.run('isInGame = false; wasmSessionStarted = false;');
+  assert.equal(remote.press('KEY_RETURN', { target: { tagName: 'DIV' } }), false);
+  assert.equal(remote.press('KEY_CHANNEL_UP', { target: { tagName: 'DIV' } }), false);
+});
+
 test('both Enter keys accept and prevent the native click', () => {
   const { recorder, press } = loadRemoteController();
   assert.equal(press('KEY_ENTER'), true);

@@ -586,7 +586,6 @@ function showHosts() {
 
   // Hide the main header and content before showing a loading screen
   $('#main-header').children().hide();
-  $('#main-header').css({'backgroundColor': 'transparent', 'boxShadow': 'none'});
   $('#settings-list, #game-grid').hide();
 
   // Show a spinner while the host list loads
@@ -603,7 +602,6 @@ function showHosts() {
 
     // Show the main header after the loading screen is complete
     $('#main-header').children().show();
-    $('#main-header').css({'backgroundColor': '', 'boxShadow': ''});
 
     // Navigate to the Hosts view
     showHostsMode();
@@ -1971,7 +1969,6 @@ function showSettings() {
 
   // Hide the main header and content before showing a loading screen
   $('#main-header').children().hide();
-  $('#main-header').css({'backgroundColor': 'transparent', 'boxShadow': 'none'});
   $('#host-grid, #game-grid').hide();
 
   // Show a spinner while the setting list loads
@@ -1988,7 +1985,6 @@ function showSettings() {
 
     // Show the main header after the loading screen is complete
     $('#main-header').children().show();
-    $('#main-header').css({'backgroundColor': '', 'boxShadow': ''});
 
     // Show the settings list section
     $('#settings-list').removeClass('hide-container');
@@ -2901,7 +2897,6 @@ function showApps(host) {
 
     // Hide the main header before showing a loading screen
     $('#main-header').children().hide();
-    $('#main-header').css({'backgroundColor': 'transparent', 'boxShadow': 'none'});
     $('#host-grid, #settings-list').hide();
 
     // Show a spinner while the app list loads
@@ -2923,7 +2918,6 @@ function showApps(host) {
 
         // Show the main header after the loading screen is complete
         $('#main-header').children().show();
-        $('#main-header').css({'backgroundColor': '', 'boxShadow': ''});
 
         // Show the game grid section
         $('#game-grid').show();
@@ -3171,7 +3165,6 @@ function showApps(host) {
 
         // Show the main header after the loading screen is complete
         $('#main-header').children().show();
-        $('#main-header').css({'backgroundColor': '', 'boxShadow': ''});
 
         console.error('%c[index.js, showApps]', 'color: green;', 'Error: Failed to get app list from ' + host.hostname + '. Host object: ', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
         var errorAppListImg = new Image();

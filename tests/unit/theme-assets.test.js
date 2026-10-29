@@ -77,7 +77,8 @@ test('the stylesheets animate only transform and opacity, without blur or will-c
           file + ' has a transition of ' + property + ': ' + decl.value);
       });
     });
-    assert.equal(decls.some((decl) => decl.property === 'will-change'), false, file + ' uses will-change');
+    // will-change only as 'auto', which turns off the layer that Material Design Lite asks for on its switches
+    assert.deepEqual(decls.filter((decl) => decl.property === 'will-change' && decl.value !== 'auto'), [], file + ' uses will-change');
     assert.equal(/filter\s*:[^;]*blur\(/.test(css), false, file + ' uses a blur filter');
     // The keyframes change transform and opacity only
     const keyframes = css.match(/@keyframes\s+[-\w]+\s*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g) || [];
@@ -99,10 +100,10 @@ test('the only running animations are the loading bars and the icon of a running
       infinite.push(match[1].trim());
     }
   }
-  assert.deepEqual(infinite, ['#wasmSpinner > .bar1, #loadingSpinner > .bar1', '#rescanNetworkBtn.is-scanning .navigation-button-icons']);
+  assert.deepEqual(infinite, ['#wasmSpinner > .bar1, .launch-bar::after', '#rescanNetworkBtn.is-scanning .navigation-button-icons']);
   // Both stop for the users who ask for less motion
   const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
-  assert.match(reduced, /#wasmSpinner > \.bar1, #loadingSpinner > \.bar1 \{\s*animation: none;/);
+  assert.match(reduced, /#wasmSpinner > \.bar1, \.launch-bar::after \{\s*animation: none;/);
   assert.match(reduced, /#rescanNetworkBtn\.is-scanning \.navigation-button-icons \{\s*animation: none;/);
 });
 

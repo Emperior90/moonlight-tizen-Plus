@@ -253,7 +253,7 @@ test('box art shows uncropped: portrait covers as a poster and landscape art as 
       const poster = document.getElementById('launch-poster');
       const rect = poster.getBoundingClientRect();
       const box = (element) => element.getBoundingClientRect();
-      const bar = box(document.querySelector('#loadingSpinner > .bar3'));
+      const bar = box(document.querySelector('.launch-bar'));
       const message = box(document.getElementById('loadingSpinnerMessage'));
       const info = box(document.querySelector('.launch-info'));
       const result = {
@@ -268,16 +268,29 @@ test('box art shows uncropped: portrait covers as a poster and landscape art as 
         textRightOfPoster: info.left >= rect.right && bar.left >= rect.right && message.left >= rect.right,
         barBelowText: bar.top >= info.bottom && message.top >= bar.bottom,
         aligned: bar.left === info.left && message.left === info.left,
+        // The poster and the column of text, bar and message are centred together on the screen
+        centred: Math.abs((rect.left + Math.max(info.right, bar.right, message.right)) / 2 - window.innerWidth / 2) <= 1,
         canvases: document.querySelectorAll('canvas').length,
       };
       document.getElementById('loadingSpinner').style.display = 'none';
       return result;
     }, { appId: id, name: title });
     const common = { source: true, overline: 'Starting', overlineShownAs: 'uppercase', host: 'GAMING-PC', textRightOfPoster: true,
-      barBelowText: true, aligned: true, canvases: 0 };
+      barBelowText: true, aligned: true, centred: true, canvases: 0 };
     assert.deepEqual(await start(21, 'A Steam Cover'), Object.assign({ wide: false, ratio: 0.67, art: 0.67, title: 'A Steam Cover' }, common));
     assert.deepEqual(await start(23, 'C Landscape Banner'), Object.assign({ wide: true, ratio: 2.14, art: 2.14, title: 'C Landscape Banner' },
       common));
+    // A title too long for one line takes two, in the widest column
+    const long = 'B Sunshine Cover, the Game of the Year Edition with Every Expansion';
+    assert.deepEqual(await start(22, long), Object.assign({ wide: false, ratio: 0.75, art: 0.75, title: long }, common));
+    assert.deepEqual(await app.page.evaluate(() => {
+      document.getElementById('loadingSpinner').style.display = 'inline-block';
+      const title = document.getElementById('launch-title');
+      const result = [Math.round(title.getBoundingClientRect().width), Math.round(title.getBoundingClientRect().height /
+        parseFloat(getComputedStyle(title).lineHeight))];
+      document.getElementById('loadingSpinner').style.display = 'none';
+      return result;
+    }), [720, 2]);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
@@ -414,6 +427,39 @@ test('the hero offers UP for the options of a host only in the first row of card
   }
 });
 
+test('the hero of a PC that runs a game says what OK does: it opens the PC, where the game is resumed or quit', async () => {
+  const app = await openApp(harness, { tv: TV });
+  try {
+    await installHosts(app.page);
+    // GAMING-PC runs a game; the focus moves from the Add Host card to it
+    await press(app.page, 'ArrowRight');
+    const read = () => app.page.evaluate(() => ({
+      title: document.getElementById('hero-title').textContent,
+      text: document.getElementById('hero-text').textContent,
+      ok: document.querySelector('#hero-hints .hint').textContent,
+    }));
+    assert.deepEqual(await read(), { title: 'GAMING-PC', text: 'A game is running on this PC. Open it to resume or quit the game.',
+      ok: 'OKOpen' });
+    await app.page.evaluate(() => i18n.setLanguage('pt-BR'));
+    await app.page.waitForTimeout(400);
+    await press(app.page, 'ArrowRight');
+    await press(app.page, 'ArrowLeft');
+    assert.deepEqual(await read(), { title: 'GAMING-PC', text: 'Um jogo está em execução neste PC. Abra-o para retomar ou encerrar.',
+      ok: 'OKAbrir' });
+    // OK opens the PC (its app list), it doesn't resume the game by itself
+    await app.page.evaluate(() => {
+      window.__opened = [];
+      hostChosen = (host) => window.__opened.push(host.hostname);
+      startGame = () => window.__opened.push('startGame');
+    });
+    await press(app.page, 'Enter');
+    assert.deepEqual(await app.page.evaluate(() => window.__opened), ['GAMING-PC']);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
 test('the ambient light follows the box art only once the focus rests, and covers only the right part of the screen', async () => {
   const app = await openAppList();
   try {
@@ -449,6 +495,46 @@ test('the ambient light follows the box art only once the focus rests, and cover
       return [Math.round(rect.left), Math.round(rect.right)];
     });
     assert.deepEqual(box, [768, 1920]);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('the chips of the header stay readable over the ambient light of the brightest box art', async () => {
+  // A white and yellow cover: the brightest light the hero can paint behind the header
+  const app = await openAppList(0, [{ id: 41, title: 'A Bright Cover', art: cover(600, 800, '#ffffff', '#ffd400') }]);
+  try {
+    await focusApp(app.page, 'A Bright Cover');
+    await app.page.waitForFunction(() => getComputedStyle(document.getElementById('hero-ambient')).opacity === '1', null, { timeout: 3000 });
+    // The boxes of the text and icon of each chip, and their text colour
+    const chips = await app.page.evaluate(() => ['header-profile', 'header-status'].map((id) => {
+      const range = document.createRange();
+      range.selectNodeContents(document.getElementById(id));
+      const rect = range.getBoundingClientRect();
+      return { id, colour: getComputedStyle(document.getElementById(id)).color.match(/\d+/g).slice(0, 3).map(Number),
+        clip: { x: Math.round(rect.left), y: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) } };
+    }));
+    assert.ok(chips.every((chip) => chip.clip.width > 40 && chip.clip.x > 768), JSON.stringify(chips));
+    // What lies behind the text: the chips without their text and icons
+    await app.page.addStyleTag({ content: '.header-status, .header-status * { color: transparent !important; }' });
+    await app.page.waitForTimeout(100);
+    // Relative luminance and contrast ratio of WCAG 2
+    const luminance = (colour) => {
+      const linear = colour.map((value) => {
+        const c = value / 255;
+        return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+      });
+      return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+    };
+    for (const chip of chips) {
+      const text = luminance(chip.colour);
+      const worst = Math.min.apply(null, (await pixels(app.page, chip.clip)).map((colour) => {
+        const back = luminance(colour);
+        return (Math.max(text, back) + 0.05) / (Math.min(text, back) + 0.05);
+      }));
+      assert.ok(worst >= 4.5, chip.id + ': ' + worst.toFixed(2) + ':1');
+    }
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

@@ -215,7 +215,7 @@ const Launcher = (function() {
     const state = hostState(host);
     const texts = {
       online: t('Ready to stream. Select it to see its apps and games.'),
-      running: t('A game is running on this PC. Select it to resume.'),
+      running: t('A game is running on this PC. Open it to resume or quit the game.'),
       locked: t('Select it to pair this TV with the PC using a PIN.'),
       offline: t('This PC is not reachable. Turn it on, or wake it from its options.'),
       unknown: '',
@@ -341,18 +341,25 @@ const Launcher = (function() {
     updateFade();
   }
 
-  // Light up the settings row of the focused control
+  // Light up the settings row of the focused control, and scroll the whole row into view below the fade at the top of
+  // the pane (32 px, style.css)
   function showSettingsRow(element) {
     const row = element.closest('.setting-option');
-    if (row === currentRow) {
-      return;
+    if (row !== currentRow) {
+      if (currentRow) {
+        currentRow.classList.remove('is-current');
+      }
+      currentRow = row;
+      if (row) {
+        row.classList.add('is-current');
+      }
     }
-    if (currentRow) {
-      currentRow.classList.remove('is-current');
-    }
-    currentRow = row;
-    if (row) {
-      row.classList.add('is-current');
+    const box = row && row.getBoundingClientRect();
+    if (box && box.height) {
+      const pane = byId('settings-right-pane');
+      const view = pane.getBoundingClientRect();
+      const above = box.top - view.top - 32;
+      pane.scrollTop += above < 0 ? Math.floor(above) : Math.max(0, Math.ceil(box.bottom - view.bottom));
     }
   }
 
