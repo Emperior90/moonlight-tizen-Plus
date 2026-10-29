@@ -34,6 +34,13 @@ try {
 // Port of the local box art server. The regular Moonlight app uses 8888, so this build, which can be installed next to
 // it, uses its own port (SMART_HUB_PREVIEW_PORT in wasm/platform/index.js)
 var PREVIEW_PORT = 8889;
+// The only routes the box art server answers: a plain preview file name, which the app builds from
+// SMART_HUB_PREVIEW_FILE_PREFIX of wasm/static/js/utils.js and the numeric app ID (e.g. '/preview-881448767.jpg' for
+// the prefix of the regular Moonlight app). The server listens on every network interface of the TV, so any other route
+// (a '..' segment, a further slash, a percent-encoded character, an absolute path or another extension) gets a 404
+// without touching the file system, and a file path is only ever built from the file name this pattern captures. Same
+// pattern as in the fork of fidoboy (github.com/fidoboy/moonlight-tizen-ac3)
+var PREVIEW_ROUTE_PATTERN = /^\/(preview-[A-Za-z0-9_-]+\.jpg)$/;
 var tvIp = '127.0.0.1';
 var localServer = null;
 var routeMap = {};
@@ -94,15 +101,20 @@ function startLocalServer() {
   localServer = http.createServer(function (req, res) {
     var route = require('url').parse(req.url).pathname; // Strip query string for cache-busting
     logAndSend('Local HTTP server received request for: ' + route);
+    var routeMatch = PREVIEW_ROUTE_PATTERN.exec(route || '');
+    if (!routeMatch) {
+      logAndSend('Rejected a request for a route that is not a preview file name: ' + route);
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    var fileName = routeMatch[1];
     if (routeMap[route]) {
       var imagePath = routeMap[route];
       try {
         var binaryData = fs.readFileSync(imagePath);
-        var contentType = route.toLowerCase().endsWith('.jpg')
-          ? 'image/jpeg'
-          : 'image/png';
         res.writeHead(200, {
-          'Content-Type': contentType,
+          'Content-Type': 'image/jpeg',
           'Content-Length': binaryData.length
         });
         res.end(binaryData);
@@ -113,32 +125,31 @@ function startLocalServer() {
         res.end();
       }
     } else {
-      // Fallback for TV reboots when memory routeMap is empty
-      if (route && route.startsWith('/preview-') && route.endsWith('.jpg')) {
-        logAndSend('Attempting fallback disk resolution for: ' + route);
-        var fallbackPaths = [
-          '/opt/usr/home/owner/content/Documents' + route,
-          '/home/owner/content/Documents' + route
-        ];
-        
-        for (var i = 0; i < fallbackPaths.length; i++) {
-          try {
-            var fallbackData = fs.readFileSync(fallbackPaths[i]);
-            var fallbackContentType = 'image/jpeg';
-            res.writeHead(200, {
-              'Content-Type': fallbackContentType,
-              'Content-Length': fallbackData.length
-            });
-            res.end(fallbackData);
-            logAndSend('Successfully served fallback binary image from ' + fallbackPaths[i]);
-            return; // Exit on success
-          } catch (fallbackErr) {
-            // Ignore error and try the next path
-            logAndSend('Fallback path not found or error reading: ' + fallbackErr.message);
-          }
+      // Fallback for TV reboots when memory routeMap is empty. The path is built from the checked file name only,
+      // never from the request path
+      logAndSend('Attempting fallback disk resolution for: ' + fileName);
+      var fallbackPaths = [
+        '/opt/usr/home/owner/content/Documents/' + fileName,
+        '/home/owner/content/Documents/' + fileName
+      ];
+
+      for (var i = 0; i < fallbackPaths.length; i++) {
+        try {
+          var fallbackData = fs.readFileSync(fallbackPaths[i]);
+          var fallbackContentType = 'image/jpeg';
+          res.writeHead(200, {
+            'Content-Type': fallbackContentType,
+            'Content-Length': fallbackData.length
+          });
+          res.end(fallbackData);
+          logAndSend('Successfully served fallback binary image from ' + fallbackPaths[i]);
+          return; // Exit on success
+        } catch (fallbackErr) {
+          // Ignore error and try the next path
+          logAndSend('Fallback path not found or error reading: ' + fallbackErr.message);
         }
       }
-      
+
       logAndSend('Route not found in routeMap or fallbacks for: ' + route);
       res.writeHead(404);
       res.end();
@@ -224,8 +235,13 @@ function handleDataInRequest() {
                 if (tile.image_url && tile.txtPath) {
                   var parsedUrl = require('url').parse(tile.image_url);
                   var route = parsedUrl.pathname;
-                  routeMap[route] = tile.txtPath;
-                  logAndSend('Mapped route ' + route + ' to ' + tile.txtPath);
+                  // Map only the routes the server answers (PREVIEW_ROUTE_PATTERN)
+                  if (PREVIEW_ROUTE_PATTERN.test(route || '')) {
+                    routeMap[route] = tile.txtPath;
+                    logAndSend('Mapped route ' + route + ' to ' + tile.txtPath);
+                  } else {
+                    logAndSend('Ignored the image route ' + route + ', which is not a preview file name');
+                  }
                   
                   // Fallback to Samsung webapis to get the real IP
                   if (tvIp === '127.0.0.1') {

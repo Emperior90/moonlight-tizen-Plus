@@ -3,6 +3,11 @@
 // which the box art server of the service expects)
 var SMART_HUB_PREVIEW_FILE_PREFIX = 'preview-s90c-';
 
+// The error with which NvHTTP.quitApp() fails when the host still runs the app after /cancel. A host may answer /cancel
+// with success and keep running an app that another client started (GeForce Experience does), which Moonlight for PC
+// reports as error 599 as well
+var QUIT_APP_STILL_RUNNING_ERROR = 599;
+
 // Safely wraps IPv6 addresses in brackets for URL construction.
 // IPv4 addresses and DNS hostnames do not contain colons, so they are untouched.
 function formatAddressForUrl(address) {
@@ -32,9 +37,12 @@ function isRandomMacAddress(macAddress) {
   return (firstOctet & 0x02) !== 0;
 }
 
+// The random IDs and the pairing PIN come from the cryptographic random generator of the browser (cryptoRand()) instead
+// of Math.random(), whose output can be predicted from earlier values. A unique ID that an install already stored stays
+// as it is (loadHTTPCertsCb() in wasm/platform/index.js only creates one when none is stored)
 function guuid() {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    var r = Math.random() * 16 | 0,
+    var r = cryptoRand(16),
       v = c == 'x' ? r : (r & 0x3 | 0x8);
     return v.toString(16);
   });
@@ -42,9 +50,14 @@ function guuid() {
 
 function uniqueid() {
   return 'xxxxxxxxxxxxxxxx'.replace(/[x]/g, function(c) {
-    var r = Math.random() * 16 | 0;
+    var r = cryptoRand(16);
     return r.toString(16);
   });
+}
+
+// The 4-digit PIN that the user enters on the host while pairing, with leading zeros (0000 to 9999)
+function generatePairingPin() {
+  return String('0000' + cryptoRand(10000)).slice(-4);
 }
 
 function generateRemoteInputKey() {
@@ -987,12 +1000,21 @@ NvHTTP.prototype = {
     ]);
   },
 
+  // Quit the running app. A host may answer /cancel with success without quitting an app that another client started,
+  // so the server info is refreshed once /cancel completed, and the quit fails with QUIT_APP_STILL_RUNNING_ERROR while
+  // the host still reports a running app. It also fails when /cancel or the refresh fails.
   quitApp: function() {
-    // Refresh server info after quitting because it may silently fail if the session belongs to a different client
     return sendMessage('openUrl', [
       this._baseUrlHttps + '/cancel?' + this._buildUidStr(), this.ppkstr, false
-    ]).then(this.refreshServerInfo());
-    // TODO: We should probably bubble this up to our caller.
+    ]).then(function() {
+      return this.refreshServerInfo();
+    }.bind(this)).then(function() {
+      if (this.currentGame != 0) {
+        console.warn('%c[utils.js, quitApp]', 'color: gray;', 'Warning: ' + this.hostname + ' still runs the app ' + this.currentGame + ' after quitting it!');
+        return Promise.reject(QUIT_APP_STILL_RUNNING_ERROR);
+      }
+      return true;
+    }.bind(this));
   },
 
   updateExternalAddressIP4: function() {

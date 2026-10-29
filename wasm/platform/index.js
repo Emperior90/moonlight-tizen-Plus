@@ -25,6 +25,7 @@ var api; // The `api` should only be set if we're in a host-specific screen, on 
 var isInGame = false; // Flag indicating whether the game has started, initial value is false
 var streamLaunchId = 0; // Number of the latest stream launch, which replies of an older or cancelled launch are ignored by, initial value is 0
 var streamLaunchHost = null; // Host of the latest stream launch, initial value is null
+var streamLaunchAppTitle = ''; // Title of the app of the latest stream launch, which the Stream Menu shows, initial value is empty
 var wasmSessionStarted = false; // Flag indicating whether the start request of the current stream reached the WASM module, initial value is false
 var isDialogOpen = false; // Flag indicating whether the dialog is open, initial value is false
 var isPairingInProgress = false; // Flag indicating whether a pairing process is in progress, initial value is false
@@ -105,6 +106,7 @@ function attachListeners() {
 
   $('#addHostContainer').on('click', addHostDialog);
   $('#optimalSettingsBtn').on('click', optimalSettingsDialog);
+  $('#rescanNetworkBtn').on('click', rescanNetwork);
   $('#settingsBtn').on('click', showSettings);
   $('#supportBtn').on('click', appSupportDialog);
   $('#goBackBtn').on('click', showHosts);
@@ -148,6 +150,7 @@ function attachListeners() {
   $('#navigationGuideBtn').on('click', navigationGuideDialog);
   $('#checkUpdatesBtn').on('click', checkForAppUpdates);
   $('#restartAppBtn').on('click', restartAppDialog);
+  attachOverlayMenuListeners();
 
   const registerMenu = (elementId, view) => {
     $(`#${elementId}`).on('click', () => {
@@ -458,6 +461,43 @@ function stopPollingHosts() {
   }
 }
 
+// Whether a scan of the local network that the Rescan network button started is running
+var isNetworkRescanRunning = false;
+
+// Scan the local network for hosts again (the subnet scan of static/js/mdns-browser/main.js, which stands in for mDNS
+// discovery on Tizen), e.g. for a PC that came online after the app started or got a new IP address. As at startup, the
+// background polling of the known hosts pauses while the scan runs, since both together can exhaust the network stack
+// of the TV, and resumes afterwards while the hosts are shown. Returns a promise that resolves once the scan is done.
+function rescanNetwork() {
+  if (isNetworkRescanRunning) {
+    snackbarLog('The local network is already being scanned.');
+    return Promise.resolve();
+  }
+  if (isInGame || typeof startSubnetScanner !== 'function') {
+    return Promise.resolve();
+  }
+  isNetworkRescanRunning = true;
+  console.log('%c[index.js, rescanNetwork]', 'color: green;', 'Rescanning the local network for hosts...');
+  $('#rescanNetworkBtn').addClass('is-scanning');
+  snackbarLog('Scanning the local network to discover new hosts...');
+  stopPollingHosts();
+  return Promise.resolve().then(function() {
+    return startSubnetScanner();
+  }).catch(function(error) {
+    console.warn('%c[index.js, rescanNetwork]', 'color: green;', 'Warning: The scan of the local network failed: ', error);
+  }).then(function() {
+    isNetworkRescanRunning = false;
+    isSubnetScanFinished = true;
+    $('#rescanNetworkBtn').removeClass('is-scanning');
+    console.log('%c[index.js, rescanNetwork]', 'color: green;', 'Finished rescanning the local network.');
+    // The polling of the hosts runs only while they are shown; opening a host or the settings stopped the scan already
+    if (!isInGame && $('#host-grid').is(':visible')) {
+      snackbarLog('Finished scanning the local network.');
+      startPollingHosts();
+    }
+  });
+}
+
 function snackbarLog(...args) {
   const translatedMessage = t(...args);
   console.log('%c[index.js, snackbarLog]', 'color: green;', ...args);
@@ -484,8 +524,10 @@ function showHostsMode() {
   $('#header-title').html(t('Hosts'));
   $('#header-logo').show();
   $('#main-header').show();
+  $('#appMenuHint').hide();
   $('.nav-menu-parent').show();
   $('#updateAppBtn').show();
+  $('#rescanNetworkBtn').show();
   $('#settingsBtn').show();
   $('#supportBtn').show();
   $('#main-content').children().not('#listener, #loadingSpinner, #wasmSpinner').show();
@@ -1171,7 +1213,7 @@ function pairingDialog(nvhttpHost, onSuccess, onFailure) {
     // Find the existing overlay and dialog elements
     var pairingOverlay = document.querySelector('#pairingDialogOverlay');
     var pairingDialog = document.querySelector('#pairingDialog');
-    var randomNumber = String('0000' + (Math.random() * 10000 | 0)).slice(-4);
+    var randomNumber = generatePairingPin();
 
     // Rollback to 'Cancel' button text when opening
     $('#cancelPairing').text('Cancel');
@@ -1671,6 +1713,8 @@ function deleteHostDialog(host) {
     delete _previewApps[host.serverUid];
     savePreviewApps();
     updatePreviewData();
+    // Forget the apps that were hidden for the host
+    forgetHiddenApps(host.serverUid);
     // If host removed, show snackbar message
     snackbarLog('%1$s has been deleted successfully.', host.hostname);
     deleteHostOverlay.style.display = 'none';
@@ -1729,6 +1773,8 @@ function deleteAllHostsDialog() {
           $('#host-container-' + host.serverUid).remove();
           // Remove the host from the hosts object
           delete hosts[host.serverUid];
+          // Forget the apps that were hidden for the host
+          forgetHiddenApps(host.serverUid);
           // Save the updated hosts (empty hosts object)
           saveHosts();
         }
@@ -1863,6 +1909,7 @@ function showSettingsMode() {
   $('#header-title').html(t('Settings'));
   $('#header-logo').show();
   $('#main-header').show();
+  $('#appMenuHint').hide();
   $('#goBackBtn').show();
   $('#restoreDefaultsBtn').show();
   $('#main-content').children().not('#listener, #loadingSpinner, #wasmSpinner').show();
@@ -1870,6 +1917,7 @@ function showSettingsMode() {
   $('#game-grid').hide();
   $('.nav-menu-parent').hide();
   $('#updateAppBtn').hide();
+  $('#rescanNetworkBtn').hide();
   $('#settingsBtn').hide();
   $('#supportBtn').hide();
   $('#quitRunningAppBtn').hide();
@@ -2724,12 +2772,12 @@ function stylizeBoxArts(freshApi, appsList) {
       console.warn('%c[index.js, stylizeBoxArts]', 'color: green;', 'Warning: No box art found for appId: ' + app.id);
       return;
     }
-    // If the game is currently running, then apply CSS stylization
+    // If the game is currently running, then apply CSS stylization and the Running badge (menus.js)
     if (freshApi.currentGame === app.id) {
-      appBox.classList.add('current-game-active');
+      setAppTileBadge(appBox, 'running', true);
       appBox.title = app.title + t(' (Running)');
     } else {
-      appBox.classList.remove('current-game-active');
+      setAppTileBadge(appBox, 'running', false);
       appBox.title = app.title;
     }
   });
@@ -2762,11 +2810,14 @@ function showAppsMode() {
   $('#main-header').show();
   $('#goBackBtn').show();
   $('#quitRunningAppBtn').show();
+  // Tell how to open the menu of an app (menus.js)
+  $('#appMenuHint').show();
   $('#main-content').children().not('#listener, #loadingSpinner, #wasmSpinner').show();
   $('#host-grid').hide();
   $('#settings-list').hide();
   $('.nav-menu-parent').hide();
   $('#updateAppBtn').hide();
+  $('#rescanNetworkBtn').hide();
   $('#settingsBtn').hide();
   $('#supportBtn').hide();
   $('#restoreDefaultsBtn').hide();
@@ -2885,7 +2936,15 @@ function showApps(host) {
         // Reset preview promises for this showApps invocation
         window.previewPromises = [];
 
-        sortedAppList.forEach(function(app) {
+        // Leave out the apps that the user hid with the app menu, unless they show after 'Show hidden apps' (menus.js)
+        var hiddenApps = loadHiddenApps(host.serverUid);
+        var gridApps = selectGridApps(sortedAppList, hiddenApps, showHiddenAppsHost === host.serverUid, host.currentGame);
+        appGridHiddenCount = sortedAppList.filter(function(app) {
+          return isAppHidden(hiddenApps, app);
+        }).length;
+
+        gridApps.forEach(function(gridApp) {
+          var app = gridApp.app;
           // Double clicking the button will cause multiple box arts to appear.
           // To mitigate this, we ensure that we don't add a duplicate box art.
           // This isn't perfect: there's lots of RTTs before the logic prevents anything.
@@ -2896,8 +2955,13 @@ function showApps(host) {
               class: 'game-container mdl-card mdl-shadow--4dp',
               role: 'link',
               tabindex: 0,
-              'aria-label': app.title
+              'aria-label': app.title,
+              'data-app-id': app.id
             });
+            // Dim a hidden app that shows after 'Show hidden apps'
+            if (gridApp.hidden) {
+              setAppTileBadge(gameContainer[0], 'hidden', true);
+            }
 
             // Create the game cell to serve as a holder for the game box
             var gameCell = $('<div>', {
@@ -3011,7 +3075,9 @@ function showApps(host) {
         });
 
         // Check all game containers for the current running app and apply CSS styling accordingly
-        stylizeBoxArts(host, sortedAppList);
+        stylizeBoxArts(host, gridApps.map(function(gridApp) {
+          return gridApp.app;
+        }));
 
         var settledPromises = boxArtPromises.map(function(p) {
           return p.catch(function(e) {
@@ -3029,6 +3095,10 @@ function showApps(host) {
               break;
             }
           }
+        }
+        // Keep the selection on a tile, e.g. when the app that was selected is hidden now
+        if (window.Views && Views.Apps && Views.Apps.view && Views.Apps.view.index >= Views.Apps.view.func().length) {
+          Views.Apps.view.index = Math.max(0, Views.Apps.view.func().length - 1);
         }
 
         // Navigate to the Apps view
@@ -3194,8 +3264,12 @@ function startGame(host, appID) {
   // started (see cancelStreamLaunch)
   var launchId = ++streamLaunchId;
   streamLaunchHost = host;
+  streamLaunchAppTitle = '';
   wasmSessionStarted = false;
   isStreamConnected = false;
+  // The Stream Menu state of an earlier stream doesn't belong to this one (menus.js)
+  streamMouseEmulationActive = false;
+  quitAppAfterStream = false;
   isStreamVideoTrackClosed = false;
   streamVideoTrackCloseReason = -1;
   streamHiddenCount = 0;
@@ -3245,15 +3319,18 @@ function startGame(host, appID) {
           $('#continueQuitApp').off('click');
           $('#continueQuitApp').on('click', function() {
             console.log('%c[index.js, startGame]', 'color: green;', 'Quitting game, closing app dialog, and returning.');
-            stopGame(host, function() {
+            stopGame(host, function(quitSucceeded) {
               setTimeout(() => {
                 // Scroll to the current game row
                 Navigation.switch();
                 // Switch to Apps view
                 Navigation.change(Views.Apps);
               }, 1500);
-              // Please, don't infinite loop with recursion
-              setTimeout(() => startGame(host, appID), 3000);
+              // Start the new app only once the host quit the running one, which would otherwise ask again
+              if (quitSucceeded) {
+                // Please, don't infinite loop with recursion
+                setTimeout(() => startGame(host, appID), 3000);
+              }
             });
             quitAppOverlay.style.display = 'none';
             quitAppDialog.close();
@@ -3334,6 +3411,7 @@ function startGame(host, appID) {
 
       // Shows a loading message to launch the application and start stream mode
       $('#loadingSpinnerMessage').text(t('Starting %1$s...', appToStart.title));
+      streamLaunchAppTitle = appToStart.title;
       showStreamMode();
 
       // Check if user wants to resume the already-running app
@@ -3376,7 +3454,9 @@ function startGame(host, appID) {
               return;
             }
             wasmSessionStarted = true;
-            // A video format that the TV rejected during an earlier stream doesn't belong to this one (messages.js)
+            // A video format that the TV rejected and the ports named for the termination of an earlier stream don't
+            // belong to this one (messages.js)
+            terminationBlockedPorts = '';
             rejectedVideoTrack = null;
             sendMessage('startRequest', [
               host.address, host.httpPort, streamWidth, streamHeight, frameRate, bitrate.toString(), rikey, rikeyid.toString(),
@@ -3446,7 +3526,9 @@ function startGame(host, appID) {
             return;
           }
           wasmSessionStarted = true;
-          // A video format that the TV rejected during an earlier stream doesn't belong to this one (messages.js)
+          // A video format that the TV rejected and the ports named for the termination of an earlier stream don't
+          // belong to this one (messages.js)
+          terminationBlockedPorts = '';
           rejectedVideoTrack = null;
           sendMessage('startRequest', [
             host.address, host.httpPort, streamWidth, streamHeight, frameRate, bitrate.toString(), rikey, rikeyid.toString(),
@@ -3512,7 +3594,8 @@ function refreshCodecModesBeforeStream(host) {
   });
 }
 
-// Stop the running app title, refresh the server info, and then return to Apps grid
+// Stop the running app title, refresh the server info, and then return to Apps grid. The callback gets whether the
+// host quit the app
 function stopGame(host, callbackFunction) {
   isInGame = false;
 
@@ -3520,32 +3603,47 @@ function stopGame(host, callbackFunction) {
     return;
   }
 
+  // Show the app list once the quit is over, also when it couldn't start (the quit after a stream that the Stream Menu
+  // ended waits for it on the loading screen), and pass to the callback whether the app is quit
+  var showAppsAfterQuit = function(quitSucceeded) {
+    showApps(host).finally(() => {
+      if (typeof(callbackFunction) === "function") callbackFunction(quitSucceeded);
+    });
+  };
+
   host.refreshServerInfo().then(function(ret) {
     host.getAppById(host.currentGame).then(function(runningApp) {
       if (!runningApp) {
         snackbarLog('No app is currently running.');
+        showAppsAfterQuit(true);
         return;
       }
       var appTitle = runningApp.title;
       snackbarLog('Quitting %1$s...', appTitle);
+      // quitApp() refreshes the server info once the host answered and fails while the host still runs the app
       host.quitApp().then(function(ret2) {
         snackbarLog('Successfully quit %1$s', appTitle);
-        host.refreshServerInfo().then(function(ret3) {
-          // Refresh to show no app is currently running
-          showApps(host).finally(() => {
-            if (typeof(callbackFunction) === "function") callbackFunction();
-          });
-        }, function(failedRefreshInfo2) {
-          console.error('%c[index.js, stopGame]', 'color: green;', 'Error: Failed to refresh server info! Returned error was: ' + failedRefreshInfo2 + '! Failed server was: ' + '\n', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
-        });
+        // Refresh to show no app is currently running
+        showAppsAfterQuit(true);
       }, function(failedQuitApp) {
         console.error('%c[index.js, stopGame]', 'color: green;', 'Error: Failed to quit app! Returned error was: ' + failedQuitApp + '!');
+        if (failedQuitApp === QUIT_APP_STILL_RUNNING_ERROR) {
+          snackbarLogLong('%1$s is still running on %2$s, probably because another device started it. Quit it on that device or on the PC.', appTitle, host.hostname);
+        } else {
+          snackbarLogLong('Unable to quit %1$s. Check the connection to %2$s and try again.', appTitle, host.hostname);
+        }
+        // Refresh to show the app that still runs
+        showAppsAfterQuit(false);
       });
     }, function(failedGetApp) {
       console.error('%c[index.js, stopGame]', 'color: green;', 'Error: Failed to get app ID! Returned error was: ' + failedGetApp + '!');
+      snackbarLogLong('Unable to quit the app. Check the connection to %1$s and try again.', host.hostname);
+      showAppsAfterQuit(false);
     });
   }, function(failedRefreshInfo) {
     console.error('%c[index.js, stopGame]', 'color: green;', 'Error: Failed to refresh server info! Returned error was: ' + failedRefreshInfo + '!');
+    snackbarLogLong('Unable to quit the app. Check the connection to %1$s and try again.', host.hostname);
+    showAppsAfterQuit(false);
   });
 }
 
@@ -4920,6 +5018,17 @@ function initSamsungKeys() {
 
   console.log('%c[index.js, initSamsungKeys]', 'color: green;', 'Initializing TV platform...');
   platformOnLoad(handler);
+
+  // Register the media keys one by one: Play/Pause (or Play and Pause) opens the Stream Menu during a stream and the menu
+  // of a host or app otherwise (remote_controller.js). A TV that refuses one of them, e.g. for a remote without it, must
+  // not stop the others, so RED, YELLOW and the gamepad combo stay the fallback.
+  ['MediaPlayPause', 'MediaPlay', 'MediaPause'].forEach(function(keyName) {
+    try {
+      tizen.tvinputdevice.registerKey(keyName);
+    } catch (error) {
+      console.warn('%c[index.js, initSamsungKeys]', 'color: green;', 'Warning: Failed to register the key ' + keyName + ': ' + error);
+    }
+  });
 }
 
 function initSpecialKeys() {
@@ -4927,6 +5036,32 @@ function initSpecialKeys() {
 
   // Find the video element that displays the streaming session
   var videoElement = document.getElementById('wasm_module');
+
+  // During a stream, keep the keys that open the Stream Menu, and every key while it is open, away from the PC: this
+  // listener runs before the keyboard handler of the stream on the video element, which sends the keys to the PC while
+  // the pointer is locked. The key handler of the remote gets them instead (menus.js, remote_controller.js). The release
+  // of a key that closed the menu, e.g. RETURN or OK on Resume, stays away from the PC as well.
+  var streamMenuKeyCode = null;
+  ['keydown', 'keyup'].forEach(function(eventType) {
+    window.addEventListener(eventType, function(e) {
+      if (isInGame !== true) {
+        streamMenuKeyCode = null;
+        return;
+      }
+      var isReleaseOfMenuKey = e.type === 'keyup' && e.keyCode === streamMenuKeyCode;
+      if (!(isStreamMenuOpen || isMenuKeyEvent(e) || isReleaseOfMenuKey)) {
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.type === 'keydown') {
+        streamMenuKeyCode = e.keyCode;
+        remoteControllerHandler(e);
+      } else if (isReleaseOfMenuKey) {
+        streamMenuKeyCode = null;
+      }
+    }, true);
+  });
 
   // Listen for keydown events on the video element
   videoElement.addEventListener('keydown', function(e) {
@@ -5852,9 +5987,12 @@ function updatePreviewData() {
         return;
       }
 
-      // Only include as many apps as can fit within the remaining tile limit
+      // Only include as many apps as can fit within the remaining tile limit, without the apps that the user hid (menus.js)
       var remainingTiles = SMART_HUB_MAX_TILES - totalTiles;
-      var apps = entry.apps.slice(0, remainingTiles);
+      var hiddenApps = loadHiddenApps(serverUid);
+      var apps = entry.apps.filter(function(app) {
+        return !isAppHidden(hiddenApps, app);
+      }).slice(0, remainingTiles);
 
       // Create a tile for each app in the host's app list, including the title, subtitle, and action data
       var tiles = apps.map(function(app, index) {

@@ -1,4 +1,5 @@
 #include "moonlight_wasm.hpp"
+#include "audio_stream_stats.hpp"
 #include "video_track_rejection.hpp"
 
 #include <algorithm>
@@ -162,6 +163,12 @@ static float s_HostFrameRate = 0.0f;
 static std::atomic<bool> s_ExpectedIdrFrame{false};
 
 static std::string s_StatString = "";
+// Guards s_StatString, which the video decoder thread formats while TogglePerformanceStats() may read it on another
+// thread
+static std::mutex s_StatStringMutex;
+
+// The previous reading of the audio data rate for the overlay (see FormatAudioStreamStats), on the decoder thread
+static AudioRateWindow s_AudioRateWindow;
 
 static VIDEO_STATS m_ActiveWndVideoStats;
 static VIDEO_STATS m_LastWndVideoStats;
@@ -632,7 +639,10 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
   s_HdrMetadataEnabled = g_Instance->m_HdrMetadataEnabled;
 
   // Preallocate space for the performance stats string
-  s_StatString.resize(2048);
+  {
+    std::lock_guard<std::mutex> statLock(s_StatStringMutex);
+    s_StatString.resize(2048);
+  }
 
   // Clear active window video statistics to start fresh
   memset(&m_ActiveWndVideoStats, 0, sizeof(m_ActiveWndVideoStats));
@@ -1020,7 +1030,8 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
   // Flip performance stats window roughly every second
   if (m_ActiveWndVideoStats.measurementStartTimestamp + 1000 < nowMs) {
     // Update performance stats overlay if it's enabled
-    if (g_Instance->m_PerformanceStatsEnabled == true) {
+    if (g_Instance->m_PerformanceStatsEnabled.load()) {
+      std::lock_guard<std::mutex> statLock(s_StatStringMutex);
       // Create a container to hold aggregated stats for display
       VIDEO_STATS lastTwoWndStats = {};
       // Calculate the bitrate in megabits per second from the bytes received over the actual length of this window
@@ -1430,6 +1441,14 @@ void MoonlightInstance::FormatVideoStats(VIDEO_STATS& stats, char* output, int l
     }
   }
 
+  // Print the audio stream: the negotiated format, the data rate of its packets and the packets the network lost
+  ret = FormatAudioStreamStats(g_AudioStreamStats, s_AudioRateWindow, LiGetMillis(), &output[offset], length - offset);
+  if (ret < 0) {
+    assert(false);
+    return;
+  }
+  offset += ret;
+
   // Print the top of the WASM heap against the fixed memory size. It never goes down, since freed memory is reused
   // below it, so a steady climb over hours is the warning sign of a leak before an allocation aborts the module.
   const uintptr_t heapTop = (uintptr_t)sbrk(0);
@@ -1446,12 +1465,22 @@ void MoonlightInstance::FormatVideoStats(VIDEO_STATS& stats, char* output, int l
 }
 
 void MoonlightInstance::TogglePerformanceStats() {
-  // Toggle the performance stats overlay flag
-  m_PerformanceStatsEnabled = !m_PerformanceStatsEnabled;
+  // Toggle the performance stats overlay flag. The remote (main thread) and the gamepad combo (gamepad thread) can
+  // toggle it at the same time, so flip it in one atomic step (compare_exchange_weak() leaves the value it replaced in
+  // `enabled`).
+  bool enabled = m_PerformanceStatsEnabled.load();
+  while (!m_PerformanceStatsEnabled.compare_exchange_weak(enabled, !enabled)) {
+  }
+  enabled = !enabled;
 
   // Notify the JS code that performance stats overlay is enabled or disabled
-  if (m_PerformanceStatsEnabled) {
-    PostToJs(std::string("StatMsg: ") + s_StatString.data());
+  if (enabled) {
+    std::string message;
+    {
+      std::lock_guard<std::mutex> statLock(s_StatStringMutex);
+      message = std::string("StatMsg: ") + s_StatString.data();
+    }
+    PostToJs(message);
   } else {
     PostToJs(std::string("NoStatMsg: "));
   }

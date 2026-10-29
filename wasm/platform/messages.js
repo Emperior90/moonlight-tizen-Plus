@@ -88,8 +88,28 @@ function replaceKnownStageLabels(text) {
   return translated;
 }
 
-function replaceKnownStatsLabels(text) {
+// Translate the audio lines of the performance stats (FormatAudioStreamStats() in wasm/audio_stream_stats.hpp), e.g.
+// 'Audio stream: Opus 5.1 surround (6 channels), 5 ms packets, 512 kbps'
+function replaceKnownAudioStatsLabels(text) {
+  const layouts = {
+    'Mono': t('Mono'),
+    'Stereo': t('Stereo'),
+    '5.1 surround': t('5.1 surround'),
+    '7.1 surround': t('7.1 surround'),
+  };
   return text
+    .replace(/Audio stream: Opus (?:(Mono|Stereo|5\.1 surround|7\.1 surround) \()?(\d+) channels\)?, ([\d.]+) ms packets/g, function(match, layout, channels, packetMs) {
+      const channelText = t('%1$s channels', channels);
+      return t('Audio stream:') + ' Opus ' + (layout ? layouts[layout] + ' (' + channelText + ')' : channelText) + ', ' +
+        t('%1$s ms packets', packetMs);
+    })
+    .replace(/Session audio packets lost by network:/g, t('Session audio packets lost by network:'))
+    .replace(/Session audio decode errors:/g, t('Session audio decode errors:'))
+    .replace(/TV audio player rejections:/g, t('TV audio player rejections:'));
+}
+
+function replaceKnownStatsLabels(text) {
+  return replaceKnownAudioStatsLabels(text)
     .replace(/Video stream:/g, t('Video stream:'))
     .replace(/Codec:/g, t('Codec:'))
     .replace(/Incoming frame rate from network:/g, t('Incoming frame rate from network:'))
@@ -149,10 +169,23 @@ function replaceKnownWolErrorLabels(text) {
   return translated;
 }
 
+// Translate the message of a connection stage that failed and the ports of the host PC it needs
+// (FormatStageFailedMessage() in wasm/connection_ports.hpp), e.g. 'RTSP handshake failed (error 10060)'
+function replaceKnownConnectionErrorLabels(text) {
+  return text
+    .replace(/^(.+) failed \(error (-?\d+)\)$/m, function(match, stage, errorCode) {
+      return t('%1$s failed (error %2$s)', stage, errorCode);
+    })
+    .replace(/^Check that the firewall of the host PC and your router don't block these ports: (.+)$/m, function(match, ports) {
+      return t('Check that the firewall of the host PC and your router don\'t block these ports: %1$s', ports);
+    });
+}
+
 function translateBackendMessage(text) {
   const normalized = normalizeBackendMessageText(text);
 
   let translated = t(normalized);
+  translated = replaceKnownConnectionErrorLabels(translated);
   translated = replaceKnownStageLabels(translated);
   translated = replaceKnownStatsLabels(translated);
 
@@ -291,9 +324,11 @@ var handlePromiseMessage = function(callbackId, type, msg) {
  * leaveStreamView - Leaves the stream view and returns to the app list, after a stream ended or its start was cancelled
  *
  * @param  {Object} host The host of the stream
+ * @param  {boolean} quitApp Whether to quit the app on the host first ('Disconnect and quit the app on the PC' of the
+ *     Stream Menu)
  * @return {void}
  */
-function leaveStreamView(host) {
+function leaveStreamView(host, quitApp) {
   // Stop the rumble that the host left on, which would otherwise keep being played
   Rumble.stopAll();
   // Let the screensaver of the TV work again, since the menus are static
@@ -315,6 +350,18 @@ function leaveStreamView(host) {
   $('#wasmSpinner').css('display', 'inline-block');
   $('#wasmSpinnerLogo').hide();
   $('#wasmSpinnerMessage').text(t('Loading Apps...'));
+  if (quitApp) {
+    // Quit the app on the host, which then shows the app list without it, or with it and the reason it still runs
+    stopGame(host, function() {
+      // Scroll to the current game row
+      Navigation.switch();
+      // Switch to Apps view
+      if (!window.isDialogOpen) {
+        Navigation.change(Views.Apps);
+      }
+    });
+    return;
+  }
   // Refresh the server info to update the current game and app list
   host.refreshServerInfo().then(function(ret) {
     // Return to the app list with new current game
@@ -344,6 +391,10 @@ function leaveStreamView(host) {
 // of wasm/video_track_rejection.hpp), for the message of the stream termination with error -200 that follows it, or
 // null. The start of a stream clears it (startGame() in index.js).
 var rejectedVideoTrack = null;
+// The ports of the host PC that the cause of the next stream termination points to (the 'TerminationPortsMsg: ' of
+// ClConnectionTerminated() in wasm/connectionlistener.cpp), e.g. 'UDP 47998, UDP 48000' when no video arrived. The
+// start of a stream clears it (startGame() in index.js).
+var terminationBlockedPorts = '';
 
 // Read the video format of a 'VideoTrackRejected: ' message, e.g. 'AV1 Main10,3840,2160,60', into
 // { codec, width, height, fps }, or return null for a text in another format
@@ -392,17 +443,29 @@ function handleMessage(msg) {
     isStreamConnected = false;
     isStreamVideoTrackClosed = false;
     streamLaunchId++;
-    leaveStreamView(streamLaunchHost || api);
+    // The Stream Menu belongs to the stream, and 'Disconnect and quit the app on the PC' to this end of it (menus.js)
+    closeStreamMenu(false);
+    var quitApp = quitAppAfterStream;
+    quitAppAfterStream = false;
+    streamMouseEmulationActive = false;
+    leaveStreamView(streamLaunchHost || api, quitApp);
     // Show a termination snackbar message if the termination was unexpected
     var errorCode = parseInt(msg.replace('streamTerminated: ', ''));
     // A video format that the TV rejected belongs to this stream only
     var videoTrackRejection = rejectedVideoTrack;
     rejectedVideoTrack = null;
+    // The ports named for this termination belong to this stream only
+    var blockedPorts = terminationBlockedPorts;
+    terminationBlockedPorts = '';
     switch (errorCode) {
       case 0: // ML_ERROR_GRACEFUL_TERMINATION
         break;
       case -100: // ML_ERROR_NO_VIDEO_TRAFFIC
-        snackbarLogLong('No video received from host. Check the host PC\'s firewall and port forwarding rules.');
+        if (blockedPorts) {
+          snackbarLogLong('No video received from host. Check that the firewall of the host PC and your router don\'t block these ports: %1$s', blockedPorts);
+        } else {
+          snackbarLogLong('No video received from host. Check the host PC\'s firewall and port forwarding rules.');
+        }
         break;
       case -101: // ML_ERROR_NO_VIDEO_FRAME
         snackbarLogLong('Your network connection isn\'t performing well. Reduce your video bitrate setting or try a faster connection.');
@@ -469,6 +532,10 @@ function handleMessage(msg) {
   } else if (msg.indexOf('DialogMsg: ') === 0) {
     // Show dialog message using the warning dialog
     warningDialog(t('Connection Error'), translateBackendMessage(msg.replace('DialogMsg: ', '')));
+  } else if (msg.indexOf('TerminationPortsMsg: ') === 0) {
+    // The connection is about to end for a cause that points to these ports of the host PC, which the termination
+    // message that follows names
+    terminationBlockedPorts = msg.replace('TerminationPortsMsg: ', '');
   } else if (msg.indexOf('VideoTrackRejected: ') === 0) {
     // The TV rejected every profile of the video track. Keep its video format for the stream termination with error
     // -200 that follows, which then names it.
@@ -496,6 +563,9 @@ function handleMessage(msg) {
       $('#performanceStatsBtn')[0].MaterialSwitch.off();
       savePerformanceStats();
       $('#performance-stats').css('display', 'none');
+      if (isStreamMenuOpen) {
+        updateStreamMenu();
+      }
     }
     // Hide the performance statistics overlay
     $('#performance-stats').css('background', 'transparent');
@@ -506,6 +576,9 @@ function handleMessage(msg) {
       $('#performanceStatsBtn')[0].MaterialSwitch.on();
       savePerformanceStats();
       $('#performance-stats').css('display', 'inline-block');
+      if (isStreamMenuOpen) {
+        updateStreamMenu();
+      }
     }
     // Show the performance statistics overlay, followed by the network connection of the TV if it's known
     // and the audio statistics of the Web Audio backend
@@ -531,10 +604,21 @@ function handleMessage(msg) {
     console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Playing rumble on gamepad ' + gamepadIdx + ' with weak magnitude ' + weakMagnitude + ' and strong magnitude ' + strongMagnitude + '...');
     Rumble.play(gamepadIdx, weakMagnitude, strongMagnitude);
   } else if (msg.indexOf('mouseEmulationOn') === 0) {
-    // Show mouse emulation enable status as a notification
+    // Show mouse emulation enable status as a notification, and in the Stream Menu
+    streamMouseEmulationActive = true;
+    if (isStreamMenuOpen) {
+      updateStreamMenu();
+    }
     snackbarLogLong('Mouse emulation is activated');
   } else if (msg.indexOf('mouseEmulationOff') === 0) {
-    // Show mouse emulation disable status as notification
+    // Show mouse emulation disable status as notification, and in the Stream Menu
+    streamMouseEmulationActive = false;
+    if (isStreamMenuOpen) {
+      updateStreamMenu();
+    }
     snackbarLogLong('Mouse emulation is deactivated');
+  } else if (msg === 'streamMenuRequested') {
+    // A gamepad held Select + Start for the Stream Menu (wasm/gamepad.cpp)
+    openStreamMenu();
   }
 }

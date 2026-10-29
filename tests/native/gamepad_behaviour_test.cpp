@@ -160,13 +160,15 @@ static void TestControllerTypeSetting() {
 
 // The button flags sent for one pressed button with the given face button swaps. They are an int, so Y (0x8000)
 // arrives as it is instead of sign-extended from a short, which set every extended button flag before
-// moonlight-common-c masked it (sendControllerEventInternal() in InputStream.c).
+// moonlight-common-c masked it (sendControllerEventInternal() in InputStream.c). Back and Start reach the host once the
+// window of the Stream Menu combo has passed (stream_menu_combo_test.cpp), so the button is held that long.
 static int FlagsFor(int button, bool flipAB, bool flipXY) {
   harness::Reset(false, false, flipAB, flipXY);
   Connect(0);
   Poll();
   SetButton(0, button, true);
   Poll();
+  PollFor(static_cast<int>(kComboChordWindowMs));
   return padPackets.empty() ? -1 : padPackets.back().buttons;
 }
 
@@ -356,7 +358,7 @@ static void TestMouseEmulationToggle() {
   PollFor(100);
   CHECK_EQ(harness::mouseMoves.size(), 2u);
 
-  // Turning the setting off ends the mouse emulation on the next poll
+  // New settings (the start of a stream) end the mouse emulation; the Stream Menu can turn it on without the setting
   harness::Instance()->HandleGamepadInputState(false, false, false, false, LI_CTYPE_UNKNOWN);
   Poll();
   CHECK(!mouseEmulationActive);
@@ -389,7 +391,8 @@ static void TestOneTogglePerHold() {
   CHECK(heldMs >= 1000 && heldMs <= 1010);
   CHECK(harness::postedToJs.size() == 2 && harness::postedToJs[1] == "mouseEmulationOff");
 
-  // Start held with LB, RB or Back, the buttons of the combos, doesn't toggle, even once they are released again
+  // Start held with LB, RB or Back, the buttons of the combos, doesn't toggle, even once they are released again.
+  // (Back + Start opens the Stream Menu instead.)
   for (int comboButton : { kButtonLB, kButtonRB, kButtonBack }) {
     harness::Reset(false, true);
     Connect(0);
@@ -403,7 +406,9 @@ static void TestOneTogglePerHold() {
     CHECK(!mouseEmulationActive);
     SetButton(0, kButtonStart, false);
     Poll();
-    CHECK(harness::postedToJs.empty());
+    const std::vector<std::string> expected = comboButton == kButtonBack ? std::vector<std::string>{ "streamMenuRequested" } :
+      std::vector<std::string>{};
+    CHECK(harness::postedToJs == expected);
   }
 
   // With the mouse emulation switch off, holding Start never toggles, and the host gets Start all along
@@ -430,6 +435,7 @@ static void TestNeutralPadBeforeMouseMode() {
   SetButton(1, kButtonA, true);
   SetButton(0, kButtonStart, true);
   Poll();
+  PollFor(static_cast<int>(kComboChordWindowMs));
   CHECK(LastPacketOf(0) && (LastPacketOf(0)->buttons & PLAY_FLAG));
   for (int elapsed = 0; elapsed < 3000 && !mouseEmulationActive; elapsed += 5) {
     Poll(5);
@@ -472,11 +478,12 @@ static void TestNeutralPadBeforeMouseMode() {
   PollFor(500);
   CHECK(LastPacketOf(0) && !(LastPacketOf(0)->buttons & PLAY_FLAG));
 
-  // Once released and pressed again, Start reaches the host again
+  // Once released and pressed again, Start reaches the host again, after the window of the Stream Menu combo
   SetButton(0, kButtonStart, false);
   Poll();
   SetButton(0, kButtonStart, true);
   Poll();
+  PollFor(static_cast<int>(kComboChordWindowMs));
   CHECK(LastPacketOf(0) && (LastPacketOf(0)->buttons & PLAY_FLAG));
 }
 
@@ -498,11 +505,14 @@ static void TestMouseEmulationResetForNewStream() {
   padPackets.clear();
   harness::mouseButtons.clear();
   Poll();
-  // The controller acts as a controller: A and Start reach the host, and its new host gets no mouse button release
+  // The controller acts as a controller: A and Start reach the host (Start after the window of the Stream Menu combo),
+  // and its new host gets no mouse button release
+  CHECK(!padPackets.empty() && (padPackets.back().buttons & A_FLAG));
+  PollFor(static_cast<int>(kComboChordWindowMs));
   CHECK(!padPackets.empty() && (padPackets.back().buttons & A_FLAG) && (padPackets.back().buttons & PLAY_FLAG));
   CHECK(harness::mouseButtons.empty());
   // The Start that is still held counts as a new hold from the start of the stream
-  PollFor(500);
+  PollFor(500 - static_cast<int>(kComboChordWindowMs));
   CHECK(!mouseEmulationActive);
   PollFor(510);
   CHECK(mouseEmulationActive);

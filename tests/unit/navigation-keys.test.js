@@ -35,6 +35,7 @@ function loadRemoteController(globals) {
         toggleStats: () => moduleCalls.push('toggleStats'),
       },
       cancelStreamLaunch: () => moduleCalls.push('cancelStreamLaunch'),
+      toggleStreamMenu: () => moduleCalls.push('toggleStreamMenu'),
       isInGame: false,
       wasmSessionStarted: false,
     }, globals || {}),
@@ -74,11 +75,12 @@ test('the TV key codes that the handler compares with', () => {
   });
 });
 
-test('initSamsungKeys() registers the color, source, channel list and channel keys', () => {
+test('initSamsungKeys() registers the color, source, channel list, channel and media keys', () => {
   const platform = loadPlatformScripts(['res/platform.js', 'wasm/platform/remote_controller.js'].concat(INDEX_SCRIPTS));
   platform.run('initSamsungKeys()');
   const registered = platform.tvCalls.filter((call) => call.name === 'tizen.tvinputdevice.registerKey').map((call) => call.args[0]);
-  assert.deepEqual(registered, ['ColorF0Red', 'ColorF1Green', 'ColorF2Yellow', 'ColorF3Blue', 'Source', 'ChannelList', 'ChannelDown', 'ChannelUp']);
+  assert.deepEqual(registered, ['ColorF0Red', 'ColorF1Green', 'ColorF2Yellow', 'ColorF3Blue', 'Source', 'ChannelList', 'ChannelDown', 'ChannelUp',
+    'MediaPlayPause', 'MediaPlay', 'MediaPause']);
   // The key handler listens on the document
   assert.equal(platform.documentListeners.keydown.length, 1);
   assert.equal(platform.documentListeners.keydown[0], platform.get('remoteControllerHandler'));
@@ -134,6 +136,39 @@ test('YELLOW toggles the performance statistics only while streaming', () => {
   remote.platform.run('isInGame = true;');
   remote.press('KEY_YELLOW');
   assert.deepEqual(remote.moduleCalls, ['toggleStats']);
+});
+
+test('Play/Pause, Play and Pause toggle the Stream Menu in a stream and open the menu of a host or app otherwise', () => {
+  const remote = loadRemoteController();
+  assert.deepEqual({ KEY_PLAY_PAUSE: remote.tvKey.KEY_PLAY_PAUSE, KEY_PLAY: remote.tvKey.KEY_PLAY, KEY_PAUSE: remote.tvKey.KEY_PAUSE },
+    { KEY_PLAY_PAUSE: 10252, KEY_PLAY: 415, KEY_PAUSE: 19 });
+  // In the menus they press like CH+
+  assert.equal(remote.press('KEY_PLAY_PAUSE', { key: 'MediaPlayPause' }), true);
+  remote.press('KEY_PLAY', { key: 'MediaPlay' });
+  remote.press('KEY_PAUSE', { key: 'MediaPause' });
+  assert.deepEqual(remote.recorder.operations, ['press', 'press', 'press']);
+  assert.deepEqual(remote.moduleCalls, []);
+  // During a stream they open or close the Stream Menu, once per press
+  remote.platform.run('isInGame = true; wasmSessionStarted = true;');
+  remote.press('KEY_PLAY_PAUSE', { key: 'MediaPlayPause' });
+  remote.press('KEY_PLAY_PAUSE', { key: 'MediaPlayPause', repeat: true });
+  remote.press('KEY_PAUSE', { key: 'MediaPause' });
+  assert.deepEqual(remote.moduleCalls, ['toggleStreamMenu', 'toggleStreamMenu']);
+  assert.deepEqual(remote.recorder.operations, ['press', 'press', 'press']);
+});
+
+test('the Pause/Break key of a keyboard, which has the key code of Pause, opens no menu', () => {
+  const remote = loadRemoteController();
+  remote.press('KEY_PAUSE', { key: 'Pause' });
+  remote.platform.run('isInGame = true; wasmSessionStarted = true;');
+  assert.equal(remote.press('KEY_PAUSE', { key: 'Pause' }), false);
+  assert.deepEqual(remote.recorder.operations, []);
+  assert.deepEqual(remote.moduleCalls, []);
+  const isMenuKeyEvent = remote.platform.get('isMenuKeyEvent');
+  assert.equal(isMenuKeyEvent({ keyCode: 19, key: 'Pause' }), false);
+  assert.equal(isMenuKeyEvent({ keyCode: 19, key: 'MediaPause' }), true);
+  assert.equal(isMenuKeyEvent({ keyCode: 10252, key: 'MediaPlayPause' }), true);
+  assert.equal(isMenuKeyEvent({ keyCode: 403, key: 'ColorF0Red' }), false);
 });
 
 test('other keys do nothing', () => {

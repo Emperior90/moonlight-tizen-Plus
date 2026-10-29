@@ -1,3 +1,10 @@
+// Check if a key event comes from a key that opens the menus: Play/Pause, Play or Pause of the remote. The Pause/Break
+// key of a keyboard has the key code of Pause as well, but is named 'Pause', and goes to the PC during a stream.
+function isMenuKeyEvent(e) {
+  const keyCode = e.keyCode;
+  return keyCode === tvKey.KEY_PLAY_PAUSE || keyCode === tvKey.KEY_PLAY || (keyCode === tvKey.KEY_PAUSE && e.key !== 'Pause');
+}
+
 function remoteControllerHandler(e) {
   const keyCode = e.keyCode;
 
@@ -65,6 +72,22 @@ function remoteControllerHandler(e) {
       // Toggle performance stats overlay
       if (isInGame === true) {
         Module.toggleStats();
+      }
+      break;
+    case tvKey.KEY_PLAY_PAUSE:
+    case tvKey.KEY_PLAY:
+    case tvKey.KEY_PAUSE:
+      // Ignore the auto-repeat of a held key and the Pause/Break key of a keyboard
+      if (e.repeat || !isMenuKeyEvent(e)) {
+        break;
+      }
+      e.preventDefault();
+      if (isInGame === true) {
+        // Open or close the Stream Menu (menus.js)
+        toggleStreamMenu();
+      } else {
+        // Open the menu of the current host or app, like CH+
+        Navigation.press();
       }
       break;
     default:

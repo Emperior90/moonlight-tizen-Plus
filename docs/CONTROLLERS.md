@@ -2,7 +2,7 @@
 
 This page describes how Moonlight Plus handles game controllers: in the menus, during a stream, and what the PC gets. For setting up the app, see the [guide](GUIDE.md).
 
-**Testing status:** the controller changes of Moonlight Plus (menus, controller type, rumble, mouse emulation) were tested with simulated controllers and native tests of the controller code. None of them was checked with real controllers on a TV yet. Reports from real controllers are welcome on the [issue tracker of this fork](https://github.com/Emperior90/moonlight-tizen-S90c/issues).
+**Testing status:** the controller changes of Moonlight Plus (menus, controller type, rumble, mouse emulation, the Stream Menu combo) were tested with simulated controllers and native tests of the controller code. None of them was checked with real controllers on a TV yet. Reports from real controllers are welcome on the [issue tracker of this fork](https://github.com/Emperior90/moonlight-tizen-S90c/issues).
 
 ## Contents
 
@@ -41,7 +41,7 @@ The menus use the button positions (Xbox names first, PlayStation names in brack
 | A (Cross) | Select the current item, like SELECT on the remote |
 | B (Circle) | Back, like RETURN on the remote |
 | D-pad, left stick | Move. Holding them repeats the move after 350 ms, then every 100 ms. Small stick movements are ignored. |
-| Select / View (Share, Create) | Like CH+ on the remote: switch the mode of the host address field, and open the menu of the host PC |
+| Select / View (Share, Create) | Like CH+ on the remote: switch the mode of the host address field, and open the menu of the host PC or of the selected app ([app menu](GUIDE.md#16-stream-menu-and-app-menu)) |
 | Start / Menu (Options) | Like CH- on the remote: set the focus on the current item |
 
 - The in-app *Navigation guide* (Settings → About) lists the same buttons, with the remote and keyboard keys next to them.
@@ -67,10 +67,21 @@ Settings → Input Settings:
 
 | Combo | Action |
 |---|---|
+| Select + Start, held for 1 second | Open the [Stream Menu](GUIDE.md#16-stream-menu-and-app-menu) (like the Play/Pause key of the remote) |
 | Select + Start + LB + RB | End the stream (like the RED key of the remote) |
 | Select + LB + RB + X | Show or hide the performance statistics (like the YELLOW key) |
 
 X means the left face button (Square on PlayStation controllers), also with *Flip X/Y face buttons* on.
+
+**Select + Start for the Stream Menu.** Two buttons that every controller has, held together and alone, which none of the other combos uses on its own. So that the game doesn't react to the combo:
+
+- Press both at the same time. While both are held, the game gets neither of them, and once the menu opened, it gets neither until you release them.
+- A press of Select or Start alone reaches the game 0.1 seconds late (other buttons aren't delayed), so that the other button of the combo can still join it. A shorter press reaches the game right after its release, for as long as it was held.
+- Select + Start released before the menu opened, e.g. the Select + Start hotkey of RetroArch, reach the game together afterwards, for as long as they were held.
+- If one of them was held alone for longer than 0.1 seconds first, the game has it already: it sees that button held until the menu opens.
+- Pressing LB + RB as well within the second ends the stream instead (the stop combo). The hold of Start for the mouse emulation never counts a hold of Select + Start.
+
+**While the Stream Menu is open**, the PC gets every controller released (no buttons, sticks centred, triggers at 0) and no mouse buttons, and the controllers move through the menu like through the other menus (D-pad or left stick, A to choose, B back to the game). Buttons that are still held when the menu closes, e.g. A on *Resume*, reach the game only after you release them and press them again. Mouse mode stays as it was.
 
 ## 5. Controller type sent to the PC
 
@@ -103,11 +114,12 @@ Settings → Input Settings → *Rumble feedback* (off by default).
 
 ## 7. Mouse emulation
 
-Settings → Input Settings → *Mouse emulation* (off by default) lets a controller act as the mouse of the PC.
+Settings → Input Settings → *Mouse emulation* (off by default) lets a controller act as the mouse of the PC by holding Start.
 
 - During a stream, hold Start for 1 second to switch mouse mode on or off. A notice says "Mouse emulation is activated" or "deactivated".
+- The *Mouse emulation* entry of the [Stream Menu](GUIDE.md#16-stream-menu-and-app-menu) switches it as well, also with the setting off.
 - It switches once per hold, so holding Start longer doesn't switch it back. A hold of Start together with Select, LB or RB, which belong to the button combos, never switches it.
-- When a hold switches mouse mode off, the game doesn't get that Start. When a hold switches it on, the game sees Start held until the switch (1 second), and then the controller released, so a game may open its pause menu.
+- When a hold switches mouse mode off, the game doesn't get that Start. When a hold switches it on, the game sees Start held until the switch (from 0.1 seconds after the press, see the Stream Menu combo above, to 1 second), and then the controller released, so a game may open its pause menu.
 
 In mouse mode:
 

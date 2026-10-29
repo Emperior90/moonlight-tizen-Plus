@@ -40,6 +40,12 @@
   Module.toggleStats = function() {
     record('toggleStats', arguments);
   };
+  Module.setStreamMenuOpen = function() {
+    record('setStreamMenuOpen', arguments);
+  };
+  Module.toggleMouseEmulation = function() {
+    record('toggleMouseEmulation', arguments);
+  };
   Module.sendKeyboardEvent = function() {
     record('sendKeyboardEvent', arguments);
   };

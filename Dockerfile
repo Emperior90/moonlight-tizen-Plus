@@ -135,6 +135,14 @@ RUN \
     fi
 
 RUN cmake --install build --prefix build
+
+# Patch the reading of a std::string in the JavaScript that Embind generates, which writes into the heap while other
+# threads use it (see tools/patch-embind-string.js, ported from the fork of fidoboy and based on a patch by mmadej20).
+# The script runs on the Node of the Emscripten SDK and fails, and with it the build, unless it finds the code it
+# replaces exactly once, e.g. after a change of the SDK
+COPY --chown=moonlight tools/patch-embind-string.js ./moonlight-tizen/tools/
+RUN /home/moonlight/emscripten-release-bundle/emsdk/node/12.9.1_64bit/bin/node moonlight-tizen/tools/patch-embind-string.js build/widget/moonlight-wasm.js
+
 RUN cp moonlight-tizen/res/icon.png build/widget/
 
 # Inject Game Mode metadata into the Tizen config.xml file, which is required for building the ForceGM variant later

@@ -261,7 +261,8 @@ class MoonlightInstance {
   bool m_FullRangeEnabled;
   bool m_GameModeEnabled;
   bool m_DisableWarningsEnabled;
-  bool m_PerformanceStatsEnabled;
+  // Written by TogglePerformanceStats() on the main thread or the gamepad thread and read by the video decoder thread
+  std::atomic<bool> m_PerformanceStatsEnabled{false};
   bool m_RefFrameInvalidationEnabled;
   bool m_HdrMetadataEnabled;
 
@@ -336,6 +337,8 @@ MessageResult stopStream();
 MessageResult cancelRequest();
 
 void toggleStats();
+void setStreamMenuOpen(bool open);
+void toggleMouseEmulation();
 void stun(int callbackId);
 void pair(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber, std::string uniqueId);
 void wakeOnLan(int callbackId, std::string macAddress);

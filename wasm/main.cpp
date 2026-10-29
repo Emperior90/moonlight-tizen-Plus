@@ -851,6 +851,8 @@ EMSCRIPTEN_BINDINGS(handle_message) {
   emscripten::function("stopStream", &stopStream);
   emscripten::function("cancelRequest", &cancelRequest);
   emscripten::function("toggleStats", &toggleStats);
+  emscripten::function("setStreamMenuOpen", &setStreamMenuOpen);
+  emscripten::function("toggleMouseEmulation", &toggleMouseEmulation);
   emscripten::function("stun", &stun);
   emscripten::function("pair", &pair);
   emscripten::function("wakeOnLan", &wakeOnLan);

@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <array>
+#include <atomic>
 #include <utility>
 #include <sstream>
 #include <chrono>
@@ -27,6 +28,9 @@ const int STOP_STREAM_BUTTONS = BACK_FLAG | PLAY_FLAG | LB_FLAG | RB_FLAG;
 
 // Bitmask for gamepad combo buttons to toggle the performance stats overlay
 const int PERF_STATS_BUTTONS = BACK_FLAG | LB_FLAG | RB_FLAG | X_FLAG;
+
+// Bitmask for gamepad combo buttons to open the Stream Menu, held for kStreamMenuHoldMs (see UpdateStreamMenuCombo())
+const int STREAM_MENU_BUTTONS = BACK_FLAG | PLAY_FLAG;
 
 // Flag for gamepad to track controller rumble state
 bool rumbleFeedbackSwitch = false;
@@ -116,6 +120,44 @@ static MouseEmulationHold mouseEmulationHold[kMaxControllers];
 
 // Button combos that are held per controller, so that a held combo triggers only once
 static bool comboTriggered[kMaxControllers];
+
+// Stream Menu combo: holding Back and Start together, and no other button, for kStreamMenuHoldMs opens the Stream Menu.
+// So that the game doesn't act on the combo, a press of Back or Start reaches the host kComboChordWindowMs later,
+// unless the other one joins it meanwhile: then the host gets neither while both are held. A press that ends earlier,
+// or a Back + Start that ends before it opened the menu (e.g. the Select + Start hotkey of RetroArch), reaches the host
+// afterwards for as long as it was held. Once the combo opened the menu, the host gets neither until it is released.
+static constexpr uint64_t kStreamMenuHoldMs = 1000;
+static constexpr uint64_t kComboChordWindowMs = 100;
+
+// What the host gets of Back or Start of one controller
+struct ComboButton {
+  bool held = false; // the button is held
+  bool withheld = false; // it is held, and the host doesn't have it yet
+  bool dropped = false; // it is held, and the host doesn't get it: the combo opened the Stream Menu
+  uint64_t pressMs = 0; // when it was pressed
+  uint64_t replayUntilMs = 0; // the host gets the button pressed until then: a press it didn't get while it was held
+};
+
+// The Stream Menu combo of one controller
+struct StreamMenuCombo {
+  ComboButton back;
+  ComboButton start;
+  uint64_t chordMs = 0; // when Back and Start started to be held together and alone, or 0
+  // This hold opened the Stream Menu, so new presses of Back and Start are dropped until both are released
+  bool opened = false;
+};
+
+static StreamMenuCombo streamMenuCombo[kMaxControllers];
+
+// The Stream Menu is open (setStreamMenuOpen(), called by the UI on the main thread): the host gets every controller
+// released, no mouse input and no button combos, while the menus of the UI read the controllers. The buttons that are
+// held when it closes, e.g. the one that chose Resume, reach the host only once they were released and pressed again.
+static std::atomic<bool> streamMenuOpen{false};
+static bool inputPaused = false; // the state of streamMenuOpen that the input thread follows
+static int heldSinceMenu[kMaxControllers]; // buttons, as the host gets them, held since the Stream Menu closed
+
+// The Stream Menu asked to turn the mouse emulation on or off (toggleMouseEmulation()), which the next poll does
+static std::atomic<bool> mouseEmulationToggleRequested{false};
 
 // Mouse buttons that the host holds because of the mouse emulation, as a combination of these bits
 static constexpr int kMouseLeft = 1;
@@ -337,6 +379,87 @@ static void UpdateMouseEmulationToggle(int controller, int physicalFlags, uint64
   PostToJs(std::string(mouseEmulationActive ? "mouseEmulationOn" : "mouseEmulationOff"));
 }
 
+// Follow Back or Start of a controller for the Stream Menu combo. A new press is withheld, or dropped while the combo
+// that opened the menu is still held. A withheld press reaches the host once kComboChordWindowMs have passed since it
+// was pressed, unless Back and Start are held together and alone (the chord), and a withheld press that is released
+// gets replayed for as long as it was held.
+static void UpdateComboButton(ComboButton& button, bool pressed, bool chord, bool menuOpened, uint64_t nowMs) {
+  if (pressed && !button.held) {
+    button.held = true;
+    button.withheld = !menuOpened;
+    button.dropped = menuOpened;
+    button.pressMs = nowMs;
+  } else if (!pressed && button.held) {
+    if (button.withheld) {
+      button.replayUntilMs = nowMs + (nowMs - button.pressMs);
+    }
+    button.held = false;
+    button.withheld = false;
+    button.dropped = false;
+  }
+  if (button.withheld && !chord && nowMs - button.pressMs >= kComboChordWindowMs) {
+    button.withheld = false;
+  }
+}
+
+// Check if the host gets Back or Start of a controller on this poll: the button is held and passed on, or its replay
+// runs
+static bool ComboButtonReachesHost(const ComboButton& button, uint64_t nowMs) {
+  return (button.held && !button.withheld && !button.dropped) || nowMs < button.replayUntilMs;
+}
+
+// Run the Stream Menu combo of a controller on its physical buttons, open the Stream Menu once Back and Start were held
+// together and alone for kStreamMenuHoldMs, and return the buttons that the host gets: those of the poll, with Back and
+// Start as the combo passes them on. The menu opens once per hold, and a press of Start that came first and already
+// reached the host is released there when the menu opens.
+static int UpdateStreamMenuCombo(int controller, int buttonFlags, int physicalFlags, uint64_t nowMs) {
+  StreamMenuCombo& combo = streamMenuCombo[controller];
+  const bool chord = physicalFlags == STREAM_MENU_BUTTONS;
+  if (!chord) {
+    combo.chordMs = 0;
+  } else if (combo.chordMs == 0) {
+    combo.chordMs = nowMs;
+  }
+
+  UpdateComboButton(combo.back, (physicalFlags & BACK_FLAG) != 0, chord, combo.opened, nowMs);
+  UpdateComboButton(combo.start, (physicalFlags & PLAY_FLAG) != 0, chord, combo.opened, nowMs);
+
+  if (chord && !combo.opened && nowMs - combo.chordMs >= kStreamMenuHoldMs) {
+    combo.opened = true;
+    ComboButton* buttons[] = { &combo.back, &combo.start };
+    for (ComboButton* button : buttons) {
+      button->withheld = false;
+      button->dropped = true;
+      button->replayUntilMs = 0;
+    }
+    // Ask the UI to open the Stream Menu, without waiting for the main thread
+    PostToJsAsync(std::string("streamMenuRequested"));
+  } else if (combo.opened && !(physicalFlags & STREAM_MENU_BUTTONS)) {
+    // Both are released: the next hold can open the menu again
+    combo.opened = false;
+  }
+
+  int flags = buttonFlags & ~STREAM_MENU_BUTTONS;
+  if (ComboButtonReachesHost(combo.back, nowMs)) {
+    flags |= BACK_FLAG;
+  }
+  if (ComboButtonReachesHost(combo.start, nowMs)) {
+    flags |= PLAY_FLAG;
+  }
+  return flags;
+}
+
+// Called by the UI on the main thread when the Stream Menu opens or closes (bound in main.cpp)
+void setStreamMenuOpen(bool open) {
+  streamMenuOpen.store(open);
+}
+
+// Called by the UI on the main thread for the mouse emulation entry of the Stream Menu, which works whatever the
+// setting "Mouse emulation" (that setting only allows the hold of Start). The input thread toggles it on its next poll.
+void toggleMouseEmulation() {
+  mouseEmulationToggleRequested.store(true);
+}
+
 // Send the state of a controller with nothing pressed and the sticks centred, unless the host has it already. The host
 // keeps the last state it got while the mouse emulation sends none, and that state holds at least Start, which turned
 // the mouse emulation on, and often a stick. A state that couldn't be queued is sent again on the next poll.
@@ -447,12 +570,17 @@ void MoonlightInstance::HandleGamepadInputState(bool rumbleFeedback, bool mouseE
     slotState[i].announced = false;
     mouseEmulationHold[i] = {};
     comboTriggered[i] = false;
+    streamMenuCombo[i] = {};
+    heldSinceMenu[i] = 0;
   }
 
   // A stream that ended in mouse mode must not start the next one in mouse mode, where the controllers would seem dead.
-  // The host of a new stream holds no mouse buttons.
+  // The host of a new stream holds no mouse buttons. A Stream Menu of the previous stream is closed.
   SetMouseEmulationActive(false);
   sentMouseButtons = 0;
+  streamMenuOpen.store(false);
+  inputPaused = false;
+  mouseEmulationToggleRequested.store(false);
 
   // Store the new settings for use during polling
   rumbleFeedbackSwitch = rumbleFeedback;
@@ -523,6 +651,8 @@ void MoonlightInstance::PollGamepads() {
     sentState[i] = {};
     mouseEmulationHold[i] = {};
     comboTriggered[i] = false;
+    streamMenuCombo[i] = {};
+    heldSinceMenu[i] = 0;
   }
 
   // Announce new (or re-arrived) controllers so Sunshine can pick the right profile
@@ -573,6 +703,28 @@ void MoonlightInstance::PollGamepads() {
 
   const uint64_t nowMs = LiGetMillis();
 
+  // Follow the Stream Menu of the UI. When it opens, the combos and holds of Start that are in progress end, since the
+  // host gets nothing while it is open; when it closes, the buttons that are held stay away from the host until they
+  // are released.
+  const bool paused = streamMenuOpen.load();
+  const bool resumed = inputPaused && !paused;
+  if (paused && !inputPaused) {
+    for (int i = 0; i < kMaxControllers; ++i) {
+      streamMenuCombo[i] = {};
+      mouseEmulationHold[i] = {};
+    }
+    pendingScrollX = 0.0;
+    pendingScrollY = 0.0;
+    lastScrollMs = 0;
+  }
+  inputPaused = paused;
+
+  // Turn the mouse emulation on or off for the entry of the Stream Menu, and notify the user as the hold of Start does
+  if (mouseEmulationToggleRequested.exchange(false)) {
+    SetMouseEmulationActive(!mouseEmulationActive);
+    PostToJs(std::string(mouseEmulationActive ? "mouseEmulationOn" : "mouseEmulationOff"));
+  }
+
   // Read the input of every real, already-announced controller, and run its button combos and the mouse emulation
   // toggle before anything is sent, so the mouse emulation that one controller turns on applies to all of them at once
   ControllerInput inputs[kMaxControllers];
@@ -586,7 +738,21 @@ void MoonlightInstance::PollGamepads() {
     // Process input for active gamepad
     inputs[gamepadID] = ReadControllerInput(events[gamepadID], slotState[gamepadID].type);
     hasInput[gamepadID] = true;
-    const int physicalFlags = inputs[gamepadID].physicalFlags;
+    // While the Stream Menu is open, its buttons belong to the menus of the UI
+    if (paused) {
+      continue;
+    }
+    ControllerInput& input = inputs[gamepadID];
+    const int physicalFlags = input.physicalFlags;
+
+    // The buttons that were held when the Stream Menu closed reach the host once they were released and pressed again
+    if (resumed) {
+      heldSinceMenu[gamepadID] = input.buttonFlags;
+    }
+    heldSinceMenu[gamepadID] &= input.buttonFlags;
+    input.buttonFlags &= ~heldSinceMenu[gamepadID];
+    // The physical buttons without Back and Start held since then, which mustn't count as a new combo or hold either
+    const int liveFlags = physicalFlags & ~(heldSinceMenu[gamepadID] & STREAM_MENU_BUTTONS);
 
     // Check the button combinations on the physical buttons, before the A/B and X/Y swaps, so they are the same with
     // every swap setting (the Navigation Guide documents them in the Xbox layout: A bottom, X left)
@@ -606,13 +772,22 @@ void MoonlightInstance::PollGamepads() {
       comboTriggered[gamepadID] = false;
     }
 
+    // Open the Stream Menu with a hold of Back + Start, which the host doesn't get
+    input.buttonFlags = UpdateStreamMenuCombo(gamepadID, input.buttonFlags, liveFlags, nowMs);
+
     // Toggle mouse emulation on and off based on how long the PLAY/START button is pressed
-    UpdateMouseEmulationToggle(gamepadID, physicalFlags, nowMs);
+    UpdateMouseEmulationToggle(gamepadID, liveFlags, nowMs);
   }
 
-  // Deactivate mouse emulation if the mouse emulation switch is unchecked
-  if (!mouseEmulationSwitch && mouseEmulationActive) {
-    SetMouseEmulationActive(false);
+  if (paused) {
+    // The Stream Menu is open: release the controllers and the mouse buttons on the host once, and send nothing else
+    for (int gamepadID = 0; gamepadID < limit; ++gamepadID) {
+      if (hasInput[gamepadID]) {
+        SendNeutralState(gamepadID, activeGamepadMask, nowMs);
+      }
+    }
+    SendMouseButtons(0);
+    return;
   }
 
   if (mouseEmulationActive) {

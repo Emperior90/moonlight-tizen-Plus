@@ -100,7 +100,7 @@ body {
 /* =============================
    Navigation Menu
 ============================= */
-#settingsBtn, #supportBtn, #restoreDefaultsBtn, #quitRunningAppBtn {
+#rescanNetworkBtn, #settingsBtn, #supportBtn, #restoreDefaultsBtn, #quitRunningAppBtn {
     background-color: #404354;
     width: 50px;
     height: 50px;
@@ -142,6 +142,14 @@ body {
 .navigation-button-icons {
     margin: 0 8px 0 -4px;
     font-size: 32px !important;
+}
+/* The icon of the Rescan network button turns while the scan runs */
+#rescanNetworkBtn.is-scanning .navigation-button-icons {
+    animation: rescan-network-spin 1s linear infinite;
+}
+@keyframes rescan-network-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
 }
 .nav-menu-parent {
     position: relative;
@@ -1079,7 +1087,7 @@ body {
 #closeUpdateApp:hover, #closeUpdateApp:focus, #continueRestoreDefaults:hover, #continueRestoreDefaults:focus, #cancelRestoreDefaults:hover,
 #cancelRestoreDefaults:focus, #continueQuitApp:hover, #continueQuitApp:focus, #cancelQuitApp:hover, #cancelQuitApp:focus, #closeWarning:hover,
 #closeWarning:focus, #continueRestartApp:hover, #continueRestartApp:focus, #cancelRestartApp:hover, #cancelRestartApp:focus, #continueExitApp:hover,
-#continueExitApp:focus, #cancelExitApp:hover, #cancelExitApp:focus, #settingsBtn:hover, #settingsBtn:focus, #supportBtn:hover, #supportBtn:focus,
+#continueExitApp:focus, #cancelExitApp:hover, #cancelExitApp:focus, #rescanNetworkBtn:hover, #rescanNetworkBtn:focus, #settingsBtn:hover, #settingsBtn:focus, #supportBtn:hover, #supportBtn:focus,
 #goBackBtn:hover, #goBackBtn:focus, #restoreDefaultsBtn:hover, #restoreDefaultsBtn:focus, #quitRunningAppBtn:hover, #quitRunningAppBtn:focus,
 #optimalSettingsBtn:hover, #optimalSettingsBtn:focus, #selectResolution:hover, #selectResolution:focus, #selectFramerate:hover, #selectFramerate:focus, #selectBitrate:hover, #selectBitrate:focus,
 #framePacingBtn:hover, #framePacingBtn:focus, #selectLanguage:hover, #selectLanguage:focus, #ipAddressFieldModeBtn:hover, #ipAddressFieldModeBtn:focus, #sortAppsListBtn:hover,
@@ -1113,4 +1121,163 @@ body {
     100% {
         transform: translateX(-100%);
     }
+}
+/* =============================
+   Stream Menu and App Menu
+   The overlay menus, the badges of the app tiles and the hint of the app grid (platform/menus.js) keep their look in
+   this block and its variables, so that a theme can restyle them here. Only properties of Chromium 69 (Tizen 5.5).
+============================= */
+.overlay-menu-backdrop {
+    --overlay-menu-surface: rgba(51, 56, 70, 0.96);
+    --overlay-menu-text: #ffffff;
+    --overlay-menu-muted: rgba(255, 255, 255, 0.7);
+    --overlay-menu-accent: #00A3C6;
+    --overlay-menu-focus: #484C5F;
+    --overlay-menu-line: rgba(255, 255, 255, 0.12);
+    --overlay-menu-radius: 16px;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 1000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.4);
+}
+/* The Stream Menu sits on the right inside the safe area (5 % of the screen), and the stream keeps playing beside it */
+.stream-menu-backdrop {
+    justify-content: flex-end;
+    background: linear-gradient(to left, rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0) 55%);
+}
+.overlay-menu {
+    color: var(--overlay-menu-text);
+    background: var(--overlay-menu-surface);
+    width: 560px;
+    max-height: 90%;
+    padding: 24px 0 16px 0;
+    box-sizing: border-box;
+    overflow-y: auto;
+    border-radius: var(--overlay-menu-radius);
+    box-shadow: 0 0 12px 6px rgba(0, 163, 198, 1);
+}
+.stream-menu {
+    margin-right: 5%;
+}
+.overlay-menu-header {
+    padding: 0 28px 12px 28px;
+}
+.overlay-menu-title {
+    margin: 0;
+    font-size: 2.4rem;
+    font-weight: 500;
+    line-height: normal;
+    letter-spacing: 0.5px;
+}
+.overlay-menu-subtitle {
+    color: var(--overlay-menu-muted);
+    margin-top: 4px;
+    font-size: 1.4rem;
+    line-height: normal;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.overlay-menu-item {
+    color: inherit;
+    background: transparent;
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 56px;
+    margin: 0;
+    padding: 0 28px;
+    box-sizing: border-box;
+    border: none;
+    outline: none;
+    font-family: inherit;
+    font-size: 1.6rem;
+    text-align: left;
+    cursor: pointer;
+}
+.overlay-menu-item[hidden] {
+    display: none;
+}
+.overlay-menu-item.hovered, .overlay-menu-item:hover, .overlay-menu-item:focus {
+    background: var(--overlay-menu-focus);
+    box-shadow: inset 4px 0 0 var(--overlay-menu-accent);
+}
+.overlay-menu-icon {
+    color: var(--overlay-menu-muted);
+    margin-right: 20px;
+    font-size: 28px;
+}
+.overlay-menu-item.hovered .overlay-menu-icon, .overlay-menu-item:hover .overlay-menu-icon,
+.overlay-menu-item:focus .overlay-menu-icon {
+    color: var(--overlay-menu-accent);
+}
+.overlay-menu-label {
+    flex: 1;
+}
+.overlay-menu-value {
+    color: var(--overlay-menu-muted);
+    margin-left: 16px;
+    font-size: 1.4rem;
+}
+.overlay-menu-value.is-on {
+    color: var(--overlay-menu-accent);
+}
+.overlay-menu-group {
+    color: var(--overlay-menu-muted);
+    margin-top: 8px;
+    padding: 12px 28px 4px 28px;
+    border-top: 1px solid var(--overlay-menu-line);
+    font-size: 1.2rem;
+    letter-spacing: 0.5px;
+}
+.overlay-menu-separator {
+    margin: 8px 0;
+    border-top: 1px solid var(--overlay-menu-line);
+}
+.overlay-menu-hint {
+    color: var(--overlay-menu-muted);
+    margin-top: 8px;
+    padding: 12px 28px 0 28px;
+    border-top: 1px solid var(--overlay-menu-line);
+    font-size: 1.2rem;
+}
+/* Badges of the app tiles: the running app and, after 'Show hidden apps', the hidden ones, which are dimmed */
+#game-grid .app-badge {
+    color: #fff;
+    background: rgba(0, 0, 0, 0.75);
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 3;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 1.1rem;
+    font-weight: 500;
+    line-height: normal;
+    letter-spacing: 0.5px;
+}
+#game-grid .app-badge-running {
+    color: #1d1d1d;
+    background: #8BC34A;
+}
+#game-grid .app-badge-hidden {
+    left: auto;
+    right: 8px;
+}
+#game-grid .mdl-card.app-hidden > img.fade-in {
+    opacity: 0.35;
+}
+/* Hint for the menu of an app tile in the header of the app grid */
+.header-hint {
+    color: rgba(255, 255, 255, 0.7);
+    display: none;
+    margin-left: 24px;
+    font-size: 1.2rem;
+    letter-spacing: 0.5px;
 }

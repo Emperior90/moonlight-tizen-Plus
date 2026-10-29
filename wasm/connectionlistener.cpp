@@ -1,4 +1,5 @@
 #include "moonlight_wasm.hpp"
+#include "connection_ports.hpp"
 
 #include <cstdarg>
 #include <cstring>
@@ -19,7 +20,11 @@ void MoonlightInstance::ClStageFailed(int stage, int errorCode) {
   if (stage == STAGE_VIDEO_STREAM_START && errorCode == ERROR_VIDEO_SETUP_FAILED) {
     return;
   }
-  PostToJs(std::string("DialogMsg: ") + std::string(LiGetStageName(stage)) + std::string(" failed (error ") + std::to_string(errorCode) + std::string(")"));
+  // Name the ports of the host PC that the stage needs, which a firewall or the router may block (e.g. TCP 48010,
+  // UDP 48000 and UDP 48010 for the RTSP handshake)
+  char ports[kPortListLength];
+  LiStringifyPortFlags(LiGetPortFlagsFromStage(stage), ", ", ports, sizeof(ports));
+  PostToJs(std::string("DialogMsg: ") + FormatStageFailedMessage(LiGetStageName(stage), errorCode, ports));
 }
 
 void MoonlightInstance::ClConnectionStarted(void) {
@@ -27,6 +32,15 @@ void MoonlightInstance::ClConnectionStarted(void) {
 }
 
 void MoonlightInstance::ClConnectionTerminated(int errorCode) {
+  // Name the ports of the host PC that the cause of the termination points to (UDP 47998 and UDP 48000 when no video
+  // arrived), which the message of the termination that follows shows
+  const unsigned int portFlags = LiGetPortFlagsFromTerminationErrorCode(errorCode);
+  if (portFlags != 0) {
+    char ports[kPortListLength];
+    LiStringifyPortFlags(portFlags, ", ", ports, sizeof(ports));
+    PostToJs(std::string("TerminationPortsMsg: ") + ports);
+  }
+
   // The host can end the connection while it's still being started, for example when the
   // TV never starts the video stream. Wake up the media pipeline setup in that case, so
   // that the connection thread returns and the stop thread can join it. Otherwise both

@@ -1,4 +1,5 @@
 #include "moonlight_wasm.hpp"
+#include "audio_stream_stats.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -34,6 +35,8 @@ static constexpr size_t kAudioSlotElements = kAudioSlotStride * MAX_CHANNEL_COUN
 static constexpr int kDefaultAudioJitterMs = 100;
 
 static std::vector<opus_int16> s_DecodeBuffer;
+
+AudioStreamStats g_AudioStreamStats;
 
 static TimeStamp s_frameDuration;
 static TimeStamp s_pktPts;
@@ -96,6 +99,7 @@ static void DecodeAndAppendPacket(samsung::wasm::ElementaryMediaTrack* track, sa
 
   // Check if audio decoding failed
   if (decodeLen <= 0) {
+    g_AudioStreamStats.decodeErrors.fetch_add(1, std::memory_order_relaxed);
     // Reset the buffer contents to zero when decoding fails
     s_DecodeBuffer.assign(s_DecodeBuffer.size(), 0);
     return;
@@ -121,6 +125,7 @@ static void DecodeAndAppendPacket(samsung::wasm::ElementaryMediaTrack* track, sa
     // If successful, update the presentation timestamp for the next packet
     s_pktPts += s_frameDuration;
   } else {
+    g_AudioStreamStats.playerRejections.fetch_add(1, std::memory_order_relaxed);
     MoonlightInstance::ClLogMessage("Append audio packet failed\n");
   }
 
@@ -151,6 +156,7 @@ static void DecodeAndScheduleFrame(OpusMSDecoder* decoder, const unsigned char* 
 
   // Check if audio decoding failed
   if (decodeLen <= 0) {
+    g_AudioStreamStats.decodeErrors.fetch_add(1, std::memory_order_relaxed);
     // Report the rejected packets in batches, as logging every one of them from the audio
     // thread would cost more time than decoding them
     if (++s_AudioDecodeErrors % 100 == 1) {
@@ -210,9 +216,15 @@ int MoonlightInstance::AudDecInit(int audioConfiguration, POPUS_MULTISTREAM_CONF
 
   // Skip creating the Opus decoder when the audio output is disabled, as every audio packet is discarded
   if (s_AudioBackend == AudioBackend::Disabled) {
+    // No audio lines in the performance stats
+    g_AudioStreamStats.channelCount = 0;
     ClLogMessage("Audio output is disabled, so the audio stream will be discarded\n");
     return 0;
   }
+
+  // Start the audio statistics of the performance stats with the negotiated format of this stream
+  g_AudioStreamStats.Reset(opusConfig->channelCount, opusConfig->samplesPerFrame, opusConfig->sampleRate,
+    LiGetMillis());
 
   // Initialize packet timestamp to zero
   s_pktPts = 0s;
@@ -306,6 +318,9 @@ void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLe
   if (s_AudioBackend == AudioBackend::Disabled) {
     return;
   }
+
+  // Count the packet for the performance stats; one without data stands for a lost packet
+  g_AudioStreamStats.CountPacket(sampleData, sampleLength);
 
   // Check if the Web Audio backend is rendering this streaming session
   if (s_AudioBackend == AudioBackend::WebAudio) {

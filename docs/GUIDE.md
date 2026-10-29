@@ -25,6 +25,7 @@ How to read it:
 13. [Known limits](#13-known-limits)
 14. [Troubleshooting](#14-troubleshooting)
 15. [Updating from the earlier release v1.19.0-s90c.1](#15-updating-from-the-earlier-release-v1190-s90c1)
+16. [Stream Menu and app menu](#16-stream-menu-and-app-menu)
 
 ## 1. Requirements
 
@@ -181,7 +182,7 @@ When the decoder check counts and says No for AV1, the codec menu labels AV1 "ma
 
 ## 7. Performance statistics
 
-Turn them on in Settings → Advanced Settings → *Performance statistics*. In the stream, the YELLOW key (or the controller combo Select + LB + RB + X) shows and hides them. Some lines only appear when they have something to say.
+Turn them on in Settings → Advanced Settings → *Performance statistics*. In the stream, the YELLOW key (or the controller combo Select + LB + RB + X) shows and hides them, and so does *Performance statistics* in the [Stream Menu](#16-stream-menu-and-app-menu). Some lines only appear when they have something to say.
 
 **Stream and host**
 
@@ -223,6 +224,8 @@ Turn them on in Settings → Advanced Settings → *Performance statistics*. In 
 | UDP receive buffer | The receive buffer that the app asked for, and the one that the TV reports |
 | WASM heap top | Memory of the streaming engine against its fixed size. A steady climb over hours points to a memory leak; please report it. |
 | Network connection | Ethernet (with the reminder of the 100 Mbps port), or Wi-Fi with the signal strength in percent when the TV reports it, refreshed every 5 seconds |
+| Audio stream | The audio that the host sends: codec, channel layout and packet duration as negotiated (e.g. *Opus 5.1 surround (6 channels), 5 ms packets*) and its data rate. If you chose 5.1 or 7.1 and it shows *Stereo*, the host only offers stereo. |
+| Session audio packets lost by network | Audio packets that the network lost and the error correction couldn't repair, which the TV covers up with concealed sound. A steady rise means packet loss on the network. Errors of the audio decoder and rejections of the audio player of the TV show in a further line once there are any. |
 | Audio buffer, Audio session | Only with the Web Audio backend: jitter buffer, schedule lead, browser latency, underruns, skipped and lost audio frames, the correction of *Audio clock sync* and a suggested buffer size (see [section 11](#11-audio)). While the audio output of the browser isn't running, a single line *Audio (Web Audio)* shows its state instead. |
 | Moonlight hidden during the stream | How often the app was hidden during the stream and how often the TV closed its video (see [section 12](#12-when-moonlight-goes-to-the-background)) |
 
@@ -299,7 +302,7 @@ Settings → Audio Settings → *Audio backend*:
 - Overlays of the TV such as the quick settings and the volume should leave the stream running. The line *Moonlight hidden during the stream* of the performance statistics counts how often the app was hidden.
 - The game keeps running on the PC. Open Moonlight Plus and select the game again to resume it. A notice says so.
 - The screensaver of the TV stays off while you stream.
-- The RED key ends the stream. During "Starting…", it cancels the start. On a remote without color keys, the 123 key usually shows them on screen (as on the remote of the S90C).
+- The RED key ends the stream. During "Starting…", it cancels the start. On a remote without color keys, the 123 key usually shows them on screen (as on the remote of the S90C). The [Stream Menu](#16-stream-menu-and-app-menu) (Play/Pause) ends the stream as well, with *Disconnect*.
 
 ## 13. Known limits
 
@@ -318,7 +321,9 @@ The app ends a failed stream with a message instead of a frozen or black picture
 
 | Message | Cause and what to do |
 |---|---|
-| "No video received from host." (-100) | Check the firewall and port forwarding rules of the host PC. |
+| "No video received from host." (-100) | Check the firewall of the host PC and the port forwarding of your router. The message names the ports the video and audio need (UDP 47998 and UDP 48000). |
+| "RTSP handshake failed (error …)" and other "… failed (error …)" messages of the connection | The connection to the host failed at this step. When the step needs certain ports, the message names them (e.g. TCP 48010, UDP 48000 and UDP 48010 for the RTSP handshake, UDP 47999 for the control stream); check that the firewall of the host PC and your router let them through. |
+| "… is still running on …, probably because another device started it." | *Quit Running App* didn't quit the app, usually because another device started it. Quit it on that device or on the PC. |
 | "Your network connection isn't performing well." (-101) | Lower the bitrate, or use a faster connection. |
 | "Something went wrong on your host PC when starting the stream." (-102) | Restart the host PC and try again. |
 | "… Make sure you don't have any DRM-protected content open on your host PC." (-103) | Close the protected content on the host. |
@@ -334,6 +339,9 @@ The app ends a failed stream with a message instead of a frozen or black picture
 
 Other problems:
 
+- **Play/Pause doesn't open the Stream Menu:** some TVs may not pass the key to apps (untested). Hold Select + Start on a controller for 1 second instead; RED and YELLOW keep working.
+- **An app is missing from the app list:** it may be hidden. Open the menu of any app (CH+ or Play/Pause) and choose *Show hidden apps* (see [section 16](#16-stream-menu-and-app-menu)).
+- **The PC isn't in the list, or it got a new IP address:** press UP in the host list and select *Rescan network* (the first button of the header) to search the local network again. The app searches for hosts on its own at startup.
 - **The picture freezes on Tizen 9.0 or newer:** turn the *Game mode* switch off, and use the ForceGM variant for the Game Mode of the TV.
 - **Colors look washed out:** HDR is on in the app but off on the host display, or the TV doesn't support HDR (see [section 10](#10-hdr)).
 - **Crackling sound with EMSS:** lower the bitrate by one step, or switch to Web Audio.
@@ -344,3 +352,32 @@ Still stuck? Open an issue on the [issue tracker of this fork](https://github.co
 ## 15. Updating from the earlier release v1.19.0-s90c.1
 
 The earlier release of this fork, v1.19.0-s90c.1 (shown on the TV as *Moonlight S90C*), checked the releases of upstream Moonlight Tizen for updates, not those of this fork. It will never offer Moonlight Plus. An update that it announces later is a release of the regular Moonlight Tizen app, which installs as a separate app next to it, so don't install that to get Moonlight Plus. Install Moonlight Plus 1.19.100 once by hand, as described in [Installation](#3-installation). It has the same package ID, so it installs over the earlier release and normally keeps its settings and pairing. From 1.19.100 on, *Check for updates* looks at the releases of this fork.
+
+## 16. Stream Menu and app menu
+
+**Stream Menu.** During a stream, press **Play/Pause** on the remote, or hold **Select + Start** on a controller for 1 second, to open the Stream Menu on the right of the picture, inside the safe area of the screen. The stream keeps playing behind it, but the PC gets nothing from the remote, the keyboard or the controllers while it is open: they move through the menu (UP and DOWN or the D-pad, OK or A), and RETURN, Play/Pause or B close it and return to the game.
+
+| Entry | What it does |
+|---|---|
+| Resume | Returns to the game |
+| Performance statistics | Shows or hides the [statistics](#7-performance-statistics), like YELLOW. The menu stays open and shows *On* or *Off*. |
+| Mouse emulation | Only shows with a controller connected. Switches the [mouse mode](CONTROLLERS.md#7-mouse-emulation) of the controllers on or off, also when the setting *Mouse emulation* is off (the setting only allows the hold of Start). |
+| Windows key, Alt + Tab, Alt + F4, Esc | Presses the keys on the PC and releases them again in reverse order, so that no key stays held, and returns to the game |
+| Disconnect | Ends the stream, like RED. The game keeps running on the PC. |
+| Disconnect and quit the app on the PC | Ends the stream and then quits the app on the PC, like *Quit Running App*. Unsaved progress in the game is lost. |
+
+- The menu opens once the picture shows, not during "Starting…". RED and YELLOW keep working while it is open.
+- The buttons that are still held when the menu closes (e.g. A on *Resume*) reach the game only after you release them. [CONTROLLERS.md](CONTROLLERS.md#4-buttons-during-a-stream) describes the controller combo.
+- Untested on real TVs: whether every remote and firmware passes Play/Pause to the app. The combo and the color keys work without it.
+
+**App menu.** In the app list, press **CH+** or **Play/Pause** on the remote, or **Select** on a controller, to open the menu of the selected app. The header of the app list names these keys, and the app that runs on the PC has a green *Running* badge.
+
+| Entry | What it does |
+|---|---|
+| Resume or Start | *Resume* for the running app, *Start* for the others: the same as OK on the tile |
+| Quit app | Only for the running app: quits it on the PC after a confirmation, like *Quit Running App* |
+| Hide app, Show app again | Leaves the app out of the app list and the Smart Hub tiles of this host, or brings it back |
+| Show hidden apps (N), Hide hidden apps | Shows the hidden apps of the host dimmed, with a *Hidden* badge, until you choose *Hide hidden apps* or restart Moonlight |
+
+- The TV stores the hidden apps of each host, by ID and title, so an app stays hidden when Sunshine gives it a new ID. Deleting the host forgets them.
+- The running app always shows, also when it is hidden, so you can resume or quit it. When every app of a host is hidden, all of them show.

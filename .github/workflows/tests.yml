@@ -1,5 +1,5 @@
 # This workflow runs the tests of the app on every push and pull request: the ES2018 syntax, EM_ASM, locale and documentation link checks, the Node unit tests, the native tests with sanitizers and the browser tests in Chromium (see `tests/README.md`).
-# It needs no build of the WebAssembly module, since the browser tests replace it with a stub and the native tests build single source files with g++. The full Docker build stays in the release workflows.
+# It needs no build of the WebAssembly module, since the browser tests replace it with a stub and the native tests build single source files with g++ and gcc. The full Docker build stays in the release workflows.
 name: Tests
 # Configure this workflow to be triggered by every push to any branch and by every pull request.
 on:
@@ -12,7 +12,7 @@ permissions:
 concurrency:
   group: tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
-# There is a single job in this workflow. It's configured to run on the latest available version of Ubuntu, which provides g++ for the native tests.
+# There is a single job in this workflow. It's configured to run on the latest available version of Ubuntu, which provides g++ and gcc for the native tests.
 jobs:
   tests:
     runs-on: ubuntu-latest
@@ -49,7 +49,7 @@ jobs:
       - name: Run the unit tests
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         run: npm run test:unit
-      # This step builds the native gamepad tests with g++ and the address and undefined behaviour sanitizers, and runs them.
+      # This step builds the native tests (the gamepad and the stats of the app with g++, files of moonlight-common-c with gcc) with the address and undefined behaviour sanitizers, and runs them.
       - name: Run the native tests
         if: ${{ !cancelled() }}
         run: npm run test:native

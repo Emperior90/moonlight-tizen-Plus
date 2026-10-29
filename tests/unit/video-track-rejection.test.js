@@ -33,7 +33,8 @@ function loadMessages() {
   const notices = [];
   const format = (text, values) => text.replace(/%(\d+)\$s/g, (match, index) => String(values[Number(index) - 1]));
   const jquery = () => ({ css: jquery, removeClass: jquery, addClass: jquery, text: jquery, hide: jquery, show: jquery });
-  const platform = loadPlatformScripts(['wasm/platform/messages.js'], {
+  // menus.js holds the Stream Menu state that the end of a stream resets
+  const platform = loadPlatformScripts(['wasm/platform/messages.js', 'wasm/platform/menus.js'], {
     globals: {
       t: (text, ...values) => format(text, values),
       snackbarLogLong: (text, ...values) => notices.push(format(text, values)),

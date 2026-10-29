@@ -139,6 +139,16 @@ function elementId(target) {
   return typeof target === 'string' ? target : '';
 }
 
+// Select a button of the Hosts header in the HostsNav view, so that the view marks it and OK presses it once the view
+// is entered, instead of the button at the position it had before (the update and Rescan network buttons come before
+// the Settings button)
+function selectHostsNavButton(id) {
+  const index = Views.HostsNav.view.func().indexOf(id);
+  if (index >= 0) {
+    Views.HostsNav.view.index = index;
+  }
+}
+
 // Safely add focus to an element
 function focusElement(target) {
   const element = resolveElement(target);
@@ -519,9 +529,9 @@ const Views = {
   HostsNav: {
     view: new ListView(() => {
       if (document.getElementById('updateAppBtn')) {
-        return ['updateAppBtn', 'settingsBtn', 'supportBtn'];
+        return ['updateAppBtn', 'rescanNetworkBtn', 'settingsBtn', 'supportBtn'];
       } else {
-        return ['settingsBtn', 'supportBtn'];
+        return ['rescanNetworkBtn', 'settingsBtn', 'supportBtn'];
       }
     }),
     up: function() {},
@@ -921,7 +931,8 @@ const Views = {
     },
     back: function() {
       resolveElement('goBackBtn').click();
-      // Navigate to the HostsNav view
+      // Navigate to the HostsNav view with the Settings button selected
+      selectHostsNavButton('settingsBtn');
       Navigation.change(Views.HostsNav);
       focusElement('settingsBtn');
     },
@@ -960,7 +971,8 @@ const Views = {
       const currentItem = resolveElement(this.view.current());
       if (currentItem && currentItem.id === 'goBackBtn') {
         clickElement(currentItem);
-        // Navigate to the HostsNav view
+        // Navigate to the HostsNav view with the Settings button selected
+        selectHostsNavButton('settingsBtn');
         Navigation.change(Views.HostsNav);
         // Set focus to the "Settings" button after navigating to the HostsNav view
         focusElement('settingsBtn');
@@ -970,7 +982,8 @@ const Views = {
     },
     back: function() {
       resolveElement('goBackBtn').click();
-      // Navigate to the HostsNav view
+      // Navigate to the HostsNav view with the Settings button selected
+      selectHostsNavButton('settingsBtn');
       Navigation.change(Views.HostsNav);
       // Set focus to the "Settings" button after navigating to the HostsNav view
       focusElement('settingsBtn');
@@ -1748,7 +1761,10 @@ const Views = {
     back: function() {
       resolveElement('goBackBtn').click();
     },
-    press: function() {},
+    press: function() {
+      // Open the menu of the current app (CH+ or Play/Pause on the remote, Select on a gamepad)
+      openAppMenu(resolveElement(this.view.current()));
+    },
     switch: function() {
       this.view.currentCardRow(6);
     },
@@ -1794,6 +1810,73 @@ const Views = {
     },
     leave: function() {
       unmark(this.view.current());
+    },
+  },
+  AppMenu: {
+    // The entries of the app menu that show for the app (menus.js)
+    view: new ListView(() => getOverlayMenuItems('appMenu')),
+    up: function() {
+      this.view.prevOption();
+      focusElement(this.view.current());
+    },
+    down: function() {
+      this.view.nextOption();
+      focusElement(this.view.current());
+    },
+    left: function() {},
+    right: function() {},
+    accept: function() {
+      clickElement(this.view.current());
+    },
+    back: function() {
+      closeAppMenu();
+    },
+    press: function() {
+      // The key that opened the menu closes it again
+      closeAppMenu();
+    },
+    switch: function() {
+      focusElement(this.view.current());
+    },
+    enter: function() {
+      mark(this.view.current());
+      focusElement(this.view.current());
+    },
+    leave: function() {
+      unmark(this.view.current());
+      blurElement(this.view.current());
+    },
+  },
+  StreamMenu: {
+    // The entries of the Stream Menu that show (menus.js). Back closes it and resumes the stream.
+    view: new ListView(() => getOverlayMenuItems('streamMenu')),
+    up: function() {
+      this.view.prevOption();
+      focusElement(this.view.current());
+    },
+    down: function() {
+      this.view.nextOption();
+      focusElement(this.view.current());
+    },
+    left: function() {},
+    right: function() {},
+    accept: function() {
+      clickElement(this.view.current());
+    },
+    back: function() {
+      closeStreamMenu(true);
+    },
+    press: function() {},
+    switch: function() {
+      focusElement(this.view.current());
+    },
+    enter: function() {
+      mark(this.view.current());
+      focusElement(this.view.current());
+    },
+    leave: function() {
+      unmark(this.view.current());
+      blurElement(this.view.current());
     },
   },
   QuitAppDialog: {

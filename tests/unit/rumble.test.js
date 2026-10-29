@@ -90,7 +90,8 @@ function loadWithGamepad(options) {
   const format = (text, values) => text.replace(/%(\d+)\$s/g, (match, index) => String(values[Number(index) - 1]));
   // A jQuery stand-in for the page changes of leaveStreamView()
   const jquery = () => ({ css: jquery, removeClass: jquery, addClass: jquery, text: jquery, hide: jquery, show: jquery });
-  const platform = loadPlatformScripts(['wasm/platform/gamepad.js', 'wasm/platform/messages.js'], {
+  // menus.js holds the Stream Menu state that the end of a stream resets
+  const platform = loadPlatformScripts(['wasm/platform/gamepad.js', 'wasm/platform/messages.js', 'wasm/platform/menus.js'], {
     globals: {
       navigator: { getGamepads: () => pads.slice() },
       setTimeout: timers.setTimeout,
