@@ -55,12 +55,17 @@ test('the messages are those of the native test', () => {
   assert.ok(read('tests/native/port_flags_test.c').includes('"UDP 47998, UDP 48000"'));
 });
 
-test('a failed stage shows its error and the ports in the connection error dialog', () => {
+test('a failed stage shows its error and the ports in the connection error dialog, as two paragraphs', () => {
   const app = loadMessages('en-US');
   app.handleMessage('DialogMsg: ' + RTSP_MESSAGE);
-  assert.deepEqual(app.dialogs.map((dialog) => dialog.text), [RTSP_MESSAGE]);
+  // The dialog shows HTML (warningDialog() in index.js): the blank line becomes a paragraph break, the rest stays text
+  // (tests/browser/connection-error-dialog.test.js checks the lines that the dialog shows)
+  assert.deepEqual(app.dialogs.map((dialog) => dialog.text), ['RTSP handshake failed (error 10060)<br><br>' +
+    'Check that the firewall of the host PC and your router don&#39;t block these ports: TCP 48010, UDP 48000, UDP 48010']);
   // A stage without ports keeps its message
   assert.equal(app.translate('video stream establishment failed (error -1)'), 'video stream establishment failed (error -1)');
+  app.handleMessage('DialogMsg: video stream establishment failed (error -1)');
+  assert.equal(app.dialogs[1].text, 'video stream establishment failed (error -1)');
 });
 
 test('Brazilian Portuguese translates the stage, its error and the hint, and keeps the ports', () => {
@@ -84,14 +89,19 @@ test('a stream without video names the ports that the module sent before the ter
   assert.equal(app.notices[1], 'No video received from host. Check the host PC\'s firewall and port forwarding rules.');
 });
 
-test('the native code sends the ports of the stage and of the termination', () => {
+test('the native code sends the ports of the stage and of the termination, moved to the ports of the host', () => {
   const listener = read('wasm/connectionlistener.cpp');
-  assert.match(listener, /LiStringifyPortFlags\(LiGetPortFlagsFromStage\(stage\), ", ", ports, sizeof\(ports\)\);\s+PostToJs\(std::string\("DialogMsg: "\) \+ FormatStageFailedMessage\(LiGetStageName\(stage\), errorCode, ports\)\);/);
+  // Both lists come from LiStringifyPortFlags(), moved by the offset of the RTSP port in the session URL of the host
+  // (connection_message_test.cpp checks the offset for a host with another port)
+  assert.match(listener, /LiStringifyPortFlags\(portFlags, ", ", ports, sizeof\(ports\)\);\s+return MovePortList\(ports, GetPortOffsetFromSessionUrl\(g_Instance->m_RtspUrl\)\);/);
+  assert.match(listener, /PostToJs\(std::string\("DialogMsg: "\) \+ FormatStageFailedMessage\(LiGetStageName\(stage\), errorCode,\s+GetHostPortList\(LiGetPortFlagsFromStage\(stage\)\)\)\);/);
   const terminated = listener.slice(listener.indexOf('void MoonlightInstance::ClConnectionTerminated'));
   const portsMessage = terminated.indexOf('PostToJs(std::string("TerminationPortsMsg: ") + ports);');
   const stopped = terminated.indexOf('onConnectionStopped, errorCode);');
   assert.ok(portsMessage > 0 && stopped > portsMessage, 'the ports must arrive before the termination');
-  assert.match(terminated, /LiGetPortFlagsFromTerminationErrorCode\(errorCode\)/);
+  assert.match(terminated, /GetHostPortList\(LiGetPortFlagsFromTerminationErrorCode\(errorCode\)\)/);
+  // The session URL that moonlight-common-c connects to is the one the host sent (main.cpp)
+  assert.match(read('wasm/main.cpp'), /serverInfo\.rtspSessionUrl = me->m_RtspUrl\.c_str\(\);/);
 });
 
 test('the start of a stream drops the ports named for the termination of an earlier one', () => {

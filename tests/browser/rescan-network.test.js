@@ -2,9 +2,10 @@
 
 // Checks the Rescan network button of the Hosts header (rescanNetwork() in wasm/platform/index.js): the remote and a
 // gamepad reach it from the host grid, it runs the subnet scan of static/js/mdns-browser/main.js again with the polling
-// of the known hosts paused, runs only once at a time, and resumes the polling only while the hosts are shown. It also
-// checks that the header still presses Settings after a return from the settings, now that the button comes first.
-// The scan is replaced by one that the test finishes by hand; the calls of the polling are recorded.
+// of the known hosts paused, runs only once at a time, and resumes the polling only while the hosts are shown, with one
+// poll loop per host also when it was pressed during the scan or the first polls at startup. It also checks that the
+// header still presses Settings after a return from the settings, now that the button comes first. The scan is
+// replaced by one that the test finishes by hand; the calls of the polling are recorded.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -194,6 +195,108 @@ test('after a return from the settings, OK in the header presses Settings again'
     await app.page.keyboard.press('Enter');
     await app.page.waitForFunction(() => $('#settings-list').is(':visible') && !$('#wasmSpinner').is(':visible'));
     assert.equal((await state(app.page)).events.includes('scan'), false, 'OK opened the settings, not a scan');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+// Replace the known hosts by two simulated ones whose server info requests take refreshMs, and the scan by one that the
+// test finishes by hand and that returns the running scan to a second caller, like startSubnetScanner(). The polls of
+// each host (pollServer() of utils.js, which the poll loop calls every 5 seconds) are counted in window.__polls.
+const simulateHosts = (page, refreshMs) => page.evaluate((delay) => {
+  stopPollingHosts();
+  Object.keys(hosts).forEach((uid) => delete hosts[uid]);
+  document.querySelector('#snackbar').MaterialSnackbar.showSnackbar = () => {};
+  window.__polls = {};
+  window.__starts = 0;
+  ['HOST1', 'HOST2'].forEach((uid, index) => {
+    const host = new NvHTTP('10.0.0.' + (10 + index), 'client', '', '');
+    host.serverUid = uid;
+    host.paired = false;
+    window.__polls[uid] = 0;
+    host.refreshServerInfo = () => new Promise((resolve) => setTimeout(resolve, delay));
+    host.selectServerAddress = (onSuccess) => setTimeout(() => onSuccess(host.address), 10);
+    const realPoll = host.pollServer;
+    host.pollServer = function(onComplete) {
+      window.__polls[uid]++;
+      return realPoll.call(host, onComplete);
+    };
+    hosts[uid] = host;
+  });
+  window.subnetScanPromise = null;
+  window.__finishScan = null;
+  startSubnetScanner = () => {
+    if (!window.subnetScanPromise) {
+      window.subnetScanPromise = new Promise((resolve) => {
+        window.__finishScan = () => {
+          window.subnetScanPromise = null;
+          resolve();
+        };
+      });
+    }
+    return window.subnetScanPromise;
+  };
+  const realStart = startPollingHosts;
+  startPollingHosts = function() {
+    window.__starts++;
+    return realStart();
+  };
+}, refreshMs);
+
+// Count the polls of each host for a bit more than one poll interval (5 s) after the scan finished
+const pollsAfterScan = (page) => page.evaluate(async () => {
+  window.__finishScan();
+  // The first refreshes of the resumed polling end, and each loop waits 5 seconds for its first poll
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  Object.keys(window.__polls).forEach((uid) => {
+    window.__polls[uid] = 0;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 5300));
+  const polls = Object.assign({}, window.__polls);
+  stopPollingHosts();
+  return { polls, starts: window.__starts };
+});
+
+test('Rescan network during the scan at startup leaves one poll loop per host', async () => {
+  const app = await openWithScan();
+  try {
+    await simulateHosts(app.page, 20);
+    await app.page.evaluate(async () => {
+      discoverHostsAtStartup();
+      while (!window.__finishScan) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      // The button presses into the running scan, which both resume the polling once it ends
+      $('#rescanNetworkBtn').trigger('click');
+    });
+    const result = await pollsAfterScan(app.page);
+    assert.equal(result.starts, 3, 'the start, the end of the scan and the end of the rescan start the polling');
+    assert.deepEqual(result.polls, { HOST1: 1, HOST2: 1 });
+    assert.equal(await app.page.evaluate(() => $('#rescanNetworkBtn').hasClass('is-scanning')), false);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('Rescan network during the first polls at startup leaves one poll loop per host', async () => {
+  const app = await openWithScan();
+  try {
+    // The first server info requests of the start are still running when the button is pressed
+    await simulateHosts(app.page, 300);
+    await app.page.evaluate(async () => {
+      discoverHostsAtStartup();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      $('#rescanNetworkBtn').trigger('click');
+      while (!window.__finishScan) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      // The start waits for its first polls before it joins the scan of the button
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+    const result = await pollsAfterScan(app.page);
+    assert.deepEqual(result.polls, { HOST1: 1, HOST2: 1 });
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

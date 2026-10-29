@@ -1,8 +1,9 @@
 // Pins the controller side of the Stream Menu in wasm/gamepad.cpp: the combo that opens it (Back + Start held together
 // and alone for 1 second), which the game must not see, the replay of the Back and Start presses that turn out not to be
-// the combo, the other combos next to it, and the input while the menu is open and after it closed (setStreamMenuOpen()):
-// the host gets the controllers released, and the buttons that chose an entry don't reach the game. The mouse emulation
-// entry of the menu (toggleMouseEmulation()) works without the setting that allows the hold of Start.
+// the combo, a Back or Start pressed with another button (passed on at once, together with that button), the other
+// combos next to it, and the input while the menu is open and after it closed (setStreamMenuOpen()): the host gets the
+// controllers released, and the buttons that chose an entry don't reach the game. The mouse emulation entry of the menu
+// (toggleMouseEmulation()) works without the setting that allows the hold of Start.
 
 #include "gamepad_harness.h"
 #include "test_support.h"
@@ -184,15 +185,72 @@ static void TestShortChordIsReplayed() {
   CHECK(harness::postedToJs.empty());
 }
 
+static void TestBackWithAnotherButton() {
+  // Select as the modifier of a hotkey (e.g. Select + R1 to save a state in RetroArch), with R1 30 ms later: the game
+  // gets Select together with R1 at once, not R1 first and Select after the window of the combo
+  StartWithController();
+  SetButton(0, kButtonBack, true);
+  Poll();
+  CHECK_EQ(LastButtons(), 0);
+  PollFor(25);
+  SetButton(0, kButtonRB, true);
+  Poll();
+  CHECK_EQ(LastButtons(), BACK_FLAG | RB_FLAG);
+  // A quick tap of R1 (60 ms) overlaps with Select in the game, which still gets Select afterwards while it is held
+  PollFor(55);
+  SetButton(0, kButtonRB, false);
+  Poll();
+  CHECK_EQ(LastButtons(), BACK_FLAG);
+  SetButton(0, kButtonBack, false);
+  Poll();
+  CHECK_EQ(LastButtons(), 0);
+  CHECK(harness::postedToJs.empty());
+
+  // Select and X pressed on the same poll reach the game together
+  StartWithController();
+  const size_t together = padPackets.size();
+  SetButton(0, kButtonBack, true);
+  SetButton(0, kButtonX, true);
+  Poll();
+  CHECK_EQ(padPackets.size(), together + 1);
+  CHECK_EQ(LastButtons(), BACK_FLAG | X_FLAG);
+
+  // A button that was held first: Start pressed with it reaches the game on the same poll as well
+  StartWithController();
+  SetButton(0, kButtonA, true);
+  Poll();
+  CHECK_EQ(LastButtons(), A_FLAG);
+  SetButton(0, kButtonStart, true);
+  Poll();
+  CHECK_EQ(LastButtons(), A_FLAG | PLAY_FLAG);
+
+  // A tap of Select and R1 together, shorter than the window: both reach the game at once and overlap
+  StartWithController();
+  const size_t tap = padPackets.size();
+  SetButton(0, kButtonBack, true);
+  SetButton(0, kButtonRB, true);
+  PollFor(40);
+  SetButton(0, kButtonBack, false);
+  SetButton(0, kButtonRB, false);
+  PollFor(100);
+  CHECK(padPackets.size() > tap && padPackets[tap].buttons == (BACK_FLAG | RB_FLAG));
+  for (size_t i = tap; i < padPackets.size(); ++i) {
+    CHECK(padPackets[i].buttons == (BACK_FLAG | RB_FLAG) || padPackets[i].buttons == 0);
+  }
+  CHECK_EQ(LastButtons(), 0);
+  CHECK(harness::postedToJs.empty());
+}
+
 static void TestOtherCombosAndButtons() {
-  // Back + Start with another button is no Stream Menu combo: after the window both reach the game
+  // Back + Start with another button is no Stream Menu combo: both reach the game at once with that button
   StartWithController();
   SetButton(0, kButtonA, true);
   SetButton(0, kButtonBack, true);
   SetButton(0, kButtonStart, true);
-  PollFor(static_cast<int>(kComboChordWindowMs) + 5);
+  Poll();
   CHECK_EQ(LastButtons(), A_FLAG | BACK_FLAG | PLAY_FLAG);
   PollFor(1500);
+  CHECK_EQ(LastButtons(), A_FLAG | BACK_FLAG | PLAY_FLAG);
   CHECK(harness::postedToJs.empty());
 
   // The stop combo still ends the stream, also when Back + Start came first, as long as LB + RB join within the second
@@ -391,6 +449,7 @@ int main() {
   test_support::RunTest("Back + Start held for a second opens the Stream Menu once, unseen by the game", TestComboOpensMenuOnce);
   test_support::RunTest("a single Back or Start reaches the game after the combo window, a tap is replayed", TestSinglePressesReachTheGame);
   test_support::RunTest("a Back + Start released before the menu opened reaches the game afterwards", TestShortChordIsReplayed);
+  test_support::RunTest("Back or Start with another button reaches the game at once, together with it", TestBackWithAnotherButton);
   test_support::RunTest("the stop and statistics combos, a late Back and the hold of Start next to the combo", TestOtherCombosAndButtons);
   test_support::RunTest("while the Stream Menu is open the host gets the controllers released and nothing else", TestInputWhileMenuOpen);
   test_support::RunTest("buttons held when the Stream Menu closes reach the game only when pressed again", TestButtonsHeldWhenMenuCloses);

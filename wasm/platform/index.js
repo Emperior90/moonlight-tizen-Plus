@@ -19,6 +19,7 @@ var isHostOpening = false; // Prevents concurrent hostChosen executions, initial
 var isHostsLoaded = false; // Indicates if IndexedDB has finished loading hosts
 var isSubnetScanFinished = false; // Indicates if the initial subnet scan has completed
 var activePolls = {}; // Hosts currently being polled. An associated array of polling IDs, keyed by server UID
+var pollGenerations = {}; // Number of the latest start of the polling of each host, keyed by server UID
 var pairingCert; // Loads the generated certificate
 var myUniqueid;
 var api; // The `api` should only be set if we're in a host-specific screen, on the initial screen it should always be null
@@ -371,7 +372,17 @@ function beginBackgroundPollingOfHost(host) {
   // poll loops that corrupt the _pollCompletionCallbacks deduplication guard and
   // prevent the host from ever recovering to the online state.
   endBackgroundPollingOfHost(host);
-  // Ensure the key exists so the hasOwnProperty check in scheduleNextPoll passes
+  // Number this start, so that only its poll loop runs. A start that comes while the first refresh of an earlier one is
+  // still running (e.g. Rescan network during the scan at startup, which both resume the polling once the scan ends,
+  // or a return to the hosts right after opening one) would otherwise let that refresh start a second loop as well,
+  // since it finds the entry of the new start in activePolls: the host would get two requests every 5 seconds, and the
+  // timer of one loop could no longer be cleared.
+  var generation = (pollGenerations[host.serverUid] || 0) + 1;
+  pollGenerations[host.serverUid] = generation;
+  var isCurrentPoll = function() {
+    return activePolls.hasOwnProperty(host.serverUid) && pollGenerations[host.serverUid] === generation;
+  };
+  // Ensure the key exists so the check in scheduleNextPoll passes
   activePolls[host.serverUid] = null;
 
   // Refresh server info before attempting to start background polling of the host
@@ -391,6 +402,9 @@ function beginBackgroundPollingOfHost(host) {
     // Update the UI after the network finishes
     updateHostStatusIndicator(host);
 
+    // A later start took over the polling of the host, whose loop may be polling already, so leave its state alone
+    if (pollGenerations[host.serverUid] !== generation) return;
+
     // Reset poll state so that recovery polls from the interval below start with
     // a clean slate. Without this, stale _pollCompletionCallbacks entries from
     // previous (leaked) intervals can block the deduplication guard and prevent
@@ -406,19 +420,19 @@ function beginBackgroundPollingOfHost(host) {
     host._pollCompletionCallbacks = [];
 
     var scheduleNextPoll = function(delay) {
-      // Stop if the poll was canceled (ID removed from activePolls)
-      if (!activePolls.hasOwnProperty(host.serverUid)) return;
+      // Stop if the poll was canceled (ID removed from activePolls) or a later start took over
+      if (!isCurrentPoll()) return;
 
       activePolls[host.serverUid] = window.setTimeout(function() {
         // In case it was canceled while waiting
-        if (!activePolls.hasOwnProperty(host.serverUid)) return;
+        if (!isCurrentPoll()) return;
 
         host.pollServer(function(returnedHost) {
           // Update the UI after the network finishes
           updateHostStatusIndicator(returnedHost);
 
           // In case it was canceled while the network request was running
-          if (!activePolls.hasOwnProperty(host.serverUid)) return;
+          if (!isCurrentPoll()) return;
 
           // Schedule the next poll for 5 seconds AFTER this one finished
           scheduleNextPoll(5000);
@@ -667,6 +681,10 @@ function hostChosen(host, onSuccessCallback) {
     snackbarLogLong('A pairing request is currently in progress. Please wait for it to timeout or finish before trying again.');
     return;
   }
+  // The menu of an app tile belongs to the app list it was opened on, which the app list of this host replaces, e.g.
+  // for a Smart Hub tile picked while the menu was open. Close it, so that it neither stays over the new app list or
+  // the stream that the tile starts, nor keeps the Stream Menu from opening (isDialogShown() in menus.js).
+  closeAppMenu();
   localStorage.setItem('lastOpenedHost', host.serverUid);
 
   // If the host is already offline or fails to connect, notify the user.
@@ -5039,8 +5057,10 @@ function initSpecialKeys() {
 
   // During a stream, keep the keys that open the Stream Menu, and every key while it is open, away from the PC: this
   // listener runs before the keyboard handler of the stream on the video element, which sends the keys to the PC while
-  // the pointer is locked. The key handler of the remote gets them instead (menus.js, remote_controller.js). The release
-  // of a key that closed the menu, e.g. RETURN or OK on Resume, stays away from the PC as well.
+  // the pointer is locked. The key handler of the remote gets them instead (menus.js, remote_controller.js). The last
+  // key that went to the menu stays away from the PC until it is released, also once it closed the menu, e.g. RETURN
+  // or OK on Resume: the auto-repeat of a held key would press it on the PC (OK as Enter, RETURN as Esc through the
+  // handler below), and the PC wouldn't get its release, which would leave Enter held there.
   var streamMenuKeyCode = null;
   ['keydown', 'keyup'].forEach(function(eventType) {
     window.addEventListener(eventType, function(e) {
@@ -5048,19 +5068,26 @@ function initSpecialKeys() {
         streamMenuKeyCode = null;
         return;
       }
-      var isReleaseOfMenuKey = e.type === 'keyup' && e.keyCode === streamMenuKeyCode;
-      if (!(isStreamMenuOpen || isMenuKeyEvent(e) || isReleaseOfMenuKey)) {
+      var isMenuKey = isStreamMenuOpen || isMenuKeyEvent(e);
+      var isHeldMenuKey = streamMenuKeyCode !== null && e.keyCode === streamMenuKeyCode;
+      if (!(isMenuKey || isHeldMenuKey)) {
         return;
       }
       e.preventDefault();
       e.stopPropagation();
-      if (e.type === 'keydown') {
+      if (e.type === 'keyup') {
+        if (isHeldMenuKey) {
+          streamMenuKeyCode = null;
+        }
+      } else if (isMenuKey) {
         streamMenuKeyCode = e.keyCode;
         remoteControllerHandler(e);
-      } else if (isReleaseOfMenuKey) {
-        streamMenuKeyCode = null;
       }
     }, true);
+  });
+  // A key whose release went elsewhere, e.g. while another app had the focus, isn't held any more
+  window.addEventListener('blur', function() {
+    streamMenuKeyCode = null;
   });
 
   // Listen for keydown events on the video element
@@ -5733,28 +5760,33 @@ function loadHTTPCertsCb() {
           updatePreviewData();
         });
         console.log('%c[index.js, loadHTTPCertsCb]', 'color: green;', 'Loading previously connected hosts...');
-        
-        // Immediately start polling known hosts so they are ready for Smart Hub or instant clicks.
-        // We wait for all known hosts to finish their initial ping before launching the subnet scanner
-        // to guarantee that the 254 scanner requests don't choke the network stack and cause known hosts to timeout.
-        startPollingHosts().then(() => {
-          if (typeof startSubnetScanner === 'function') {
-            snackbarLog('Scanning the local network to discover new hosts...');
-            // Stop background polling while sweeping the subnet to prevent network exhaustion
-            stopPollingHosts();
-            startSubnetScanner().then(() => {
-              isSubnetScanFinished = true;
-              startPollingHosts();
-            }).catch(() => {
-              isSubnetScanFinished = true;
-              startPollingHosts();
-            });
-          } else {
-            isSubnetScanFinished = true;
-          }
-        });
+        discoverHostsAtStartup();
       });
     });
+  });
+}
+
+// Poll the known hosts and then scan the local network for new ones, once the stored hosts are loaded at startup.
+// Returns a promise that resolves once the scan is done and the polling resumed.
+function discoverHostsAtStartup() {
+  // Immediately start polling known hosts so they are ready for Smart Hub or instant clicks.
+  // We wait for all known hosts to finish their initial ping before launching the subnet scanner
+  // to guarantee that the 254 scanner requests don't choke the network stack and cause known hosts to timeout.
+  return startPollingHosts().then(() => {
+    if (typeof startSubnetScanner === 'function') {
+      snackbarLog('Scanning the local network to discover new hosts...');
+      // Stop background polling while sweeping the subnet to prevent network exhaustion
+      stopPollingHosts();
+      return startSubnetScanner().then(() => {
+        isSubnetScanFinished = true;
+        startPollingHosts();
+      }).catch(() => {
+        isSubnetScanFinished = true;
+        startPollingHosts();
+      });
+    } else {
+      isSubnetScanFinished = true;
+    }
   });
 }
 

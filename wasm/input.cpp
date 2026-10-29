@@ -2,7 +2,26 @@
 
 #include <Limelight.h>
 
+#include <set>
+
 #define KEY_PREFIX 0x80
+
+// Keys and mouse buttons that the stream sent to the host as pressed and that the host didn't get the release of yet.
+// The handlers below run on the main thread, which is the only one that uses them.
+static std::set<uint32_t> heldKeys;
+static std::set<int> heldMouseButtons;
+
+// Release every key and mouse button that the host still holds from the stream
+static void ReleaseHeldInput() {
+  for (uint32_t keyCode : heldKeys) {
+    LiSendKeyboardEvent(KEY_PREFIX << 8 | keyCode, KEY_ACTION_UP, 0);
+  }
+  heldKeys.clear();
+  for (int button : heldMouseButtons) {
+    LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, button);
+  }
+  heldMouseButtons.clear();
+}
 
 static int ConvertButtonToLiButton(unsigned short button) {
   switch (button) {
@@ -41,7 +60,9 @@ EM_BOOL MoonlightInstance::HandleMouseDown(const EmscriptenMouseEvent &event) {
     return EM_TRUE;
   }
 
-  LiSendMouseButtonEvent(BUTTON_ACTION_PRESS, ConvertButtonToLiButton(event.button));
+  const int button = ConvertButtonToLiButton(event.button);
+  LiSendMouseButtonEvent(BUTTON_ACTION_PRESS, button);
+  heldMouseButtons.insert(button);
   return EM_TRUE;
 }
 
@@ -64,7 +85,9 @@ EM_BOOL MoonlightInstance::HandleMouseUp(const EmscriptenMouseEvent &event) {
     return EM_FALSE;
   }
 
-  LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, ConvertButtonToLiButton(event.button));
+  const int button = ConvertButtonToLiButton(event.button);
+  LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, button);
+  heldMouseButtons.erase(button);
   return EM_TRUE;
 }
 
@@ -103,6 +126,7 @@ EM_BOOL MoonlightInstance::HandleKeyDown(const EmscriptenKeyboardEvent &event) {
   }
 
   LiSendKeyboardEvent(KEY_PREFIX << 8 | keyCode, KEY_ACTION_DOWN, modifiers);
+  heldKeys.insert(keyCode);
   return EM_TRUE;
 }
 
@@ -121,6 +145,7 @@ EM_BOOL MoonlightInstance::HandleKeyUp(const EmscriptenKeyboardEvent &event) {
   }
 
   LiSendKeyboardEvent(KEY_PREFIX << 8 | keyCode, KEY_ACTION_UP, modifiers);
+  heldKeys.erase(keyCode);
   return EM_TRUE;
 }
 
@@ -202,6 +227,11 @@ void MoonlightInstance::DidLockMouse(int32_t result) {
 
 void MoonlightInstance::MouseLockLost() {
   m_MouseLocked = false;
+  // Without the pointer lock, HandleKeyUp() and HandleMouseUp() pass nothing on, so the releases of the keys and mouse
+  // buttons that are held now would never reach the host, which keeps them held (and repeats a held key) until they are
+  // pressed again: e.g. W held to walk or the right mouse button held to aim when the Stream Menu opens, which releases
+  // the pointer and keeps the keys in the UI. Release them on the host now.
+  ReleaseHeldInput();
 }
 
 void sendKeyboardEvent(uint32_t keyCode, uint16_t action, char modifiers) {

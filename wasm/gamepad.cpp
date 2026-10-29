@@ -123,9 +123,11 @@ static bool comboTriggered[kMaxControllers];
 
 // Stream Menu combo: holding Back and Start together, and no other button, for kStreamMenuHoldMs opens the Stream Menu.
 // So that the game doesn't act on the combo, a press of Back or Start reaches the host kComboChordWindowMs later,
-// unless the other one joins it meanwhile: then the host gets neither while both are held. A press that ends earlier,
-// or a Back + Start that ends before it opened the menu (e.g. the Select + Start hotkey of RetroArch), reaches the host
-// afterwards for as long as it was held. Once the combo opened the menu, the host gets neither until it is released.
+// unless the other one joins it meanwhile: then the host gets neither while both are held. Another button held with it
+// rules out the combo, so the host gets the press at once then, together with that button, which keeps the order of a
+// hotkey with Back as its modifier (e.g. Select + R1 in RetroArch). A press that ends earlier, or a Back + Start that
+// ends before it opened the menu (e.g. the Select + Start hotkey of RetroArch), reaches the host afterwards for as long
+// as it was held. Once the combo opened the menu, the host gets neither until it is released.
 static constexpr uint64_t kStreamMenuHoldMs = 1000;
 static constexpr uint64_t kComboChordWindowMs = 100;
 
@@ -381,9 +383,10 @@ static void UpdateMouseEmulationToggle(int controller, int physicalFlags, uint64
 
 // Follow Back or Start of a controller for the Stream Menu combo. A new press is withheld, or dropped while the combo
 // that opened the menu is still held. A withheld press reaches the host once kComboChordWindowMs have passed since it
-// was pressed, unless Back and Start are held together and alone (the chord), and a withheld press that is released
-// gets replayed for as long as it was held.
-static void UpdateComboButton(ComboButton& button, bool pressed, bool chord, bool menuOpened, uint64_t nowMs) {
+// was pressed, unless Back and Start are held together and alone (the chord), or at once when another button is held
+// with it (others), and a withheld press that is released gets replayed for as long as it was held.
+static void UpdateComboButton(ComboButton& button, bool pressed, bool chord, bool others, bool menuOpened,
+                              uint64_t nowMs) {
   if (pressed && !button.held) {
     button.held = true;
     button.withheld = !menuOpened;
@@ -397,7 +400,7 @@ static void UpdateComboButton(ComboButton& button, bool pressed, bool chord, boo
     button.withheld = false;
     button.dropped = false;
   }
-  if (button.withheld && !chord && nowMs - button.pressMs >= kComboChordWindowMs) {
+  if (button.withheld && !chord && (others || nowMs - button.pressMs >= kComboChordWindowMs)) {
     button.withheld = false;
   }
 }
@@ -415,14 +418,16 @@ static bool ComboButtonReachesHost(const ComboButton& button, uint64_t nowMs) {
 static int UpdateStreamMenuCombo(int controller, int buttonFlags, int physicalFlags, uint64_t nowMs) {
   StreamMenuCombo& combo = streamMenuCombo[controller];
   const bool chord = physicalFlags == STREAM_MENU_BUTTONS;
+  // Another button is held, which rules out the combo
+  const bool others = (physicalFlags & ~STREAM_MENU_BUTTONS) != 0;
   if (!chord) {
     combo.chordMs = 0;
   } else if (combo.chordMs == 0) {
     combo.chordMs = nowMs;
   }
 
-  UpdateComboButton(combo.back, (physicalFlags & BACK_FLAG) != 0, chord, combo.opened, nowMs);
-  UpdateComboButton(combo.start, (physicalFlags & PLAY_FLAG) != 0, chord, combo.opened, nowMs);
+  UpdateComboButton(combo.back, (physicalFlags & BACK_FLAG) != 0, chord, others, combo.opened, nowMs);
+  UpdateComboButton(combo.start, (physicalFlags & PLAY_FLAG) != 0, chord, others, combo.opened, nowMs);
 
   if (chord && !combo.opened && nowMs - combo.chordMs >= kStreamMenuHoldMs) {
     combo.opened = true;

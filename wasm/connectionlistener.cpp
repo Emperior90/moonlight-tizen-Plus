@@ -12,6 +12,15 @@ void MoonlightInstance::ClStageStarting(int stage) {
   PostToJs(std::string("ProgressMsg: Starting ") + std::string(LiGetStageName(stage)) + std::string("..."));
 }
 
+// The ports of the host PC in the port flags of moonlight-common-c, as the stream uses them: the default ports of
+// LiStringifyPortFlags(), moved like the RTSP port in the session URL of the host (wasm/connection_ports.hpp), e.g.
+// TCP 50021 instead of TCP 48010 for a Sunshine host with the port 50000, or "" when there are none
+static std::string GetHostPortList(unsigned int portFlags) {
+  char ports[kPortListLength];
+  LiStringifyPortFlags(portFlags, ", ", ports, sizeof(ports));
+  return MovePortList(ports, GetPortOffsetFromSessionUrl(g_Instance->m_RtspUrl));
+}
+
 void MoonlightInstance::ClStageFailed(int stage, int errorCode) {
   if (g_Instance && g_Instance->m_ConnectionCancelled) {
     return;
@@ -22,9 +31,8 @@ void MoonlightInstance::ClStageFailed(int stage, int errorCode) {
   }
   // Name the ports of the host PC that the stage needs, which a firewall or the router may block (e.g. TCP 48010,
   // UDP 48000 and UDP 48010 for the RTSP handshake)
-  char ports[kPortListLength];
-  LiStringifyPortFlags(LiGetPortFlagsFromStage(stage), ", ", ports, sizeof(ports));
-  PostToJs(std::string("DialogMsg: ") + FormatStageFailedMessage(LiGetStageName(stage), errorCode, ports));
+  PostToJs(std::string("DialogMsg: ") + FormatStageFailedMessage(LiGetStageName(stage), errorCode,
+                                                                   GetHostPortList(LiGetPortFlagsFromStage(stage))));
 }
 
 void MoonlightInstance::ClConnectionStarted(void) {
@@ -34,10 +42,8 @@ void MoonlightInstance::ClConnectionStarted(void) {
 void MoonlightInstance::ClConnectionTerminated(int errorCode) {
   // Name the ports of the host PC that the cause of the termination points to (UDP 47998 and UDP 48000 when no video
   // arrived), which the message of the termination that follows shows
-  const unsigned int portFlags = LiGetPortFlagsFromTerminationErrorCode(errorCode);
-  if (portFlags != 0) {
-    char ports[kPortListLength];
-    LiStringifyPortFlags(portFlags, ", ", ports, sizeof(ports));
+  const std::string ports = GetHostPortList(LiGetPortFlagsFromTerminationErrorCode(errorCode));
+  if (!ports.empty()) {
     PostToJs(std::string("TerminationPortsMsg: ") + ports);
   }
 

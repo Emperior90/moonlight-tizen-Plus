@@ -76,7 +76,7 @@ X means the left face button (Square on PlayStation controllers), also with *Fli
 **Select + Start for the Stream Menu.** Two buttons that every controller has, held together and alone, which none of the other combos uses on its own. So that the game doesn't react to the combo:
 
 - Press both at the same time. While both are held, the game gets neither of them, and once the menu opened, it gets neither until you release them.
-- A press of Select or Start alone reaches the game 0.1 seconds late (other buttons aren't delayed), so that the other button of the combo can still join it. A shorter press reaches the game right after its release, for as long as it was held.
+- A press of Select or Start alone reaches the game 0.1 seconds late (other buttons aren't delayed), so that the other button of the combo can still join it. A shorter press reaches the game right after its release, for as long as it was held. A press together with another button isn't the combo and reaches the game at once with that button, so a hotkey with Select as its modifier (e.g. Select + R1 in RetroArch) keeps its order.
 - Select + Start released before the menu opened, e.g. the Select + Start hotkey of RetroArch, reach the game together afterwards, for as long as they were held.
 - If one of them was held alone for longer than 0.1 seconds first, the game has it already: it sees that button held until the menu opens.
 - Pressing LB + RB as well within the second ends the stream instead (the stop combo). The hold of Start for the mouse emulation never counts a hold of Select + Start.

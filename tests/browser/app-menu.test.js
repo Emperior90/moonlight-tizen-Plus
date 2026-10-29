@@ -259,3 +259,83 @@ test('the Smart Hub tiles leave out the hidden apps, and a deleted host forgets 
     await app.context.close();
   }
 });
+
+test('a Smart Hub tile picked while the app menu is open closes it, so the stream shows and the Stream Menu opens', async () => {
+  const app = await openAppList({ currentGame: 0 });
+  try {
+    // The real start of a stream, with the launch reply of the host given by the test
+    await app.page.evaluate(() => {
+      const host = window.__host;
+      let launch = null;
+      window.__launch = (reply) => launch(reply);
+      host.getAppListWithCacheFlush = () => Promise.resolve(window.__apps.slice());
+      host.launchApp = () => new Promise((resolve) => {
+        launch = resolve;
+      });
+      hosts.HOST1 = host;
+      startGame = window.__realStartGame;
+      window.__navigation = [];
+      const name = (view) => Object.keys(Views).find((key) => Views[key] === view);
+      const push = Navigation.push;
+      const pop = Navigation.pop;
+      const change = Navigation.change;
+      Navigation.push = (view, hostname) => {
+        window.__navigation.push('push ' + name(view));
+        return push(view, hostname);
+      };
+      Navigation.pop = () => {
+        window.__navigation.push('pop');
+        return pop();
+      };
+      Navigation.change = (view) => {
+        window.__navigation.push('change ' + name(view));
+        return change(view);
+      };
+    });
+    await remote(app.page, 'KEY_CHANNEL_UP');
+    assert.equal((await appMenu(app.page)).open, true);
+
+    // Home, then the tile of Steam Big Picture in Smart Hub: the running app gets the deep link (handleDeepLink())
+    await app.page.evaluate(() => {
+      _isSmartHubSupported = true;
+      const current = tizen.application.getCurrentApplication;
+      tizen.application.getCurrentApplication = () => Object.assign({}, current(), {
+        getRequestedAppControl: () => ({ appControl: { data: [{ key: 'PAYLOAD', value: [JSON.stringify({ values: JSON.stringify({ serverUid: 'HOST1', appId: 12 }) })] }] } }),
+      });
+      handleDeepLink();
+    });
+    await app.page.waitForFunction(() => isInGame === true, null, { timeout: 5000 });
+    let state = await app.page.evaluate(() => ({ menuShown: $('#appMenuOverlay').is(':visible'), isDialogOpen, target: appMenuTarget }));
+    assert.deepEqual(state, { menuShown: false, isDialogOpen: false, target: null });
+
+    // The stream connects, and Play/Pause opens the Stream Menu over it
+    await app.page.evaluate(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      window.__launch('<root status_code="200" status_message="OK"><sessionUrl0>rtsp://10.0.0.2:48010</sessionUrl0></root>');
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      window.__host.currentGame = 12;
+      handleMessage('Connection Established');
+    });
+    await remote(app.page, 'KEY_PLAY_PAUSE');
+    assert.equal(await app.page.evaluate(() => isStreamMenuOpen), true);
+    await remote(app.page, 'KEY_PLAY_PAUSE');
+
+    // After the stream, the app list of the host gets the keys again: the app menu left the navigation before the app
+    // list of the tile came in, and the end of the stream returns to that app list
+    await app.page.evaluate(async () => {
+      handleMessage('streamTerminated: 0');
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+    await waitForGrid(app.page);
+    state = await app.page.evaluate(() => ({ menuShown: $('#appMenuOverlay').is(':visible'), isDialogOpen, navigation: window.__navigation.slice() }));
+    assert.deepEqual(state, { menuShown: false, isDialogOpen: false, navigation: ['push AppMenu', 'pop', 'push Apps', 'change Apps',
+      'push StreamMenu', 'pop', 'change Apps'] });
+    // CH+ opens the menu of the selected tile, which is in the app list again
+    const selected = await selectedApp(app.page);
+    await remote(app.page, 'KEY_CHANNEL_UP');
+    assert.deepEqual(await appMenu(app.page).then((menu) => [menu.open, menu.title]), [true, selected]);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});

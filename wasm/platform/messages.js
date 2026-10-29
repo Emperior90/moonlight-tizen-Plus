@@ -192,6 +192,12 @@ function translateBackendMessage(text) {
   return translated;
 }
 
+// Turn a text into the HTML of a dialog text (warningDialog() in index.js sets it as innerHTML): its characters as they
+// are, and each line break as <br>, so that a blank line stays a paragraph break
+function formatDialogText(text) {
+  return escapeHTML(text).replace(/\n/g, '<br>');
+}
+
 /**
  * var sendMessage - Sends a message with arguments to the Wasm module
  *
@@ -530,8 +536,9 @@ function handleMessage(msg) {
         break;
     }
   } else if (msg.indexOf('DialogMsg: ') === 0) {
-    // Show dialog message using the warning dialog
-    warningDialog(t('Connection Error'), translateBackendMessage(msg.replace('DialogMsg: ', '')));
+    // Show dialog message using the warning dialog, which shows HTML: the line breaks of the message (e.g. the blank
+    // line before the ports of a failed connection stage) become <br>, which the dialog would show as spaces otherwise
+    warningDialog(t('Connection Error'), formatDialogText(translateBackendMessage(msg.replace('DialogMsg: ', ''))));
   } else if (msg.indexOf('TerminationPortsMsg: ') === 0) {
     // The connection is about to end for a cause that points to these ports of the host PC, which the termination
     // message that follows names

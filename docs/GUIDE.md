@@ -321,8 +321,8 @@ The app ends a failed stream with a message instead of a frozen or black picture
 
 | Message | Cause and what to do |
 |---|---|
-| "No video received from host." (-100) | Check the firewall of the host PC and the port forwarding of your router. The message names the ports the video and audio need (UDP 47998 and UDP 48000). |
-| "RTSP handshake failed (error …)" and other "… failed (error …)" messages of the connection | The connection to the host failed at this step. When the step needs certain ports, the message names them (e.g. TCP 48010, UDP 48000 and UDP 48010 for the RTSP handshake, UDP 47999 for the control stream); check that the firewall of the host PC and your router let them through. |
+| "No video received from host." (-100) | Check the firewall of the host PC and the port forwarding of your router. The message names the ports the video and audio need (UDP 47998 and UDP 48000, or the ports of the host's port setting, e.g. UDP 50009 and UDP 50011 for Sunshine with the port 50000). |
+| "RTSP handshake failed (error …)" and other "… failed (error …)" messages of the connection | The connection to the host failed at this step. When the step needs certain ports, the message names them (e.g. TCP 48010, UDP 48000 and UDP 48010 for the RTSP handshake, UDP 47999 for the control stream; a host with another port setting gets its own ports, e.g. TCP 50021, UDP 50011 and UDP 50021 for Sunshine with the port 50000); check that the firewall of the host PC and your router let them through. |
 | "… is still running on …, probably because another device started it." | *Quit Running App* didn't quit the app, usually because another device started it. Quit it on that device or on the PC. |
 | "Your network connection isn't performing well." (-101) | Lower the bitrate, or use a faster connection. |
 | "Something went wrong on your host PC when starting the stream." (-102) | Restart the host PC and try again. |
@@ -367,7 +367,7 @@ The earlier release of this fork, v1.19.0-s90c.1 (shown on the TV as *Moonlight 
 | Disconnect and quit the app on the PC | Ends the stream and then quits the app on the PC, like *Quit Running App*. Unsaved progress in the game is lost. |
 
 - The menu opens once the picture shows, not during "Starting…". RED and YELLOW keep working while it is open.
-- The buttons that are still held when the menu closes (e.g. A on *Resume*) reach the game only after you release them. [CONTROLLERS.md](CONTROLLERS.md#4-buttons-during-a-stream) describes the controller combo.
+- The buttons that are still held when the menu closes (e.g. A on *Resume*) reach the game only after you release them, and so does the key of the remote or keyboard that closed it (e.g. OK on *Resume*). Keyboard keys and mouse buttons that are held when the menu opens are released on the PC. [CONTROLLERS.md](CONTROLLERS.md#4-buttons-during-a-stream) describes the controller combo.
 - Untested on real TVs: whether every remote and firmware passes Play/Pause to the app. The combo and the color keys work without it.
 
 **App menu.** In the app list, press **CH+** or **Play/Pause** on the remote, or **Select** on a controller, to open the menu of the selected app. The header of the app list names these keys, and the app that runs on the PC has a green *Running* badge.

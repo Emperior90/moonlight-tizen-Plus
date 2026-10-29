@@ -103,8 +103,29 @@ function setOverlayMenuValue(valueId, isOn) {
   }
 }
 
+// Select an entry of the Stream Menu again after the entries that show changed while it is open, or the last entry
+// before it that shows when it doesn't show any more. Otherwise the index of the selection would point at the entry
+// after it, which OK presses without it being marked.
+function reselectStreamMenuEntry(entry) {
+  const entries = getOverlayMenuItems('streamMenu');
+  let index = entries.indexOf(entry);
+  if (index < 0) {
+    const before = entries.filter((item) => entry.compareDocumentPosition(item) & Node.DOCUMENT_POSITION_PRECEDING);
+    index = Math.max(0, before.length - 1);
+  }
+  if (Views.StreamMenu.view.index === index && entries[index] === entry) {
+    return;
+  }
+  unmark(entry);
+  Views.StreamMenu.view.index = index;
+  mark(entries[index]);
+  focusElement(entries[index]);
+}
+
 // Fill the Stream Menu with the current state of the stream: the app and host, whether the performance statistics and
-// the mouse emulation are on, and the mouse emulation entry only while a controller is connected
+// the mouse emulation are on, and the mouse emulation entry only while a controller is connected or the mouse emulation
+// is on. When that entry goes while the menu shows, e.g. after the mouse emulation was turned off on it and no
+// controller is connected any more, the selection moves to the entry before it.
 function updateStreamMenu() {
   const host = streamLaunchHost || api;
   const subtitle = [streamLaunchAppTitle, host && host.hostname ? host.hostname : ''].filter((text) => !!text).join(' · ');
@@ -113,7 +134,12 @@ function updateStreamMenu() {
   setOverlayMenuValue('streamMenuMouseValue', streamMouseEmulationActive);
   const mouseEntry = document.getElementById('streamMenuMouse');
   if (mouseEntry) {
+    // The selected entry while the menu shows; openStreamMenu() selects the first entry after this
+    const selected = $('#streamMenuOverlay').is(':visible') ? Views.StreamMenu.view.current() : null;
     mouseEntry.hidden = !(streamMouseEmulationActive || Controller.getConnectedGamepads().length > 0);
+    if (selected) {
+      reselectStreamMenuEntry(selected);
+    }
   }
 }
 
@@ -146,7 +172,9 @@ function openStreamMenu() {
   }
   console.log('%c[menus.js, openStreamMenu]', 'color: teal;', 'Opening the Stream Menu.');
   isStreamMenuOpen = true;
-  // Stop the controller input of the PC first, and release the pointer, which would move the mouse of the PC
+  // Stop the controller input of the PC first, and release the pointer, which would move the mouse of the PC. The end
+  // of the pointer lock also releases the keys and mouse buttons that the PC still holds (MouseLockLost() in
+  // wasm/input.cpp), since their releases stay in the UI from now on.
   setStreamMenuInputPaused(true);
   streamMenuPointerWasLocked = !!document.pointerLockElement;
   if (streamMenuPointerWasLocked && typeof document.exitPointerLock === 'function') {

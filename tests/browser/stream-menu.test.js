@@ -127,6 +127,14 @@ const remoteKey = (page, keyCode, key) => page.evaluate(({ code, name }) => {
   });
 }, { code: keyCode, name: key });
 
+// Send one key event of the remote or a keyboard to the focused element, e.g. the auto-repeat of a held key
+const keyEvent = (page, type, keyCode, key, repeat) => page.evaluate(({ eventType, code, name, isRepeat }) => {
+  const event = new KeyboardEvent(eventType, { key: name, repeat: isRepeat, bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'keyCode', { value: code });
+  Object.defineProperty(event, 'which', { value: code });
+  (document.activeElement || document.body).dispatchEvent(event);
+}, { eventType: type, code: keyCode, name: key, isRepeat: !!repeat });
+
 const PLAY_PAUSE = [10252, 'MediaPlayPause'];
 const RETURN = [10009, 'XF86Back'];
 const DOWN = [40, 'ArrowDown'];
@@ -208,6 +216,50 @@ test('Play/Pause opens the Stream Menu over the stream, the remote moves in it, 
       return { whileOpen, afterClose: seen.slice() };
     });
     assert.deepEqual(mouse, { whileOpen: [], afterClose: ['mousedown', 'mouseup'] });
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a held key that closed the Stream Menu stays away from the PC until it is released', async () => {
+  const app = await openStreaming();
+  try {
+    // OK held on Resume: the menu closes on the first press, and neither the auto-repeat nor the release reaches the
+    // stream, which would press Enter on the PC without releasing it
+    await remoteKey(app.page, ...PLAY_PAUSE);
+    await keyEvent(app.page, 'keydown', ...ENTER);
+    assert.deepEqual(await menuState(app.page).then((state) => [state.open, state.focused]), [false, 'wasm_module']);
+    await keyEvent(app.page, 'keydown', ...ENTER, true);
+    await keyEvent(app.page, 'keydown', ...ENTER, true);
+    await keyEvent(app.page, 'keyup', ...ENTER);
+    assert.deepEqual(await app.page.evaluate(() => window.__videoKeys.slice()), []);
+    // The next press of OK goes to the stream again, with its release
+    await remoteKey(app.page, ...ENTER);
+    assert.deepEqual(await app.page.evaluate(() => window.__videoKeys.splice(0)), ['keydown 13', 'keyup 13']);
+
+    // RETURN held to close the menu: its auto-repeat doesn't send Esc to the PC (the Back key handler of the stream)
+    await remoteKey(app.page, ...PLAY_PAUSE);
+    await app.page.evaluate(() => window.__wasmCalls.splice(0));
+    await keyEvent(app.page, 'keydown', ...RETURN);
+    assert.equal((await menuState(app.page)).open, false);
+    await keyEvent(app.page, 'keydown', ...RETURN, true);
+    await keyEvent(app.page, 'keydown', ...RETURN, true);
+    await keyEvent(app.page, 'keyup', ...RETURN);
+    assert.deepEqual(await moduleCalls(app.page), ['setStreamMenuOpen false']);
+    assert.deepEqual(await app.page.evaluate(() => window.__videoKeys.slice()), []);
+
+    // A key held while the menu closes another way (B of a gamepad, here the Resume entry) stays away until released,
+    // while the other keys reach the stream at once
+    await remoteKey(app.page, ...PLAY_PAUSE);
+    await keyEvent(app.page, 'keydown', ...DOWN);
+    await app.page.evaluate(() => closeStreamMenu(true));
+    await keyEvent(app.page, 'keydown', ...DOWN, true);
+    await remoteKey(app.page, 87, 'w');
+    await keyEvent(app.page, 'keyup', ...DOWN);
+    assert.deepEqual(await app.page.evaluate(() => window.__videoKeys.splice(0)), ['keydown 87', 'keyup 87']);
+    await remoteKey(app.page, ...DOWN);
+    assert.deepEqual(await app.page.evaluate(() => window.__videoKeys.splice(0)), ['keydown 40', 'keyup 40']);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
@@ -322,6 +374,60 @@ test('the mouse emulation entry asks the module and shows its answer, the key en
       streamMenuKeyAltF4: ['32932,3,4', '32883,3,4', '32883,4,4', '32932,4,0'],
       streamMenuKeyEsc: ['32795,3,0', '32795,4,0'],
     });
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('when the mouse emulation entry goes under the selection, the entry before it is selected, not the Windows key', async () => {
+  const app = await openStreaming({ gamepad: true });
+  try {
+    // The controller turned the mouse emulation on and then dropped out (e.g. an empty battery), so the entry shows
+    // only because the mouse emulation is on
+    await app.page.evaluate(() => {
+      handleMessage('mouseEmulationOn');
+      const pad = window.__pads[0];
+      window.__pads[0] = null;
+      const event = new Event('gamepaddisconnected');
+      Object.defineProperty(event, 'gamepad', { value: Object.assign({}, pad, { connected: false }) });
+      window.dispatchEvent(event);
+    });
+    await remoteKey(app.page, ...PLAY_PAUSE);
+    await remoteKey(app.page, ...DOWN);
+    await remoteKey(app.page, ...DOWN);
+    assert.equal((await menuState(app.page)).focused, 'streamMenuMouse');
+    await remoteKey(app.page, ...ENTER);
+    assert.deepEqual(await moduleCalls(app.page), ['setStreamMenuOpen true', 'toggleMouseEmulation']);
+
+    // The module turns it off, and the entry goes: the selection moves up to the performance statistics, marked and
+    // focused, and stays in sync with the entries
+    await app.page.evaluate(() => handleMessage('mouseEmulationOff'));
+    const selection = () => app.page.evaluate(() => ({
+      focused: document.activeElement ? document.activeElement.id : '',
+      current: Views.StreamMenu.view.current().id,
+      marked: Array.prototype.filter.call(document.querySelectorAll('#streamMenu .overlay-menu-item'),
+        (item) => item.classList.contains('hovered')).map((item) => item.id),
+    }));
+    assert.deepEqual(await selection(), { focused: 'streamMenuStats', current: 'streamMenuStats', marked: ['streamMenuStats'] });
+    assert.equal((await menuState(app.page)).entries.includes('streamMenuMouse'), false);
+
+    // The next OK toggles the statistics instead of pressing the Windows key on the PC
+    await app.page.evaluate(() => window.__wasmCalls.splice(0));
+    await remoteKey(app.page, ...ENTER);
+    assert.deepEqual(await moduleCalls(app.page), ['toggleStats']);
+    assert.equal((await menuState(app.page)).open, true);
+    // DOWN goes on to the Windows key, the entry after the statistics now
+    await remoteKey(app.page, ...DOWN);
+    assert.deepEqual(await selection(), { focused: 'streamMenuKeyWin', current: 'streamMenuKeyWin', marked: ['streamMenuKeyWin'] });
+
+    // An entry that stays keeps the selection when the entries change: on the Windows key, a controller that connects
+    // brings the mouse emulation entry back before it
+    await app.page.evaluate(() => {
+      window.__connectPad(0, 'Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)');
+      updateStreamMenu();
+    });
+    assert.deepEqual(await selection(), { focused: 'streamMenuKeyWin', current: 'streamMenuKeyWin', marked: ['streamMenuKeyWin'] });
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
