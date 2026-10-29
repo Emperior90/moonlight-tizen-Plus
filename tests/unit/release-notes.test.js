@@ -7,13 +7,21 @@
 // - docs/RELEASE_NOTES_DEV.md and docs/RELEASE_NOTES_STABLE.md fit the release descriptions that the workflows build
 //   around them: no heading of level 1 or 2, which would end the section in the dialog, and no relative links, which
 //   don't work in a release description
+// - both stay short (the owner asked for only the essentials in a release description): a budget of lines and
+//   characters, the version of res/config.xml that they describe, which file to install, that a first install goes
+//   next to the regular Moonlight app, how the version was tested, no link to the patch notes of their own (the line of
+//   links of the workflows has it, and the dialog would show a link as text that can't be followed), and the stable
+//   notes, which the update dialog shows to the installs of the last release, fit the dialog without being cut
 // - the release descriptions that release-development.yml (pre-release and promotion) and release-stable.yml build are
-//   run with bash on the documents of the repository and read back by extractReleaseNotes()
+//   run with bash on the documents of the repository and read back by extractReleaseNotes(): the title, the notes, one
+//   line of links (commit, and the patch notes and the guide when the commit has them) and, for a pre-release, a
+//   one-line warning
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const childProcess = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { REPO_ROOT } = require('../lib/dev-modules');
 const { INDEX_SCRIPTS, loadPlatformScripts } = require('./helpers/platform-loader');
@@ -176,13 +184,37 @@ for (const name of ['RELEASE_NOTES_DEV.md', 'RELEASE_NOTES_STABLE.md']) {
   });
 }
 
-test('the stable release notes name both files and the manual update of v1.19.0-s90c.1', () => {
+// The version of the app in res/config.xml, which the next pre-release builds and its promotion tags
+const APP_VERSION = /<widget[^>]*\sversion="([^"]+)"/.exec(fs.readFileSync(path.join(REPO_ROOT, 'res', 'config.xml'), 'utf8'))[1];
+// The budget of the release notes: lines of the file (empty ones included) and characters of a line as the dialog shows it
+const MAX_NOTE_LINES = 15;
+const MAX_NOTE_LINE_CHARS = 160;
+
+for (const name of ['RELEASE_NOTES_DEV.md', 'RELEASE_NOTES_STABLE.md']) {
+  test(`docs/${name} stays short, names the version ${APP_VERSION} of res/config.xml and leaves the patch notes to the workflows`, () => {
+    const notes = fs.readFileSync(path.join(REPO_ROOT, 'docs', name), 'utf8');
+    const lines = notes.replace(/\s+$/, '').split(/\r?\n/);
+    assert.ok(lines.length <= MAX_NOTE_LINES, `${lines.length} lines, at most ${MAX_NOTE_LINES}: the details belong in docs/PATCH_NOTES.md and CHANGELOG.md`);
+    lines.forEach((line, index) => {
+      const shown = (dialogLines(line) || [''])[0];
+      assert.ok(shown.length <= MAX_NOTE_LINE_CHARS, `line ${index + 1} shows ${shown.length} characters, at most ${MAX_NOTE_LINE_CHARS}: ${shown}`);
+    });
+    assert.ok(notes.indexOf(APP_VERSION) >= 0, 'the notes describe the version of res/config.xml');
+    assert.ok(!/PATCH_NOTES\.md|patch notes/i.test(notes), 'the patch notes are linked by the line of links of the workflows, not by the notes');
+    assert.ok(notes.indexOf('`Moonlight-ForceGM.wgt`') >= 0 && notes.indexOf('`Moonlight.wgt`') >= 0, 'which file to install');
+    assert.ok(notes.indexOf('next to the regular Moonlight app') >= 0, 'a first install goes next to the regular Moonlight app');
+    assert.match(notes, /^Tested\b/m, 'how the version was tested');
+  });
+}
+
+test('the stable release notes keep the manual update of v1.19.0-s90c.1, and the update dialog shows them in full', () => {
   const notes = fs.readFileSync(path.join(REPO_ROOT, 'docs', 'RELEASE_NOTES_STABLE.md'), 'utf8');
-  assert.ok(notes.indexOf('`Moonlight-ForceGM.wgt`') >= 0 && notes.indexOf('`Moonlight.wgt`') >= 0);
   assert.ok(notes.indexOf('v1.19.0-s90c.1') >= 0 && notes.indexOf('by hand') >= 0);
-  // What the dialog shows first: the introduction and the manual update
+  // The installs of the last release read these notes in the update dialog, which can't scroll: they fit without the
+  // pointer to the release page, so nothing of them is cut
   const lines = dialogLines(notes);
-  assert.match(lines[0], /^Moonlight Plus 1\.19\.100 is the first full release of Moonlight Plus/);
+  assert.notEqual(lines[lines.length - 1], MORE_CHANGES, 'the dialog cuts the stable notes');
+  assert.ok(lines.reduce((sum, line) => sum + rowsOf(line), 0) <= MAX_ROWS);
   assert.ok(lines.some((line) => line.indexOf('v1.19.0-s90c.1') >= 0), 'the dialog shows the note about v1.19.0-s90c.1');
 });
 
@@ -206,9 +238,9 @@ function releaseNoteBlocks(workflowFile) {
 }
 
 // Run a block with bash in the repository, with the variables that the workflow step sets
-function runBlock(block) {
+function runBlock(block, cwd) {
   return childProcess.execFileSync('bash', ['-c', 'set -eu\n' + block], {
-    cwd: REPO_ROOT,
+    cwd: cwd || REPO_ROOT,
     encoding: 'utf8',
     env: Object.assign({}, process.env, {
       TIMESTAMP: '2026.1025.1200',
@@ -222,15 +254,18 @@ function runBlock(block) {
 }
 
 const WORKFLOW_DESCRIPTIONS = [
-  { workflow: 'release-development.yml', index: 0, title: '# Moonlight Plus v2026.1025.1200', notes: 'RELEASE_NOTES_DEV.md' },
-  { workflow: 'release-development.yml', index: 1, title: '# Moonlight Plus v1.19.100', notes: 'RELEASE_NOTES_STABLE.md' },
-  { workflow: 'release-stable.yml', index: 0, title: '# Moonlight Plus v1.19.100', notes: 'RELEASE_NOTES_STABLE.md' },
+  { workflow: 'release-development.yml', index: 0, title: '# Moonlight Plus v2026.1025.1200', notes: 'RELEASE_NOTES_DEV.md', preRelease: true },
+  { workflow: 'release-development.yml', index: 1, title: '# Moonlight Plus v1.19.100', notes: 'RELEASE_NOTES_STABLE.md', preRelease: false },
+  { workflow: 'release-stable.yml', index: 0, title: '# Moonlight Plus v1.19.100', notes: 'RELEASE_NOTES_STABLE.md', preRelease: false },
 ];
 
 test('the workflows build their release descriptions in the expected places', () => {
   assert.equal(releaseNoteBlocks('release-development.yml').length, 2, 'pre-release and promotion');
   assert.equal(releaseNoteBlocks('release-stable.yml').length, 1, 'stable release');
 });
+
+const SHA = '0123456789abcdef0123456789abcdef01234567';
+const PRE_RELEASE_SHA = 'fedcba9876543210fedcba9876543210fedcba98';
 
 for (const entry of WORKFLOW_DESCRIPTIONS) {
   test(`the update dialog reads the release description of ${entry.workflow} (block ${entry.index + 1}) from docs/${entry.notes}`, () => {
@@ -251,9 +286,50 @@ for (const entry of WORKFLOW_DESCRIPTIONS) {
     assert.equal(lines[0], firstNoteLine, 'the dialog starts with the notes');
     lines.forEach((line) => {
       assert.doesNotMatch(line, /\*\*|\]\(|`|^#/, 'no Markdown marks left: ' + line);
-      assert.doesNotMatch(line, /^• Commit|^• Full Changelog|^• Guide|This is a pre-release build/, 'no workflow links: ' + line);
+      assert.doesNotMatch(line, /^• Commit|Patch notes ·|· Guide|A test build that may be unstable|patch notes\.$/i, 'no workflow links: ' + line);
       assert.doesNotMatch(line.replace(/<br>/g, ''), /<[a-z]/i, 'no HTML tags: ' + line);
     });
     assert.ok(lines.reduce((sum, line) => sum + rowsOf(line), 0) <= MAX_ROWS + rowsOf(MORE_CHANGES), 'the dialog stays on the screen');
   });
+
+  test(`the release description of ${entry.workflow} (block ${entry.index + 1}) is the title, the notes, one line of links${entry.preRelease ? ' and a one-line warning' : ''}`, () => {
+    const notes = fs.readFileSync(path.join(REPO_ROOT, 'docs', entry.notes), 'utf8').replace(/\s+$/, '');
+    const description = runBlock(releaseNoteBlocks(entry.workflow)[entry.index]);
+    const blob = 'https://github.com/owner/repo/blob/' + SHA + '/';
+    const commit = entry.workflow === 'release-development.yml' && entry.index === 1 ? PRE_RELEASE_SHA : SHA;
+    const expected = [
+      entry.title,
+      '',
+      '## What\'s Changed:',
+      '',
+      notes,
+      '',
+      '- **Commit**: [`' + commit.slice(0, 7) + '`](https://github.com/owner/repo/commit/' + commit + ')' +
+        ' · [Patch notes](' + blob + 'docs/PATCH_NOTES.md) · [Guide](' + blob + 'docs/GUIDE.md)',
+    ];
+    if (entry.preRelease) {
+      expected.push('', '> [!WARNING]', '> A test build that may be unstable. Please report problems on the [issue tracker](https://github.com/owner/repo/issues).');
+    }
+    assert.equal(description, expected.join('\n') + '\n');
+  });
 }
+
+test('the line of links of a release description names the patch notes and the guide only when the commit has them', () => {
+  // A checkout with the release notes alone, e.g. of a branch from before the patch notes and the guide
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'moonlight-release-notes-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'docs'));
+    ['RELEASE_NOTES_DEV.md', 'RELEASE_NOTES_STABLE.md'].forEach((name) => fs.copyFileSync(path.join(REPO_ROOT, 'docs', name), path.join(dir, 'docs', name)));
+    for (const entry of WORKFLOW_DESCRIPTIONS) {
+      const description = runBlock(releaseNoteBlocks(entry.workflow)[entry.index], dir);
+      const linkLine = description.split('\n').find((line) => line.indexOf('- **Commit**: ') === 0);
+      assert.match(linkLine, /^- \*\*Commit\*\*: \[`[0-9a-f]{7}`\]\(https:\/\/github\.com\/owner\/repo\/commit\/[0-9a-f]{40}\)$/, entry.workflow);
+      assert.ok(description.indexOf('https://github.com/owner/repo/blob/') < 0, entry.workflow + ': no link to a missing document');
+    }
+    fs.writeFileSync(path.join(dir, 'docs', 'PATCH_NOTES.md'), '# Patch notes\n');
+    const description = runBlock(releaseNoteBlocks('release-stable.yml')[0], dir);
+    assert.ok(description.indexOf('`](https://github.com/owner/repo/commit/' + SHA + ') · [Patch notes](https://github.com/owner/repo/blob/' + SHA + '/docs/PATCH_NOTES.md)\n') > 0, description);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

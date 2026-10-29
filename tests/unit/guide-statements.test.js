@@ -3,11 +3,14 @@
 // Checks statements of the documents that describe what the code does, against the code, so that a change of the rules
 // fails here until the documents follow (the table of recommended bitrates has its own test, guide-bitrate-table.test.js):
 // - the warnings that the TV classes of docs/GUIDE.md section 2 get above 60 FPS at 4K (resolutionFramerateWarningKey())
-// - the game mode on Tizen 5.5 with a WASM player that offers the Ultra Low Latency mode (getGameModeDefault())
+// - the game mode on Tizen 5.5 with a WASM player that offers the Ultra Low Latency mode, and the switch that stays
+//   disabled on a TV whose WASM player doesn't offer it (getGameModeDefault())
 // - the limit of the bitrate presets on TVs without a tested profile (presetBitrateLimit())
 // - the controller type that System information shows when the setting overrides the detection
 // - the Start of a hold that switches the mouse emulation on, which the game sees (wasm/gamepad.cpp)
 // - the version suffix of a release promoted from a pre-release, and what the earlier release v1.19.0-s90c.1 offers
+// The release notes of a release (docs/RELEASE_NOTES_STABLE.md) only give the essentials, so the statements that they
+// carried until 1.19.100 are checked in the guide and the patch notes (docs/PATCH_NOTES.md), where they are now.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -60,7 +63,7 @@ test('the TV classes of the guide name the warnings that 4K above 60 FPS gets on
   assert.match(row8k, /4K at 90 or 120 FPS gets the warning that many Samsung TVs have 60 Hz panels instead of the Level 5.2 warning/);
   assert.match(row8k, /4K at 144 FPS still gets the warning that it exceeds Level 5.2/);
   // No document calls level 5.2 the highest level of all Samsung TVs any more
-  for (const file of ['docs/GUIDE.md', 'docs/RELEASE_NOTES_STABLE.md', 'CHANGELOG.md', 'wasm/platform/tv_profile.js']) {
+  for (const file of ['docs/GUIDE.md', 'docs/RELEASE_NOTES_STABLE.md', 'docs/PATCH_NOTES.md', 'CHANGELOG.md', 'wasm/platform/tv_profile.js']) {
     assert.doesNotMatch(read(file), /highest (decoder )?level of Samsung TVs|Level 5\.2 on every Samsung TV/i, file);
   }
 });
@@ -70,7 +73,12 @@ test('the guide gives the game mode of Tizen 5.5 with the exception for a WASM p
   assert.equal(profile.getGameModeDefault('5.5', 'unknown'), null, 'off and disabled');
   const gameModeItem = GUIDE.split('\n').find((line) => line.indexOf('- **Game mode:**') === 0);
   assert.match(gameModeItem, /On Tizen 5\.5 it is off and disabled, unless the video player of the TV says that it offers the Ultra Low Latency mode/);
-  assert.match(read('docs/RELEASE_NOTES_STABLE.md'), /off and disabled on 5\.5 unless the video player of the TV offers the Ultra Low Latency mode/);
+  // The patch notes of 1.19.100: a disabled switch on every TV whose WASM player says that it lacks the mode
+  for (const version of ['5.5', '6.0', '6.5', '7.0', '8.0', '9.0']) {
+    assert.equal(profile.getGameModeDefault(version, 'no'), null, 'Tizen ' + version + ': off and disabled');
+  }
+  assert.equal(profile.isGameModeUnavailable({ wasmPlayer: { ultraLowLatency: 'no' } }), true);
+  assert.match(read('docs/PATCH_NOTES.md'), /a disabled \*Game mode\* switch where the TV can't use it/);
 });
 
 test('the guide names the limit of the bitrate presets on TVs without a tested profile', () => {
@@ -95,8 +103,7 @@ test('the documents describe the controller type of System information and the S
 
 test('the documents explain the version of a promoted release and what the earlier release v1.19.0-s90c.1 offers', () => {
   assert.match(tableRow('App Version')[1], /a full release that was promoted from a tested pre-release, because it keeps the files of the pre-release/);
-  assert.match(read('docs/RELEASE_NOTES_STABLE.md'), /A release promoted from a tested pre-release keeps its files, so System information shows its version with the commit of the pre-release/);
-  for (const file of ['README.md', 'docs/GUIDE.md', 'docs/RELEASE_NOTES_STABLE.md']) {
+  for (const file of ['README.md', 'docs/GUIDE.md', 'docs/PATCH_NOTES.md']) {
     assert.match(read(file), /announces (later )?is (a release of )?the regular Moonlight Tizen app/, file);
   }
   const archive = read('docs/profiles/S90C/RELEASE_NOTES_v1.19.0-s90c.1.md');

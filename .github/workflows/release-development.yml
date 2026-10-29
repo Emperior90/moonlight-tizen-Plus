@@ -186,22 +186,16 @@ jobs:
           if [ -f .github/scripts/check-support-path.sh ]; then
             bash .github/scripts/check-support-path.sh
           fi
-      # Builds the description of the pre-release, with the release notes from `docs/RELEASE_NOTES_DEV.md` when the branch has them.
-      # It links the guide of this fork (`docs/GUIDE.md`) when the branch has it, and the requirements and installation methods of upstream Moonlight Tizen otherwise.
-      # The links after the notes (commit, changelog, guide, controller page and the archived S90C documents in `docs/profiles/S90C/`) only name the files that exist, and the update dialog of the app stops reading the notes at the commit line (extractReleaseNotes() in wasm/platform/index.js).
+      # Builds the description of the pre-release: the title, the short release notes from `docs/RELEASE_NOTES_DEV.md` under
+      # the "## What's Changed:" heading, one line of links (the commit, and the patch notes and the guide of the commit when
+      # it has them) and a one-line warning. The update dialog of the app stops reading the notes at the commit line
+      # (extractReleaseNotes() in wasm/platform/index.js), so the links and the warning stay out of it.
       - name: Prepare release notes
         env:
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
           {
             echo "# Moonlight Plus v${TIMESTAMP}"
-            echo
-            if [ -f docs/GUIDE.md ]; then
-              echo "- Follow the [guide](${REPO_URL}/blob/${GITHUB_SHA}/docs/GUIDE.md) to check the requirements, install the application on your TV and set it up."
-            else
-              echo "- Ensure your setup meets the necessary [requirements](https://github.com/brightcraft/moonlight-tizen#%EF%B8%8F-prerequisites) for the best possible streaming experience."
-              echo "- Choose one of the available [installation methods](https://github.com/brightcraft/moonlight-tizen/wiki/Installation-Guide) and follow the instructions to install the application on your TV."
-            fi
             echo
             echo "## What's Changed:"
             echo
@@ -211,27 +205,17 @@ jobs:
               echo "- No release notes have been provided for this pre-release yet."
             fi
             echo
-            echo "- **Commit**: [\`${GITHUB_SHA:0:7}\`](${REPO_URL}/commit/${GITHUB_SHA})"
-            if [ -f CHANGELOG.md ]; then
-              echo "- **Full Changelog**: [CHANGELOG.md](${REPO_URL}/blob/${GITHUB_SHA}/CHANGELOG.md)"
+            links="- **Commit**: [\`${GITHUB_SHA:0:7}\`](${REPO_URL}/commit/${GITHUB_SHA})"
+            if [ -f docs/PATCH_NOTES.md ]; then
+              links="${links} · [Patch notes](${REPO_URL}/blob/${GITHUB_SHA}/docs/PATCH_NOTES.md)"
             fi
             if [ -f docs/GUIDE.md ]; then
-              echo "- **Guide**: [docs/GUIDE.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/GUIDE.md)"
+              links="${links} · [Guide](${REPO_URL}/blob/${GITHUB_SHA}/docs/GUIDE.md)"
             fi
-            if [ -f docs/CONTROLLERS.md ]; then
-              echo "- **Controllers**: [docs/CONTROLLERS.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/CONTROLLERS.md)"
-            fi
-            if [ -f docs/profiles/S90C/S90C-Kurzanleitung.md ]; then
-              echo "- **S90C quick guide** (archive of the tested S90C profile, German): [docs/profiles/S90C/S90C-Kurzanleitung.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/profiles/S90C/S90C-Kurzanleitung.md)"
-            fi
-            if [ -f docs/profiles/S90C/S90C-Optimierungsplan.md ]; then
-              echo "- **S90C tuning guide** (archive of the tested S90C profile, German): [docs/profiles/S90C/S90C-Optimierungsplan.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/profiles/S90C/S90C-Optimierungsplan.md)"
-            fi
+            echo "${links}"
             echo
             echo "> [!WARNING]"
-            echo "> This is a pre-release build intended for development and testing only."
-            echo "> Experimental features, bug fixes, and improvements may be unstable or incomplete."
-            echo "> Please report any unexpected behavior and provide feedback to help improve future releases."
+            echo "> A test build that may be unstable. Please report problems on the [issue tracker](${REPO_URL}/issues)."
           } > release_notes.md
           cat release_notes.md
       # Creates a new GitHub pre-release using the extracted version and the release notes prepared above.
@@ -275,7 +259,9 @@ jobs:
     # This job turns an existing pre-release into a full release, so that a tested build stays available: the cleanup of
     # the next pre-release of the branch only deletes pre-releases. It keeps the files of the pre-release and moves it to the
     # tag "v" + the version in `res/config.xml`, which the in-app update check compares with the installed version (the
-    # timestamp of a pre-release tag would read as a newer version). The description comes from `docs/RELEASE_NOTES_STABLE.md`.
+    # timestamp of a pre-release tag would read as a newer version). The description comes from `docs/RELEASE_NOTES_STABLE.md`,
+    # with the same line of links as a pre-release, and the promotion stops while the section of the version in
+    # `docs/PATCH_NOTES.md` still says Pre-release.
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -361,39 +347,30 @@ jobs:
             echo "Use the release tag v$app_version, or raise the version in res/config.xml and build a new pre-release."
             exit 1
           fi
+          # The release links the patch notes of this commit, so their section of this version must no longer call it a
+          # pre-release: the first line after its heading carries the date of the release
+          if [ -f docs/PATCH_NOTES.md ] && awk -v heading="## $app_version" '{ sub(/[ \t\r]+$/, "") } $0 == heading { found = 1; next } found && NF { print; exit }' docs/PATCH_NOTES.md | grep -q '^\*Pre-release'; then
+            echo "The section $app_version of docs/PATCH_NOTES.md still says Pre-release."
+            echo "Date it, and add v$app_version to RELEASES in tests/unit/patch-notes.test.js, before promoting."
+            exit 1
+          fi
 
           {
             echo "# Moonlight Plus ${RELEASE_TAG}"
-            echo
-            # The guide of this fork when the commit of this run has it, the pages of upstream Moonlight Tizen otherwise
-            if [ -f docs/GUIDE.md ]; then
-              echo "- Follow the [guide](${REPO_URL}/blob/${GITHUB_SHA}/docs/GUIDE.md) to check the requirements, install the application on your TV and set it up."
-            else
-              echo "- Ensure your setup meets the necessary [requirements](https://github.com/brightcraft/moonlight-tizen#%EF%B8%8F-prerequisites) for the best possible streaming experience."
-              echo "- Choose one of the available [installation methods](https://github.com/brightcraft/moonlight-tizen/wiki/Installation-Guide) and follow the instructions to install the application on your TV."
-            fi
             echo
             echo "## What's Changed:"
             echo
             cat docs/RELEASE_NOTES_STABLE.md
             echo
             # The commit link names the build, the documents link the commit these release notes come from
-            echo "- **Commit**: [\`${sha:0:7}\`](${REPO_URL}/commit/${sha})"
-            if [ -f CHANGELOG.md ]; then
-              echo "- **Full Changelog**: [CHANGELOG.md](${REPO_URL}/blob/${GITHUB_SHA}/CHANGELOG.md)"
+            links="- **Commit**: [\`${sha:0:7}\`](${REPO_URL}/commit/${sha})"
+            if [ -f docs/PATCH_NOTES.md ]; then
+              links="${links} · [Patch notes](${REPO_URL}/blob/${GITHUB_SHA}/docs/PATCH_NOTES.md)"
             fi
             if [ -f docs/GUIDE.md ]; then
-              echo "- **Guide**: [docs/GUIDE.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/GUIDE.md)"
+              links="${links} · [Guide](${REPO_URL}/blob/${GITHUB_SHA}/docs/GUIDE.md)"
             fi
-            if [ -f docs/CONTROLLERS.md ]; then
-              echo "- **Controllers**: [docs/CONTROLLERS.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/CONTROLLERS.md)"
-            fi
-            if [ -f docs/profiles/S90C/S90C-Kurzanleitung.md ]; then
-              echo "- **S90C quick guide** (archive of the tested S90C profile, German): [docs/profiles/S90C/S90C-Kurzanleitung.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/profiles/S90C/S90C-Kurzanleitung.md)"
-            fi
-            if [ -f docs/profiles/S90C/S90C-Optimierungsplan.md ]; then
-              echo "- **S90C tuning guide** (archive of the tested S90C profile, German): [docs/profiles/S90C/S90C-Optimierungsplan.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/profiles/S90C/S90C-Optimierungsplan.md)"
-            fi
+            echo "${links}"
           } > release_notes.md
           cat release_notes.md
 

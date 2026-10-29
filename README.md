@@ -21,7 +21,7 @@ Moonlight Plus is an unofficial fork of [Moonlight Tizen](https://github.com/bri
 - **Performance statistics** with session totals that show whether the host, the network or the TV causes a problem.
 - **Update check** that reads the releases of this fork.
 
-The full list is in the [release notes](docs/RELEASE_NOTES_STABLE.md) and the [changelog](CHANGELOG.md).
+What changed in each version, in short: [patch notes](docs/PATCH_NOTES.md). Every detail: [changelog](CHANGELOG.md).
 
 ![The Hosts screen of Moonlight Plus: the focused PC "GAMING-PC" with the chips Running, Online and Paired, the hints "OK Open" and "Options", a drawing of a PC that runs a game, and a row of PC cards that show their state (running, offline, unpaired, online) next to the Add Host card](docs/images/hosts.jpg)
 
@@ -42,7 +42,7 @@ The full list is in the [release notes](docs/RELEASE_NOTES_STABLE.md) and the [c
 
 ## Installation
 
-Download the file from the [releases page of this fork](https://github.com/Emperior90/moonlight-tizen-S90c/releases). Take the release marked *Latest*. Pre-releases are test builds.
+Download the file from the [releases page of this fork](https://github.com/Emperior90/moonlight-tizen-S90c/releases). Take the release marked *Latest*. Pre-releases are test builds. The [patch notes](docs/PATCH_NOTES.md) say what each version changed.
 
 | Your TV | File |
 |---|---|
@@ -65,7 +65,7 @@ Moonlight Plus installs **next to** the regular Moonlight app, with its own sett
 
 - [Guide](docs/GUIDE.md): installation, the optimal settings, finding your bitrate, System information, performance statistics, host settings, HDR, audio, known limits and troubleshooting
 - [Controllers](docs/CONTROLLERS.md): supported controllers, modes, buttons, controller type, rumble and mouse emulation
-- [Release notes](docs/RELEASE_NOTES_STABLE.md) and [changelog](CHANGELOG.md)
+- [Patch notes](docs/PATCH_NOTES.md): what changed in each version, in short, with every detail in the [changelog](CHANGELOG.md)
 - [Tested S90C profile](docs/profiles/S90C/S90C-Optimierungsplan.md): the archived German tuning guide of the Samsung S90C, the model this fork was first tuned on
 
 ---

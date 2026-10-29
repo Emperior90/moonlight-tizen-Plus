@@ -1,4 +1,4 @@
-> **Archive (German):** the release notes of the earlier release v1.19.0-s90c.1 of the tested Samsung S90C profile; the notes of Moonlight Plus are in [RELEASE_NOTES_STABLE.md](../../RELEASE_NOTES_STABLE.md).
+> **Archive (German):** the release notes of the earlier release v1.19.0-s90c.1 of the tested Samsung S90C profile; the notes of every version of Moonlight Plus are in the [patch notes](../../PATCH_NOTES.md).
 >
 > **Correction:** the note under *Hinweise* that the update check of the app (*Check for updates*) reads the releases of this project is wrong. The update check of v1.19.0-s90c.1 reads the releases of upstream Moonlight Tizen, so it never offers Moonlight Plus, and an update that it announces is the regular Moonlight Tizen app. See [section 15 of the guide](../../GUIDE.md#15-updating-from-the-earlier-release-v1190-s90c1).
 

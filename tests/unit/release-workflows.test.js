@@ -7,7 +7,10 @@
 //   guide that the README, the release notes and the Support dialog of the app send users to
 // - the step 'Promote the pre-release to a full release' of release-development.yml: it compares the app sources of the
 //   commit of the run with those of the pre-release before it checks the release tag against res/config.xml of the
-//   pre-release, so that a version raised after the pre-release is named as the cause instead of a wrong tag
+//   pre-release, so that a version raised after the pre-release is named as the cause instead of a wrong tag, and it
+//   gives the release the notes of the commit of the run with one line of links (the commit of the files, and the
+//   documents of the commit of the run), but only once the patch notes of that commit date the section of the version
+//   instead of calling it a pre-release
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -263,6 +266,7 @@ test('the promotion checks the release tag against the version of the pre-releas
   try {
     repo.write('tests/unit/example.test.js', '// a fixed test\n');
     repo.write('docs/RELEASE_NOTES_STABLE.md', 'Final notes\n');
+    repo.write('docs/PATCH_NOTES.md', '# Patch notes\n');
     repo.write('.github/workflows/release.yml', 'name: x\n');
     const runSha = repo.commit();
 
@@ -279,7 +283,34 @@ test('the promotion checks the release tag against the version of the pre-releas
     const body = JSON.parse(patch.data);
     assert.deepEqual([body.tag_name, body.target_commitish, body.name, body.prerelease, body.make_latest], ['v1.19.100', runSha, 'Moonlight Plus v1.19.100', false, 'true']);
     assert.ok(body.body.indexOf('Final notes') >= 0, 'the notes of the commit of the run');
+    // One line of links: the commit of the files, and the patch notes of the commit of the run (it has no guide)
+    assert.ok(body.body.indexOf('\n- **Commit**: [`' + repo.preRelease.slice(0, 7) + '`](https://github.com/owner/repo/commit/' + repo.preRelease + ')' +
+      ' · [Patch notes](https://github.com/owner/repo/blob/' + runSha + '/docs/PATCH_NOTES.md)\n') > 0, body.body);
+    assert.doesNotMatch(body.body, /\[Guide\]|\[!WARNING\]/, 'no link to a missing guide, and no warning in a full release');
     assert.ok(result.requests.some((request) => request.method === 'DELETE' && request.url === API_URL + '/git/refs/tags/v2026.1025.1200'));
+  } finally {
+    repo.cleanup();
+  }
+});
+
+test('the promotion refuses patch notes whose section of the version still says Pre-release', () => {
+  const repo = createRepository('1.19.100');
+  try {
+    const patchNotes = (firstLine) => '# Patch notes\n\n## 1.19.1000\n\n*Pre-release, in testing.* Not this one.\n\n## 1.19.100\r\n\n' + firstLine +
+      ' A summary.\n\n> **Install:** by hand.\n\n## 1.19.0-s90c.1\n\n*2026-10-23.* Older.\n';
+    repo.write('docs/PATCH_NOTES.md', patchNotes('*Pre-release, in testing.*'));
+    const undated = promote(repo, repo.commit(), 'v1.19.100');
+    assert.equal(undated.status, 1, undated.output);
+    assert.match(undated.output, /The section 1\.19\.100 of docs\/PATCH_NOTES\.md still says Pre-release\./);
+    assert.match(undated.output, /add v1\.19\.100 to RELEASES in tests\/unit\/patch-notes\.test\.js/);
+    assert.equal(undated.requests.filter((request) => request.method !== 'GET').length, 0, 'nothing was changed');
+
+    // Dated, the promotion goes on; a pre-release section of another version doesn't matter
+    ['api_response.json', 'existing_ref.json', 'release_notes.md'].forEach((file) => fs.rmSync(path.join(repo.dir, file), { force: true }));
+    repo.write('docs/PATCH_NOTES.md', patchNotes('*2026-10-30.*'));
+    const dated = promote(repo, repo.commit(), 'v1.19.100');
+    assert.equal(dated.status, 0, dated.output);
+    assert.ok(dated.requests.some((request) => request.method === 'PATCH'), dated.output);
   } finally {
     repo.cleanup();
   }

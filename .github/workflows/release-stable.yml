@@ -130,20 +130,16 @@ jobs:
         run: |
           docker stop temp_container temp_container_forcegm
           docker rm temp_container temp_container_forcegm
-      # Builds the description of the release like the promotion of a pre-release in release-development.yml does: the guide of
-      # this fork (`docs/GUIDE.md`) when the commit has it, the release notes from `docs/RELEASE_NOTES_STABLE.md` under the
-      # "## What's Changed:" heading that the in-app update dialog reads (extractReleaseNotes() in wasm/platform/index.js),
-      # and the links to the commit and the documents.
+      # Builds the description of the release like the promotion of a pre-release in release-development.yml does: the title,
+      # the short release notes from `docs/RELEASE_NOTES_STABLE.md` under the "## What's Changed:" heading that the in-app
+      # update dialog reads (extractReleaseNotes() in wasm/platform/index.js), and one line of links (the commit, and the
+      # patch notes and the guide of the commit when it has them), where the dialog stops reading.
       - name: Prepare release notes
         env:
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
           {
             echo "# Moonlight Plus v${VERSION}"
-            echo
-            if [ -f docs/GUIDE.md ]; then
-              echo "- Follow the [guide](${REPO_URL}/blob/${GITHUB_SHA}/docs/GUIDE.md) to check the requirements, install the application on your TV and set it up."
-            fi
             echo
             echo "## What's Changed:"
             echo
@@ -153,16 +149,14 @@ jobs:
               echo "- No release notes have been provided for this release yet."
             fi
             echo
-            echo "- **Commit**: [\`${GITHUB_SHA:0:7}\`](${REPO_URL}/commit/${GITHUB_SHA})"
-            if [ -f CHANGELOG.md ]; then
-              echo "- **Full Changelog**: [CHANGELOG.md](${REPO_URL}/blob/${GITHUB_SHA}/CHANGELOG.md)"
+            links="- **Commit**: [\`${GITHUB_SHA:0:7}\`](${REPO_URL}/commit/${GITHUB_SHA})"
+            if [ -f docs/PATCH_NOTES.md ]; then
+              links="${links} · [Patch notes](${REPO_URL}/blob/${GITHUB_SHA}/docs/PATCH_NOTES.md)"
             fi
             if [ -f docs/GUIDE.md ]; then
-              echo "- **Guide**: [docs/GUIDE.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/GUIDE.md)"
+              links="${links} · [Guide](${REPO_URL}/blob/${GITHUB_SHA}/docs/GUIDE.md)"
             fi
-            if [ -f docs/CONTROLLERS.md ]; then
-              echo "- **Controllers**: [docs/CONTROLLERS.md](${REPO_URL}/blob/${GITHUB_SHA}/docs/CONTROLLERS.md)"
-            fi
+            echo "${links}"
           } > release_notes.md
           cat release_notes.md
       # Creates a new GitHub release using the extracted version and the release notes prepared above.
