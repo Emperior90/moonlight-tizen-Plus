@@ -18,7 +18,7 @@ void MoonlightInstance::ClStageStarting(int stage) {
 static std::string GetHostPortList(unsigned int portFlags) {
   char ports[kPortListLength];
   LiStringifyPortFlags(portFlags, ", ", ports, sizeof(ports));
-  return MovePortList(ports, GetPortOffsetFromSessionUrl(g_Instance->m_RtspUrl));
+  return MovePortList(ports, g_Instance ? GetPortOffsetFromSessionUrl(g_Instance->GetRtspUrl()) : 0);
 }
 
 void MoonlightInstance::ClStageFailed(int stage, int errorCode) {

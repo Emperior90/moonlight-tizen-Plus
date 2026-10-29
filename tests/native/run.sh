@@ -54,6 +54,35 @@ for source in "$here"/*_test.c; do
   fi
 done
 
+# Compile every source file of the WebAssembly module without linking (-fsyntax-only), with the same stubs, so that an
+# error that only the release build would see (e.g. a private member used outside its class) fails here: most of
+# these files are in no test. wasm/http.cpp needs the headers of curl and OpenSSL and is checked when they exist.
+syntax_flags=(-std=gnu++17 -fsyntax-only -DSAMSUNG_WRT -DOS_WASM -DNDEBUG
+  -I"$here/stubs" -I"$repo/wasm" -I"$repo/wasm/dispatcher" -I"$repo/moonlight-common-c/src"
+  -I"$repo/moonlight-common-c/enet/include" -I"$repo/moonlight-common-c/reedsolomon" -I"$repo/libgamestream"
+  -I"$repo/h264bitstream" -I"$repo/opus/include")
+for source in "$repo"/wasm/*.cpp; do
+  name="$(basename "$source")"
+  if [ "$name" = "http.cpp" ] && ! printf '#include <curl/curl.h>\n#include <openssl/ssl.h>\n' |
+      "$cxx" -x c++ -fsyntax-only - 2>/dev/null; then
+    echo "# Skipped the syntax check of wasm/$name: the headers of curl or OpenSSL are missing"
+    continue
+  fi
+  echo "# Checking the syntax of wasm/$name"
+  if ! "$cxx" "${syntax_flags[@]}" "$source"; then
+    echo "# wasm/$name doesn't compile"
+    failed=1
+  fi
+done
+for source in "$repo"/wasm/*.c "$repo"/moonlight-common-c/src/*.c; do
+  echo "# Checking the syntax of ${source#"$repo"/}"
+  if ! "$cc" -std=gnu99 -fsyntax-only -I"$here/stubs_c" -I"$repo/moonlight-common-c/src" \
+      -I"$repo/moonlight-common-c/enet/include" -I"$repo/moonlight-common-c/reedsolomon" "$source"; then
+    echo "# ${source#"$repo"/} doesn't compile"
+    failed=1
+  fi
+done
+
 if [ "$failed" -ne 0 ]; then
   echo "# Native tests failed"
   exit 1

@@ -187,6 +187,9 @@ class MoonlightInstance {
 
   LoadResult LoadCert(const char* certStr, const char* keyStr);
 
+  // The RTSP session URL of the stream, which names the ports of the host (wasm/connection_ports.hpp)
+  const std::string& GetRtspUrl() const { return m_RtspUrl; }
+
   private:
     using EmssReadyState = samsung::wasm::ElementaryMediaStreamSource::ReadyState;
     using EmssTrackCloseReason = samsung::wasm::ElementaryMediaTrack::CloseReason;

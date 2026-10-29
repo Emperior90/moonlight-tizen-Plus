@@ -50,6 +50,10 @@ jobs:
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         run: npm run test:unit
       # This step builds the native tests (the gamepad and the stats of the app with g++, files of moonlight-common-c with gcc) with the address and undefined behaviour sanitizers, and runs them.
+      # It also compiles every source file of the WebAssembly module without linking, which catches errors that only the release build would show; the headers of curl and OpenSSL let it check wasm/http.cpp too.
+      - name: Install the headers of curl and OpenSSL
+        if: ${{ !cancelled() }}
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libcurl4-openssl-dev libssl-dev
       - name: Run the native tests
         if: ${{ !cancelled() }}
         run: npm run test:native

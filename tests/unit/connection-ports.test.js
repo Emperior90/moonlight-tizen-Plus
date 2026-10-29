@@ -97,7 +97,7 @@ test('the native code sends the ports of the stage and of the termination, moved
   const listener = read('wasm/connectionlistener.cpp');
   // Both lists come from LiStringifyPortFlags(), moved by the offset of the RTSP port in the session URL of the host
   // (connection_message_test.cpp checks the offset for a host with another port)
-  assert.match(listener, /LiStringifyPortFlags\(portFlags, ", ", ports, sizeof\(ports\)\);\s+return MovePortList\(ports, GetPortOffsetFromSessionUrl\(g_Instance->m_RtspUrl\)\);/);
+  assert.match(listener, /LiStringifyPortFlags\(portFlags, ", ", ports, sizeof\(ports\)\);\s+return MovePortList\(ports, g_Instance \? GetPortOffsetFromSessionUrl\(g_Instance->GetRtspUrl\(\)\) : 0\);/);
   assert.match(listener, /PostToJs\(std::string\("DialogMsg: "\) \+ FormatStageFailedMessage\(LiGetStageName\(stage\), errorCode,\s+GetHostPortList\(LiGetPortFlagsFromStage\(stage\)\)\)\);/);
   const terminated = listener.slice(listener.indexOf('void MoonlightInstance::ClConnectionTerminated'));
   const portsMessage = terminated.indexOf('PostToJs(std::string("TerminationPortsMsg: ") + ports);');
