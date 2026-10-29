@@ -169,6 +169,11 @@ function replaceKnownWolErrorLabels(text) {
   return translated;
 }
 
+// Join each protocol to its port with a no-break space, so that a line never ends between 'TCP' and '48010'
+function keepPortsTogether(ports) {
+  return ports.replace(/(TCP|UDP) /g, '$1\u00a0');
+}
+
 // Translate the message of a connection stage that failed and the ports of the host PC it needs
 // (FormatStageFailedMessage() in wasm/connection_ports.hpp), e.g. 'RTSP handshake failed (error 10060)'
 function replaceKnownConnectionErrorLabels(text) {
@@ -177,7 +182,7 @@ function replaceKnownConnectionErrorLabels(text) {
       return t('%1$s failed (error %2$s)', stage, errorCode);
     })
     .replace(/^Check that the firewall of the host PC and your router don't block these ports: (.+)$/m, function(match, ports) {
-      return t('Check that the firewall of the host PC and your router don\'t block these ports: %1$s', ports);
+      return t('Check that the firewall of the host PC and your router don\'t block these ports: %1$s', keepPortsTogether(ports));
     });
 }
 
@@ -347,12 +352,15 @@ function leaveStreamView(host, quitApp) {
   $('#listener').removeClass('fullscreen');
   $('#loadingSpinner').css('display', 'none');
   $('#loadingSpinnerMessage').text('');
-  $('body').css('backgroundColor', '#282C38');
+  $('body').css('backgroundColor', '');
   $('#wasm_module').css('display', 'none');
   if (!host) {
     return;
   }
   // Show that the app list is on its way, since the refresh can wait behind a launch request that is still in flight
+  if (typeof setUiView === 'function') {
+    setUiView('loading');
+  }
   $('#wasmSpinner').css('display', 'inline-block');
   $('#wasmSpinnerLogo').hide();
   $('#wasmSpinnerMessage').text(t('Loading Apps...'));
@@ -468,7 +476,7 @@ function handleMessage(msg) {
         break;
       case -100: // ML_ERROR_NO_VIDEO_TRAFFIC
         if (blockedPorts) {
-          snackbarLogLong('No video received from host. Check that the firewall of the host PC and your router don\'t block these ports: %1$s', blockedPorts);
+          snackbarLogLong('No video received from host. Check that the firewall of the host PC and your router don\'t block these ports: %1$s', keepPortsTogether(blockedPorts));
         } else {
           snackbarLogLong('No video received from host. Check the host PC\'s firewall and port forwarding rules.');
         }

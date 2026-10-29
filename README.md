@@ -10,6 +10,7 @@ Moonlight Plus is an unofficial fork of [Moonlight Tizen](https://github.com/bri
 
 ## Main improvements
 
+- **A new interface for the TV:** the focused PC or game fills the top of the screen with its name, its state and the keys to press, PC cards show their state at a glance, the box art of a game lights up the screen, and the settings, dialogs and menus have a calmer layout with larger text. It uses its own stroke icons and the Manrope font, and the app is about 760 KB smaller than before, as the icon fonts are gone.
 - **Optimal settings for this TV:** one button applies the highest resolution of the panel up to 4K, HEVC, HDR when the TV supports it, and a bitrate for its network connection. A dialog shows what it detected and what it applies.
 - **Warnings that match the TV:** frame rates above 60 FPS on 60 Hz panels, decoder levels for 4K above 60 FPS, the bitrate cap of the TV class, the 100 Mbps Ethernet port of most Samsung TVs, H.264 above 1080p, and HDR on a TV that doesn't report it.
 - **System information** shows what the app detected: panel, HDR, connection, whether the TV offers the Ultra Low Latency mode, which video codecs its browser reports, and the connected controllers.
@@ -21,6 +22,12 @@ Moonlight Plus is an unofficial fork of [Moonlight Tizen](https://github.com/bri
 - **Update check** that reads the releases of this fork.
 
 The full list is in the [release notes](docs/RELEASE_NOTES_STABLE.md) and the [changelog](CHANGELOG.md).
+
+![The Hosts screen of Moonlight Plus: the focused PC "GAMING-PC" with the chips Running, Online and Paired, the hints "OK Open" and "Options", a drawing of a PC that runs a game, and a row of PC cards that show their state (running, offline, unpaired, online) next to the Add Host card](docs/images/hosts.jpg)
+
+![The app list of Moonlight Plus: the running game "Neon Drift" with its box art at the top right and a Running chip, and below it a grid of box art tiles, the focused one with a white ring and a mint Running badge](docs/images/apps.jpg)
+
+*Screenshots of a simulated TV with made-up PCs and generated box art.*
 
 ---
 

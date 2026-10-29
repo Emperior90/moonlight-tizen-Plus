@@ -26,6 +26,7 @@ How to read it:
 14. [Troubleshooting](#14-troubleshooting)
 15. [Updating from the earlier release v1.19.0-s90c.1](#15-updating-from-the-earlier-release-v1190-s90c1)
 16. [Stream Menu and app menu](#16-stream-menu-and-app-menu)
+17. [The screens of the app](#17-the-screens-of-the-app)
 
 ## 1. Requirements
 
@@ -93,7 +94,7 @@ Settings → Basic Settings → *Optimal settings for this TV* → *Apply the op
 - advice for the network connection: over Wi-Fi how far you can raise the bitrate, over Ethernet how to avoid packet loss on the 100 Mbps port of the TV
 - on Tizen 9.0 and newer, a pointer to the ForceGM variant, or a note that it is installed
 
-*Continue* applies the settings, *Close* keeps your current ones. The same values are the defaults of a fresh install and of *Restore Defaults* (the icon at the top of the settings).
+*Continue* applies the settings, *Close* keeps your current ones. The same values are the defaults of a fresh install and of *Restore Defaults* (the round arrow at the top right of the settings, see [the screens](#17-the-screens-of-the-app)).
 
 What the button applies:
 
@@ -341,7 +342,7 @@ Other problems:
 
 - **Play/Pause doesn't open the Stream Menu:** some TVs may not pass the key to apps (untested). Hold Select + Start on a controller for 1 second instead; RED and YELLOW keep working.
 - **An app is missing from the app list:** it may be hidden. Open the menu of any app (CH+ or Play/Pause) and choose *Show hidden apps* (see [section 16](#16-stream-menu-and-app-menu)).
-- **The PC isn't in the list, or it got a new IP address:** press UP in the host list and select *Rescan network* (the first button of the header) to search the local network again. The app searches for hosts on its own at startup.
+- **The PC isn't in the list, or it got a new IP address:** press UP in the host list and select *Rescan network* (the circular arrow, the first round button of the header) to search the local network again. The app searches for hosts on its own at startup.
 - **The picture freezes on Tizen 9.0 or newer:** turn the *Game mode* switch off, and use the ForceGM variant for the Game Mode of the TV.
 - **Colors look washed out:** HDR is on in the app but off on the host display, or the TV doesn't support HDR (see [section 10](#10-hdr)).
 - **Crackling sound with EMSS:** lower the bitrate by one step, or switch to Web Audio.
@@ -370,7 +371,7 @@ The earlier release of this fork, v1.19.0-s90c.1 (shown on the TV as *Moonlight 
 - The buttons that are still held when the menu closes (e.g. A on *Resume*) reach the game only after you release them, and so does the key of the remote or keyboard that closed it (e.g. OK on *Resume*). Keyboard keys and mouse buttons that are held when the menu opens are released on the PC. [CONTROLLERS.md](CONTROLLERS.md#4-buttons-during-a-stream) describes the controller combo.
 - Untested on real TVs: whether every remote and firmware passes Play/Pause to the app. The combo and the color keys work without it.
 
-**App menu.** In the app list, press **CH+** or **Play/Pause** on the remote, or **Select** on a controller, to open the menu of the selected app. The header of the app list names these keys, and the app that runs on the PC has a green *Running* badge.
+**App menu.** In the app list, press **CH+** or **Play/Pause** on the remote, or **Select** on a controller, to open the menu of the selected app. The header of the app list names these keys, and the app that runs on the PC has a mint ring and a mint *Running* badge.
 
 | Entry | What it does |
 |---|---|
@@ -381,3 +382,25 @@ The earlier release of this fork, v1.19.0-s90c.1 (shown on the TV as *Moonlight 
 
 - The TV stores the hidden apps of each host, by ID and title, so an app stays hidden when Sunshine gives it a new ID. Deleting the host forgets them.
 - The running app always shows, also when it is hidden, so you can resume or quit it. When every app of a host is hidden, all of them show.
+
+## 17. The screens of the app
+
+**Header.** On the left: the Back button (in the app list and the settings), the logo and the name of the screen; in the settings also the name of the open section, in its color, and in the app list the keys of the app menu. On the right: the stream profile of the settings (e.g. *4K · 60 FPS · HEVC HDR*), the network connection of the TV (Wi-Fi or Ethernet) and round buttons, which UP reaches from the top row:
+
+| Icon | Button | Where |
+|---|---|---|
+| Circular arrow | Rescan network: searches the local network for PCs again, the arrow turns while it searches | Hosts |
+| Gear | Settings | Hosts |
+| Question mark | Support: the guide as a QR code, and where to report problems | Hosts |
+| Round arrow with a clock | Restore Defaults | Settings |
+| Circle with a cross | Quit Running App | App list |
+
+A *New update* button with a download arrow appears in the header when a newer release exists (see [Updates](#updates)).
+
+**Hosts.** The top of the screen shows the selected PC in large type: its address, its state as chips (*Running*, *Online*, *Paired*, *Unpaired*, *Offline*), one sentence on what OK does and the keys to press, next to a drawing of a PC that changes with the state. Below, each PC has a card with a colored tile (mint while a game runs, amber when not paired, gray when offline) and its most important state. The ⋯ button of a card opens its menu (*Refresh apps*, *Wake PC*, *Delete PC*, *View Details*): UP reaches it from the first row of cards, and CH+ or Play/Pause opens the menu from any row, as the hint *↑ Options* or *⋯ Options* says. When the focus is in the header or a menu, the top shows the last PC without the keys, or a summary of all PCs.
+
+**App list.** The top shows the selected app with its box art, and the colors of the box art light up the screen once the selection rests on the app. A white ring marks the selected tile. The app that runs on the PC has a mint ring and a *Running* badge, and hidden apps, when shown, are dimmed with a *Hidden* badge (see [section 16](#16-stream-menu-and-app-menu)). An app without box art shows its title on its tile.
+
+**Settings.** The sections are colored tiles on the left, with a line on what each holds. Each option is a row with its title and control at the top and its help text below. The color of the open section marks its tile, the selected row and the switches that are on.
+
+**Start of a stream.** The box art of the app on the left, and its title, the PC and the progress of the connection on the right.

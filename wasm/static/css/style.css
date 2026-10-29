@@ -1,1283 +1,2238 @@
-/* =============================
-   Global Styles
-============================= */
+/* Moonlight Plus "Spotlight" theme: a TV launcher with a hero for the focused host or app, rounded cards and gradient
+   accents. For Chromium 69 (Tizen 5.5): no flexbox gap, clamp(), aspect-ratio, backdrop-filter or :is()/:has(); only
+   transform and opacity move, and only the loading bars and the icon of a network scan run endlessly. */
+
+/* Manrope (SIL OFL 1.1, ../fonts/Manrope-OFL.txt): Latin, kerning, tabular figures, f-ligatures, weight 500-800. Rare
+   symbols that no UI text uses (e.g. £ ½ ×) fall back to Roboto. */
+@font-face {
+  font-family: 'Manrope';
+  font-style: normal;
+  font-weight: 500 800;
+  src: url(../fonts/Manrope-latin-wght.woff2) format('woff2');
+  unicode-range: U+0000-007E, U+00A0, U+00A9, U+00AD-00AE, U+00B0, U+00B7, U+00C0-00D6, U+00D8-00F6, U+00F8-00FF,
+    U+0152-0153, U+2013-2014, U+2018-201A, U+201C-201E, U+2022, U+2026, U+20AC, U+2122;
+}
+
+:root {
+  /* Surfaces */
+  --bg: #0A0D1A;
+  --panel-2: #20274B;
+  --glass: rgba(255, 255, 255, 0.055);
+  --glass-2: rgba(255, 255, 255, 0.09);
+  --glass-3: rgba(255, 255, 255, 0.14);
+  --line: rgba(255, 255, 255, 0.09);
+  --line-2: rgba(255, 255, 255, 0.16);
+  /* Text */
+  --text: #F4F6FF;
+  --text-2: #C3C9E2;
+  --text-3: #8D96B8;
+  --text-on-focus: #0A0D1A;
+  --text-2-on-focus: #4A5376;
+  /* Accents */
+  --violet: #7C5CFF;
+  --blue: #3D7BFF;
+  --cyan: #22D3EE;
+  --pink: #FF4D8D;
+  --amber: #FFC547;
+  --mint: #2EE6A0;
+  --red: #FF5C7A;
+  --grad-brand: linear-gradient(120deg, #7C5CFF 0%, #3D7BFF 55%, #22D3EE 100%);
+  --grad-warm: linear-gradient(120deg, #FF4D8D 0%, #FF8A4C 100%);
+  --grad-mint: linear-gradient(120deg, #10B981 0%, #2EE6A0 100%);
+  --grad-amber: linear-gradient(120deg, #FF9A3D 0%, #FFC547 100%);
+  --grad-danger: linear-gradient(120deg, #FF4D6D 0%, #FF7A59 100%);
+  --grad-slate: linear-gradient(120deg, #4B5578 0%, #6E7899 100%);
+  /* Depth and focus */
+  --shadow-card: 0 12px 24px rgba(0, 0, 0, 0.36);
+  /* The white focus ring has a dark gap, so that it shows on light box art too */
+  --ring: 0 0 0 3px var(--bg), 0 0 0 7px #fff, 0 26px 56px rgba(0, 0, 0, 0.6);
+  --shadow-focus: var(--ring), 0 0 64px rgba(124, 92, 255, 0.5);
+  /* Shape, spacing, motion */
+  --r-m: 18px;
+  --r-l: 24px;
+  --r-xl: 32px;
+  --safe-x: 96px;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --t-focus: 160ms;
+  --font: 'Manrope', 'Roboto', 'SamsungOne', sans-serif;
+}
+
+/* ===== Page ===== */
+html, body {
+  height: 100%;
+}
 body {
-    color: #fff;
-    background-color: #282C38;
-    font-family: 'Roboto', sans-serif;
-    scroll-behavior: smooth;
-    -webkit-user-select: none;
-    -moz-user-select: none;
-    user-select: none;
+  margin: 0;
+  color: var(--text);
+  background-color: var(--bg);
+  font-family: var(--font);
+  font-weight: 500;
+  -webkit-font-smoothing: antialiased;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  user-select: none;
 }
-.mdl-grid {
-    width: 100%;
+/* Static backdrop: soft glows and a star field, painted once */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(1100px 620px at 88% -8%, rgba(124, 92, 255, 0.30), rgba(124, 92, 255, 0) 70%),
+    radial-gradient(900px 600px at -6% 108%, rgba(34, 211, 238, 0.13), rgba(34, 211, 238, 0) 70%),
+    radial-gradient(700px 420px at 40% 120%, rgba(255, 77, 141, 0.10), rgba(255, 77, 141, 0) 70%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='480' stroke='%23fff' stroke-linecap='round'%3E%3Cpath stroke-width='2.6' stroke-opacity='.45' d='M32 48h0M300 120h0M250 280h0M60 400h0'/%3E%3Cpath stroke-width='2' stroke-opacity='.33' d='M190 22h0M430 64h0M96 210h0M400 330h0M180 440h0M350 450h0'/%3E%3C/svg%3E") 0 0 / 480px 480px repeat,
+    var(--bg);
 }
-.mdl-cell {
-    color: #fff;
-    padding: 25px;
-    text-align: center;
+/* No backdrop while a stream plays, so the video plane shows */
+body[data-view="stream"]::before,
+body[style*="transparent"]::before {
+  display: none;
 }
-/* =============================
-   Splash Screen
-============================= */
+/* Stroke icons of the sprite in index.html */
+#icon-sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+.icon {
+  display: block;
+  width: 28px;
+  height: 28px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: none;
+}
+/* No MDL ripples: they repaint large areas */
+.mdl-button__ripple-container, .mdl-switch__ripple-container, .mdl-menu__item-ripple-container,
+.mdl-ripple, .mdl-switch__focus-helper {
+  display: none !important;
+}
+button, .mdl-button, .mdl-menu__item, .mdl-textfield__input, .mdl-switch__label, .mdl-dialog, .mdl-snackbar__text,
+.mdl-tooltip, .mdl-layout-title, h1, h2, h3, h4, p, label, input, select {
+  font-family: var(--font);
+}
+
+/* ===== Loading screens ===== */
 #listener {
-    height: 0;
-    margin-top: 0;
-    overflow: hidden;
+  height: 0;
+  margin-top: 0;
+  overflow: hidden;
+}
+/* MDL's bars animate left and width, so bar1 becomes a pill that slides with transform and the others hide */
+#wasmSpinner, #loadingSpinner {
+  display: none;
+  z-index: 2;
 }
 #wasmSpinner {
-    width: 35%;
-    height: 10px;
-    display: none;
-    position: fixed;
-    bottom: 50%;
-    left: 50%;
-    margin: 0 auto;
-    z-index: 2;
-    transform: translate(-50%, -50%);
+  position: fixed;
+  top: 62%;
+  left: calc(50% - 240px);
+  width: 480px;
+  height: 6px;
+  margin: 0;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
 }
-#loadingSpinner {
-    width: 35%;
-    height: 10px;
-    display: none;
-    position: fixed;
-    bottom: 50%;
-    left: 50%;
-    margin: 0 auto;
-    z-index: 1;
-    transform: translate(-50%, -50%);
+.mdl-progress > .bar {
+  border-radius: 3px;
 }
-.mdl-progress > .progressbar,
-.mdl-progress > .bufferbar,
-.mdl-progress > .auxbar {
-    border-radius: 8px;
+#wasmSpinner > .bar2, #wasmSpinner > .bar3, #loadingSpinner > .bar2 {
+  display: none;
+}
+/* material.js sets the widths inline */
+#wasmSpinner > .bar1, #loadingSpinner > .bar1 {
+  left: 0;
+  width: 160px !important;
+  background: var(--grad-brand);
+  animation: spotlight-progress 1.1s cubic-bezier(0.45, 0, 0.55, 1) infinite alternate;
+}
+@keyframes spotlight-progress {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(320px);
+  }
 }
 #wasmSpinnerLogo {
-    width: 30%;
-    position: fixed;
-    bottom: 350%;
-    left: 25%;
-    right: 25%;
-    margin: 0 auto;
-    animation: fadeInOut 3s infinite;
+  position: fixed;
+  top: calc(62% - 260px);
+  left: calc(50% - 72px);
+  width: 144px;
+  height: 144px;
+  margin: 0;
+  filter: drop-shadow(0 18px 40px rgba(124, 92, 255, 0.45));
 }
 #wasmSpinnerMessage, #loadingSpinnerMessage {
-    color: #fff;
-    margin: 35px;
-    font-size: 2rem;
-    font-weight: 300;
-    line-height: normal;
-    letter-spacing: 0.5px;
-    text-align: center;
+  position: fixed;
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 0 var(--safe-x);
+  color: var(--text-2);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: center;
 }
-/* =============================
-   Header Section
-============================= */
+#wasmSpinnerMessage {
+  top: calc(62% - 90px);
+}
+/* Start screen (launcher.js): the uncropped poster left of the centre, the app, host, bar and message right of it */
+#loadingSpinner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  background: var(--bg);
+}
+#loadingSpinner > .bar1, #loadingSpinner > .bar3 {
+  top: 624px;
+  bottom: auto;
+  left: calc(50% - 144px);
+  height: 6px;
+}
+#loadingSpinner > .bar3 {
+  width: 480px !important;
+  background: rgba(255, 255, 255, 0.12);
+  -webkit-mask-image: none;
+  mask-image: none;
+  animation: none;
+}
+#loadingSpinnerMessage {
+  top: 652px;
+  left: calc(50% - 144px);
+  width: 720px;
+  padding: 0;
+  text-align: left;
+}
+#launch-poster {
+  position: absolute;
+  top: 300px;
+  right: calc(50% + 216px);
+  height: 480px;
+  max-width: 400px;
+  object-fit: cover;
+  border-radius: var(--r-l);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16), 0 40px 80px rgba(0, 0, 0, 0.6);
+}
+#launch-poster.is-wide {
+  top: 540px;
+  width: 560px;
+  height: auto;
+  max-width: none;
+  transform: translateY(-50%);
+}
+#launch-poster:not([src]) {
+  visibility: hidden;
+}
+.launch-info {
+  position: absolute;
+  bottom: calc(100% - 596px);
+  left: calc(50% - 144px);
+  width: 720px;
+}
+.launch-info .launch-overline {
+  color: var(--cyan);
+}
+.launch-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  padding-bottom: 6px;
+  color: #fff;
+  font-size: 72px;
+  font-weight: 800;
+  line-height: 1.06;
+  letter-spacing: -1.5px;
+}
+.launch-host {
+  display: flex;
+  align-items: center;
+  margin-top: 18px;
+  color: var(--text-2);
+  font-size: 26px;
+  font-weight: 700;
+}
+.launch-host::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  margin-right: 14px;
+  border-radius: 50%;
+  background: var(--mint);
+}
+/* Ambient light: three colours of the box art (--a1 to --a3, launcher.js) as radial glows under a vignette */
+.ambient {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.ambient.is-painted {
+  opacity: 1;
+}
+.launch-backdrop {
+  height: 100%;
+  background:
+    radial-gradient(700px 600px at 30% 50%, rgba(var(--a2), 0.6), rgba(var(--a2), 0) 70%),
+    radial-gradient(900px 500px at 18% 12%, rgba(var(--a1), 0.55), rgba(var(--a1), 0) 70%),
+    radial-gradient(900px 500px at 42% 92%, rgba(var(--a3), 0.55), rgba(var(--a3), 0) 70%);
+}
+.launch-backdrop::after, .hero-backdrop::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+.launch-backdrop::after {
+  background: radial-gradient(1400px 900px at 32% 50%, rgba(10, 13, 26, 0), rgba(10, 13, 26, 0.8) 85%);
+}
+
+/* ===== Header ===== */
 #main-header {
-    background-color: #333846;
-    box-shadow: 0 0 4px 0 rgba(0, 0, 0, 1);
+  color: var(--text);
+  background: transparent;
+  box-shadow: none;
+  min-height: 0;
+  overflow: visible;
 }
 .mdl-layout__header-row {
-    height: 80px;
-    padding: 0 80px 0 80px;
+  height: 128px;
+  padding: 36px var(--safe-x) 0;
+  box-sizing: border-box;
 }
 #header-logo {
-    width: 48px;
-    height: 48px;
-    margin: 2px 35px 2px 40px;
-    border-radius: 50%;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  width: 52px;
+  height: 52px;
+  margin: 0 18px 0 0;
+  filter: drop-shadow(0 6px 16px rgba(124, 92, 255, 0.45));
 }
 #header-title {
-    color: #cfcfcf;
-    font-size: 2.6rem;
-    font-weight: 600;
-    letter-spacing: 2px;
-    text-transform: uppercase;
-    text-shadow: 2px 2px 10px rgba(0, 0, 0, 0.4);
+  color: var(--text);
+  font-size: 36px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.5px;
 }
-/* =============================
-   Navigation Menu
-============================= */
-#rescanNetworkBtn, #settingsBtn, #supportBtn, #restoreDefaultsBtn, #quitRunningAppBtn {
-    background-color: #404354;
-    width: 50px;
-    height: 50px;
-    margin: 0 10px;
-    border-radius: 8px;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+/* Hint for the app menu (shown with the app grid): one quiet line with a key cap */
+.header-hint {
+  display: none;
+  position: relative;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 820px;
+  margin: 0 0 0 30px;
+  padding: 0 0 0 62px;
+  color: var(--text-3);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 48px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.header-hint::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  left: 0;
+  width: 46px;
+  height: 36px;
+  border-radius: 10px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.2' stroke-linecap='round'%3E%3Cpath d='M5.5 12h.1M12 12h.1M18.5 12h.1'/%3E%3C/svg%3E") center / 24px 24px no-repeat, var(--glass-3);
+  box-shadow: inset 0 0 0 1px var(--line-2), 0 3px 0 rgba(0, 0, 0, 0.35);
+}
+.mdl-layout__header-row .mdl-button--icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  min-width: 64px;
+  height: 64px;
+  margin: 0 0 0 16px;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--text);
+  background: var(--glass-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: transform var(--t-focus) var(--ease);
 }
 #goBackBtn {
-    background-color: #404354;
-    position: fixed;
-    left: 30px;
-    width: 50px;
-    height: 50px;
-    border-radius: 8px;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
-}
-#updateAppBtn {
-    background-color: #404354;
-    right: 52px;
-    height: 50px;
-    padding: 0 20px;
-    border-radius: 8px;
-    opacity: 0;
-    transform: translateY(-10px);
-    box-shadow: 0 0 6px 2px rgba(239, 191, 4, 0.5);
-    transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out, box-shadow 0.2s ease-in-out;
-}
-#updateAppBtn:hover, #updateAppBtn:focus {
-    background-color: #404354;
-    box-shadow: 0 0 2px 3px rgba(239, 191, 4, 1);
-}
-#updateAppBtnText {
-    font-size: 1.3rem;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-    text-shadow: 2px 2px 5px rgba(0, 0, 0, 0.4);
+  margin: 0 22px 0 0;
 }
 .navigation-button-icons {
-    margin: 0 8px 0 -4px;
-    font-size: 32px !important;
+  width: 32px;
+  height: 32px;
 }
-/* The icon of the Rescan network button turns while the scan runs */
+/* The Rescan network icon turns while a scan runs (is-scanning) */
 #rescanNetworkBtn.is-scanning .navigation-button-icons {
-    animation: rescan-network-spin 1s linear infinite;
+  animation: rescan-network-spin 1s linear infinite;
 }
 @keyframes rescan-network-spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
-}
-.nav-menu-parent {
-    position: relative;
-    margin: 0 10px;
-}
-/* =============================
-   Helper Styles
-============================= */
-#snackButton {
-    width: 0;
-    height: 0;
-    display: none;
-}
-.mdl-snackbar {
-    background: rgba(62, 68, 84, 0.9);
-    min-width: 0;
-    border-radius: 12px 12px 0 0;
-    box-shadow: 0 0 8px 4px rgba(0, 163, 198, 1);
-}
-.mdl-snackbar__text {
-    color: #fff;
-    padding: 15px 20px 15px 20px;
-    font-size: 1.45rem;
-    font-weight: 500;
-    line-height: normal;
-    letter-spacing: 0.5px;
-    text-align: center;
-}
-.mdl-tooltip {
-    color: #fff;
-    background-color: #3E4454;
-    display: inline !important;
-    position: fixed;
-    top: 72px !important;
-    max-width: 200px;
-    padding: 10px;
-    border-radius: 8px;
-    font-size: 1.65rem;
-    font-weight: 500;
-    line-height: normal;
-    letter-spacing: 0.5px;
-    box-shadow: 0 0 4px 0 rgba(0, 0, 0, 0.6);
-}
-.hovered {
-    background: rgba(158, 158, 158, 0.2);
-}
-.hide-container {
-    display: none !important;
-}
-.disable-animation {
-    animation: none !important;
-}
-/* =============================
-   Dialog Styles
-============================= */
-.dialog-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    z-index: 999;
-    background: rgba(0, 0, 0, 0.4);
-    display: none;
-    align-items: center;
-    justify-content: center;
-}
-.mdl-dialog {
-    color: #fff;
-    background-color: #333846;
-    width: 30%;
-    height: fit-content;
-    padding: 20px;
-    border-radius: 16px;
-    box-shadow: 0 0 12px 6px rgba(0, 163, 198, 1);
-}
-.large-dialog {
-    color: #fff;
-    background-color: #333846;
-    width: 90%;
-    height: fit-content;
-    padding: 20px;
-    border-radius: 16px;
-    box-shadow: 0 0 12px 6px rgba(0, 163, 198, 1);
-}
-.mdl-dialog__title {
-    margin: 0;
-    padding: 24px 24px 14px;
-    font-size: 2.8rem;
-    font-weight: 500;
-    letter-spacing: 0.5px;
-}
-.mdl-dialog__content {
-    color: rgba(255, 255, 255, 0.9);
-    padding: 20px 24px 14px 24px;
-}
-.mdl-dialog__content p, .mdl-dialog__content ul {
-    line-height: normal;
-    letter-spacing: 0.5px;
-}
-.mdl-dialog__content button {
-    font-size: 1.4rem;
-    text-transform: uppercase;
-}
-.mdl-dialog__content button, .mdl-dialog__actions button {
-    width: 100%;
-    margin-bottom: 10px;
-    border-radius: 8px;
-}
-#ipAddressInputField {
-    display: block;
-    margin: 15px 0 15px 0;
-}
-#ipAddressInputField .mdl-textfield__label {
-    top: -12px;
-}
-.mdl-textfield__label {
-    font-size: 1.65rem;
-    font-weight: 200;
-    letter-spacing: 0.5px;
-}
-.mdl-textfield--floating-label.is-invalid .mdl-textfield__label {
-    font-size: 1.65rem;
-    font-weight: 200;
-    letter-spacing: 0.5px;
-}
-#ipAddressTextInput {
-    font-size: 1.45rem;
-    letter-spacing: 0.5px;
-}
-.mdl-textfield__input {
-    width: 175%;
-    height: 32px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 6px;
-    text-indent: 10px;
-}
-.mdl-textfield__input.hovered, #ipAddressTextInput {
-    color: #fff;
-    background-color: #585D75;
-}
-.mdl-textfield__input.hovered, .mdl-textfield__input:hover, .mdl-textfield__input:focus {
-    box-shadow: 0 0 1px 2px rgba(0, 163, 198, 1);
-}
-.mdl-textfield.is-invalid .mdl-textfield__input:hover, .mdl-textfield.is-invalid .mdl-textfield__input:focus {
-    box-shadow: 0 0 1px 2px rgba(244, 67, 54, 1);
-}
-#ipAddressTextInput::placeholder {
-    color: rgba(255, 255, 255, 0.6);
-}
-#ipAddressSelectFields {
-    display: none;
-    margin: 15px 0 15px 0;
-}
-.select-option-field {
-    position: relative;
-    width: 100%;
-    padding: 22px 0;
-    font-size: 1rem;
-}
-.select-option-field-floating-label .mdl-textfield__label {
-    color: #00A3C6;
-    width: 100%;
-    font-size: 1.65rem;
-    font-weight: 200;
-    letter-spacing: 0.5px;
-}
-#ipAddressSelectFields .mdl-textfield__label {
-    top: -12px;
-}
-.ip-address-select-field {
-    width: 125px;
-    height: 38px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 6px;
-    margin: 0 2px 0 2px !important;
-    font-size: 1.45rem;
-    letter-spacing: 0.5px;
-    text-indent: 10px;
-    cursor: pointer;
-}
-.ip-address-select-field.hovered, #ipAddressField1,
-#ipAddressField2, #ipAddressField3, #ipAddressField4 {
-    color: #fff;
-    background-color: #585D75;
-}
-.ip-address-select-field.hovered, .ip-address-select-field:hover {
-    box-shadow: 0 0 1px 2px rgba(0, 163, 198, 1);
-}
-#supportQrCode {
-    width: 50%;
-    height: 50%;
-    margin: 5px 25% 5px 25%;
-    border-radius: 12px;
-    box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.4);
-    align-items: center;
-    justify-content: center;
-}
-.navGuideContainer {
-    display: inline-flex;
-    align-items: center;
-    padding: 5px 20px 5px 20px;
-    font-size: 1.35rem;
-    letter-spacing: 2px;
-}
-.navGuideLabel {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    margin-right: 10px;
-    box-shadow: 0 0 4px 0 rgba(0, 0, 0, 0.6);
-}
-.navGuideRemoteColor {
-    background-color: #00A3C6;
-}
-.navGuideKeyboardColor {
-    background-color: #F44336;
-}
-.navGuideGamepadColor {
-    background-color: #8BC34A;
-}
-.navGuideLabelText {
-    color: #ececec;
-    font-size: 1.65rem;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-}
-.navGuideDialogControls {
-    padding: 5px 0 5px 0;
-    font-size: 1.45rem;
-    letter-spacing: 0.5px;
-}
-.navGuideRemoteText {
-    color: #00A3C6;
-    font-size: 1.45rem;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-}
-.navGuideKeyboardText {
-    color: #F44336;
-    font-size: 1.45rem;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-}
-.navGuideGamepadText {
-    color: #8BC34A;
-    font-size: 1.45rem;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-}
-#pairingDialogText, #deleteHostDialogText, .host-details-text, #appSupportDialogText,
-#autoWolDialogText, #navGuideDialogText, #updateAppDialogText, #restoreDefaultsDialogText, #quitAppDialogText,
-#warningDialogText, #restartAppDialogText, #exitAppDialogText {
-    font-size: 1.45rem;
-    line-height: normal;
-    letter-spacing: 0.5px;
-}
-#autoWolCheckboxContainer {
-    margin-top: 36px;
-    margin-bottom: 16px;
-    width: 100%;
-}
-#autoWolCheckboxContainer .mdl-switch {
-    width: 100%;
-    height: 36px;
-    padding-left: 54px;
-    box-sizing: border-box;
-}
-#autoWolCheckboxContainer .mdl-switch__label {
-    color: #ececec;
-    font-size: 1.45rem;
-    line-height: 36px;
-    letter-spacing: 0.5px;
-    left: 8px;
-}
-#autoWolCheckboxContainer .mdl-switch__track {
-    left: 10px;
-    right: auto;
-    top: 11px;
-    margin: 0;
-}
-#autoWolCheckboxContainer .mdl-switch__thumb {
-    left: 10px;
-    right: auto;
-    top: 8px;
-    margin: 0;
-}
-#autoWolCheckboxContainer .mdl-switch.is-checked .mdl-switch__thumb {
-    left: 26px;
-    right: auto;
-}
-#autoWolCheckboxContainer .mdl-switch__ripple-container {
-    left: -4px;
-    right: auto;
-    top: -6px;
-    margin: 0;
-}
-#navGuideDialogText {
-    list-style-type: none;
-    padding: 5px 20px 5px 20px;
-}
-#continueAddHost, #cancelAddHost, #cancelPairing, #continueDeleteHost,
-#closeHostMenu, #closeHostDetails, #cancelDeleteHost, #closeAppSupport,
-#closeNavGuide, #closeUpdateApp, #continueRestoreDefaults, #cancelRestoreDefaults,
-#continueQuitApp, #cancelQuitApp, #continueWarning, #closeWarning,
-#continueRestartApp, #cancelRestartApp, #continueExitApp, #cancelExitApp, #cancelAutoWol {
-    text-transform: uppercase;
-}
-#continueAddHost, #cancelAddHost, #continueDeleteHost, #cancelDeleteHost,
-#continueRestoreDefaults, #cancelRestoreDefaults, #continueQuitApp, #cancelQuitApp,
-#continueWarning, #closeWarning, #continueRestartApp, #cancelRestartApp,
-#continueExitApp, #cancelExitApp {
-    width: 48%;
-    height: 40px;
-    font-size: 1.4rem;
-    letter-spacing: 0.5px;
-}
-#cancelAddHost, #cancelPairing, #cancelDeleteHost, #closeAppSupport,
-#cancelRestoreDefaults, #cancelQuitApp, #closeWarning, #cancelRestartApp,
-#cancelExitApp, #cancelAutoWol {
-    height: 40px;
-    margin: 0 10px 20px 0;
-    font-size: 1.4rem;
-    letter-spacing: 0.5px;
-}
-/* Warning dialog buttons - side by side when both visible, full width when only closeWarning is visible */
-#warningDialog .mdl-dialog__actions #continueWarning,
-#warningDialog .mdl-dialog__actions #closeWarning {
-    width: 48%;
-    margin-bottom: 10px;
-}
-/* When only closeWarning is visible (continueWarning is hidden), make it full width */
-#warningDialog.single-button .mdl-dialog__actions #closeWarning {
-    width: 100%;
-}
-#continueAddHost[disabled], #continueAddHost.mdl-button--disabled {
-    color: #fff;
-    background-color: #838593 !important;
-    pointer-events: auto;
-    cursor: not-allowed;
-}
-#continueAddHost[disabled].hovered, #continueAddHost[disabled]:hover,
-#continueAddHost[disabled]:focus, #continueAddHost[disabled]:active,
-#continueAddHost.mdl-button--disabled:hover, #continueAddHost.mdl-button--disabled:focus,
-#continueAddHost.mdl-button--disabled:active {
-    background-color: #666875 !important;
-    box-shadow: 0 0 2px 3px rgba(170, 170, 170, 1) !important;
-    cursor: not-allowed;
-}
-.host-menu-button, #closeHostMenu, #closeHostDetails,
-#closeUpdateApp {
-    margin: 10px 15px 20px 0;
-    font-size: 1.4rem;
-    letter-spacing: 0.5px;
-}
-#continueWarning {
-    display: none;
-}
-#closeNavGuide {
-    width: 58%;
-    height: 40px;
-    margin: 0 25rem 1.3rem 0;
-    font-size: 1.4rem;
-    letter-spacing: 0.5px;
-}
-/* =============================
-   Hosts Section
-============================= */
-#host-grid {
-    display: flex;
-    flex: 1;
-    margin: 15px 0;
-    padding: 15px 80px 15px 80px;
-    flex-flow: row wrap;
-    align-items: center;
-    justify-content: center;
-}
-#host-grid .mdl-card {
-    position: relative;
-    width: 285px;
-    height: 235px;
-    min-height: 235px;
-    margin: 20px 28px 45px 28px;
-    border-radius: 8px;
-    flex-basis: 16.2%;
-    cursor: pointer;
-    text-align: center;
-    will-change: transform;
-    transition: all 0.2s ease-in-out;
-}
-#host-grid .mdl-shadow--4dp {
-    box-shadow: unset;
-}
-#host-grid .mdl-card.hovered, #host-grid .mdl-card:hover,
-#host-grid .mdl-card:focus, #host-grid .mdl-card:active {
-    border-radius: 0;
-    z-index: 2;
-    transform: scale(1.2);
-    outline: #00A3C6 solid 3px;
-}
-#host-grid .host-cell-inactive {
-    box-shadow: 0 0 0 2px rgba(244, 67, 54, 1);
-}
-#host-grid .host-cell-inactive.hovered, #host-grid .host-cell-inactive:hover,
-#host-grid .host-cell-inactive:focus, #host-grid .host-cell-inactive:active {
-    border-radius: 0;
-    z-index: 2;
-    transform: scale(1.2);
-    outline: #F44336 solid 3px;
-}
-#host-grid .mdl-card__title {
-    padding: 0;
-}
-.host-add-container > .mdl-card__title {
-    color: #fff;
-    background: url('../res/ic_add_to_queue_white_48px.svg') center no-repeat rgba(62, 68, 84, 1);
-}
-.host-container > .mdl-card__title {
-    color: #fff;
-    background: url('../res/ic_tv_white_48px.svg') center no-repeat rgba(62, 68, 84, 1);
-}
-#addHostContainer .host-title {
-    text-transform: uppercase;
-}
-#host-grid .host-title {
-    color: #fff;
-    background: rgba(0, 0, 0, 0.6);
-    position: absolute;
-    bottom: 0;
-    width: 100%;
-    padding: 10px 0;
-    justify-content: center;
-}
-#addHostContainer .host-text {
-    animation: none !important;
-}
-#host-grid .host-text {
-    padding: 0 15px;
-    font-size: 1.35rem;
-    font-weight: 300;
-    line-height: normal;
-    letter-spacing: 0.5px;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    transition: transform 0.2s ease-in-out;
-}
-#host-grid .mdl-card.hovered .host-text, #host-grid .mdl-card:hover .host-text,
-#host-grid .mdl-card:focus .host-text, #host-grid .mdl-card:active .host-text {
-    animation: scrollText 10s linear infinite;
-    overflow: visible;
-    text-overflow: unset;
-}
-.host-menu {
-    background: url('../res/ic_menu_white_48px.svg') center / 22px 22px no-repeat rgba(0, 0, 0, 0.6);
-    position: absolute;
-    top: 0;
-    right: 0;
-    width: 38px;
-    height: 38px;
-    padding: 2px;
-    z-index: 5;
-    border-radius: 0 0 0 28px;
-    cursor: pointer;
-    will-change: transform;
-    transform: scale(1.2);
-    transition: all 0.2s ease-in-out;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
-}
-.host-menu.hovered, .host-menu:hover, .host-menu:focus, .host-menu:active {
-    background-color: rgba(0, 163, 198, 0.6);
-    transform: scale(1.3);
-    box-shadow: 0 1px 4px rgba(0, 163, 198, 0.4);
-}
-.host-center-icon {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -60%);
-    font-size: 32px;
-    color: #fff;
-    text-shadow: 0 0 5px rgba(0,0,0,0.8);
-    z-index: 5;
-}
-/* =============================
-   Games Section
-============================= */
-#game-grid {
-    display: flex;
-    flex: 1;
-    margin: 15px 0;
-    padding: 15px 80px 15px 80px;
-    flex-flow: row wrap;
-    align-items: center;
-    justify-content: flex-start;
-}
-#game-grid .mdl-card {
-    background: url('../res/placeholder_game.svg') center / cover no-repeat rgba(29, 29, 29, 1);
-    position: relative;
-    width: 215px;
-    height: 275px;
-    min-height: 275px;
-    margin: 20px 38px 20px 38px;
-    border-radius: 8px;
-    flex-basis: 12.2%;
-    cursor: pointer;
-    text-align: center;
-    will-change: transform;
-    transition: all 0.2s ease-in-out;
-}
-#game-grid .mdl-card img {
-    width: 100%;
-    height: 100%;
-    z-index: -1;
-    opacity: 0;
-    transition: opacity 0.3s;
-}
-#game-grid .mdl-card img.fade-in {
-    opacity: 1;
-}
-#game-grid .mdl-shadow--4dp {
-    box-shadow: unset;
-}
-#game-grid .mdl-card.hovered, #game-grid .mdl-card:hover,
-#game-grid .mdl-card:focus, #game-grid .mdl-card:active {
-    border-radius: 0;
-    z-index: 2;
-    transform: scale(1.2);
-    outline: #00A3C6 solid 3px;
-}
-#game-grid .current-game-active {
-    box-shadow: 0 0 0 2px rgba(139, 195, 74, 1);
-}
-#game-grid .current-game-active.hovered, #game-grid .current-game-active:hover,
-#game-grid .current-game-active:focus, #game-grid .current-game-active:active {
-    border-radius: 0;
-    z-index: 2;
-    transform: scale(1.2);
-    outline: #8BC34A solid 3px;
-}
-#game-grid .mdl-card__title {
-    padding: 0;
-}
-#game-grid .game-title {
-    color: #fff;
-    background: rgba(0, 0, 0, 0.6);
-    position: absolute;
-    bottom: 0;
-    width: 100%;
-    padding: 10px 0;
-    justify-content: center;
-}
-#game-grid .game-text {
-    padding: 0 15px;
-    font-size: 1.25rem;
-    font-weight: 300;
-    line-height: normal;
-    letter-spacing: 0.5px;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    transition: transform 0.2s ease-in-out;
-}
-#game-grid .mdl-card.hovered .game-text, #game-grid .mdl-card:hover .game-text,
-#game-grid .mdl-card:focus .game-text, #game-grid .mdl-card:active .game-text {
-    animation: scrollText 10s linear infinite;
-    overflow: visible;
-    text-overflow: unset;
-}
-/* =============================
-   Streaming Layout
-============================= */
-.fullscreen {
-    position: relative !important;
-    height: 100vh !important;
-    z-index: 1 !important;
-    margin: auto !important;
-    padding: 0 !important;
-    border: none !important;
-    overflow: hidden !important;
-}
-#connection-warnings {
-    color: #fff;
-    background: transparent;
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    z-index: 3;
-    padding: 8px;
-    border-radius: 8px;
-    font-size: 1.85rem;
-    font-weight: 600;
-    line-height: 1.2;
-    white-space: pre-wrap;
-}
-#performance-stats {
-    color: #fff;
-    background: transparent;
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    z-index: 3;
-    padding: 8px;
-    border-radius: 8px;
-    font-size: 1.65rem;
-    font-weight: 500;
-    line-height: 1.2;
-    white-space: pre-wrap;
-}
-/* =============================
-   Settings Section
-============================= */
-#settings-list {
-    width: 100%;
-    height: 100%;
-    margin: 0;
-    display: flex;
-    flex-flow: row wrap;
-}
-#settings-left-pane {
-    flex: 1;
-    max-width: 30%;
-    padding: 20px;
-    border-right: 4px solid rgba(29, 29, 29, 0.8);
-    overflow: auto;
-}
-.settings-categories {
-    width: auto;
-    height: auto;
-    margin: 5px 25px 5px 25px;
-    font-weight: 600;
-    text-align: left;
-    overflow: hidden;
-}
-.settings-category {
-    color: #cfcfcf;
-    margin: 25px;
-    padding: 25px;
-    border-bottom: 2px solid #666666;
-    border-radius: 12px;
-    cursor: pointer;
-}
-.settings-category.hovered, .settings-category:hover, .settings-category:focus {
-    background-color: #484C5F;
-    box-shadow: 0 0 2px 3px rgba(0, 163, 198, 0.8);
-}
-.settings-category.selected {
-    color: #ececec;
-    background: rgba(0, 163, 198, 0.8);
-    transform: scale(1.02);
-    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.4);
-}
-.settings-category.selected:hover, .settings-category.selected:focus {
-    transform: scale(1.05);
-}
-.settings-category-icons {
-    margin: 0 30px 0 15px;
-    font-size: 32px !important;
-}
-.settings-category label {
-    position: relative;
-    bottom: 6.5px;
-    font-size: 1.8rem;
-    font-weight: 500;
-    letter-spacing: 0.5px;
-    cursor: pointer;
-}
-#settings-right-pane {
-    flex: 1;
-    padding: 20px;
-    overflow: auto;
-}
-.settings-options {
-    width: auto;
-    height: auto;
-    display: none;
-    margin: 10px 35px 10px 35px;
-    overflow: hidden;
-}
-.setting-option {
-    margin: 25px;
-}
-.settings-options label {
-    color: #cfcfcf;
-    display: inline-block;
-    margin-bottom: 12px;
-    font-size: 1.7rem;
-    font-weight: 500;
-    letter-spacing: 0.5px;
-    text-align: left;
-}
-.settings-options .mdl-list__item-text-body {
-    color: #ececec;
-    display: block;
-    margin-bottom: 12px;
-    font-size: 1.4rem;
-    line-height: 1.5;
-    letter-spacing: 0.5px;
-    text-align: left;
-}
-.settings-options .mdl-switch__label {
-    color: #ececec;
-    display: block;
-    margin: 18px 0 12px 0;
-    font-size: 1.45rem;
-    line-height: normal;
-    letter-spacing: 0.5px;
-    text-align: left;
-}
-/* =============================
-   Switch, Button, Badge, and Menu Styles
-============================= */
-.mdl-switch__input, .mdl-switch__track, .mdl-switch__thumb {
-    margin: 1.2rem 0 1.2rem 74.5rem;
-}
-.mdl-switch.is-checked .mdl-switch__track {
-    background: rgba(0, 163, 198, 1);
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
-}
-.mdl-switch.is-checked .mdl-switch__thumb {
-    background-color: #fff;
-}
-.mdl-switch.is-focused {
-    background-color: #404354;
-    box-shadow: 0 0 2px 3px rgba(0, 163, 198, 1);
-}
-.mdl-icon-toggle__label.material-icons {
-    color: #818181;
-}
-.mdl-button {
-    color: #fff;
-    border-radius: 8px;
-    font-size: 1.15rem;
-    font-weight: 500;
-    letter-spacing: 0.5px;
-    text-transform: none;
-}
-.mdl-button--raised.mdl-button--colored {
-    color: #fff;
-    background-color: #404354 !important;
-}
-.mdl-button--raised.mdl-button--colored:hover, .mdl-button--raised.mdl-button--colored:focus,
-.mdl-button--raised.mdl-button--colored:active {
-    background-color: #404354 !important;
-    box-shadow: 0 0 2px 3px rgba(0, 163, 198, 1);
-}
-.mdl-button--raised.mdl-button--colored[disabled] {
-	color: #dedede !important;
-    opacity: 0.5 !important;
-	pointer-events: none;
-}
-.mdl-button--raised.mdl-button--colored[disabled].hovered, .mdl-button--raised.mdl-button--colored[disabled]:hover,
-.mdl-button--raised.mdl-button--colored[disabled]:focus, .mdl-button--raised.mdl-button--colored[disabled]:active {
-    box-shadow: 0 0 2px 3px rgba(170, 170, 170, 1) !important;
-}
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+.mdl-layout__header-row .mdl-button--icon.hovered, .mdl-layout__header-row .mdl-button--icon:focus {
+  color: var(--text-on-focus);
+  background: #fff;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.25), 0 14px 30px rgba(0, 0, 0, 0.45);
+  transform: scale(1.12);
+}
+/* Network status of the TV (launcher.js) */
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 16px 0 12px;
+  margin: 0 10px 8px 0;
+  border-radius: 20px;
+  background: var(--glass-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  line-height: 1;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.status-chip .icon {
+  width: 22px;
+  height: 22px;
+  margin-right: 8px;
+}
+.status-chip .dot {
+  width: 10px;
+  height: 10px;
+  margin: 0 10px 0 4px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.status-chip.chip-online { color: var(--mint); background: rgba(46, 230, 160, 0.12); box-shadow: inset 0 0 0 1px rgba(46, 230, 160, 0.28); }
+.status-chip.chip-offline { color: #A9B0CC; background: rgba(169, 176, 204, 0.10); }
+.status-chip.chip-paired { color: #9FB8FF; background: rgba(61, 123, 255, 0.14); box-shadow: inset 0 0 0 1px rgba(61, 123, 255, 0.3); }
+.status-chip.chip-locked { color: var(--amber); background: rgba(255, 197, 71, 0.12); box-shadow: inset 0 0 0 1px rgba(255, 197, 71, 0.3); }
+/* Running is mint on every screen, like the ring of the running app */
+.status-chip.chip-running { color: #04261A; background: var(--grad-mint); box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3); }
+.status-chip.chip-hidden { color: var(--text-2); text-transform: uppercase; }
+.header-status {
+  height: 48px;
+  margin: 0 4px 0 0;
+  padding: 0 20px 0 16px;
+  border-radius: 24px;
+  font-size: 19px;
+  letter-spacing: 0.3px;
+  color: var(--text-2);
+}
+.header-status:empty, body[data-view="stream"] .header-status {
+  display: none;
+}
+/* Stream profile of the settings (launcher.js) */
+#header-profile {
+  margin-right: 12px;
+  color: var(--text);
+  background: rgba(124, 92, 255, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(124, 92, 255, 0.34);
+}
+/* Colour (R, G, B) of the open settings section (data-section, index.js): header, tile bar, focused row, switches */
+:root {
+  --hue: 124, 92, 255;
+}
+body[data-section="basicSettings"] { --hue: 139, 107, 255; }
+body[data-section="interfaceSettings"] { --hue: 255, 92, 154; }
+body[data-section="hostSettings"] { --hue: 56, 189, 248; }
+body[data-section="inputSettings"] { --hue: 46, 230, 160; }
+body[data-section="audioSettings"] { --hue: 255, 176, 58; }
+body[data-section="videoSettings"] { --hue: 255, 90, 110; }
+body[data-section="advancedSettings"] { --hue: 107, 124, 255; }
+body[data-section="aboutSettings"] { --hue: 150, 163, 199; }
+.header-section {
+  display: none;
+  margin-left: 24px;
+  padding-left: 22px;
+  border-left: 4px solid rgb(var(--hue));
+  color: rgb(var(--hue));
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 40px;
+  white-space: nowrap;
+}
+body[data-view="settings"][data-section] .header-section {
+  display: block;
+}
+#updateAppBtn {
+  display: flex;
+  align-items: center;
+  height: 56px;
+  padding: 0 26px 0 20px;
+  border-radius: 28px;
+  color: #2A1300;
+  background: var(--grad-amber) !important;
+  opacity: 0;
+  transform: translateY(-10px);
+  box-shadow: 0 12px 30px rgba(255, 154, 61, 0.35);
+  overflow: visible;
+  transition: opacity 0.3s ease-out, transform 0.3s ease-out;
+}
+#updateAppBtn.hovered, #updateAppBtn:focus {
+  box-shadow: 0 0 0 4px #fff, 0 16px 36px rgba(0, 0, 0, 0.5);
+  transform: scale(1.06) !important;
+}
+#updateAppBtn .icon {
+  width: 28px;
+  height: 28px;
+  margin-right: 10px;
+}
+#updateAppBtnText {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+}
+/* The count of the update sits on the top right corner of the button, outlined against its gradient */
 .mdl-badge {
-    margin-right: 30px !important;
-}
-.mdl-badge::after {
-    background-color: #EFC004D0 !important;
-    padding: 2px;
+  position: static;
+  margin-right: 10px !important;
 }
 .mdl-badge[data-badge]::after {
-    width: 22px;
-    height: 22px;
-    font-size: 1.25rem;
-    font-weight: 700;
-    letter-spacing: 0.5px;
+  width: 26px;
+  height: 26px;
+  top: -8px;
+  right: -8px;
+  color: #fff;
+  background: var(--red) !important;
+  box-shadow: 0 0 0 3px var(--bg);
+  font-family: var(--font);
+  font-size: 16px;
+  font-weight: 800;
 }
-.mdl-button .mdl-badge[data-badge]:after {
-    top: -5px;
-    bottom: 0;
-    left: 30px;
-    right: 0;
+.nav-menu-parent {
+  position: relative;
+  margin: 0 10px;
 }
-.badge {
-    display: inline-block;
-    border-radius: 12px;
-    margin-left: 10px;
-    padding: 2px 12px;
-    font-size: 0.95rem;
-    font-weight: 700;
-    letter-spacing: 1.2px;
-    text-transform: uppercase;
-    vertical-align: middle;
+
+/* ===== Helpers, tooltips, snackbar ===== */
+#snackButton {
+  width: 0;
+  height: 0;
+  display: none;
 }
-.badge-new {
-    color: #76FF7A;
-    background-color: #404354;
-    border: 1px solid #76FA20;
+.mdl-snackbar {
+  bottom: 40px;
+  min-width: 0;
+  max-width: 1100px;
+  border-radius: 20px;
+  background: rgba(24, 30, 60, 0.97);
+  box-shadow: 0 0 0 1px var(--line-2), 0 24px 60px rgba(0, 0, 0, 0.55);
+  transform: translate(-50%, 180px);
 }
-.badge-preview {
-  color: #E0C3FC;
-  background-color: #404354;
-  border: 1px solid #B388FF;
+.mdl-snackbar--active {
+  transform: translate(-50%, 0);
 }
-.badge-experimental {
-    color: #FFC046;
-    background-color: #404354;
-    border: 1px solid #FFA620;
+.mdl-snackbar__text {
+  padding: 20px 32px;
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-align: center;
 }
-#optimalSettingsBtn, #selectResolution, #selectFramerate, #selectBitrate, #selectLanguage, #removeAllHostsBtn,
-#selectControllerType, #selectAudioBackend, #selectAudio, #selectAudioJitter, #selectCodec, #navigationGuideBtn,
-#checkUpdatesBtn, #restartAppBtn {
-    font-size: 1.45rem;
-    letter-spacing: 0.5px;
-    text-indent: 36px;
+.mdl-tooltip {
+  display: inline !important;
+  position: fixed;
+  top: 132px !important;
+  max-width: 260px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  color: var(--text);
+  background: var(--panel-2);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.3;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
 }
-#optimalSettingsBtn, #selectResolution, #selectFramerate, #selectBitrate, #framePacingBtn, #selectLanguage, #ipAddressFieldModeBtn,
-#sortAppsListBtn, #optimizeGamesBtn, #removeAllHostsBtn, #rumbleFeedbackBtn, #mouseEmulationBtn,
-#flipABfaceButtonsBtn, #flipXYfaceButtonsBtn, #selectControllerType, #selectAudioBackend, #selectAudio, #audioSyncBtn,
-#selectAudioJitter, #audioClockSyncBtn, #playHostAudioBtn, #decryptHostAudioBtn,
-#selectCodec, #hdrModeBtn, #fullRangeBtn, #gameModeBtn, #refFrameInvalidationBtn, #hdrMetadataBtn, #unlockAllFpsBtn, #optimizeBitrateBtn,
-#disableWarningsBtn, #performanceStatsBtn, #navigationGuideBtn, #checkUpdatesBtn, #restartAppBtn {
-    color: #ececec;
-    background-color: #404354;
-    width: 100%;
-    height: 60px;
-    border-radius: 8px;
-    text-align: left;
-    box-sizing: border-box;
-    cursor: pointer;
+.hovered {
+  background: rgba(255, 255, 255, 0.08);
 }
+.hide-container {
+  display: none !important;
+}
+.disable-animation {
+  animation: none !important;
+}
+
+/* ===== Main content and hero ("Spotlight") ===== */
+#main-content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.launcher-hero {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 400px;
+  margin: 0 var(--safe-x);
+}
+/* The hero shows on the hosts and apps screens only (data-view), whatever jQuery's show() and hide() left inline */
+body[data-view="hosts"] .launcher-hero, body[data-view="apps"] .launcher-hero {
+  display: flex !important;
+}
+body:not([data-view="hosts"]):not([data-view="apps"]) .launcher-hero {
+  display: none !important;
+}
+.hero-copy {
+  position: relative;
+  z-index: 2;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-right: 48px;
+}
+.hero-overline {
+  margin-bottom: 12px;
+  color: var(--text-3);
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hero-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  padding-bottom: 6px;
+  color: #fff;
+  font-size: 80px;
+  font-weight: 800;
+  line-height: 1.04;
+  letter-spacing: -2px;
+  word-wrap: break-word;
+}
+.hero-chips {
+  margin-top: 22px;
+  font-size: 0;
+}
+.hero-chips:empty {
+  display: none;
+}
+.hero-chips .status-chip {
+  height: 44px;
+  padding: 0 18px 0 14px;
+  border-radius: 22px;
+  font-size: 18px;
+}
+.hero-text {
+  max-width: 860px;
+  margin: 20px 0 0;
+  color: var(--text-2);
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+.hero-text:empty {
+  display: none;
+}
+.hero-hints {
+  display: flex;
+  align-items: center;
+  margin-top: 28px;
+  color: var(--text-3);
+  font-size: 20px;
+  font-weight: 700;
+}
+.hero-hints:empty {
+  display: none;
+}
+.hint {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 34px;
+}
+.keycap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 46px;
+  height: 40px;
+  margin-right: 12px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  color: #fff;
+  background: var(--glass-3);
+  box-shadow: inset 0 0 0 1px var(--line-2), 0 3px 0 rgba(0, 0, 0, 0.35);
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+.keycap .icon {
+  width: 24px;
+  height: 24px;
+}
+.hero-art {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 680px;
+  height: 100%;
+}
+/* Host illustration, recoloured by data-state */
+.hero-pc {
+  width: 640px;
+  height: 414px;
+  margin-top: 56px;
+  color: var(--violet);
+  overflow: visible;
+}
+.hero-pc .pc-screen { fill: url(#pc-on); }
+.hero-pc .pc-led { fill: var(--violet); }
+.hero-pc .pc-scene { display: none; }
+.launcher-hero[data-state="online"] .scene-online,
+.launcher-hero[data-state="unknown"] .scene-online,
+.launcher-hero[data-state="add"] .scene-add,
+.launcher-hero[data-state="running"] .scene-running,
+.launcher-hero[data-state="locked"] .scene-locked,
+.launcher-hero[data-state="offline"] .scene-offline {
+  display: inline;
+}
+.launcher-hero[data-state="online"] .hero-pc { color: var(--blue); }
+.launcher-hero[data-state="online"] .pc-led,
+.launcher-hero[data-state="running"] .pc-led { fill: var(--mint); }
+.launcher-hero[data-state="running"] .hero-pc { color: var(--mint); }
+.launcher-hero[data-state="running"] .pc-screen { fill: url(#pc-run); }
+.launcher-hero[data-state="locked"] .hero-pc { color: var(--amber); }
+.launcher-hero[data-state="locked"] .pc-screen { fill: url(#pc-lock); }
+.launcher-hero[data-state="locked"] .pc-led { fill: var(--amber); }
+.launcher-hero[data-state="offline"] .hero-pc { color: #39405E; }
+.launcher-hero[data-state="offline"] .pc-screen { fill: url(#pc-off); }
+.launcher-hero[data-state="offline"] .pc-led { fill: var(--red); }
+.launcher-hero[data-state="offline"] .pc-fans { opacity: 0.18; }
+/* App: the box art as an uncropped poster, or a banner fading in from the left for landscape art (art-wide) */
+.launcher-hero[data-kind="app"] .hero-art {
+  width: 900px;
+}
+.hero-poster {
+  display: none;
+  height: 372px;
+  max-width: 900px;
+  object-fit: cover;
+  border-radius: var(--r-l);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14), 0 30px 60px rgba(0, 0, 0, 0.55);
+}
+.art-wide .hero-poster {
+  border-radius: var(--r-xl);
+  box-shadow: none;
+  -webkit-mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.55) 22%, #000 48%);
+  mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.55) 22%, #000 48%);
+}
+/* The glows lie right of the text, so the light covers only the right 60 % of the screen: less to paint */
+.hero-backdrop {
+  display: none;
+  position: fixed;
+  left: 40%;
+  z-index: 0;
+  width: 60%;
+  height: 560px;
+  background:
+    radial-gradient(800px 460px at 80% 20%, rgba(var(--a1), 0.75), rgba(var(--a1), 0) 70%),
+    radial-gradient(760px 440px at 50% 52%, rgba(var(--a2), 0.6), rgba(var(--a2), 0) 70%),
+    radial-gradient(640px 380px at 93% 78%, rgba(var(--a3), 0.55), rgba(var(--a3), 0) 70%);
+}
+.hero-backdrop::after {
+  background:
+    linear-gradient(90deg, rgba(10, 13, 26, 0.5), rgba(10, 13, 26, 0) 50%),
+    linear-gradient(0deg, var(--bg) 0%, rgba(10, 13, 26, 0.5) 25%, rgba(10, 13, 26, 0) 60%);
+}
+.launcher-hero[data-kind="app"] .hero-pc {
+  display: none;
+}
+.launcher-hero[data-kind="app"].has-art .hero-poster,
+.launcher-hero[data-kind="app"].has-art .hero-backdrop {
+  display: block;
+}
+.launcher-hero[data-kind="app"]:not(.has-art) .hero-art {
+  display: none;
+}
+/* Focus outside the cards: the hero keeps the last card without key hints */
+.launcher-hero.is-away .hero-hints {
+  visibility: hidden;
+}
+/* Rows scrolling under the hero fade out (is-scrolled) */
+.launcher-hero::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  right: calc(-1 * var(--safe-x));
+  left: calc(-1 * var(--safe-x));
+  z-index: 2;
+  height: 72px;
+  background: linear-gradient(180deg, var(--bg) 8%, rgba(10, 13, 26, 0));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.launcher-hero.is-scrolled::after {
+  opacity: 1;
+}
+
+/* ===== Card grids (5 hosts and 6 apps per row, as navigation.js expects) ===== */
+#host-grid, #game-grid {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-gap: 32px;
+  align-content: start;
+  padding: 30px var(--safe-x) 80px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+#host-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-auto-rows: 232px;
+}
+#game-grid {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-auto-rows: 348px;
+}
+#host-grid .mdl-card, #game-grid .mdl-card {
+  width: auto;
+  height: auto;
+  min-height: 0;
+  margin: 0;
+  border-radius: var(--r-l);
+  cursor: pointer;
+  transition: transform var(--t-focus) var(--ease);
+}
+#host-grid .mdl-shadow--4dp, #game-grid .mdl-shadow--4dp {
+  box-shadow: var(--shadow-card);
+}
+#host-grid .mdl-card.hovered, #host-grid .mdl-card:focus,
+#game-grid .mdl-card.hovered, #game-grid .mdl-card:focus {
+  z-index: 2;
+  transform: scale(1.07);
+  box-shadow: var(--shadow-focus);
+  outline: none;
+}
+
+/* Host cards */
+#host-grid .mdl-card {
+  background:
+    radial-gradient(260px 160px at 0% 0%, rgba(124, 92, 255, 0.22), rgba(124, 92, 255, 0) 70%),
+    linear-gradient(160deg, #1D2346 0%, #141932 100%);
+  box-shadow: var(--shadow-card), inset 0 0 0 1px var(--line);
+}
+#host-grid .mdl-card__title {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-end;
+  height: 100%;
+  padding: 0 26px 24px;
+  box-sizing: border-box;
+}
+#host-grid .host-title {
+  display: block;
+  width: 100%;
+  color: #fff;
+}
+#host-grid .host-text {
+  display: block;
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.3px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.host-chips {
+  margin-top: 10px;
+  font-size: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.host-chips .status-chip {
+  height: 34px;
+  margin: 0;
+  padding: 0 14px 0 10px;
+  border-radius: 17px;
+  font-size: 16px;
+  letter-spacing: 1px;
+}
+.host-chips .status-chip .icon {
+  width: 18px;
+  height: 18px;
+  margin-right: 6px;
+}
+.host-chips .status-chip .dot {
+  width: 8px;
+  height: 8px;
+  margin: 0 6px 0 4px;
+}
+/* Icon tile of a host card, coloured by data-state */
+.host-tile {
+  position: absolute;
+  top: 24px;
+  left: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 20px;
+  color: #fff;
+  background: var(--grad-brand);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 10px 22px rgba(0, 0, 0, 0.35);
+}
+.host-tile .icon {
+  width: 36px;
+  height: 36px;
+}
+#host-grid .mdl-card[data-state="running"] .host-tile { color: #04261A; background: var(--grad-mint); }
+#host-grid .mdl-card[data-state="locked"] .host-tile { background: var(--grad-amber); }
+#host-grid .mdl-card[data-state="offline"] .host-tile { background: var(--grad-slate); }
+#host-grid .mdl-card[data-state="running"] {
+  background:
+    radial-gradient(260px 160px at 0% 0%, rgba(46, 230, 160, 0.2), rgba(46, 230, 160, 0) 70%),
+    linear-gradient(160deg, #1D2346 0%, #141932 100%);
+}
+#host-grid .mdl-card[data-state="locked"] {
+  background:
+    radial-gradient(260px 160px at 0% 0%, rgba(255, 197, 71, 0.18), rgba(255, 197, 71, 0) 70%),
+    linear-gradient(160deg, #1D2346 0%, #141932 100%);
+}
+#host-grid .mdl-card[data-state="offline"] {
+  background: linear-gradient(160deg, #171B33 0%, #10142A 100%);
+}
+#host-grid .mdl-card[data-state="offline"] .host-text {
+  color: var(--text-2);
+}
+/* Status badge on the icon tile */
+.host-center-icon {
+  display: none;
+  position: absolute;
+  top: 68px;
+  left: 70px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px #171C38;
+  background: center / 18px 18px no-repeat;
+}
+.host-center-icon[data-status="locked"] {
+  background-color: var(--amber);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232A1300' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='10.5' width='14' height='10' rx='2.2'/%3E%3Cpath d='M8.2 10.5V7.8a3.8 3.8 0 0 1 7.6 0v2.7M12 14.5v2'/%3E%3C/svg%3E");
+}
+.host-center-icon[data-status="offline"] {
+  background-color: var(--red);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.3 4.3a2 2 0 0 1 3.4 0l7.6 13.2a2 2 0 0 1-1.7 3H4.4a2 2 0 0 1-1.7-3zM12 9.5v4.2M12 16.8v.1'/%3E%3C/svg%3E");
+}
+.host-center-icon[data-status="locked"], .host-center-icon[data-status="offline"] {
+  display: block;
+}
+/* Options button of a host card */
+.host-menu {
+  position: absolute;
+  top: 22px;
+  right: 22px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--glass-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: transform var(--t-focus) var(--ease);
+}
+.host-menu .icon {
+  width: 30px;
+  height: 30px;
+}
+.host-menu.hovered, .host-menu:hover, .host-menu:focus {
+  color: var(--text-on-focus);
+  background: #fff;
+  transform: scale(1.15);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+  outline: none;
+}
+/* Add Host card */
+#addHostContainer {
+  background: rgba(255, 255, 255, 0.025);
+  box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.14);
+}
+#addHostContainer #host-add {
+  align-items: center;
+  justify-content: center;
+  padding: 0 20px;
+}
+#host-add::before {
+  content: '';
+  display: block;
+  width: 76px;
+  height: 76px;
+  margin-bottom: 18px;
+  border-radius: 50%;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 5v14M5 12h14'/%3E%3C/svg%3E") center / 44px 44px no-repeat, var(--grad-brand);
+  box-shadow: 0 12px 28px rgba(124, 92, 255, 0.45);
+}
+#addHostContainer .host-title {
+  text-align: center;
+}
+#addHostContainer .host-text {
+  color: var(--text-2);
+  font-size: 24px;
+}
+#addHostContainer.hovered, #addHostContainer:focus {
+  background: rgba(124, 92, 255, 0.16);
+}
+#addHostContainer.hovered .host-text, #addHostContainer:focus .host-text {
+  color: #fff;
+}
+/* No host yet: a wider Add Host card */
+#host-grid > #addHostContainer:only-child {
+  grid-column: 1 / span 2;
+  box-shadow: inset 0 0 0 3px rgba(124, 92, 255, 0.55);
+}
+#host-grid > #addHostContainer.hovered, #host-grid > #addHostContainer:focus {
+  box-shadow: var(--shadow-focus);
+}
+
+/* App cards */
+#game-grid .mdl-card {
+  background: #1A1F3D url('../res/placeholder_game.svg') center / cover no-repeat;
+}
+#game-grid .mdl-card img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 0;
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+#game-grid .mdl-card img.fade-in {
+  opacity: 1;
+}
+#game-grid .mdl-card__title {
+  padding: 0;
+}
+/* Titles show only on cards without box art */
+#game-grid .game-title {
+  display: none;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  padding: 60px 20px 20px;
+  color: #fff;
+  background: linear-gradient(0deg, rgba(10, 13, 26, 0.92) 0%, rgba(10, 13, 26, 0) 100%);
+}
+#game-grid .no-art .game-title {
+  display: block;
+}
+#game-grid .game-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-align: left;
+}
+/* The running app: a mint ring and Running badge; a hidden app: a dimmed cover and Hidden badge (menus.js) */
+#game-grid .current-game-active {
+  box-shadow: var(--shadow-card), 0 0 0 4px var(--mint);
+}
+#game-grid .current-game-active.hovered, #game-grid .current-game-active:focus {
+  box-shadow: var(--ring), 0 0 64px rgba(46, 230, 160, 0.45);
+}
+#game-grid .app-badge {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  max-width: calc(100% - 32px);
+  height: 38px;
+  padding: 0 16px 0 12px;
+  box-sizing: border-box;
+  border-radius: 19px;
+  color: var(--text);
+  background: rgba(10, 13, 26, 0.84);
+  box-shadow: inset 0 0 0 1px var(--line-2), 0 8px 20px rgba(0, 0, 0, 0.45);
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#game-grid .app-badge::before {
+  content: '';
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-right: 8px;
+  background: center / 20px 20px no-repeat;
+}
+#game-grid .app-badge-running {
+  color: #04261A;
+  background: var(--grad-mint);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
+}
+#game-grid .app-badge-running::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M8 5.3v13.4l10.6-6.7z' fill='%2304261A' stroke='%2304261A' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+#game-grid .app-badge-hidden {
+  color: var(--text-2);
+}
+#game-grid .app-badge-hidden::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23C3C9E2' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M9.8 5.8a9.6 9.6 0 0 1 2.2-.3c6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-2.7 3.5M6.5 7C3.9 8.8 2.5 12 2.5 12s3.5 6.5 9.5 6.5a9.2 9.2 0 0 0 4.5-1.2M9.9 9.9a3 3 0 0 0 4.2 4.2M3.5 3.5l17 17'/%3E%3C/svg%3E");
+}
+/* Running and hidden: the Hidden badge below */
+#game-grid .current-game-active.app-hidden .app-badge-hidden {
+  top: 64px;
+}
+#game-grid .app-hidden::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  background: rgba(10, 13, 26, 0.62);
+}
+#game-grid .app-hidden.hovered::before, #game-grid .app-hidden:focus::before {
+  opacity: 0.55;
+}
+/* Empty or failed app list */
+#game-grid > img, #game-grid > img.hovered {
+  grid-column: 1 / -1;
+  justify-self: center;
+  width: 760px;
+  max-width: 100%;
+  height: auto;
+  margin-top: 10px;
+  background: transparent;
+}
+
+/* ===== Settings: categories as icon tiles on the left, option rows on the right ===== */
+#settings-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  padding: 8px 0 0 var(--safe-x);
+  box-sizing: border-box;
+  display: flex;
+  flex-flow: row nowrap;
+}
+#settings-left-pane {
+  flex: none;
+  width: 500px;
+  padding: 32px 26px 60px 8px;
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.settings-category {
+  position: relative;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  grid-column-gap: 20px;
+  align-items: center;
+  margin: 0 0 10px;
+  padding: 14px 18px;
+  border-radius: 22px;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: transform var(--t-focus) var(--ease);
+}
+.settings-category-icons.cat-tile {
+  grid-row: 1 / span 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 19px;
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 8px 18px rgba(0, 0, 0, 0.3);
+}
+.cat-tile .icon {
+  width: 34px;
+  height: 34px;
+}
+.cat-tune { background: linear-gradient(135deg, #8B6BFF 0%, #4F6BFF 100%); }
+.cat-ui { background: linear-gradient(135deg, #FF5C9A 0%, #FF8A4C 100%); }
+.cat-pc { background: linear-gradient(135deg, #3D7BFF 0%, #22D3EE 100%); }
+.cat-gamepad { background: linear-gradient(135deg, #10B981 0%, #2EE6C0 100%); }
+.cat-audio { background: linear-gradient(135deg, #FF8A3D 0%, #FFC547 100%); }
+.cat-video { background: linear-gradient(135deg, #FF4D6D 0%, #B05CFF 100%); }
+.cat-advanced { background: linear-gradient(135deg, #5B6BFF 0%, #2E2A8F 100%); }
+.cat-info { background: linear-gradient(135deg, #6E7899 0%, #3E4766 100%); }
+.settings-category label {
+  grid-column: 2;
+  align-self: end;
+  color: var(--text);
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.2px;
+  cursor: pointer;
+}
+.settings-category-sub {
+  grid-column: 2;
+  align-self: start;
+  margin-top: 3px;
+  color: var(--text-3);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-category.selected {
+  background: var(--glass-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.settings-category.selected::before {
+  content: '';
+  position: absolute;
+  top: 22px;
+  bottom: 22px;
+  left: -8px;
+  width: 6px;
+  border-radius: 3px;
+  background: rgb(var(--hue));
+}
+.settings-category.hovered, .settings-category:hover, .settings-category:focus {
+  background: #fff;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+  transform: scale(1.03);
+  outline: none;
+}
+.settings-category.hovered label, .settings-category:hover label, .settings-category:focus label {
+  color: var(--text-on-focus);
+}
+.settings-category.hovered .settings-category-sub, .settings-category:hover .settings-category-sub,
+.settings-category:focus .settings-category-sub {
+  color: var(--text-2-on-focus);
+}
+/* Rows that scroll out at the top fade out instead of ending in a hard cut, and a focused one stays below the fade */
+#settings-right-pane {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 32px var(--safe-x) 140px 24px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scroll-padding-top: 32px;
+  -webkit-mask-image: linear-gradient(transparent, #000 32px);
+}
+.settings-options {
+  display: none;
+}
+/* One row per option: title and control on top, the help text across the row below. A switch label repeats the help
+   text, so it shows only in place of a missing one, where the switch takes that line. */
+.setting-option {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-column-gap: 40px;
+  align-items: center;
+  margin: 0 0 14px;
+  padding: 24px 28px;
+  border-radius: var(--r-l);
+  /* Opaque, so that the stars of the backdrop don't show between the letters */
+  background: #171B2E;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+.setting-option.is-current {
+  background: linear-gradient(105deg, rgba(var(--hue), 0.16), rgba(var(--hue), 0.03) 60%), #1A1E31;
+  box-shadow: inset 0 0 0 2px rgba(var(--hue), 0.85), 0 16px 40px rgba(0, 0, 0, 0.3);
+}
+.setting-option > label {
+  grid-column: 1;
+  grid-row: 1;
+  display: block;
+  color: var(--text);
+  font-size: 25px;
+  font-weight: 800;
+  line-height: 1.25;
+  letter-spacing: -0.2px;
+  text-align: left;
+}
+.setting-option > .mdl-list__item-text-body, .setting-option .mdl-switch__label {
+  color: var(--text-3);
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.5;
+  text-align: left;
+}
+.setting-option > .mdl-list__item-text-body {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: block;
+  margin: 12px 0 0;
+}
+.setting-option > .mdl-list__item-text-body:empty {
+  display: none;
+}
+.setting-option.is-current > .mdl-list__item-text-body, .setting-option.is-current .mdl-switch__label {
+  color: var(--text-2);
+}
+/* Hide the "- " that starts the help texts (their locale keys) */
+.setting-option > .mdl-list__item-text-body::first-letter {
+  font-size: 0;
+  margin-right: -5px;
+}
+.setting-option > div[id], #removeAllHostsMenu {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+.setting-option > .mdl-list__item-text-body:empty + div[id] {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  justify-self: stretch;
+  margin-top: 12px;
+}
+/* Menus (value and chevron) and actions (text and icon), on one line */
+.setting-option .mdl-button {
+  display: flex;
+  align-items: center;
+  min-width: 440px;
+  min-height: 68px;
+  height: auto;
+  padding: 12px 24px;
+  border-radius: var(--r-m);
+  background: var(--glass-2);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: left;
+  white-space: nowrap;
+  transition: transform var(--t-focus) var(--ease);
+}
+.setting-option [id^="select"] {
+  width: 440px;
+  padding-right: 64px;
+  text-overflow: ellipsis;
+}
+.setting-option [id^="select"]::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 30px;
+  width: 11px;
+  height: 11px;
+  margin-top: -9px;
+  border: solid currentColor;
+  border-width: 0 3px 3px 0;
+  transform: rotate(45deg);
+}
+.setting-option .mdl-button > span {
+  flex: 1 1 auto;
+  padding-right: 16px;
+}
+.setting-option .mdl-button > .icon {
+  width: 34px;
+  height: 34px;
+}
+/* The main action of the settings */
+#optimalSettingsBtn {
+  color: #fff;
+  background: var(--grad-brand);
+  box-shadow: 0 12px 30px rgba(61, 123, 255, 0.35);
+}
+/* Switches: a toggle in the colour of the section */
+.setting-option .mdl-switch {
+  display: block;
+  width: 68px;
+  height: 36px;
+  padding: 0;
+}
+.setting-option .mdl-switch__label {
+  display: none;
+}
+.setting-option > .mdl-list__item-text-body:empty + div .mdl-switch {
+  width: auto;
+  padding-right: 100px;
+}
+.setting-option > .mdl-list__item-text-body:empty + div .mdl-switch__label {
+  position: static;
+  display: block;
+  margin: 0;
+  line-height: 36px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mdl-switch__track {
+  top: 50%;
+  left: auto;
+  right: 22px;
+  width: 68px;
+  height: 36px;
+  margin: -18px 0 0;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.2);
+}
+.mdl-switch__thumb {
+  top: 50%;
+  left: auto;
+  right: 58px;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  transition: transform 0.16s var(--ease);
+}
+.setting-option .mdl-switch__track {
+  right: 0;
+}
+.setting-option .mdl-switch__thumb {
+  right: 36px;
+}
+.mdl-switch.is-checked .mdl-switch__track {
+  background: rgb(var(--hue));
+}
+.mdl-switch.is-checked .mdl-switch__thumb {
+  left: auto;
+  background: #fff;
+  transform: translateX(32px);
+}
+.mdl-switch.is-disabled {
+  opacity: 0.45;
+}
+/* Focus: a white fill, or a white ring around a toggle */
+.setting-option .mdl-button.hovered, .setting-option .mdl-button:focus {
+  color: var(--text-on-focus);
+  background-color: #fff;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.22), 0 16px 36px rgba(0, 0, 0, 0.45);
+  transform: scale(1.02);
+}
+#optimalSettingsBtn.hovered, #optimalSettingsBtn:focus {
+  color: #fff;
+  background: var(--grad-brand);
+  box-shadow: 0 0 0 4px #fff, 0 18px 44px rgba(61, 123, 255, 0.5);
+}
+.setting-option .mdl-switch.hovered .mdl-switch__track, .setting-option .mdl-switch.is-focused .mdl-switch__track {
+  box-shadow: 0 0 0 3px var(--bg), 0 0 0 6px #fff;
+}
+.setting-option .mdl-switch.hovered .mdl-switch__label, .setting-option .mdl-switch.is-focused .mdl-switch__label {
+  color: var(--text);
+}
+/* System information: a readout across the row, outlined on focus */
 #systemInfoBtn {
-    color: #ececec;
-    background-color: #404354;
-    width: 100%;
-    height: 100%;
-    padding: 15px 50px 20px 50px;
-    border-radius: 8px;
-    font-size: 1.45rem;
-    letter-spacing: 0.5px;
-    cursor: pointer;
-    text-align: left;
-    white-space: pre-line;
-    box-sizing: border-box;
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 0;
+  padding: 24px 30px;
+  box-sizing: border-box;
+  border-radius: var(--r-m);
+  color: var(--text-2);
+  background: rgba(0, 0, 0, 0.28);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.6;
+  text-align: left;
+  white-space: pre-line;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+#systemInfoBtn.hovered, #systemInfoBtn:focus {
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px transparent, 0 0 0 4px #fff;
+  transform: none;
 }
 .unsupported-resolution[disabled] {
-	opacity: 0.5 !important;
-	pointer-events: none;
+  opacity: 0.45 !important;
+  pointer-events: none;
 }
-.unsupported-resolution[disabled].hovered, .unsupported-resolution[disabled]:hover,
-.unsupported-resolution[disabled]:focus, .unsupported-resolution[disabled]:active {
-	color: #dedede !important;
-    background-color: #666875 !important;
+/* Badges */
+.badge {
+  display: inline-block;
+  margin-left: 12px;
+  padding: 5px 12px 4px;
+  border-radius: 999px;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  vertical-align: 3px;
 }
-#gameModeBtn.is-disabled.hovered, #gameModeBtn.is-disabled:hover,
-#gameModeBtn.is-disabled:focus, #gameModeBtn.is-disabled:active {
-    box-shadow: 0 0 2px 3px rgba(170, 170, 170, 1) !important;
-    cursor: not-allowed;
+.badge-new { color: #04261A; background: var(--grad-mint); }
+.badge-experimental { color: #2A1300; background: var(--grad-amber); }
+/* Popup menus of the settings (MDL) */
+.mdl-button {
+  color: var(--text);
+  text-transform: none;
+}
+.mdl-menu__container {
+  z-index: 20;
+}
+.setting-option .mdl-menu__container {
+  width: 440px !important;
 }
 .mdl-menu__outline {
-    color: #fff;
-    background-color: #333846;
+  width: 100% !important;
+  border-radius: 20px;
+  color: var(--text);
+  background: var(--panel-2);
+  box-shadow: 0 0 0 1px var(--line-2), 0 30px 70px rgba(0, 0, 0, 0.65);
+}
+.mdl-menu {
+  width: 100% !important;
+  top: 8px !important;
+  padding: 10px 0;
+  box-sizing: border-box;
 }
 .mdl-menu__item {
-    color: #ececec;
-    font-size: 1.25rem;
-    letter-spacing: 0.5px;
-    text-indent: 40px;
-    text-align: left;
+  height: 58px;
+  margin: 0 10px;
+  padding: 0 20px;
+  border-radius: 14px;
+  color: var(--text-2);
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 58px;
+  text-overflow: ellipsis;
 }
 .mdl-menu__item.hovered, .mdl-menu__item:hover, .mdl-menu__item:focus {
-    background-color: #484C5F;
+  color: var(--text-on-focus);
+  background: #fff;
 }
-.videoResolutionMenu, .videoFramerateMenu, .videoBitrateMenu,
-.languageMenu, .controllerTypeMenu, .audioBackendMenu, .audioConfigMenu, .audioJitterMenu,
-.videoCodecMenu, .mdl-menu__container {
-    width: 59.4% !important;
+.mdl-menu__item[disabled] {
+  color: var(--text-3);
+  opacity: 0.5;
 }
-.videoResolutionMenu, .videoFramerateMenu, .videoBitrateMenu,
-.languageMenu, .controllerTypeMenu, .audioBackendMenu, .audioConfigMenu, .audioJitterMenu,
-.videoCodecMenu, .mdl-menu__outline {
-    width: 100% !important;
-    top: 2.5px !important;
-    border-radius: 0 0 8px 8px;
-}
+/* Bitrate and jitter: a slider in the popup */
 .videoBitrateMenu, .audioJitterMenu {
-    background-color: #333846;
-    display: flex;
-    align-items: center;
+  display: flex;
+  align-items: center;
+  height: 84px;
+  padding: 0 18px;
 }
-.videoBitrateMenu, .audioJitterMenu, .mdl-menu__container {
-    height: 20% !important;
+.mdl-slider__container {
+  flex: 1 1 auto;
+  height: 40px;
 }
 .mdl-slider {
-    width: 74rem;
+  width: 100%;
 }
 .mdl-slider__background-flex {
-    top: 25%;
-    height: 12px;
-    border-radius: 8px;
+  top: 50%;
+  height: 10px;
+  margin-top: -5px;
+  border-radius: 5px;
+  overflow: hidden;
 }
-#bitrateLowestValue, #jitterLowestValue {
-    color: #ececec;
-    margin: 0 -12px 0 14px;
-    font-size: 1.45rem;
-    letter-spacing: 0.5px;
+.mdl-slider__background-lower {
+  background: var(--grad-brand);
 }
-#bitrateHighestValue, #jitterHighestValue {
-    color: #ececec;
-    margin: 0 12px 0 -14px;
-    font-size: 1.45rem;
-    letter-spacing: 0.5px;
+.mdl-slider__background-upper {
+  background: rgba(255, 255, 255, 0.18);
+}
+.mdl-slider.is-upgraded::-webkit-slider-thumb {
+  width: 30px;
+  height: 30px;
+  border: none;
+  background: #fff;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+}
+#bitrateLowestValue, #bitrateHighestValue, #jitterLowestValue, #jitterHighestValue {
+  flex: none;
+  margin: 0 6px;
+  color: var(--text-2);
+  font-size: 18px;
+  font-weight: 800;
 }
 #bitrateLowestValue.hovered, #bitrateHighestValue.hovered,
 #jitterLowestValue.hovered, #jitterHighestValue.hovered {
-    background-color: #333846;
+  background: transparent;
 }
-.dropdown-items {
-    float: right;
-    margin: 5px 28px 5px 28px;
+
+/* ===== Dialogs ===== */
+.dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 999;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  background: rgba(5, 7, 16, 0.74);
 }
-#videoResolutionMenu > #selectResolution, #videoFramerateMenu > #selectFramerate,
-#videoBitrateMenu > #selectBitrate, #languageMenu > #selectLanguage,
-#controllerTypeMenu > #selectControllerType, #audioBackendMenu > #selectAudioBackend, #audioConfigMenu > #selectAudio,
-#audioJitterMenu > #selectAudioJitter, #videoCodecMenu > #selectCodec {
-    color: #ececec;
-    background: url('../res/ic_arrow_drop_down_48px.svg') 94.8% 50% no-repeat rgba(64, 67, 84, 1);
+dialog::backdrop {
+  background: transparent;
 }
-#optimalSettingsIcon, #removeAllHostsIcon, #navigationGuideIcon, #checkUpdatesIcon,
-#restartApplicationIcon {
-    float: right;
-    width: 35px;
-    height: 35px;
-    margin: 2px 46px;
-    filter: drop-shadow(0 1px 4px rgba(0, 0, 0, 0.4));
+.mdl-dialog, .large-dialog {
+  width: 1000px;
+  max-width: calc(100% - 192px);
+  max-height: calc(100% - 96px);
+  padding: 52px 60px 44px;
+  box-sizing: border-box;
+  border-radius: var(--r-xl);
+  color: var(--text);
+  background:
+    radial-gradient(640px 280px at 0% 0%, rgba(124, 92, 255, 0.32), rgba(124, 92, 255, 0) 70%),
+    radial-gradient(520px 260px at 100% 100%, rgba(34, 211, 238, 0.12), rgba(34, 211, 238, 0) 70%),
+    linear-gradient(180deg, #1F2649 0%, #161B36 100%);
+  box-shadow: 0 0 0 1px var(--line-2), 0 50px 120px rgba(0, 0, 0, 0.7);
+  overflow-y: auto;
 }
-/* =============================
-   Interactive Elements
-============================= */
-#continueAddHost:hover, #continueAddHost:focus, #cancelAddHost:hover, #cancelAddHost:focus, #cancelPairing:hover, #cancelPairing:focus, #cancelAutoWol:hover, #cancelAutoWol:focus,
-#continueDeleteHost:hover, #continueDeleteHost:focus, #cancelDeleteHost:hover, #cancelDeleteHost:focus, #closeHostMenu:hover, #closeHostMenu:focus,
-#closeHostDetails:hover, #closeHostDetails:focus, #closeAppSupport:hover, #closeAppSupport:focus, #closeNavGuide:hover, #closeNavGuide:focus,
-#closeUpdateApp:hover, #closeUpdateApp:focus, #continueRestoreDefaults:hover, #continueRestoreDefaults:focus, #cancelRestoreDefaults:hover,
-#cancelRestoreDefaults:focus, #continueQuitApp:hover, #continueQuitApp:focus, #cancelQuitApp:hover, #cancelQuitApp:focus, #closeWarning:hover,
-#closeWarning:focus, #continueRestartApp:hover, #continueRestartApp:focus, #cancelRestartApp:hover, #cancelRestartApp:focus, #continueExitApp:hover,
-#continueExitApp:focus, #cancelExitApp:hover, #cancelExitApp:focus, #rescanNetworkBtn:hover, #rescanNetworkBtn:focus, #settingsBtn:hover, #settingsBtn:focus, #supportBtn:hover, #supportBtn:focus,
-#goBackBtn:hover, #goBackBtn:focus, #restoreDefaultsBtn:hover, #restoreDefaultsBtn:focus, #quitRunningAppBtn:hover, #quitRunningAppBtn:focus,
-#optimalSettingsBtn:hover, #optimalSettingsBtn:focus, #selectResolution:hover, #selectResolution:focus, #selectFramerate:hover, #selectFramerate:focus, #selectBitrate:hover, #selectBitrate:focus,
-#framePacingBtn:hover, #framePacingBtn:focus, #selectLanguage:hover, #selectLanguage:focus, #ipAddressFieldModeBtn:hover, #ipAddressFieldModeBtn:focus, #sortAppsListBtn:hover,
-#sortAppsListBtn:focus, #optimizeGamesBtn:hover, #optimizeGamesBtn:focus, #removeAllHostsBtn:hover, #removeAllHostsBtn:focus, #rumbleFeedbackBtn:hover,
-#rumbleFeedbackBtn:focus, #mouseEmulationBtn:hover, #mouseEmulationBtn:focus, #flipABfaceButtonsBtn:hover, #flipABfaceButtonsBtn:focus,
-#flipXYfaceButtonsBtn:hover, #flipXYfaceButtonsBtn:focus, #selectControllerType:hover, #selectControllerType:focus, #selectAudioBackend:hover, #selectAudioBackend:focus, #selectAudio:hover,
-#selectAudio:focus, #audioSyncBtn:hover, #audioSyncBtn:focus, #selectAudioJitter:hover, #selectAudioJitter:focus, #audioClockSyncBtn:hover, #audioClockSyncBtn:focus,
-#playHostAudioBtn:hover, #playHostAudioBtn:focus, #decryptHostAudioBtn:hover, #decryptHostAudioBtn:focus, #selectCodec:hover, #selectCodec:focus, #hdrModeBtn:hover, #hdrModeBtn:focus, #fullRangeBtn:hover,
-#fullRangeBtn:focus, #gameModeBtn:hover, #gameModeBtn:focus, #refFrameInvalidationBtn:hover, #refFrameInvalidationBtn:focus, #hdrMetadataBtn:hover, #hdrMetadataBtn:focus, #unlockAllFpsBtn:hover, #unlockAllFpsBtn:focus, #optimizeBitrateBtn:hover,
-#optimizeBitrateBtn:focus, #disableWarningsBtn:hover, #disableWarningsBtn:focus, #performanceStatsBtn:hover, #performanceStatsBtn:focus,
-#systemInfoBtn:hover, #systemInfoBtn:focus, #navigationGuideBtn:hover, #navigationGuideBtn:focus, #checkUpdatesBtn:hover, #checkUpdatesBtn:focus,
-#restartAppBtn:hover, #restartAppBtn:focus {
-    background-color: #404354;
-    box-shadow: 0 0 2px 3px rgba(0, 163, 198, 1);
+/* An open dialog is a column in which only the text scrolls, so that its title and buttons stay in view */
+.mdl-dialog[open] {
+  display: flex;
+  flex-direction: column;
 }
-/* =============================
-   Animations and Keyframes
-============================= */
-@keyframes fadeInOut {
-    0%, 100% {
-        transform: scale(0.8);
-    }
-    50% {
-        transform: scale(1);
-    }
+.large-dialog {
+  width: 1640px;
+  max-height: calc(100% - 48px);
+  padding-top: 40px;
 }
-@keyframes scrollText {
-    0% {
-        transform: translateX(100%);
-    }
-    100% {
-        transform: translateX(-100%);
-    }
+.large-dialog .dialog-badge {
+  display: none;
 }
-/* =============================
-   Stream Menu and App Menu
-   The overlay menus, the badges of the app tiles and the hint of the app grid (platform/menus.js) keep their look in
-   this block and its variables, so that a theme can restyle them here. Only properties of Chromium 69 (Tizen 5.5).
-============================= */
+.dialog-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 76px;
+  height: 76px;
+  margin-bottom: 26px;
+  border-radius: 24px;
+  color: #fff;
+  background: var(--grad-brand);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 14px 30px rgba(124, 92, 255, 0.4);
+}
+.dialog-badge .icon {
+  width: 42px;
+  height: 42px;
+}
+.dialog-badge.badge-warm { background: var(--grad-warm); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 14px 30px rgba(255, 77, 141, 0.35); }
+.dialog-badge.badge-amber { background: var(--grad-amber); color: #2A1300; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 14px 30px rgba(255, 154, 61, 0.35); }
+/* The optimal settings in the warning dialog (is-optimal): wider and tighter, own badge beside the title, value tiles
+   above the text */
+#warningDialog .badge-optimal, #warningDialog.is-optimal .badge-warning, .value-tiles {
+  display: none;
+}
+#warningDialog.is-optimal {
+  width: 1200px;
+  padding-top: 40px;
+}
+#warningDialog.is-optimal .badge-optimal {
+  display: flex;
+  position: absolute;
+  top: 22px;
+  left: 60px;
+}
+#warningDialog.is-optimal .mdl-dialog__title {
+  min-height: 58px;
+  margin-bottom: 20px;
+  padding-left: 102px;
+  font-size: 36px;
+}
+#warningDialog.is-optimal .value-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-gap: 16px;
+  margin-bottom: 24px;
+}
+#warningDialog.is-optimal p {
+  line-height: 1.4;
+}
+.value-tile {
+  display: flex;
+  flex-direction: column;
+  padding: 16px 20px;
+  border-radius: var(--r-m);
+  background: var(--glass);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+.value-label {
+  margin-bottom: 12px;
+  color: var(--text-3);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.value-number {
+  margin-top: auto;
+  color: var(--cyan);
+  font-size: 52px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -1.5px;
+}
+.value-tile:nth-child(2) .value-number { color: #A48BFF; }
+.value-tile:nth-child(3) .value-number { color: var(--mint); }
+.value-tile:nth-child(4) .value-number { color: var(--amber); }
+.value-unit {
+  margin-top: 8px;
+  color: var(--text-2);
+  font-size: 19px;
+  font-weight: 700;
+}
+.mdl-dialog__title {
+  margin: 0 0 18px;
+  padding: 0;
+  color: #fff;
+  font-size: 42px;
+  font-weight: 800;
+  line-height: 1.12;
+  letter-spacing: -0.8px;
+}
+/* The scroll area keeps room for the focus rings of its controls */
+.mdl-dialog__content {
+  margin: -8px -16px;
+  padding: 8px 16px;
+  overflow-y: auto;
+  color: var(--text-2);
+}
+.mdl-dialog__content p, .mdl-dialog__content ul {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+#warningDialogText b, #pairingDialogText b {
+  color: #fff;
+}
+/* The PIN to type on the PC, readable from the couch */
+#pairingDialogText b {
+  font-size: 48px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.mdl-dialog__actions {
+  display: flex;
+  flex-direction: row-reverse;
+  flex-wrap: nowrap;
+  padding: 34px 0 0;
+}
+.mdl-dialog__actions button {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 68px;
+  margin: 0 0 0 18px;
+  padding: 0 24px;
+  border-radius: 34px;
+  background: var(--glass-2) !important;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  font-size: 22px;
+  font-weight: 800;
+  transition: transform var(--t-focus) var(--ease);
+}
+.mdl-dialog__actions button:last-child {
+  margin-left: 0;
+}
+/* Confirming buttons are the gradient ones, destructive ones red */
+#continueAddHost, #continueRestoreDefaults, #continueWarning, #continueRestartApp {
+  color: #fff;
+  background: var(--grad-brand) !important;
+  box-shadow: 0 12px 30px rgba(61, 123, 255, 0.35);
+}
+#continueDeleteHost, #continueQuitApp, #continueExitApp {
+  color: #fff;
+  background: var(--grad-danger) !important;
+  box-shadow: 0 12px 30px rgba(255, 77, 109, 0.35);
+}
+/* Dialog buttons follow the real focus, not a stale 'hovered' class that Views.WarningDialog may leave */
+.mdl-dialog button:focus,
+#continueAddHost:focus, #continueRestoreDefaults:focus, #continueWarning:focus, #continueRestartApp:focus,
+#continueDeleteHost:focus, #continueQuitApp:focus, #continueExitApp:focus {
+  color: var(--text-on-focus);
+  background: #fff !important;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.25), 0 16px 36px rgba(0, 0, 0, 0.5);
+  transform: scale(1.03);
+  outline: none;
+}
+#continueWarning {
+  display: none;
+}
+#warningDialog.single-button .mdl-dialog__actions #closeWarning {
+  flex: 1 1 auto;
+}
+.mdl-button--raised.mdl-button--colored[disabled] {
+  color: var(--text-3) !important;
+  opacity: 0.5 !important;
+  pointer-events: none;
+}
+#continueAddHost[disabled], #continueAddHost.mdl-button--disabled {
+  color: var(--text-3);
+  background: var(--glass-2) !important;
+  box-shadow: inset 0 0 0 1px var(--line);
+  pointer-events: auto;
+  cursor: not-allowed;
+}
+#continueAddHost[disabled].hovered, #continueAddHost[disabled]:focus,
+#continueAddHost.mdl-button--disabled.hovered, #continueAddHost.mdl-button--disabled:focus {
+  color: var(--text-2-on-focus);
+  background: #C9CEE0 !important;
+}
+#closeNavGuide {
+  flex: 0 0 420px;
+}
+#navGuideDialog .mdl-dialog__actions {
+  justify-content: center;
+}
+/* Add Host: text field and the numeric fields */
+#ipAddressInputField {
+  display: block;
+}
+#ipAddressInputField .mdl-textfield {
+  width: 100%;
+  padding: 46px 0 0;
+}
+.mdl-textfield__label, #ipAddressInputField .mdl-textfield__label {
+  top: 0;
+  color: var(--text-3);
+  font-size: 19px;
+  font-weight: 700;
+}
+.mdl-textfield--floating-label.is-focused .mdl-textfield__label, .mdl-textfield--floating-label.is-dirty .mdl-textfield__label,
+.mdl-textfield--floating-label.has-placeholder .mdl-textfield__label {
+  top: 0;
+  color: var(--text-3);
+  font-size: 19px;
+}
+.mdl-textfield__label::after {
+  display: none;
+}
+.mdl-textfield__input {
+  height: 68px;
+  padding: 0 22px;
+  box-sizing: border-box;
+  border: none;
+  border-radius: var(--r-m);
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.3);
+  box-shadow: inset 0 0 0 2px var(--line-2);
+  font-size: 24px;
+  font-weight: 700;
+}
+#ipAddressTextInput::placeholder {
+  color: var(--text-3);
+}
+.mdl-textfield__input.hovered, .mdl-textfield__input:hover, .mdl-textfield__input:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 3px #fff, 0 0 0 4px rgba(255, 255, 255, 0.2);
+}
+.mdl-textfield.is-invalid .mdl-textfield__input:hover, .mdl-textfield.is-invalid .mdl-textfield__input:focus {
+  box-shadow: inset 0 0 0 3px var(--red);
+}
+#ipAddressSelectFields {
+  display: none;
+}
+.select-option-field {
+  position: relative;
+  width: 100%;
+  padding: 46px 0 0;
+}
+.select-option-field-floating-label .mdl-textfield__label {
+  width: 100%;
+}
+/* The octets: the chevron of the theme instead of the native arrow, and a white fill on focus like the menus */
+.ip-address-select-field {
+  width: 172px;
+  height: 68px;
+  margin: 0 10px 0 0 !important;
+  padding: 0 46px 0 20px;
+  border: none;
+  border-radius: var(--r-m);
+  color: var(--text);
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238D96B8' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9.5l6 6 6-6'/%3E%3C/svg%3E") right 16px center / 20px 20px no-repeat, rgba(0, 0, 0, 0.3);
+  box-shadow: inset 0 0 0 2px var(--line-2);
+  font-size: 24px;
+  font-weight: 700;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+.ip-address-select-field.hovered, .ip-address-select-field:hover {
+  color: var(--text-on-focus);
+  background-color: #fff;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.25);
+}
+/* Wake PC switch */
+#autoWolCheckboxContainer {
+  width: 100%;
+  margin: 28px 0 8px;
+}
+#autoWolCheckboxContainer .mdl-switch {
+  display: flex;
+  align-items: center;
+  height: 68px;
+  padding: 0 116px 0 24px;
+  border-radius: var(--r-m);
+  background: var(--glass-2);
+}
+#autoWolCheckboxContainer .mdl-switch__label {
+  position: static;
+  color: var(--text-2);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+/* Support QR code */
+#supportQrCode {
+  display: block;
+  width: 280px;
+  height: 280px;
+  margin: 6px auto 0;
+  padding: 14px;
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45);
+}
+/* Navigation guide: coloured key caps per input device, tight enough to fit without scrolling in pt-BR */
+.navGuideContainer {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 28px 10px 0;
+  font-size: 19px;
+  font-weight: 700;
+}
+.navGuideLabel {
+  width: 18px;
+  height: 18px;
+  margin-right: 10px;
+  border-radius: 6px;
+}
+.navGuideRemoteColor { background: var(--cyan); }
+.navGuideKeyboardColor { background: var(--pink); }
+.navGuideGamepadColor { background: var(--mint); }
+.navGuideLabelText {
+  color: var(--text);
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+#navGuideDialogText {
+  list-style-type: none;
+  padding: 0;
+  -webkit-column-count: 2;
+  column-count: 2;
+  -webkit-column-gap: 56px;
+  column-gap: 56px;
+}
+.navGuideDialogControls {
+  -webkit-column-break-inside: avoid;
+  break-inside: avoid;
+  padding: 4px 0;
+  font-size: 19px;
+  line-height: 1.35;
+}
+.navGuideRemoteText, .navGuideKeyboardText, .navGuideGamepadText {
+  display: inline-block;
+  margin: 2px 0;
+  padding: 1px 10px;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.navGuideRemoteText { color: #031A20; background: var(--cyan); }
+.navGuideKeyboardText { color: #2A0012; background: #FF7FAA; }
+.navGuideGamepadText { color: #04261A; background: var(--mint); }
+
+/* ===== Overlay menus (menus.js): the Stream Menu and the app menu, a nearly opaque panel without blur ===== */
 .overlay-menu-backdrop {
-    --overlay-menu-surface: rgba(51, 56, 70, 0.96);
-    --overlay-menu-text: #ffffff;
-    --overlay-menu-muted: rgba(255, 255, 255, 0.7);
-    --overlay-menu-accent: #00A3C6;
-    --overlay-menu-focus: #484C5F;
-    --overlay-menu-line: rgba(255, 255, 255, 0.12);
-    --overlay-menu-radius: 16px;
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    z-index: 1000;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.4);
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  background: rgba(5, 7, 16, 0.74);
 }
-/* The Stream Menu sits on the right inside the safe area (5 % of the screen), and the stream keeps playing beside it */
+/* The Stream Menu sits on the right in the safe area over the live video, without a scrim */
 .stream-menu-backdrop {
-    justify-content: flex-end;
-    background: linear-gradient(to left, rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0) 55%);
+  justify-content: flex-end;
+  background: transparent;
 }
 .overlay-menu {
-    color: var(--overlay-menu-text);
-    background: var(--overlay-menu-surface);
-    width: 560px;
-    max-height: 90%;
-    padding: 24px 0 16px 0;
-    box-sizing: border-box;
-    overflow-y: auto;
-    border-radius: var(--overlay-menu-radius);
-    box-shadow: 0 0 12px 6px rgba(0, 163, 198, 1);
+  width: 600px;
+  max-height: calc(100% - 108px);
+  padding: 30px 16px 18px;
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-radius: 28px;
+  color: var(--text);
+  background:
+    radial-gradient(420px 220px at 0% 0%, rgba(124, 92, 255, 0.28), rgba(124, 92, 255, 0) 70%),
+    linear-gradient(180deg, rgba(31, 38, 73, 0.97) 0%, rgba(20, 25, 50, 0.97) 100%);
+  box-shadow: 0 0 0 1px var(--line-2), 0 40px 100px rgba(0, 0, 0, 0.6);
 }
 .stream-menu {
-    margin-right: 5%;
+  margin-right: var(--safe-x);
 }
 .overlay-menu-header {
-    padding: 0 28px 12px 28px;
+  padding: 0 20px 18px;
 }
 .overlay-menu-title {
-    margin: 0;
-    font-size: 2.4rem;
-    font-weight: 500;
-    line-height: normal;
-    letter-spacing: 0.5px;
+  margin: 0;
+  color: #fff;
+  font-size: 34px;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .overlay-menu-subtitle {
-    color: var(--overlay-menu-muted);
-    margin-top: 4px;
-    font-size: 1.4rem;
-    line-height: normal;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  margin-top: 6px;
+  color: var(--text-3);
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.overlay-menu-subtitle:empty {
+  display: none;
 }
 .overlay-menu-item {
-    color: inherit;
-    background: transparent;
-    display: flex;
-    align-items: center;
-    width: 100%;
-    min-height: 56px;
-    margin: 0;
-    padding: 0 28px;
-    box-sizing: border-box;
-    border: none;
-    outline: none;
-    font-family: inherit;
-    font-size: 1.6rem;
-    text-align: left;
-    cursor: pointer;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 64px;
+  margin: 0 0 4px;
+  padding: 10px 18px;
+  box-sizing: border-box;
+  border: none;
+  border-radius: var(--r-m);
+  outline: none;
+  color: var(--text-2);
+  background: transparent;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: left;
+  cursor: pointer;
 }
 .overlay-menu-item[hidden] {
-    display: none;
-}
-.overlay-menu-item.hovered, .overlay-menu-item:hover, .overlay-menu-item:focus {
-    background: var(--overlay-menu-focus);
-    box-shadow: inset 4px 0 0 var(--overlay-menu-accent);
+  display: none;
 }
 .overlay-menu-icon {
-    color: var(--overlay-menu-muted);
-    margin-right: 20px;
-    font-size: 28px;
+  width: 30px;
+  height: 30px;
+  margin-right: 18px;
+  color: var(--text-3);
+}
+.overlay-menu-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* The state of a switch entry (On or Off) as a pill */
+.overlay-menu-value {
+  flex: none;
+  margin-left: 16px;
+  padding: 7px 14px;
+  border-radius: 16px;
+  background: var(--glass-2);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+.overlay-menu-value:empty {
+  display: none;
+}
+.overlay-menu-value.is-on {
+  color: #04261A;
+  background: var(--grad-mint);
+  box-shadow: none;
+}
+.overlay-menu-item.hovered, .overlay-menu-item:hover, .overlay-menu-item:focus {
+  color: var(--text-on-focus);
+  background: #fff;
 }
 .overlay-menu-item.hovered .overlay-menu-icon, .overlay-menu-item:hover .overlay-menu-icon,
 .overlay-menu-item:focus .overlay-menu-icon {
-    color: var(--overlay-menu-accent);
+  color: var(--text-on-focus);
 }
-.overlay-menu-label {
-    flex: 1;
+.overlay-menu-item.hovered .overlay-menu-value:not(.is-on), .overlay-menu-item:focus .overlay-menu-value:not(.is-on) {
+  color: var(--text-2-on-focus);
+  background: rgba(10, 13, 26, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(10, 13, 26, 0.16);
 }
-.overlay-menu-value {
-    color: var(--overlay-menu-muted);
-    margin-left: 16px;
-    font-size: 1.4rem;
-}
-.overlay-menu-value.is-on {
-    color: var(--overlay-menu-accent);
-}
+/* Group label and separator */
 .overlay-menu-group {
-    color: var(--overlay-menu-muted);
-    margin-top: 8px;
-    padding: 12px 28px 4px 28px;
-    border-top: 1px solid var(--overlay-menu-line);
-    font-size: 1.2rem;
-    letter-spacing: 0.5px;
+  margin: 12px 18px 0;
+  padding: 18px 0 10px;
+  border-top: 1px solid var(--line-2);
+  color: var(--text-3);
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
 }
 .overlay-menu-separator {
-    margin: 8px 0;
-    border-top: 1px solid var(--overlay-menu-line);
+  margin: 12px 18px 16px;
+  border-top: 1px solid var(--line-2);
 }
+/* The keys that close the Stream Menu */
 .overlay-menu-hint {
-    color: var(--overlay-menu-muted);
-    margin-top: 8px;
-    padding: 12px 28px 0 28px;
-    border-top: 1px solid var(--overlay-menu-line);
-    font-size: 1.2rem;
+  margin: 12px 18px 0;
+  padding: 16px 0 4px;
+  border-top: 1px solid var(--line-2);
+  color: var(--text-3);
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.4;
 }
-/* Badges of the app tiles: the running app and, after 'Show hidden apps', the hidden ones, which are dimmed */
-#game-grid .app-badge {
-    color: #fff;
-    background: rgba(0, 0, 0, 0.75);
-    position: absolute;
-    top: 8px;
-    left: 8px;
-    z-index: 3;
-    padding: 4px 10px;
-    border-radius: 12px;
-    font-size: 1.1rem;
-    font-weight: 500;
-    line-height: normal;
-    letter-spacing: 0.5px;
+.overlay-menu-item[disabled] {
+  opacity: 0.45;
 }
-#game-grid .app-badge-running {
-    color: #1d1d1d;
-    background: #8BC34A;
+/* Destructive entries in red */
+.is-danger {
+  color: #FF8DA1;
 }
-#game-grid .app-badge-hidden {
-    left: auto;
-    right: 8px;
+.is-danger .overlay-menu-icon, .is-danger.hovered .overlay-menu-icon, .is-danger:focus .overlay-menu-icon {
+  color: var(--red);
 }
-#game-grid .mdl-card.app-hidden > img.fade-in {
-    opacity: 0.35;
+.is-danger.hovered, .is-danger:focus {
+  color: #8A1030;
 }
-/* Hint for the menu of an app tile in the header of the app grid */
-.header-hint {
-    color: rgba(255, 255, 255, 0.7);
-    display: none;
-    margin-left: 24px;
-    font-size: 1.2rem;
-    letter-spacing: 0.5px;
+/* The app menu and the host menu (a dialog, index.js), centred: Start and Resume get a gradient icon tile, mint for the
+   running app */
+.app-menu, .host-menu-dialog {
+  width: 640px;
+}
+.host-menu-dialog {
+  border: none;
+}
+.app-menu.is-running .overlay-menu-subtitle {
+  color: var(--mint);
+}
+#appMenuStart .overlay-menu-icon, #appMenuResume .overlay-menu-icon {
+  width: 44px;
+  height: 44px;
+  margin: -7px 14px -7px -7px;
+  padding: 10px;
+  box-sizing: border-box;
+  border-radius: 14px;
+  color: #fff;
+  background: var(--grad-brand);
+}
+#appMenuResume .overlay-menu-icon {
+  color: #04261A;
+  background: var(--grad-mint);
+}
+#appMenuStart, #appMenuResume {
+  color: var(--text);
+}
+#appMenuStart.hovered, #appMenuStart:focus, #appMenuResume.hovered, #appMenuResume:focus {
+  color: var(--text-on-focus);
+}
+
+/* ===== Streaming ===== */
+.fullscreen {
+  position: relative !important;
+  height: 100vh !important;
+  z-index: 1 !important;
+  margin: auto !important;
+  padding: 0 !important;
+  border: none !important;
+  overflow: hidden !important;
+}
+#connection-warnings, #performance-stats {
+  position: absolute;
+  top: 48px;
+  z-index: 3;
+  padding: 14px 20px;
+  border-radius: var(--r-m);
+  color: #fff;
+  line-height: 1.3;
+  white-space: pre-wrap;
+  font-variant-numeric: tabular-nums;
+}
+#connection-warnings {
+  right: 64px;
+  font-size: 26px;
+  font-weight: 800;
+}
+#performance-stats {
+  left: 64px;
+  font-size: 21px;
+  font-weight: 700;
+}
+
+/* ===== Reduced motion (newer TVs and browsers that report it) ===== */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition: none !important;
+  }
+  #wasmSpinner > .bar1, #loadingSpinner > .bar1 {
+    animation: none;
+    width: 480px !important;
+  }
+  #rescanNetworkBtn.is-scanning .navigation-button-icons {
+    animation: none;
+  }
 }

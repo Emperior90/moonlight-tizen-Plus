@@ -41,6 +41,8 @@ async function openAppList(options) {
       getAppList: () => Promise.resolve(window.__apps.slice()),
       getAppById: (id) => Promise.resolve(window.__apps.find((entry) => entry.id == id) || null),
       getBoxArt: () => Promise.resolve('static/res/placeholder_game.svg'),
+      // The app polls the host of the app grid every 5 seconds once its box art loaded (showApps() in index.js)
+      pollServer: (callback) => callback(host),
       toString: () => 'GAMING-PC',
     };
     (settings.hidden || []).forEach((entry) => localStorage.setItem('hiddenApps_' + entry.host, JSON.stringify(entry.apps)));

@@ -81,11 +81,13 @@ test('the button shows in the Hosts header only, with its translated label', asy
   try {
     const shown = await app.page.evaluate(() => ({
       visible: $('#rescanNetworkBtn').is(':visible'),
-      icon: $('#rescanNetworkBtn i').text().trim(),
+      // The refresh icon of the sprite, which must be drawn there
+      icon: $('#rescanNetworkBtn use').attr('xlink:href'),
+      iconDrawn: document.querySelector('#icon-sprite symbol#i-refresh') !== null,
       label: $('#rescanNetworkTooltip').text().trim(),
       order: $('nav.mdl-navigation > button').map(function() { return this.id; }).get(),
     }));
-    assert.deepEqual(shown, { visible: true, icon: 'refresh', label: 'Rescan network',
+    assert.deepEqual(shown, { visible: true, icon: '#i-refresh', iconDrawn: true, label: 'Rescan network',
       order: ['rescanNetworkBtn', 'settingsBtn', 'supportBtn', 'restoreDefaultsBtn', 'quitRunningAppBtn'] });
     await app.page.evaluate(() => $('#settingsBtn').trigger('click'));
     await app.page.waitForFunction(() => $('#settings-list').is(':visible') && !$('#wasmSpinner').is(':visible'));

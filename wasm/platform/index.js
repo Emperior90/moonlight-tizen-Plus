@@ -269,6 +269,9 @@ function stopRepeatAction() {
 }
 
 function changeUiModeForWasmLoad() {
+  if (typeof setUiView === 'function') {
+    setUiView('loading');
+  }
   $('#main-header').hide();
   $('#main-header').children().hide();
   $('#main-content').children().not('#listener, #wasmSpinner').hide();
@@ -346,22 +349,28 @@ function updateHostStatusIndicator(host) {
     }
   }
 
+  // Show the state on the card and in the hero area (launcher.js)
+  if (typeof Launcher !== 'undefined') {
+    Launcher.renderHostStatus(host);
+  }
+
   // If the indicator element is not found, exit the function early
   if (!indicator) {
     return;
   }
-  // Set the appropriate status indicator based on the host status
+  // Set the appropriate status badge based on the host status, which the stylesheet draws from data-status
   if (host.online === undefined || host.online === null) {
     indicator.style.display = 'none';
+    indicator.setAttribute('data-status', '');
   } else if (!host.online) {
     indicator.style.display = 'block';
-    indicator.innerHTML = 'warning';
+    indicator.setAttribute('data-status', 'offline');
   } else if (host.online && !host.paired) {
     indicator.style.display = 'block';
-    indicator.innerHTML = 'lock';
+    indicator.setAttribute('data-status', 'locked');
   } else {
     indicator.style.display = 'none';
-    indicator.innerHTML = '';
+    indicator.setAttribute('data-status', '');
   }
 }
 
@@ -534,8 +543,12 @@ function snackbarLogLong(...args) {
 
 // Handle layout elements when displaying the Hosts view
 function showHostsMode() {
+  if (typeof setUiView === 'function') {
+    setUiView('hosts');
+  }
   console.log('%c[index.js, showHostsMode]', 'color: green;', 'Entering "Show Hosts" mode.');
-  $('#header-title').html(t('Hosts'));
+  // Keep the key of the view title, so that a later translation pass translates it instead of resetting it to the app name
+  $('#header-title').attr('data-i18n', 'Hosts').html(t('Hosts'));
   $('#header-logo').show();
   $('#main-header').show();
   $('#appMenuHint').hide();
@@ -577,6 +590,9 @@ function showHosts() {
   $('#settings-list, #game-grid').hide();
 
   // Show a spinner while the host list loads
+  if (typeof setUiView === 'function') {
+    setUiView('loading');
+  }
   $('#wasmSpinner').css('display', 'inline-block');
   $('#wasmSpinnerLogo').hide();
   $('#wasmSpinnerMessage').text(t('Loading Hosts...'));
@@ -587,7 +603,7 @@ function showHosts() {
 
     // Show the main header after the loading screen is complete
     $('#main-header').children().show();
-    $('#main-header').css({'backgroundColor': '#333846', 'boxShadow': '0 0 4px 0 rgba(0, 0, 0, 1)'});
+    $('#main-header').css({'backgroundColor': '', 'boxShadow': ''});
 
     // Navigate to the Hosts view
     showHostsMode();
@@ -1236,9 +1252,9 @@ function pairingDialog(nvhttpHost, onSuccess, onFailure) {
     // Rollback to 'Cancel' button text when opening
     $('#cancelPairing').text('Cancel');
 
-    // Change the dialog text element to include the random PIN number
+    // Change the dialog text element to include the random PIN number, in bold (style.css shows it large)
     $('#pairingDialogText').html(
-      t('Please enter the following PIN on the target PC: %1$s<br><br>', randomNumber) + 
+      t('Please enter the following PIN on the target PC: %1$s<br><br>', '<b>' + randomNumber + '</b>') + 
       t('If your host PC is running Sunshine (all GPUs), navigate to the Sunshine Web UI to enter the PIN.<br><br>') + 
       t('Alternatively, if your host PC has NVIDIA GameStream (NVIDIA-only), navigate to the GeForce Experience to enter the PIN.<br><br>') + 
       t('This dialog will close once the pairing is complete.')
@@ -1463,7 +1479,7 @@ function addHostToGrid(host, ismDNSDiscovered) {
   // Create the host center icon to indicate the host's status (online/offline/unpaired)
   var hostStatusIndicator = $('<i>', {
     id: 'host-status-' + host.serverUid,
-    class: 'material-icons host-center-icon'
+    class: 'host-center-icon'
   });
 
   // Append the host text to the host title wrapper
@@ -1490,8 +1506,10 @@ function addHostToGrid(host, ismDNSDiscovered) {
   // Append the host status indicator to the host container
   hostContainer.append(hostStatusIndicator);
 
-  // Set initial status
-  updateHostStatusIndicator(host);
+  // Add the icon tile, the status chips and the options icon of the card (launcher.js)
+  if (typeof Launcher !== 'undefined') {
+    Launcher.decorateHostCard(hostContainer[0], host);
+  }
 
   // Attach the click event listener to the host container
   hostContainer.off('click');
@@ -1519,6 +1537,9 @@ function addHostToGrid(host, ismDNSDiscovered) {
 
   // Append the host container to the host grid
   $('#host-grid').append(hostContainer);
+
+  // Set initial status, now that the card is in the page and can be found by its ID
+  updateHostStatusIndicator(host);
 
   // Store the host object in the hosts array using its server UID as the key
   hosts[host.serverUid] = host;
@@ -1553,30 +1574,34 @@ function hostMenuDialog(host) {
     class: 'dialog-overlay'
   }).appendTo(document.body);
 
-  // Create the dialog element and append it to the overlay
+  // Create the dialog element and append it to the overlay, a list with icons like the app menu (menus.js)
   var hostMenuDialog = $('<dialog>', {
     id: 'hostMenuDialog-' + host.serverUid,
-    class: 'mdl-dialog'
+    class: 'overlay-menu host-menu-dialog'
   }).appendTo(hostMenuDialogOverlay);
 
   // Add the dialog title with the host's name
   $('<h3>', {
     id: 'hostMenuDialogTitle-' + host.serverUid,
-    class: 'mdl-dialog__title',
+    class: 'overlay-menu-title',
     text: host.hostname
-  }).appendTo(hostMenuDialog);
+  }).appendTo($('<div>', { class: 'overlay-menu-header' }).appendTo(hostMenuDialog));
 
-  // Create a content section inside the dialog
-  var hostMenuDialogContent = $('<div>', {
-    class: 'mdl-dialog__content'
-  }).appendTo(hostMenuDialog);
+  // A menu entry with a stroke icon of the sprite in index.html
+  var hostMenuItem = function(id, icon, text, className) {
+    return $('<button>', {
+      type: 'button',
+      id: id,
+      class: 'overlay-menu-item' + (className ? ' ' + className : '')
+    }).html('<svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-' + icon + '"/></svg>')
+      .append($('<span>', { class: 'overlay-menu-label', text: text }));
+  };
 
   // Define the options for the menu with the corresponding attributes
   var hostMenuDialogOptions = [
     {
       id: 'refreshApps-' + host.hostname,
-      class: 'host-menu-button',
-      'data-i18n': 'Refresh apps',
+      icon: 'refresh',
       text: t('Refresh apps'),
       disabled: !host.online,
       action: function() {
@@ -1588,8 +1613,7 @@ function hostMenuDialog(host) {
     },
     {
       id: 'wakeHost-' + host.hostname,
-      class: 'host-menu-button',
-      'data-i18n': 'Wake PC',
+      icon: 'power',
       text: t('Wake PC'),
       disabled: host.online,
       action: function() {
@@ -1605,8 +1629,9 @@ function hostMenuDialog(host) {
     },
     {
       id: 'deleteHost-' + host.hostname,
-      class: 'host-menu-button',
-      'data-i18n': 'Delete PC',
+      icon: 'trash',
+      // Destructive, in red
+      class: 'is-danger',
       text: t('Delete PC'),
       action: function() {
         // Remove the selected host from the list
@@ -1615,8 +1640,7 @@ function hostMenuDialog(host) {
     },
     {
       id: 'viewDetails-' + host.hostname,
-      class: 'host-menu-button',
-      'data-i18n': 'View Details',
+      icon: 'info',
       text: t('View Details'),
       action: function() {
         // View details of the selected host
@@ -1627,13 +1651,8 @@ function hostMenuDialog(host) {
 
   // Loop through each option to create a button in the dialog
   hostMenuDialogOptions.forEach(function(menuOption) {
-    var hostMenuDialogOption = $('<button>', {
-      type: 'button',
-      id: menuOption.id,
-      class: 'mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect',
-      text: menuOption.text,
-      disabled: menuOption.disabled || false
-    });
+    var hostMenuDialogOption = hostMenuItem(menuOption.id, menuOption.icon, menuOption.text, menuOption.class)
+      .prop('disabled', menuOption.disabled || false);
     // Trigger the action if the Option button is pressed
     hostMenuDialogOption.off('click');
     hostMenuDialogOption.click(function() {
@@ -1644,23 +1663,12 @@ function hostMenuDialog(host) {
       hostMenuDialogOverlay.remove();
       isDialogOpen = false;
     });
-    // Append the button to the dialog content
-    hostMenuDialogOption.appendTo(hostMenuDialogContent);
+    // Append the button to the dialog
+    hostMenuDialogOption.appendTo(hostMenuDialog);
   });
 
-  // Create the actions section inside the dialog
-  var hostMenuDialogActions = $('<div>', {
-    class: 'mdl-dialog__actions'
-  }).appendTo(hostMenuDialog);
-
-  // Create and set up the Close button
-  var closeHostMenuDialog = $('<button>', {
-    type: 'button',
-    id: 'closeHostMenu',
-    class: 'mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect',
-    'data-i18n': 'Close',
-    text: t('Close')
-  });
+  // Create and set up the Close button, the last entry
+  var closeHostMenuDialog = hostMenuItem('closeHostMenu', 'close', t('Close'));
 
   // Close the dialog if the Close button is pressed
   closeHostMenuDialog.off('click');
@@ -1671,7 +1679,7 @@ function hostMenuDialog(host) {
     hostMenuDialogOverlay.remove();
     isDialogOpen = false;
     Navigation.pop();
-  }).appendTo(hostMenuDialogActions);
+  }).appendTo(hostMenuDialog);
 
   // If the dialog element doesn't support the showModal method, register it with dialogPolyfill
   if (!hostMenuDialog[0].showModal) {
@@ -1923,8 +1931,11 @@ function appSupportDialog() {
 
 // Handle layout elements when displaying the Settings view
 function showSettingsMode() {
+  if (typeof setUiView === 'function') {
+    setUiView('settings');
+  }
   console.log('%c[index.js, showSettingsMode]', 'color: green;', 'Entering "Show Settings" mode.');
-  $('#header-title').html(t('Settings'));
+  $('#header-title').attr('data-i18n', 'Settings').html(t('Settings'));
   $('#header-logo').show();
   $('#main-header').show();
   $('#appMenuHint').hide();
@@ -1964,6 +1975,9 @@ function showSettings() {
   $('#host-grid, #game-grid').hide();
 
   // Show a spinner while the setting list loads
+  if (typeof setUiView === 'function') {
+    setUiView('loading');
+  }
   $('#wasmSpinner').css('display', 'inline-block');
   $('#wasmSpinnerLogo').hide();
   $('#wasmSpinnerMessage').text(t('Loading Settings...'));
@@ -1974,7 +1988,7 @@ function showSettings() {
 
     // Show the main header after the loading screen is complete
     $('#main-header').children().show();
-    $('#main-header').css({'backgroundColor': '#333846', 'boxShadow': '0 0 4px 0 rgba(0, 0, 0, 1)'});
+    $('#main-header').css({'backgroundColor': '', 'boxShadow': ''});
 
     // Show the settings list section
     $('#settings-list').removeClass('hide-container');
@@ -1998,6 +2012,10 @@ function resetSettingsView() {
   document.querySelectorAll('.settings-category').forEach(function(settingsCategory) {
     settingsCategory.classList.remove('selected');
   });
+
+  // Remove the section name from the header
+  document.body.removeAttribute('data-section');
+  $('#header-section').removeAttr('data-i18n').text('');
 }
 
 // Navigate to the provided settings view by pushing the target view and set the focus to the setting
@@ -2029,6 +2047,10 @@ function handleSettingsView(category) {
   if (selectedCategory) {
     // Mark the category as selected
     selectedCategory.classList.add('selected');
+    // Name the section in the header (in its colour), with its locale key for a change of the language
+    const sectionLabel = selectedCategory.querySelector('label');
+    document.body.setAttribute('data-section', category);
+    $('#header-section').attr('data-i18n', sectionLabel.getAttribute('data-i18n')).text(sectionLabel.textContent.trim());
   } else {
     // Otherwise, exit early
     return;
@@ -2311,9 +2333,9 @@ function updateAppButton(latestVersion) {
   });
   // Create the badge icon dynamically
   var updateAppBtnBadge = $('<div>', {
-    class: 'navigation-button-icons material-icons mdl-badge mdl-badge--overlap',
+    class: 'navigation-button-icons mdl-badge mdl-badge--overlap',
     'data-badge': '1',
-    text: 'update'
+    html: '<svg class="icon" aria-hidden="true"><use xlink:href="#i-download"/></svg>'
   });
   // Create the button text dynamically
   var updateAppBtnText = $('<span>', {
@@ -2534,9 +2556,10 @@ function warningDialog(title, message) {
   var warningDialogOverlay = document.querySelector('#warningDialogOverlay');
   var warningDialog = document.querySelector('#warningDialog');
 
-  // Change the dialog title and text element with a custom warning message
+  // Change the dialog title and text element with a custom warning message, without the optimal settings tiles
   document.getElementById('warningDialogTitle').innerHTML = t(title);
   document.getElementById('warningDialogText').innerHTML = t(message);
+  warningDialog.classList.remove('is-optimal');
 
   // Show the dialog and push the view
   warningDialogOverlay.style.display = 'flex';
@@ -2567,7 +2590,8 @@ function wakeOnLanWarningDialog(host) {
   var warningDialogOverlay = document.querySelector('#warningDialogOverlay');
   var warningDialog = document.querySelector('#warningDialog');
 
-  // Set the title and message
+  // Set the title and message, without the value tiles of the optimal settings
+  warningDialog.classList.remove('is-optimal');
   document.getElementById('warningDialogTitle').innerHTML = t('Wake-on-LAN Warning');
   document.getElementById('warningDialogText').innerHTML = t(
     'The MAC address of %1$s (%2$s) appears to be randomly generated.', escapeHTML(host.hostname), escapeHTML(host.macAddress)) + '<br><br>' +
@@ -2637,7 +2661,7 @@ function onNativeModuleFailure(details) {
       $('#connection-warnings, #performance-stats').css('display', 'none');
       $('#listener').removeClass('fullscreen');
       $('#loadingSpinner').css('display', 'none');
-      $('body').css('backgroundColor', '#282C38');
+      $('body').css('backgroundColor', '');
       $('#wasm_module').css('display', 'none');
       // Let the remote and gamepads operate the dialog, which the stream view had paused
       Navigation.start();
@@ -2820,10 +2844,13 @@ function sortTitles(list, sortOrder) {
 
 // Handle layout elements when displaying the Apps view
 function showAppsMode() {
+  if (typeof setUiView === 'function') {
+    setUiView('apps');
+  }
   console.log('%c[index.js, showAppsMode]', 'color: green;', 'Entering "Show Apps" mode.');
   // Make sure the screensaver works again in the menus, even if the stream ended in an unusual way
   setTvScreenSaver(true);
-  $('#header-title').html(t('Apps'));
+  $('#header-title').attr('data-i18n', 'Apps').html(t('Apps'));
   $('#header-logo').show();
   $('#main-header').show();
   $('#goBackBtn').show();
@@ -2844,7 +2871,7 @@ function showAppsMode() {
   $('#main-content').removeClass('fullscreen');
   $('#listener').removeClass('fullscreen');
   $('#loadingSpinner').css('display', 'none');
-  $('body').css('backgroundColor', '#282C38');
+  $('body').css('backgroundColor', '');
   $('#wasm_module').css('display', 'none');
 
   isInGame = false;
@@ -2878,6 +2905,9 @@ function showApps(host) {
     $('#host-grid, #settings-list').hide();
 
     // Show a spinner while the app list loads
+    if (typeof setUiView === 'function') {
+      setUiView('loading');
+    }
     $('#wasmSpinner').css('display', 'inline-block');
     $('#wasmSpinnerLogo').hide();
     $('#wasmSpinnerMessage').text(t('Loading Apps...'));
@@ -2893,7 +2923,7 @@ function showApps(host) {
 
         // Show the main header after the loading screen is complete
         $('#main-header').children().show();
-        $('#main-header').css({'backgroundColor': '#333846', 'boxShadow': '0 0 4px 0 rgba(0, 0, 0, 1)'});
+        $('#main-header').css({'backgroundColor': '', 'boxShadow': ''});
 
         // Show the game grid section
         $('#game-grid').show();
@@ -3141,7 +3171,7 @@ function showApps(host) {
 
         // Show the main header after the loading screen is complete
         $('#main-header').children().show();
-        $('#main-header').css({'backgroundColor': '#333846', 'boxShadow': '0 0 4px 0 rgba(0, 0, 0, 1)'});
+        $('#main-header').css({'backgroundColor': '', 'boxShadow': ''});
 
         console.error('%c[index.js, showApps]', 'color: green;', 'Error: Failed to get app list from ' + host.hostname + '. Host object: ', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
         var errorAppListImg = new Image();
@@ -3208,6 +3238,9 @@ function quitAppDialog() {
 
 // Handle layout elements when displaying the Stream view
 function showStreamMode() {
+  if (typeof setUiView === 'function') {
+    setUiView('stream');
+  }
   console.log('%c[index.js, showStreamMode]', 'color: green;', 'Entering "Show Stream" mode.');
   $('#main-header').hide();
   $('#main-content').children().not('#listener, #loadingSpinner').hide();
@@ -3430,6 +3463,10 @@ function startGame(host, appID) {
       // Shows a loading message to launch the application and start stream mode
       $('#loadingSpinnerMessage').text(t('Starting %1$s...', appToStart.title));
       streamLaunchAppTitle = appToStart.title;
+      // Show the app and its box art on the launch screen (launcher.js)
+      if (typeof Launcher !== 'undefined') {
+        Launcher.prepareStart(host, appID, appToStart.title);
+      }
       showStreamMode();
 
       // Check if user wants to resume the already-running app
@@ -4881,6 +4918,11 @@ function optimalSettingsDialog() {
     ? t('Optimal settings for this TV (%1$s)', escapeHTML(modelName))
     : t('Optimal settings for this TV');
   document.getElementById('warningDialogText').innerHTML = message;
+  // Show its main values as tiles above the text, filled from the same settings (launcher.js)
+  warningDialog.classList.add('is-optimal');
+  if (typeof Launcher !== 'undefined') {
+    Launcher.fillValueTiles(document.getElementById('warningDialogValues'), optimalSettings);
+  }
 
   // Show the dialog and push the view
   warningDialogOverlay.style.display = 'flex';

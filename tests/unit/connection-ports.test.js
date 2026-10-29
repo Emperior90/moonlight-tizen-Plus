@@ -19,6 +19,9 @@ const readLocale = (name) => JSON.parse(read('wasm/static/locales/' + name + '.j
 // The message of the RTSP handshake as the native test expects it from FormatStageFailedMessage()
 const RTSP_MESSAGE = 'RTSP handshake failed (error 10060)\n\n' +
   'Check that the firewall of the host PC and your router don\'t block these ports: TCP 48010, UDP 48000, UDP 48010';
+// The ports as the page shows them: each protocol joined to its port with a no-break space, so that no line ends between
+// them
+const SHOWN_PORTS = 'TCP\u00a048010, UDP\u00a048000, UDP\u00a048010';
 
 // Load messages.js with a t() that translates with the given locale like i18n.js does, recording the snackbar notices
 function loadMessages(locale) {
@@ -61,7 +64,7 @@ test('a failed stage shows its error and the ports in the connection error dialo
   // The dialog shows HTML (warningDialog() in index.js): the blank line becomes a paragraph break, the rest stays text
   // (tests/browser/connection-error-dialog.test.js checks the lines that the dialog shows)
   assert.deepEqual(app.dialogs.map((dialog) => dialog.text), ['RTSP handshake failed (error 10060)<br><br>' +
-    'Check that the firewall of the host PC and your router don&#39;t block these ports: TCP 48010, UDP 48000, UDP 48010']);
+    'Check that the firewall of the host PC and your router don&#39;t block these ports: ' + SHOWN_PORTS]);
   // A stage without ports keeps its message
   assert.equal(app.translate('video stream establishment failed (error -1)'), 'video stream establishment failed (error -1)');
   app.handleMessage('DialogMsg: video stream establishment failed (error -1)');
@@ -73,7 +76,7 @@ test('Brazilian Portuguese translates the stage, its error and the hint, and kee
   const pt = readLocale('pt-BR');
   const translated = app.translate(RTSP_MESSAGE);
   const expected = pt['%1$s failed (error %2$s)'].replace('%1$s', pt['RTSP handshake']).replace('%2$s', '10060') + '\n\n' +
-    pt['Check that the firewall of the host PC and your router don\'t block these ports: %1$s'].replace('%1$s', 'TCP 48010, UDP 48000, UDP 48010');
+    pt['Check that the firewall of the host PC and your router don\'t block these ports: %1$s'].replace('%1$s', SHOWN_PORTS);
   assert.equal(translated, expected);
   assert.doesNotMatch(translated, /failed|firewall of the host/);
 });
@@ -82,7 +85,8 @@ test('a stream without video names the ports that the module sent before the ter
   const app = loadMessages('en-US');
   app.handleMessage('TerminationPortsMsg: UDP 47998, UDP 48000');
   app.handleMessage('streamTerminated: -100');
-  assert.deepEqual(app.notices, ['No video received from host. Check that the firewall of the host PC and your router don\'t block these ports: UDP 47998, UDP 48000']);
+  assert.deepEqual(app.notices, ['No video received from host. Check that the firewall of the host PC and your router don\'t block these ports: ' +
+    'UDP\u00a047998, UDP\u00a048000']);
   // The ports belong to that termination only
   app.platform.run('isInGame = true;');
   app.handleMessage('streamTerminated: -100');

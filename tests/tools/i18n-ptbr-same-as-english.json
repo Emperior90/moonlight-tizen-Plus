@@ -45,6 +45,8 @@
     "OK",
     "ONLINE",
     "OFFLINE",
+    "%1$s ONLINE",
+    "%1$s OFFLINE",
     "UUID: %1$s",
     "Warning: Reference frame invalidation is experimental. If artifacts remain after a frame drop, disable it again!",
     "Warning: HDR static metadata is experimental. If HDR streams fail to start or look wrong, disable it again!",

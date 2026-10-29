@@ -362,6 +362,8 @@ function openAppMenu(appBox) {
 
   $('#appMenuTitle').text(app.title);
   $('#appMenuSubtitle').text(running ? t('Running on %1$s', host.hostname) : (hidden ? t('Hidden') : host.hostname));
+  // The stylesheet marks the menu of the running app
+  $('#appMenu').toggleClass('is-running', running);
   $('#appMenuShowHiddenLabel').text(showHidden ? t('Hide hidden apps') : t('Show hidden apps (%1$s)', appGridHiddenCount));
   Array.prototype.forEach.call(document.querySelectorAll('#appMenu .overlay-menu-item'), (item) => {
     item.hidden = entries.indexOf(item.id) < 0;
