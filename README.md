@@ -57,7 +57,7 @@ Moonlight Plus installs **next to** the regular Moonlight app, with its own sett
 
 > [!IMPORTANT]
 >
-> The earlier release v1.19.0-s90c.1 of this fork (*Moonlight S90C*) checks the releases of Moonlight Tizen for updates, so it will never offer Moonlight Plus. An update that it announces is a release of the regular Moonlight Tizen app, which installs as a separate app. Install Moonlight Plus 1.19.100 once by hand from the releases of this fork. It installs over the earlier release.
+> The earlier release v1.19.0-s90c.1 of this fork (*Moonlight S90C*) checks the releases of Moonlight Tizen for updates, so it will never offer Moonlight Plus. An update that it announces is a release of the regular Moonlight Tizen app, which installs as a separate app. Install the latest Moonlight Plus once by hand from the releases of this fork. It installs over the earlier release.
 
 ---
 

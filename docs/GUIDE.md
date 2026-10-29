@@ -352,7 +352,7 @@ Still stuck? Open an issue on the [issue tracker of this fork](https://github.co
 
 ## 15. Updating from the earlier release v1.19.0-s90c.1
 
-The earlier release of this fork, v1.19.0-s90c.1 (shown on the TV as *Moonlight S90C*), checked the releases of upstream Moonlight Tizen for updates, not those of this fork. It will never offer Moonlight Plus. An update that it announces later is a release of the regular Moonlight Tizen app, which installs as a separate app next to it, so don't install that to get Moonlight Plus. Install Moonlight Plus 1.19.100 once by hand, as described in [Installation](#3-installation). It has the same package ID, so it installs over the earlier release and normally keeps its settings and pairing. From 1.19.100 on, *Check for updates* looks at the releases of this fork.
+The earlier release of this fork, v1.19.0-s90c.1 (shown on the TV as *Moonlight S90C*), checked the releases of upstream Moonlight Tizen for updates, not those of this fork. It will never offer Moonlight Plus. An update that it announces later is a release of the regular Moonlight Tizen app, which installs as a separate app next to it, so don't install that to get Moonlight Plus. Install the latest Moonlight Plus once by hand, as described in [Installation](#3-installation). It has the same package ID, so it installs over the earlier release and normally keeps its settings and pairing. From 1.19.100 on, *Check for updates* looks at the releases of this fork.
 
 ## 16. Stream Menu and app menu
 

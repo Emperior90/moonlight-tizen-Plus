@@ -2,7 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
-- [1.19.101](#119101): pre-release, in testing
+- [1.19.101](#119101): 2026-10-29, a new look and two new menus
 - [1.19.100](#119100): 2026-10-26, the first release as Moonlight Plus
 - [1.19.0-s90c.1](#1190-s90c1): 2026-10-23, released as Moonlight S90C
 - [Base version and details](#base-version-and-details)
@@ -13,7 +13,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ## 1.19.101
 
-*Pre-release, in testing.* A new look, a Stream Menu and an app menu, and fixes for security and stability.
+*2026-10-29.* A new look, a Stream Menu and an app menu, and fixes for security and stability.
 
 > **Install:** by hand over 1.19.100 or Moonlight S90C, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >
