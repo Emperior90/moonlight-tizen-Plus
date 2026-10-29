@@ -25,7 +25,7 @@ const AsyncFunctions = {
   'STUN': (...args) => Module.stun(...args),
   // serverMajorVersion, address, httpPort, randomNumber
   'pair': (...args) => Module.pair(...args),
-  // macAddress
+  // macAddress, subnetBroadcast
   'wakeOnLan': (...args) => Module.wakeOnLan(...args),
 };
 
@@ -108,8 +108,21 @@ function replaceKnownAudioStatsLabels(text) {
     .replace(/TV audio player rejections:/g, t('TV audio player rejections:'));
 }
 
+// Translate the lines of the frame intervals (FormatFrameIntervalLine() in wasm/frame_intervals.hpp), e.g.
+// 'Host frame intervals: deviation 0.47 ms, p95 17.0 ms, 0.0% off cadence'
+function replaceKnownFrameIntervalLabels(text) {
+  const labels = {
+    'Host': t('Host frame intervals:'),
+    'TV player': t('TV player frame intervals:'),
+  };
+  return text.replace(/(Host|TV player) frame intervals: deviation ([\d.]+) ms, p95 ([\d.]+) ms, ([\d.]+)% off cadence/g,
+    function(match, source, deviation, p95, offCadence) {
+      return labels[source] + ' ' + t('deviation %1$s ms, p95 %2$s ms, %3$s% off cadence', deviation, p95, offCadence);
+    });
+}
+
 function replaceKnownStatsLabels(text) {
-  return replaceKnownAudioStatsLabels(text)
+  return replaceKnownFrameIntervalLabels(replaceKnownAudioStatsLabels(text))
     .replace(/Video stream:/g, t('Video stream:'))
     .replace(/Codec:/g, t('Codec:'))
     .replace(/Incoming frame rate from network:/g, t('Incoming frame rate from network:'))
@@ -142,7 +155,8 @@ function replaceKnownStatsLabels(text) {
 function replaceKnownWolErrorLabels(text) {
   const wolErrorLabels = [
     'Invalid MAC address format',
-    'Invalid MAC address: default zero MAC address not allowed',
+    // kWakeOnLanUnknownMacError of wasm/wake_on_lan.hpp
+    'The PC hasn\'t reported its MAC address (00:00:00:00:00:00)',
     'Failed to create socket',
     'Failed to enable broadcast',
     'Failed to send magic packet to MAC address',
@@ -152,7 +166,7 @@ function replaceKnownWolErrorLabels(text) {
 
   const translatedWolErrorLabels = [
     t('Invalid MAC address format'),
-    t('Invalid MAC address: default zero MAC address not allowed'),
+    t('The PC hasn\'t reported its MAC address (00:00:00:00:00:00)'),
     t('Failed to create socket'),
     t('Failed to enable broadcast'),
     t('Failed to send magic packet to MAC address'),
@@ -167,6 +181,70 @@ function replaceKnownWolErrorLabels(text) {
   });
 
   return translated;
+}
+
+// The resolutions of the settings by their short names, for the compact statistics line
+const COMPACT_STATS_RESOLUTIONS = {
+  '854x480': '480p',
+  '1280x720': '720p',
+  '1920x1080': '1080p',
+  '2560x1440': '1440p',
+  '3200x1800': '1800p',
+  '3840x2160': '4K',
+};
+
+// Read the figures of a 'StatCompactMsg: ' message (FormatCompactStatsMessage() in wasm/compact_stats.hpp), or return null
+// for a text that is not such an object
+function parseCompactStats(text) {
+  try {
+    const data = JSON.parse(text);
+    return data && typeof data === 'object' && isFinite(data.w) && isFinite(data.h) && isFinite(data.fps) ? data : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Build the compact statistics line from its figures, e.g.
+// '4K60 HEVC HDR · 59.9 fps · 74 Mb/s · RTT 3 ms · Net drops 0.1% · Wait+pacing 6.3 ms'
+// (the stream, the frames handed to the video player per second, the bitrate received, the round-trip time, the frames
+// lost on the network, and the time a frame waited for the video thread plus the frame pacing delay). A figure that is
+// not known yet (null) is left out. The idea of a compact line comes from Artemis, StreamLight and moonlight-tv.
+function formatCompactStatsLine(data) {
+  const known = (value) => typeof value === 'number' && isFinite(value);
+  const resolution = COMPACT_STATS_RESOLUTIONS[data.w + 'x' + data.h];
+  const stream = [resolution ? resolution + data.fps : data.w + 'x' + data.h + '@' + data.fps, data.codec,
+    data.hdr ? 'HDR' : data.bits === 10 ? '10-bit' : ''];
+  const parts = [stream.filter((text) => !!text).join(' ')];
+  if (known(data.rfps)) {
+    parts.push(data.rfps.toFixed(1) + ' fps');
+  }
+  if (known(data.mbps)) {
+    parts.push((data.mbps < 10 ? data.mbps.toFixed(1) : String(Math.round(data.mbps))) + ' Mb/s');
+  }
+  if (known(data.rtt)) {
+    parts.push('RTT ' + data.rtt + ' ms');
+  }
+  if (known(data.drop)) {
+    parts.push(t('Net drops') + ' ' + data.drop.toFixed(1) + '%');
+  }
+  if (known(data.delay)) {
+    parts.push(t('Wait+pacing') + ' ' + data.delay.toFixed(1) + ' ms');
+  }
+  return parts.join(' \u00b7 ');
+}
+
+// Whether the figures of the performance statistics belong on the screen: only while a stream runs. The video decoder
+// thread of the module can send one more 'StatMsg: ' or 'StatCompactMsg: ' after the end of the stream (until the stop
+// thread ends it), which would show the overlay over the app list, and the one of a stream that ended without video
+// would show over the launch screen of its retry (retryStreamAfterNoVideo() in index.js).
+function isShowingStreamStats() {
+  return isInGame === true && wasmSessionStarted === true;
+}
+
+// Show the performance statistics overlay with a text, as the compact line or as the full statistics, or hide it while
+// the text is empty
+function showPerformanceStats(text, isCompact) {
+  $('#performance-stats').toggleClass('is-compact', isCompact).text(text).css({ display: text ? 'inline-block' : 'none', background: '' });
 }
 
 // Join each protocol to its port with a no-break space, so that a line never ends between 'TCP' and '48010'
@@ -326,9 +404,33 @@ var sendMessage = function(method, params) {
   }
 }
 
+// Run one step of a handler that the native code reaches (handleMessage(), handlePromiseMessage()), and log what it
+// throws instead of passing it on, so that a failing step doesn't keep the steps after it from running: e.g. an error
+// in closeStreamMenu() at the end of a stream left the app in the stream view. Returns what the step returned, or
+// undefined after an error. The native calls themselves catch as well (PostToJs() in wasm/main.cpp); the idea comes
+// from the fork of mmadej20 (moonlight-tizen-modern, gamepad_sampling.hpp of 0b2d840).
+function runGuarded(name, step) {
+  try {
+    return step();
+  } catch (e) {
+    console.error('%c[messages.js, ' + name + ']', 'color: gray;', 'Error: ' + name + ' failed:', e);
+    return undefined;
+  }
+}
+
+// Settle the promise of a request that the native code answered (PostPromiseMessage() in wasm/main.cpp). The callback
+// is taken off the list first, so that one that throws doesn't stay there, and an answer that no request waits for
+// any more is only logged.
 var handlePromiseMessage = function(callbackId, type, msg) {
-  callbacks[callbackId][type](msg);
+  var callback = callbacks[callbackId];
   delete callbacks[callbackId];
+  if (!callback || typeof callback[type] !== 'function') {
+    console.warn('%c[messages.js, handlePromiseMessage]', 'color: gray;', 'Warning: No request waits for the answer ' + type + ' of request ' + callbackId + '.');
+    return;
+  }
+  runGuarded('handlePromiseMessage', function() {
+    callback[type](msg);
+  });
 }
 
 /**
@@ -340,12 +442,13 @@ var handlePromiseMessage = function(callbackId, type, msg) {
  * @return {void}
  */
 function leaveStreamView(host, quitApp) {
+  // Each of these steps on its own, so that the video is removed and the app list shows also when one of them fails
   // Stop the rumble that the host left on, which would otherwise keep being played
-  Rumble.stopAll();
+  runGuarded('Rumble.stopAll', function() { Rumble.stopAll(); });
   // Let the screensaver of the TV work again, since the menus are static
-  setTvScreenSaver(true);
+  runGuarded('setTvScreenSaver', function() { setTvScreenSaver(true); });
   // Release the audio scheduler of the Web Audio backend, which is a no-op for the EMSS backend
-  stopAudioScheduler();
+  runGuarded('stopAudioScheduler', function() { stopAudioScheduler(); });
   // Remove the on-screen overlays
   $('#connection-warnings, #performance-stats').css('display', 'none');
   // Remove the video stream now
@@ -447,6 +550,60 @@ function showVideoTrackRejection(rejection) {
  * @return {void}
  */
 function handleMessage(msg) {
+  // A handler that throws is logged, and the app goes on (see runGuarded())
+  runGuarded('handleMessage', function() {
+    dispatchMessage(msg);
+  });
+}
+
+// Tell the user why a stream ended, unless it ended normally
+function showStreamTerminationMessage(errorCode, videoTrackRejection, blockedPorts) {
+  switch (errorCode) {
+    case 0: // ML_ERROR_GRACEFUL_TERMINATION
+      break;
+    case -100: // ML_ERROR_NO_VIDEO_TRAFFIC
+      showNoVideoMessage(blockedPorts);
+      break;
+    case -101: // ML_ERROR_NO_VIDEO_FRAME
+      snackbarLogLong('Your network connection isn\'t performing well. Reduce your video bitrate setting or try a faster connection.');
+      break;
+    case -102: // ML_ERROR_UNEXPECTED_EARLY_TERMINATION
+      snackbarLogLong('Something went wrong on your host PC when starting the stream. Restart your host PC and try again.');
+      break;
+    case -103: // ML_ERROR_PROTECTED_CONTENT
+      snackbarLogLong('An issue occurred on your host PC while starting the stream. Make sure you don\'t have any DRM-protected content open on your host PC.');
+      break;
+    case -104: // ML_ERROR_FRAME_CONVERSION
+      snackbarLogLong('The host PC reported a fatal video encoding error. Try disabling HDR mode, changing the streaming resolution, or changing your host PC\'s display resolution.');
+      break;
+    case -200: // ERROR_VIDEO_SETUP_FAILED
+      if (videoTrackRejection) {
+        // Name the video format that the TV rejected and what to change
+        showVideoTrackRejection(videoTrackRejection);
+      } else {
+        snackbarLogLong('The TV was unable to start the streaming with the selected video settings. Try reducing the resolution or frame rate and consider changing the codec.');
+      }
+      break;
+    case -201: // ERROR_VIDEO_PLAYER_FAILED
+      snackbarLogLong('The video player of the TV stopped with an error during the stream. Start the stream again; if it keeps happening, try a lower bitrate, resolution or frame rate.');
+      break;
+    default:
+      snackbarLogLong('Connection terminated');
+      break;
+  }
+}
+
+// Tell the user that no video arrived from the host (ML_ERROR_NO_VIDEO_TRAFFIC), with the ports of the host PC that
+// the connection named for it, if any
+function showNoVideoMessage(blockedPorts) {
+  if (blockedPorts) {
+    snackbarLogLong('No video received from host. Check that the firewall of the host PC and your router don\'t block these ports: %1$s', keepPortsTogether(blockedPorts));
+  } else {
+    snackbarLogLong('No video received from host. Check the host PC\'s firewall and port forwarding rules.');
+  }
+}
+
+function dispatchMessage(msg) {
   console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Message data: ', msg);
   // If it's a recognized event, notify the appropriate function
   if (msg.indexOf('streamTerminated: ') === 0) {
@@ -457,13 +614,6 @@ function handleMessage(msg) {
     isStreamConnected = false;
     isStreamVideoTrackClosed = false;
     streamLaunchId++;
-    // The Stream Menu belongs to the stream, and 'Disconnect and quit the app on the PC' to this end of it (menus.js)
-    closeStreamMenu(false);
-    var quitApp = quitAppAfterStream;
-    quitAppAfterStream = false;
-    streamMouseEmulationActive = false;
-    leaveStreamView(streamLaunchHost || api, quitApp);
-    // Show a termination snackbar message if the termination was unexpected
     var errorCode = parseInt(msg.replace('streamTerminated: ', ''));
     // A video format that the TV rejected belongs to this stream only
     var videoTrackRejection = rejectedVideoTrack;
@@ -471,43 +621,28 @@ function handleMessage(msg) {
     // The ports named for this termination belong to this stream only
     var blockedPorts = terminationBlockedPorts;
     terminationBlockedPorts = '';
-    switch (errorCode) {
-      case 0: // ML_ERROR_GRACEFUL_TERMINATION
-        break;
-      case -100: // ML_ERROR_NO_VIDEO_TRAFFIC
-        if (blockedPorts) {
-          snackbarLogLong('No video received from host. Check that the firewall of the host PC and your router don\'t block these ports: %1$s', keepPortsTogether(blockedPorts));
-        } else {
-          snackbarLogLong('No video received from host. Check the host PC\'s firewall and port forwarding rules.');
-        }
-        break;
-      case -101: // ML_ERROR_NO_VIDEO_FRAME
-        snackbarLogLong('Your network connection isn\'t performing well. Reduce your video bitrate setting or try a faster connection.');
-        break;
-      case -102: // ML_ERROR_UNEXPECTED_EARLY_TERMINATION
-        snackbarLogLong('Something went wrong on your host PC when starting the stream. Restart your host PC and try again.');
-        break;
-      case -103: // ML_ERROR_PROTECTED_CONTENT
-        snackbarLogLong('An issue occurred on your host PC while starting the stream. Make sure you don\'t have any DRM-protected content open on your host PC.');
-        break;
-      case -104: // ML_ERROR_FRAME_CONVERSION
-        snackbarLogLong('The host PC reported a fatal video encoding error. Try disabling HDR mode, changing the streaming resolution, or changing your host PC\'s display resolution.');
-        break;
-      case -200: // ERROR_VIDEO_SETUP_FAILED
-        if (videoTrackRejection) {
-          // Name the video format that the TV rejected and what to change
-          showVideoTrackRejection(videoTrackRejection);
-        } else {
-          snackbarLogLong('The TV was unable to start the streaming with the selected video settings. Try reducing the resolution or frame rate and consider changing the codec.');
-        }
-        break;
-      case -201: // ERROR_VIDEO_PLAYER_FAILED
-        snackbarLogLong('The video player of the TV stopped with an error during the stream. Start the stream again; if it keeps happening, try a lower bitrate, resolution or frame rate.');
-        break;
-      default:
-        snackbarLogLong('Connection terminated');
-        break;
+    var quitApp = quitAppAfterStream;
+    quitAppAfterStream = false;
+    streamMouseEmulationActive = false;
+    // Each step on its own (runGuarded()), so that an error in one of them can't leave the app in the stream view.
+    // The Stream Menu belongs to the stream, and 'Disconnect and quit the app on the PC' to this end of it (menus.js)
+    runGuarded('closeStreamMenu', function() { closeStreamMenu(false); });
+    // No video arrived from the host at the start of the stream, e.g. since its display or encoder was still warming
+    // up: start it once more without a word, and show the message below only if that fails as well
+    // (retryStreamAfterNoVideo() in index.js)
+    if (errorCode === -100 && !quitApp && typeof retryStreamAfterNoVideo === 'function' && runGuarded('retryStreamAfterNoVideo', function() {
+      return retryStreamAfterNoVideo(blockedPorts);
+    }) === true) {
+      // Stop the rumble that the host left on, as leaveStreamView() does at the end of a stream: the retry is a new
+      // session with a new controller, for which the host sends no 0, and the rumble of this one is ignored from now on
+      runGuarded('Rumble.stopAll', function() { Rumble.stopAll(); });
+      return;
     }
+    runGuarded('leaveStreamView', function() { leaveStreamView(streamLaunchHost || api, quitApp); });
+    // Show a termination snackbar message if the termination was unexpected
+    runGuarded('showStreamTerminationMessage', function() {
+      showStreamTerminationMessage(errorCode, videoTrackRejection, blockedPorts);
+    });
   } else if (msg === 'Connection Established') {
     // A connection that completes after the user already stopped the stream or cancelled its start must neither
     // show the video nor turn the screensaver off in the menus
@@ -572,35 +707,35 @@ function handleMessage(msg) {
     // Show the connection warnings overlay
     $('#connection-warnings').css('background', 'rgba(0, 0, 0, 0.5)');
     $('#connection-warnings').text(translateBackendMessage(msg.replace('WarningMsg: ', '')));
-  } else if (msg.indexOf('NoStatMsg: ') === 0) {
-    // Toggle the performance stats switch and save the state
-    if ($('#performanceStatsSwitch').prop('checked')) {
-      $('#performanceStatsBtn')[0].MaterialSwitch.off();
-      savePerformanceStats();
-      $('#performance-stats').css('display', 'none');
-      if (isStreamMenuOpen) {
-        updateStreamMenu();
-      }
+  } else if (msg.indexOf('StatLevelMsg: ') === 0) {
+    // The stats key (YELLOW, the Stream Menu, the gamepad or keyboard combo) stepped the performance statistics to their
+    // next level: keep it as the setting, and hide the overlay until the figures of the new level arrive
+    savePerformanceStatsLevel(parseInt(msg.replace('StatLevelMsg: ', ''), 10));
+    showPerformanceStats('', false);
+    if (isStreamMenuOpen) {
+      updateStreamMenu();
     }
-    // Hide the performance statistics overlay
-    $('#performance-stats').css('background', 'transparent');
-    $('#performance-stats').text('');
+  } else if (msg.indexOf('StatCompactMsg: ') === 0) {
+    // The figures of the compact line, about once per second. Ones still on their way from another level are ignored,
+    // and so are the last ones of a stream that is over (isShowingStreamStats())
+    if (!isShowingStreamStats()) {
+      return;
+    }
+    var compactStats = parseCompactStats(msg.replace('StatCompactMsg: ', ''));
+    if (compactStats && getPerformanceStatsLevel() === PERFORMANCE_STATS_COMPACT) {
+      showPerformanceStats(formatCompactStatsLine(compactStats), true);
+    }
   } else if (msg.indexOf('StatMsg: ') === 0) {
-    // Toggle the performance stats switch and save the state
-    if (!$('#performanceStatsSwitch').prop('checked')) {
-      $('#performanceStatsBtn')[0].MaterialSwitch.on();
-      savePerformanceStats();
-      $('#performance-stats').css('display', 'inline-block');
-      if (isStreamMenuOpen) {
-        updateStreamMenu();
-      }
+    // The text of the full statistics, about once per second. Text still on its way from another level is ignored, and
+    // so is the last one of a stream that is over (isShowingStreamStats()).
+    if (!isShowingStreamStats() || getPerformanceStatsLevel() !== PERFORMANCE_STATS_FULL) {
+      return;
     }
     // Show the performance statistics overlay, followed by the network connection of the TV if it's known
     // and the audio statistics of the Web Audio backend
-    $('#performance-stats').css('background', 'rgba(0, 0, 0, 0.5)');
     var audioStatsLines = typeof getAudioStatsLines === 'function' ? getAudioStatsLines() : '';
     var backgroundStatsLine = typeof getBackgroundStatsLine === 'function' ? getBackgroundStatsLine() : '';
-    $('#performance-stats').text(translateBackendMessage(msg.replace('StatMsg: ', '')) + (streamNetworkInfo ? '\n' + streamNetworkInfo : '') + (audioStatsLines ? '\n' + audioStatsLines : '') + (backgroundStatsLine ? '\n' + backgroundStatsLine : ''));
+    showPerformanceStats(translateBackendMessage(msg.replace('StatMsg: ', '')) + (streamNetworkInfo ? '\n' + streamNetworkInfo : '') + (audioStatsLines ? '\n' + audioStatsLines : '') + (backgroundStatsLine ? '\n' + backgroundStatsLine : ''), false);
     // Keep the Wi-Fi signal strength of the network connection current while the overlay is shown
     refreshStreamNetworkInfo();
   } else if (msg.indexOf('controllerRumble: ') === 0) {

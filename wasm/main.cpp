@@ -1,5 +1,7 @@
 #include "moonlight_wasm.hpp"
+#include "compact_stats.hpp"
 #include "controller_type.hpp"
+#include "wake_on_lan.hpp"
 
 #include <pthread.h>
 #include <stdio.h>
@@ -44,7 +46,7 @@ MoonlightInstance::MoonlightInstance()
     m_MouseLastPosX(-1),
     m_MouseLastPosY(-1),
     m_WaitingForAllModifiersUp(false),
-    m_AccumulatedTicks(0),
+    m_AccumulatedMilliTicks(0),
     m_MouseDeltaX(0),
     m_MouseDeltaY(0),
     m_HttpThreadPoolSequence(0),
@@ -103,22 +105,12 @@ void MoonlightInstance::OnConnectionStopped(uint32_t error) {
 }
 
 void MoonlightInstance::StopConnection() {
+  // Also interrupts a connection that is still being started (CancelPendingSetup() in connectionlistener.cpp)
   CancelPendingSetup();
 
   // We'll need to call the listener ourselves since our connection terminated
   // callback won't be invoked for a manually requested termination.
   OnConnectionStopped(0);
-}
-
-void MoonlightInstance::CancelPendingSetup() {
-  // Mark the connection as cancelled and wake up the media pipeline setup if it's waiting,
-  // so that the connection thread can return from LiStartConnection. The flag is set while
-  // holding the mutex, so that a wait that is just about to start can't miss the wake-up.
-  std::unique_lock<std::mutex> lock(m_Mutex);
-  m_ConnectionCancelled = true;
-  m_EmssStateChanged.notify_all();
-  m_EmssAudioStateChanged.notify_all();
-  m_EmssVideoStateChanged.notify_all();
 }
 
 void* MoonlightInstance::StopThreadFunc(void* context) {
@@ -354,7 +346,7 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   std::string rikey, std::string rikeyid, std::string appversion, std::string gfeversion, std::string rtspurl, int serverCodecModeSupport,
   bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, bool flipABfaceButtons, bool flipXYfaceButtons,
   std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
-  std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, bool performanceStats,
+  std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, int performanceStats,
   bool refFrameInvalidation, bool hdrMetadata, std::string controllerType) {
   
   if (m_StopThread != 0) {
@@ -371,8 +363,6 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   PostToJs("Setting the Video resolution to: " + width + "x" + height);
   PostToJs("Setting the Video frame rate to: " + fps + " FPS");
   PostToJs("Setting the Video bitrate to: " + bitrate + " Kbps");
-  PostToJs("Setting the Remote input key to: " + rikey);
-  PostToJs("Setting the Remote input key ID to: " + rikeyid);
   PostToJs("Setting the App version to: " + appversion);
   PostToJs("Setting the GFE version to: " + gfeversion);
   PostToJs("Setting the RTSP session URL to: " + rtspurl);
@@ -395,7 +385,7 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   PostToJs("Setting the Full color range to: " + std::to_string(fullRange));
   PostToJs("Setting the Game mode to: " + std::to_string(gameMode));
   PostToJs("Setting the Disable connection warnings to: " + std::to_string(disableWarnings));
-  PostToJs("Setting the Performance statistics to: " + std::to_string(performanceStats));
+  PostToJs("Setting the Performance statistics to: " + std::to_string(performanceStats) + " (0 off, 1 compact, 2 full)");
   PostToJs("Setting the Reference frame invalidation to: " + std::to_string(refFrameInvalidation));
   PostToJs("Setting the HDR static metadata to: " + std::to_string(hdrMetadata));
 
@@ -567,7 +557,7 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   m_FullRangeEnabled = fullRange;
   m_GameModeEnabled = gameMode;
   m_DisableWarningsEnabled = disableWarnings;
-  m_PerformanceStatsEnabled = performanceStats;
+  m_PerformanceStatsLevel = ClampPerformanceStatsLevel(performanceStats);
   m_RefFrameInvalidationEnabled = refFrameInvalidation;
   m_HdrMetadataEnabled = hdrMetadata;
 
@@ -617,10 +607,12 @@ void MoonlightInstance::STUN(int callbackId) {
 }
 
 void MoonlightInstance::Pair_private(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber) {
-  char* ppkstr;
+  char* ppkstr = NULL;
   int err = gs_pair(atoi(serverMajorVersion.c_str()), address.c_str(), (unsigned short)httpPort, randomNumber.c_str(), &ppkstr);
 
-  ClLogMessage("Paired host address: %s:%d using PIN: %s with result: %d\n", address.c_str(), httpPort, randomNumber.c_str(), err);
+  // The PIN stays out of the log, like the remote input key of a stream. A wrong PIN is GS_PIN_WRONG (-7), which
+  // pairingDialog() in index.js reports as such.
+  ClLogMessage("Paired host address: %s:%d with result: %d\n", address.c_str(), httpPort, err);
   if (err == 0) {
     PostPromiseMessage(callbackId, "resolve", ppkstr);
     free(ppkstr);
@@ -634,46 +626,35 @@ void MoonlightInstance::Pair(int callbackId, std::string serverMajorVersion, std
   m_Dispatcher.post_job(std::bind(&MoonlightInstance::Pair_private, this, callbackId, serverMajorVersion, address, httpPort, randomNumber), false);
 }
 
-void MoonlightInstance::WakeOnLan(int callbackId, std::string macAddress) {
-  m_Dispatcher.post_job(std::bind(&MoonlightInstance::WakeOnLan_private, this, callbackId, macAddress), false);
+void MoonlightInstance::WakeOnLan(int callbackId, std::string macAddress, std::string subnetBroadcast) {
+  m_Dispatcher.post_job(std::bind(&MoonlightInstance::WakeOnLan_private, this, callbackId, macAddress, subnetBroadcast), false);
 }
 
-void MoonlightInstance::WakeOnLan_private(int callbackId, std::string macAddress) {
-  unsigned char magicPacket[102];
+void MoonlightInstance::WakeOnLan_private(int callbackId, std::string macAddress, std::string subnetBroadcast) {
+  unsigned char magicPacket[kMagicPacketSize];
   unsigned char mac[6];
 
   // Validate and parse the MAC address
-  if (sscanf(macAddress.c_str(), "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx", &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]) != 6) {
+  if (!ParseMacAddress(macAddress, mac)) {
     ClLogMessage("Invalid MAC address format: %s\n", macAddress.c_str());
     PostPromiseMessage(callbackId, "reject", "Invalid MAC address format");
     return;
   }
 
-  // Check for invalid default MAC address (00:00:00:00:00:00)
-  bool isZeroMac = true;
-  for (int i = 0; i < 6; i++) {
-    if (mac[i] != 0) {
-      isZeroMac = false;
-      break;
-    }
-  }
-  if (isZeroMac) {
-    ClLogMessage("Invalid MAC address: default zero MAC address not allowed: %s\n", macAddress.c_str());
+  // A host that didn't report its MAC address has 00:00:00:00:00:00, which no packet can wake. Say so at once, instead
+  // of leaving the promise of the request unsettled and the dialog waiting forever.
+  if (IsZeroMacAddress(mac)) {
+    ClLogMessage("Not sending a magic packet: the MAC address of the host is unknown (%s)\n", macAddress.c_str());
+    PostPromiseMessage(callbackId, "reject", kWakeOnLanUnknownMacError);
     return;
   }
 
-  // Fill magic packet with the MAC address
-  for (int i = 0; i < 6; i++) {
-    magicPacket[i] = 0xFF;
-  }
-  for (int i = 1; i <= 16; i++) {
-    memcpy(&magicPacket[i * 6], &mac, 6 * sizeof(unsigned char));
-  }
+  BuildMagicPacket(mac, magicPacket);
 
   // Create UDP socket
   int udpSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   if (udpSocket == -1) {
-    ClLogMessage("Failed to create socket");
+    ClLogMessage("Failed to create socket\n");
     PostPromiseMessage(callbackId, "reject", "Failed to create socket");
     return;
   }
@@ -681,53 +662,46 @@ void MoonlightInstance::WakeOnLan_private(int callbackId, std::string macAddress
   // Enable broadcasting
   int broadcast = 1;
   if (setsockopt(udpSocket, SOL_SOCKET, SO_BROADCAST, &broadcast, sizeof(broadcast)) == -1) {
-    ClLogMessage("Failed to enable broadcast");
+    ClLogMessage("Failed to enable broadcast\n");
     close(udpSocket);
     PostPromiseMessage(callbackId, "reject", "Failed to enable broadcast");
     return;
   }
 
-  // Set up destination address for the magic packet
-  struct sockaddr_in addr;
-  memset(&addr, 0, sizeof(addr));
-  addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = INADDR_BROADCAST;
-  addr.sin_port = htons(9); // Wake-on-LAN typically uses port 9
-
-  bool sent = false;
-
-  // Send the magic packet over IPv4
-  if (sendto(udpSocket, magicPacket, sizeof(magicPacket), 0, (struct sockaddr*) &addr, sizeof(addr)) == -1) {
-    ClLogMessage("Failed to send magic packet to MAC address: %s\n", macAddress.c_str());
-  } else {
-    ClLogMessage("Magic packet sent successfully to MAC address: %s\n", macAddress.c_str());
-    sent = true;
+  // The limited broadcast, the broadcast address of the subnet of the TV and, over IPv6, the link-local all-nodes
+  // address ff02::1 (wasm/wake_on_lan.hpp)
+  std::vector<WakeOnLanTarget> targets;
+  in_addr address;
+  address.s_addr = htonl(INADDR_BROADCAST);
+  targets.push_back(MakeWakeOnLanTarget(udpSocket, address));
+  if (ParseSubnetBroadcastAddress(subnetBroadcast, &address)) {
+    targets.push_back(MakeWakeOnLanTarget(udpSocket, address));
   }
-
-  // Close the IPv4 socket
-  close(udpSocket);
-
-  // Send the magic packet over IPv6
   int udp6Socket = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
   if (udp6Socket != -1) {
-    struct sockaddr_in6 addr6;
-    memset(&addr6, 0, sizeof(addr6));
-    addr6.sin6_family = AF_INET6;
-    addr6.sin6_port = htons(9); // Wake-on-LAN typically uses port 9
-    // ff02::1 is the link-local all-nodes multicast address
-    inet_pton(AF_INET6, "ff02::1", &addr6.sin6_addr);
+    in6_addr allNodes;
+    inet_pton(AF_INET6, "ff02::1", &allNodes);
+    targets.push_back(MakeWakeOnLanTarget(udp6Socket, allNodes));
+  }
 
-    if (sendto(udp6Socket, magicPacket, sizeof(magicPacket), 0, (struct sockaddr*) &addr6, sizeof(addr6)) == -1) {
-      ClLogMessage("Failed to send IPv6 magic packet to MAC address: %s\n", macAddress.c_str());
-    } else {
-      ClLogMessage("IPv6 Magic packet sent successfully to MAC address: %s\n", macAddress.c_str());
-      sent = true;
-    }
+  const int sent = SendWakeOnLanRounds(targets,
+    [&magicPacket](int socket, const sockaddr* destination, socklen_t length) {
+      return sendto(socket, magicPacket, sizeof(magicPacket), 0, destination, length) == (ssize_t)sizeof(magicPacket);
+    },
+    [](int milliseconds) {
+      usleep(milliseconds * 1000);
+    });
+
+  close(udpSocket);
+  if (udp6Socket != -1) {
     close(udp6Socket);
   }
 
-  if (!sent) {
-    PostPromiseMessage(callbackId, "reject", "Failed to send magic packet");
+  ClLogMessage("Sent %d of %d magic packets to MAC address: %s (subnet broadcast: %s)\n", sent,
+               kWakeOnLanRounds * (int)targets.size() * (int)(sizeof(kWakeOnLanPorts) / sizeof(kWakeOnLanPorts[0])),
+               macAddress.c_str(), subnetBroadcast.empty() ? "unknown" : subnetBroadcast.c_str());
+  if (sent == 0) {
+    PostPromiseMessage(callbackId, "reject", "Failed to send magic packet to MAC address " + macAddress);
     return;
   }
 
@@ -770,7 +744,7 @@ MessageResult startStream(std::string host, int httpPort, std::string width, std
   std::string rikey, std::string rikeyid, std::string appversion, std::string gfeversion, std::string rtspurl, int serverCodecModeSupport,
   bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, bool flipABfaceButtons, bool flipXYfaceButtons,
   std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
-  std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, bool performanceStats,
+  std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, int performanceStats,
   bool refFrameInvalidation, bool hdrMetadata, std::string controllerType) {
   PostToJs("Starting the streaming session...");
   return g_Instance->StartStream(host, httpPort, width, height, fps, bitrate, rikey, rikeyid, appversion, gfeversion, rtspurl, serverCodecModeSupport,
@@ -804,14 +778,25 @@ void pair(int callbackId, std::string serverMajorVersion, std::string address, i
   g_Instance->Pair(callbackId, serverMajorVersion, address, httpPort, randomNumber);
 }
 
-void wakeOnLan(int callbackId, std::string macAddress) {
-  g_Instance->WakeOnLan(callbackId, macAddress);
+void wakeOnLan(int callbackId, std::string macAddress, std::string subnetBroadcast) {
+  g_Instance->WakeOnLan(callbackId, macAddress, subnetBroadcast);
 }
 
+// The JavaScript of the calls below, and of every other MAIN_THREAD_EM_ASM block, runs on the main thread for a native
+// thread: while that thread waits for it (MAIN_THREAD_EM_ASM), or later from the queue of proxied calls
+// (MAIN_THREAD_ASYNC_EM_ASM). An exception that left such a body would never tell the waiting thread that the call is
+// done, and Emscripten 1.39 then stops running proxied calls on the main thread at all (the nesting flag of
+// emscripten_current_thread_process_queued_calls() in library_pthread.c stays set), which froze the whole app during a
+// stream: a frozen picture, no sound, no input. So each body catches what its handler throws and logs it instead.
+// unit/em-asm-guards.test.js runs every block with handlers that throw. The idea comes from the fork of mmadej20
+// (moonlight-tizen-modern, gamepad_sampling.hpp of 0b2d840).
 void PostToJs(std::string msg) {
   MAIN_THREAD_EM_ASM({
-    const msg = UTF8ToString($0);
-    handleMessage(msg);
+    try {
+      handleMessage(UTF8ToString($0));
+    } catch (e) {
+      console.error('%c[main.cpp, PostToJs]', 'color: gray;', 'Error: handleMessage() failed:', e);
+    }
   }, msg.c_str());
 }
 
@@ -823,25 +808,33 @@ void PostToJsAsync(std::string msg) {
   }
 
   MAIN_THREAD_ASYNC_EM_ASM({
-    const msg = UTF8ToString($0);
-    _free($0);
-    handleMessage(msg);
+    try {
+      const msg = UTF8ToString($0);
+      _free($0);
+      handleMessage(msg);
+    } catch (e) {
+      console.error('%c[main.cpp, PostToJsAsync]', 'color: gray;', 'Error: handleMessage() failed:', e);
+    }
   }, copy);
 }
 
 void PostPromiseMessage(int callbackId, const std::string& type, const std::string& response) {
   MAIN_THREAD_EM_ASM({
-    const type = UTF8ToString($1);
-    const response = UTF8ToString($2);
-    handlePromiseMessage($0, type, response);
+    try {
+      handlePromiseMessage($0, UTF8ToString($1), UTF8ToString($2));
+    } catch (e) {
+      console.error('%c[main.cpp, PostPromiseMessage]', 'color: gray;', 'Error: handlePromiseMessage() failed:', e);
+    }
   }, callbackId, type.c_str(), response.c_str());
 }
 
 void PostPromiseMessage(int callbackId, const std::string& type, const std::vector<uint8_t>& response) {
   MAIN_THREAD_EM_ASM({
-    const type = UTF8ToString($1);
-    const response = HEAPU8.slice($2, $2 + $3);
-    handlePromiseMessage($0, type, response);
+    try {
+      handlePromiseMessage($0, UTF8ToString($1), HEAPU8.slice($2, $2 + $3));
+    } catch (e) {
+      console.error('%c[main.cpp, PostPromiseMessage]', 'color: gray;', 'Error: handlePromiseMessage() failed:', e);
+    }
   }, callbackId, type.c_str(), response.data(), response.size());
 }
 

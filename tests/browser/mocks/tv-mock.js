@@ -45,8 +45,9 @@
     wifiSignal: 0.78,
     forceGM: false,
     // The version of res/config.xml, which unit/app-identity.test.js keeps in step
-    appVersion: '1.19.101',
+    appVersion: '1.19.102',
     ip: '192.168.0.50',
+    subnetMask: '255.255.255.0',
     failApis: '',
     wasmStartMs: 50,
     wasmPlayer: 'none',
@@ -54,7 +55,7 @@
   };
 
   var BOOLEAN_KEYS = ['hdr', 'forceGM'];
-  var CONFIG_KEYS = ['tv', 'model', 'series', 'modelCode', 'panel', 'hdr', 'tizen', 'conn', 'wifiSignal', 'forceGM', 'appVersion', 'ip', 'failApis', 'wasmStartMs', 'wasmPlayer', 'codecs'];
+  var CONFIG_KEYS = ['tv', 'model', 'series', 'modelCode', 'panel', 'hdr', 'tizen', 'conn', 'wifiSignal', 'forceGM', 'appVersion', 'ip', 'subnetMask', 'failApis', 'wasmStartMs', 'wasmPlayer', 'codecs'];
 
   // Convert a query string value to a boolean, accepting 1/0, true/false, yes/no and on/off
   function toBoolean(value) {
@@ -309,6 +310,9 @@
         },
         getIp: function() {
           return config.ip;
+        },
+        getSubnetMask: function() {
+          return config.subnetMask;
         }
       },
       appcommon: {

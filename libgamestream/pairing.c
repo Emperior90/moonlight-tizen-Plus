@@ -34,6 +34,7 @@
 #include <openssl/x509.h>
 #include <openssl/pem.h>
 #include <openssl/err.h>
+#include <openssl/crypto.h>
 
 const char* gs_error;
 
@@ -59,7 +60,8 @@ static int xml_search(char* data, size_t len, char* node, char** result) {
         return GS_FAILED;
     }
     
-    endOffset = strstr(data, endTag);
+    // Look for the end tag after the start tag, so that an end tag earlier in the answer can't cut the value short
+    endOffset = strstr(startOffset + strlen(startTag), endTag);
     if (endOffset == NULL) {
         free(data);
         return GS_FAILED;
@@ -79,6 +81,34 @@ static void bytes_to_hex(unsigned char *in, char *out, size_t len) {
         sprintf(out + i * 2, "%02x", in[i]);
     }
     out[len * 2] = 0;
+}
+
+static int hex_digit_value(char digit) {
+    if (digit >= '0' && digit <= '9')
+        return digit - '0';
+    if (digit >= 'a' && digit <= 'f')
+        return digit - 'a' + 10;
+    if (digit >= 'A' && digit <= 'F')
+        return digit - 'A' + 10;
+    return -1;
+}
+
+// Decode a hex string of exactly 2 * len digits into len bytes. Any other length or a character that isn't a hex
+// digit fails with GS_INVALID, so that a crafted answer of the host can't write past the buffer, which the earlier
+// loop over strlen() of the answer did for the fixed-size buffers on the stack. The idea of decoding the fields with
+// their exact length comes from the fork of mmadej20 (moonlight-tizen-modern, hex_utils.c).
+static int hex_to_bytes(const char *hex, unsigned char *out, size_t len) {
+    if (hex == NULL || strlen(hex) != len * 2)
+        return GS_INVALID;
+
+    for (size_t i = 0; i < len; i++) {
+        int high = hex_digit_value(hex[i * 2]);
+        int low = hex_digit_value(hex[i * 2 + 1]);
+        if (high < 0 || low < 0)
+            return GS_INVALID;
+        out[i] = (unsigned char)((high << 4) | low);
+    }
+    return GS_OK;
 }
 
 static int sign_it(const unsigned char *msg, size_t mlen, unsigned char **sig, size_t *slen, EVP_PKEY *pkey) {
@@ -144,6 +174,52 @@ static bool verifySignature(const unsigned char *data, int dataLength, unsigned 
     return result > 0;
 }
 
+// The length of the hashes of the pairing: SHA-256 from server major version 7 (GFE 3.x and every Sunshine), SHA-1
+// before
+static int pairing_hash_length(int serverMajorVersion) {
+    return serverMajorVersion >= 7 ? 32 : 20;
+}
+
+// Check that the host knows the PIN. The first hash_length bytes of its decrypted challenge response must be the hash
+// of our challenge (the 16 random bytes before their encryption), the signature of the host's certificate (256 bytes
+// for the 2048-bit RSA key of every host) and the secret of its pairing secret (its first 16 bytes). A host that
+// encrypted with another PIN, or one that doesn't know the PIN at all and only pretends to be the host, can't produce
+// it. The response must hold at least hash_length + 16 bytes, the hash and the challenge of the host. Returns GS_OK,
+// GS_PIN_WRONG for a hash that doesn't match, or GS_INVALID or GS_FAILED when the hash can't be computed. Ported from
+// moonlight-qt (NvPairingManager::pair) and moonlight-tv (gs_pair in libgamestream/src/client.c), which report the
+// mismatch as a wrong PIN.
+static int verify_server_challenge_response(int serverMajorVersion, const unsigned char *client_challenge,
+                                            X509 *server_cert, const unsigned char *server_secret,
+                                            const unsigned char *response, size_t response_length) {
+    const int hash_length = pairing_hash_length(serverMajorVersion);
+    const ASN1_BIT_STRING *signature = NULL;
+    unsigned char expected[EVP_MAX_MD_SIZE];
+    unsigned int expected_length = 0;
+    int ok;
+
+    if (response_length < (size_t)hash_length + 16)
+        return GS_INVALID;
+
+    X509_get0_signature(&signature, NULL, server_cert);
+    if (signature == NULL || signature->data == NULL || signature->length <= 0)
+        return GS_INVALID;
+
+    EVP_MD_CTX *ctx = EVP_MD_CTX_create();
+    if (ctx == NULL)
+        return GS_OUT_OF_MEMORY;
+    ok = EVP_DigestInit_ex(ctx, serverMajorVersion >= 7 ? EVP_sha256() : EVP_sha1(), NULL) == 1 &&
+         EVP_DigestUpdate(ctx, client_challenge, 16) == 1 &&
+         EVP_DigestUpdate(ctx, signature->data, (size_t)signature->length) == 1 &&
+         EVP_DigestUpdate(ctx, server_secret, 16) == 1 &&
+         EVP_DigestFinal_ex(ctx, expected, &expected_length) == 1 &&
+         expected_length == (unsigned int)hash_length;
+    EVP_MD_CTX_destroy(ctx);
+    if (!ok)
+        return GS_FAILED;
+
+    return CRYPTO_memcmp(expected, response, (size_t)hash_length) == 0 ? GS_OK : GS_PIN_WRONG;
+}
+
 X509* get_cert(PHTTP_DATA data) {
     char *pemcerthex;
 
@@ -151,10 +227,12 @@ X509* get_cert(PHTTP_DATA data) {
         return NULL;
 
     // Convert cert from hex string to the PEM string and null terminate
-    int hexstrlen = strlen(pemcerthex);
-    char *pemcert = malloc(hexstrlen / 2 + 1);
-    for (int count = 0; count < hexstrlen; count += 2) {
-        sscanf(&pemcerthex[count], "%2hhx", &pemcert[count / 2]);
+    size_t hexstrlen = strlen(pemcerthex);
+    char *pemcert = hexstrlen % 2 == 0 ? malloc(hexstrlen / 2 + 1) : NULL;
+    if (pemcert == NULL || hex_to_bytes(pemcerthex, (unsigned char*)pemcert, hexstrlen / 2) != GS_OK) {
+        free(pemcert);
+        free(pemcerthex);
+        return NULL;
     }
     pemcert[hexstrlen / 2] = 0;
     free(pemcerthex);
@@ -252,14 +330,37 @@ int gs_unpair(const char* address, unsigned short httpPort) {
   return ret;
 }
 
+// Make the host drop its pairing session after a wrong PIN. Sunshine (at least up to v2025.924) keeps the session of a
+// client until clientpairingsecret or a failed stage removes it, and it has no /unpair route, so the next pairing
+// attempt would get the stale session back and fail with 'Out of order call to getservercert'. A pairing secret of
+// random bytes, not signed with our key, fails the check of the host (paired 0) and removes the session, while no valid
+// signed secret leaves the client. The answer doesn't matter.
+static void abandon_pairing_session(const char* host_for_url, unsigned short httpPort, PHTTP_DATA data) {
+  unsigned char random_secret[16 + 256];
+  char random_secret_hex[(16 + 256) * 2 + 1];
+  char url[4096];
+
+  RAND_bytes(random_secret, sizeof(random_secret));
+  bytes_to_hex(random_secret, random_secret_hex, sizeof(random_secret));
+  snprintf(url, sizeof(url), "http://%s:%u/pair?uniqueid=%s&devicename=roth&updateState=1&clientpairingsecret=%s", host_for_url, httpPort, g_UniqueId, random_secret_hex);
+  http_request(url, NULL, data);
+}
+
 int gs_pair(int serverMajorVersion, const char* address, unsigned short httpPort, const char* pin, char** curl_ppk_string) {
   int ret = GS_OK;
   char* result = NULL;
   X509* server_cert = NULL;
+  unsigned char* signature = NULL;
   char url[4096];
   unsigned short sanitizedHttpPort = sanitize_http_port(httpPort);
   unsigned char salt_data[16];
   char salt_hex[33];
+
+  *curl_ppk_string = NULL;
+  // The PIN is the 4 digits that the user enters on the host, which the AES key below is derived from
+  if (pin == NULL || strlen(pin) != 4)
+    return GS_INVALID;
+
   RAND_bytes(salt_data, 16);
   bytes_to_hex(salt_data, salt_hex, 16);
 
@@ -295,7 +396,7 @@ int gs_pair(int serverMajorVersion, const char* address, unsigned short httpPort
   memcpy(salt_pin, salt_data, 16);
   memcpy(salt_pin+16, pin, 4);
 
-  int hash_length = serverMajorVersion >= 7 ? 32 : 20;
+  int hash_length = pairing_hash_length(serverMajorVersion);
   if (serverMajorVersion >= 7)
     SHA256(salt_pin, 20, aes_key_hash);
   else
@@ -332,10 +433,12 @@ int gs_pair(int serverMajorVersion, const char* address, unsigned short httpPort
     goto cleanup;
   }
 
+  // The hash of the host (hash_length bytes) and its challenge (16 bytes), padded to 48 bytes for AES
   unsigned char challenge_response_data_enc[48];
   unsigned char challenge_response_data[48];
-  for (int count = 0; count < strlen(result); count += 2) {
-    sscanf(&result[count], "%2hhx", &challenge_response_data_enc[count / 2]);
+  if (hex_to_bytes(result, challenge_response_data_enc, sizeof(challenge_response_data_enc)) != GS_OK) {
+    ret = GS_INVALID;
+    goto cleanup;
   }
 
   for (int i = 0; i < 48; i += 16) {
@@ -345,13 +448,19 @@ int gs_pair(int serverMajorVersion, const char* address, unsigned short httpPort
   unsigned char client_secret_data[16];
   RAND_bytes(client_secret_data, 16);
 
-  ASN1_BIT_STRING *asnSignature;
+  // The signature of our own certificate, 256 bytes for its 2048-bit RSA key (mkcert.c)
+  const ASN1_BIT_STRING *asnSignature = NULL;
   X509_get0_signature(&asnSignature, NULL, g_Cert);
+  if (asnSignature == NULL || asnSignature->data == NULL || asnSignature->length != 256) {
+    ret = GS_FAILED;
+    goto cleanup;
+  }
 
   unsigned char challenge_response[16 + 256 + 16];
   unsigned char challenge_response_hash[32];
   unsigned char challenge_response_hash_enc[32];
   char challenge_response_hex[65];
+  memset(challenge_response_hash, 0, sizeof(challenge_response_hash));
   memcpy(challenge_response, challenge_response_data + hash_length, 16);
   memcpy(challenge_response + 16, asnSignature->data, 256);
   memcpy(challenge_response + 16 + 256, client_secret_data, 16);
@@ -386,9 +495,11 @@ int gs_pair(int serverMajorVersion, const char* address, unsigned short httpPort
     goto cleanup;
   }
 
+  // The secret of the host (16 bytes) and its signature with the key of the host's certificate (256 bytes)
   unsigned char pairing_secret[16 + 256];
-  for (int count = 0; count < strlen(result); count += 2) {
-    sscanf(&result[count], "%2hhx", &pairing_secret[count / 2]);
+  if (hex_to_bytes(result, pairing_secret, sizeof(pairing_secret)) != GS_OK) {
+    ret = GS_INVALID;
+    goto cleanup;
   }
 
   if (!verifySignature(pairing_secret, 16, pairing_secret+16, 256, server_cert)) {
@@ -396,9 +507,17 @@ int gs_pair(int serverMajorVersion, const char* address, unsigned short httpPort
     goto cleanup;
   }
 
-  unsigned char *signature = NULL;
+  // Only a host that knows the PIN gets our signed secret and is trusted with its certificate from now on
+  if ((ret = verify_server_challenge_response(serverMajorVersion, challenge_data, server_cert, pairing_secret,
+                                              challenge_response_data, sizeof(challenge_response_data))) != GS_OK) {
+    // The host is waiting for our pairing secret: let it end the session, so that the next attempt starts afresh
+    if (ret == GS_PIN_WRONG)
+      abandon_pairing_session(host_for_url, sanitizedHttpPort, data);
+    goto cleanup;
+  }
+
   size_t s_len;
-  if (sign_it(client_secret_data, 16, &signature, &s_len, g_PrivateKey) != GS_OK) {
+  if (sign_it(client_secret_data, 16, &signature, &s_len, g_PrivateKey) != GS_OK || s_len != 256) {
     ret = GS_FAILED;
     goto cleanup;
   }
@@ -434,6 +553,10 @@ int gs_pair(int serverMajorVersion, const char* address, unsigned short httpPort
 
   if (server_cert != NULL)
     X509_free(server_cert);
+
+  // sign_it() allocates the signature, also when it fails afterwards
+  if (signature != NULL)
+    OPENSSL_free(signature);
 
   http_free_data(data);
 

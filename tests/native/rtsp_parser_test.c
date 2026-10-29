@@ -2,6 +2,8 @@
 // upstream commit 5ec8397 ('Fix memory leak if duplicate RTSP options are inserted'): an option that a message carries
 // twice replaces the first one and frees what it no longer needs, and an item that is already in the list is left
 // alone. The address sanitizer's leak check, which the native tests run with, fails the test on any leak at exit.
+// A message that is cut off inside a header is malformed and read only within its buffer: the parser read 1 to 2
+// bytes past it before, which the address sanitizer catches.
 
 #include "test_support_c.h"
 
@@ -101,6 +103,58 @@ static void test_duplicate_header_of_a_request(void) {
   freeMessage(&message);
 }
 
+// Parse exactly the given bytes, from a buffer of that size, so that the address sanitizer sees any read past them
+static int parseExact(PRTSP_MESSAGE message, const char* text) {
+  size_t length = strlen(text);
+  char* copy = malloc(length);
+  memcpy(copy, text, length);
+  int result = parseRtspMessage(message, copy, (int)length);
+  free(copy);
+  return result;
+}
+
+static void test_truncated_message_is_malformed(void) {
+  // Cut off in the value of a header, right after the colon of a header, and after a CR of a header line
+  const char* truncated[] = {
+    "RTSP/1.0 200 OK\r\nCSeq: 3",
+    "RTSP/1.0 200 OK\r\nCSeq: 3\r\nSession: DEADBEEFCAFE",
+    "RTSP/1.0 200 OK\r\nCSeq:",
+    "RTSP/1.0 200 OK\r\nCSeq: 3\r",
+  };
+  for (size_t i = 0; i < sizeof(truncated) / sizeof(truncated[0]); i++) {
+    RTSP_MESSAGE message;
+    int result = parseExact(&message, truncated[i]);
+    CHECK_EQ_INT(result, RTSP_ERROR_MALFORMED);
+    if (result == RTSP_ERROR_SUCCESS) {
+      freeMessage(&message);
+    }
+  }
+}
+
+static void test_complete_messages_still_parse(void) {
+  // With the double CRLF, with only one (RTSP over ENet), with the second CRLF missing one byte, and with a payload
+  const char* complete[] = {
+    "RTSP/1.0 200 OK\r\nCSeq: 3\r\n\r\n",
+    "RTSP/1.0 200 OK\r\nCSeq: 3\r\n",
+    "RTSP/1.0 200 OK\r\nCSeq: 3\r\n\r",
+    "RTSP/1.0 200 OK\r\nCSeq: 3\r\nContent-Length: 4\r\n\r\nv=0\n",
+  };
+  for (size_t i = 0; i < sizeof(complete) / sizeof(complete[0]); i++) {
+    RTSP_MESSAGE message;
+    int result = parseExact(&message, complete[i]);
+    CHECK_EQ_INT(result, RTSP_ERROR_SUCCESS);
+    if (result != RTSP_ERROR_SUCCESS) {
+      continue;
+    }
+    CHECK_EQ_INT(message.sequenceNumber, 3);
+    if (i == 3) {
+      CHECK_EQ_INT(message.payloadLength, 4);
+      CHECK(memcmp(message.payload, "v=0\n", 4) == 0);
+    }
+    freeMessage(&message);
+  }
+}
+
 int main(void) {
   RUN_TEST("a header that a response carries twice keeps its last value without a leak (upstream 5ec8397)",
            test_duplicate_header_keeps_the_last_value);
@@ -110,5 +164,9 @@ int main(void) {
            test_inserting_the_last_item_again_changes_nothing);
   RUN_TEST("a header that a request carries twice keeps its last value without a leak (upstream 5ec8397)",
            test_duplicate_header_of_a_request);
+  RUN_TEST("a message cut off inside a header is malformed and read only within its buffer",
+           test_truncated_message_is_malformed);
+  RUN_TEST("complete messages still parse, also without the second CRLF of RTSP over ENet",
+           test_complete_messages_still_parse);
   return test_summary();
 }

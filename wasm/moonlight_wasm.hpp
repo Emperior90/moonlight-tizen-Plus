@@ -105,7 +105,7 @@ class MoonlightInstance {
     std::string rikey, std::string rikeyid, std::string appversion, std::string gfeversion, std::string rtspurl, int serverCodecModeSupport,
     bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, bool flipABfaceButtons, bool flipXYfaceButtons,
     std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
-    std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, bool performanceStats,
+    std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, int performanceStats,
     bool refFrameInvalidation, bool hdrMetadata, std::string controllerType);
   MessageResult StopStream();
 
@@ -113,7 +113,7 @@ class MoonlightInstance {
 
   void STUN(int callbackId);
   void Pair(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber);
-  void WakeOnLan(int callbackId, std::string macAddress);
+  void WakeOnLan(int callbackId, std::string macAddress, std::string subnetBroadcast);
 
   virtual ~MoonlightInstance();
 
@@ -230,7 +230,7 @@ class MoonlightInstance {
   void OpenUrl_private(int callbackId, std::string url, std::string ppk, bool binaryResponse);
   void STUN_private(int callbackId);
   void Pair_private(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber);
-  void WakeOnLan_private(int callbackId, std::string macAddress);
+  void WakeOnLan_private(int callbackId, std::string macAddress, std::string subnetBroadcast);
 
   void LockMouse();
   void UnlockMouse();
@@ -264,8 +264,10 @@ class MoonlightInstance {
   bool m_FullRangeEnabled;
   bool m_GameModeEnabled;
   bool m_DisableWarningsEnabled;
-  // Written by TogglePerformanceStats() on the main thread or the gamepad thread and read by the video decoder thread
-  std::atomic<bool> m_PerformanceStatsEnabled{false};
+  // Level of the performance stats overlay (kPerformanceStatsOff, kPerformanceStatsCompact or kPerformanceStatsFull of
+  // compact_stats.hpp). Written by TogglePerformanceStats() on the main thread or the gamepad thread and read by the
+  // video decoder thread.
+  std::atomic<int> m_PerformanceStatsLevel{0};
   bool m_RefFrameInvalidationEnabled;
   bool m_HdrMetadataEnabled;
 
@@ -285,8 +287,12 @@ class MoonlightInstance {
   long m_MouseLastPosX;
   long m_MouseLastPosY;
   bool m_WaitingForAllModifiersUp;
-  float m_AccumulatedTicks;
-  int32_t m_MouseDeltaX, m_MouseDeltaY;
+  // The mouse movement and wheel ticks that the main thread adds up (HandleMouseMove(), HandleWheel()) and the input
+  // thread sends and resets (ReportMouseMovement()). Atomic, so that a movement that arrives while the input thread
+  // sends isn't lost between its read and its reset. The wheel ticks are thousandths, since there is no atomic add for
+  // a float before C++20.
+  std::atomic<int32_t> m_AccumulatedMilliTicks;
+  std::atomic<int32_t> m_MouseDeltaX, m_MouseDeltaY;
   uint32_t m_HttpThreadPoolSequence;
 
   Dispatcher m_Dispatcher;
@@ -333,7 +339,7 @@ MessageResult startStream(std::string host, int httpPort, std::string width, std
   std::string rikey, std::string rikeyid, std::string appversion, std::string gfeversion, std::string rtspurl, int serverCodecModeSupport,
   bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, bool flipABfaceButtons, bool flipXYfaceButtons,
   std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
-  std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, bool performanceStats,
+  std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, int performanceStats,
   bool refFrameInvalidation, bool hdrMetadata, std::string controllerType);
 MessageResult stopStream();
 
@@ -344,7 +350,7 @@ void setStreamMenuOpen(bool open);
 void toggleMouseEmulation();
 void stun(int callbackId);
 void pair(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber, std::string uniqueId);
-void wakeOnLan(int callbackId, std::string macAddress);
+void wakeOnLan(int callbackId, std::string macAddress, std::string subnetBroadcast);
 
 EM_BOOL handleKeyDown(int eventType, const EmscriptenKeyboardEvent* keyEvent, void* userData);
 EM_BOOL handleKeyUp(int eventType, const EmscriptenKeyboardEvent* keyEvent, void* userData);

@@ -2,7 +2,10 @@
 # Builds every native test (tests/native/*_test.cpp) on the host with g++ and the address and undefined behaviour
 # sanitizers, with the Emscripten 1.39 and Samsung headers replaced by the stubs in tests/native/stubs, and runs them.
 # Each test includes the source file it tests (e.g. wasm/gamepad.cpp) directly. The C tests (tests/native/*_test.c)
-# include C files of moonlight-common-c the same way and are built with gcc and the stubs in tests/native/stubs_c.
+# include C files of moonlight-common-c and libgamestream the same way and are built with gcc and the stubs in
+# tests/native/stubs_c. A test that needs more options or a library names them in a comment line
+# '// Build with: -lcrypto'; a test that includes OpenSSL or curl is skipped with a notice when their headers are
+# missing, like the syntax check of wasm/http.cpp below.
 # The executables go to tests/native/build. Set CXX and CC to use other compilers.
 #
 # The vptr check of UBSan is off, because the tests call member functions of MoonlightInstance, whose virtual
@@ -20,6 +23,7 @@ flags=(
   -std=c++17 -g -O1 -fno-omit-frame-pointer
   -fsanitize=address,undefined -fno-sanitize=vptr -fno-sanitize-recover=all
   -I"$here/stubs" -I"$repo/wasm" -I"$repo/wasm/dispatcher" -I"$repo/moonlight-common-c/src" -I"$repo/opus/include"
+  -I"$repo/h264bitstream"
 )
 cflags=(
   -std=gnu99 -g -O1 -fno-omit-frame-pointer
@@ -42,11 +46,26 @@ for source in "$here"/*_test.cpp; do
   fi
 done
 
+have_header() {
+  printf '#include <%s>\n' "$1" | "$cc" -x c -fsyntax-only - 2>/dev/null
+}
+
 for source in "$here"/*_test.c; do
   [ -e "$source" ] || continue
   name="$(basename "$source" .c)"
+  if grep -q '#include <openssl/' "$source" && ! have_header openssl/ssl.h; then
+    echo "# Skipped $name: the headers of OpenSSL are missing"
+    continue
+  fi
+  if grep -q '#include <curl/' "$source" && ! have_header curl/curl.h; then
+    echo "# Skipped $name: the headers of curl are missing"
+    continue
+  fi
+  # shellcheck disable=SC2207
+  extra=($(sed -n 's|^// Build with: ||p' "$source"))
   echo "# Building $name"
-  "$cc" "${cflags[@]}" -o "$out/$name" "$source" -lpthread
+  # (the form of the expansion keeps an empty list working with 'set -u' in the bash 3.2 of macOS)
+  "$cc" "${cflags[@]}" -o "$out/$name" "$source" ${extra[@]+"${extra[@]}"} -lpthread
   echo "# Running $name"
   if ! "$out/$name"; then
     echo "# $name failed"

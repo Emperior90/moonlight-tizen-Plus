@@ -140,6 +140,29 @@ static void TestFailedRead() {
   CHECK_EQ(padPackets.size(), 0u);
 }
 
+// A read that throws on the main thread, every 5 ms for the whole stream, is logged only by the JavaScript code, which
+// does so the first and every 1000th time: the poll must not log it again each time
+static void TestThrowingReadIsNotLoggedEachPoll() {
+  harness::Reset();
+  Connect(0);
+  harness::batchedReadResult = -3;
+  harness::PollFor(5000);
+  CHECK_EQ(harness::logMessages.size(), 0u);
+  CHECK_EQ(harness::arrivals.size(), 0u);
+  CHECK_EQ(padPackets.size(), 0u);
+
+  // A read that fails without an exception (no Gamepad API) is still logged here
+  harness::batchedReadResult = -1;
+  Poll();
+  CHECK_EQ(harness::logMessages.size(), 1u);
+  CHECK(!harness::logMessages.empty() && harness::logMessages[0] == "Failed to sample gamepad data!\n");
+
+  // Once the read works again, the controller arrives
+  harness::batchedReadResult = 0;
+  Poll();
+  CHECK_EQ(harness::arrivals.size(), 1u);
+}
+
 int main() {
   harness::Install();
   test_support::RunTest("batched read: arrival, send on change, refresh, retry, mask changes", TestBatchedRead);
@@ -147,5 +170,6 @@ int main() {
   test_support::RunTest("Tizen placeholder slots are announced only once they report input", TestPlaceholderSlots);
   test_support::RunTest("a controller replaced in the same slot is removed and announced again", TestReplacedController);
   test_support::RunTest("no slots: nothing is announced or sent", TestFailedRead);
+  test_support::RunTest("a read that throws is not logged again by every poll", TestThrowingReadIsNotLoggedEachPoll);
   return test_support::Summary();
 }

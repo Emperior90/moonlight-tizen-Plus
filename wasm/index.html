@@ -509,6 +509,20 @@
                 </label>
               </div>
             </div>
+            <div id="continuousAudioOption" class="setting-option">
+              <label data-i18n="Continuous audio from the host">Continuous audio from the host</label>
+              <span class="mdl-list__item-text-body" data-i18n="- Keeps the host sending audio during silence, so that the audio player of the TV and the link to a soundbar don't run dry. Needs a recent Sunshine; older hosts ignore it.">
+                - Keeps the host sending audio during silence, so that the audio player of the TV and the link to a soundbar don't run dry. Needs a recent Sunshine; older hosts ignore it.
+              </span>
+              <div id="continuousAudioMenu">
+                <label id="continuousAudioBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="continuousAudioSwitch">
+                  <input type="checkbox" id="continuousAudioSwitch" class="mdl-switch__input">
+                  <span class="mdl-switch__label" data-i18n="Ask the host to send audio also during silence">
+                    Ask the host to send audio also during silence
+                  </span>
+                </label>
+              </div>
+            </div>
             <div id="decryptHostAudioOption" class="setting-option">
               <label>
                 <span data-i18n="Decrypt host audio">Decrypt host audio</span>
@@ -662,15 +676,17 @@
             </div>
             <div class="setting-option">
               <label data-i18n="Performance statistics">Performance statistics</label>
-              <span class="mdl-list__item-text-body"></span>
+              <span class="mdl-list__item-text-body" data-i18n="- Compact shows one line with the main figures over the stream, Full every figure. While streaming, the YELLOW key and the Stream Menu switch between Off, Compact and Full.">
+                - Compact shows one line with the main figures over the stream, Full every figure. While streaming, the YELLOW key and the Stream Menu switch between Off, Compact and Full.
+              </span>
               <div id="performanceStatsMenu">
-                <label id="performanceStatsBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="performanceStatsSwitch">
-                  <input type="checkbox" id="performanceStatsSwitch" class="mdl-switch__input">
-                  <span class="mdl-switch__label" data-i18n="Display real-time stream performance information while streaming">
-                    Display real-time stream performance information while streaming
-                  </span>
-                </label>
+                <button type="button" id="selectPerformanceStats" class="mdl-button mdl-js-button mdl-js-ripple-effect" data-value="0" data-i18n="Off">Off</button>
               </div>
+              <ul class="performanceStatsMenu mdl-menu mdl-menu--bottom-left mdl-js-menu mdl-js-ripple-effect" for="selectPerformanceStats">
+                <li class="mdl-menu__item" data-value="0" data-i18n="Off">Off</li>
+                <li class="mdl-menu__item" data-value="1" data-i18n="Compact">Compact</li>
+                <li class="mdl-menu__item" data-value="2" data-i18n="Full">Full</li>
+              </ul>
             </div>
           </div>
           <div id="aboutSettings" class="settings-options">
@@ -982,7 +998,7 @@
           </li>
           <li class="navGuideDialogControls">
             <span class="navGuideRemoteText" data-i18n="YELLOW">YELLOW</span> / <span class="navGuideKeyboardText" data-i18n="F3">F3</span> / <span class="navGuideKeyboardText" data-i18n="CTRL + ALT + SHIFT + S">CTRL + ALT + SHIFT + S</span> / <span class="navGuideGamepadText" data-i18n="SELECT + LB + RB + X">SELECT + LB + RB + X</span>
-            <span data-i18n="— Toggle the performance statistics overlay.">— Toggle the performance statistics overlay.</span>
+            <span data-i18n="— Step the performance statistics overlay through Off, Compact and Full.">— Step the performance statistics overlay through Off, Compact and Full.</span>
           </li>
         </ul>
       </div>
@@ -1079,6 +1095,9 @@
       </button>
       <button type="button" id="streamMenuKeyEsc" class="overlay-menu-item" role="menuitem">
         <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-keyboard"/></svg><span class="overlay-menu-label">Esc</span>
+      </button>
+      <button type="button" id="streamMenuKeyAltEnter" class="overlay-menu-item" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-keyboard"/></svg><span class="overlay-menu-label">Alt + Enter</span>
       </button>
       <div class="overlay-menu-separator"></div>
       <button type="button" id="streamMenuDisconnect" class="overlay-menu-item" role="menuitem">

@@ -69,7 +69,7 @@ Settings → Input Settings:
 |---|---|
 | Select + Start, held for 1 second | Open the [Stream Menu](GUIDE.md#16-stream-menu-and-app-menu) (like the Play/Pause key of the remote) |
 | Select + Start + LB + RB | End the stream (like the RED key of the remote) |
-| Select + LB + RB + X | Show or hide the performance statistics (like the YELLOW key) |
+| Select + LB + RB + X | Step the performance statistics through Off, Compact and Full (like the YELLOW key) |
 
 X means the left face button (Square on PlayStation controllers), also with *Flip X/Y face buttons* on.
 

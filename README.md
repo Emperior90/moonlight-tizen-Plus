@@ -17,8 +17,8 @@ Moonlight Plus is an unofficial fork of [Moonlight Tizen](https://github.com/bri
 - **Smoother video:** reworked frame pacing, faster error correction, fixes for freezes after packet loss, and decoder level 5.2 for 4K above 60 FPS.
 - **Clear messages** instead of frozen or black pictures, e.g. which video format the TV rejected. A stream also ends after 1 minute in the background instead of running on.
 - **Controllers:** Select and Start work in the menus, mouse emulation works with several controllers, rumble lasts longer than 5 seconds, a *Controller type sent to the PC* setting, and a notice for controllers with a non-standard layout.
-- **Audio:** an optional *Audio clock sync* and a faster recovery after dropouts for the Web Audio backend.
-- **Performance statistics** with session totals that show whether the host, the network or the TV causes a problem.
+- **Audio:** an optional *Audio clock sync* and a faster recovery after dropouts for the Web Audio backend, and a [guide to 5.1 surround sound with a soundbar](docs/GUIDE.md#surround-sound-with-a-soundbar).
+- **Performance statistics** as one compact line or in full, with session totals and frame intervals that show whether the host, the network or the TV causes a problem.
 - **Update check** that reads the releases of this fork.
 
 What changed in each version, in short: [patch notes](docs/PATCH_NOTES.md). Every detail: [changelog](CHANGELOG.md).

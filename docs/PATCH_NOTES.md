@@ -2,6 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
+- [1.19.102](#119102): pre-release, in testing
 - [1.19.101](#119101): 2026-10-29, a new look and two new menus
 - [1.19.100](#119100): 2026-10-26, the first release as Moonlight Plus
 - [1.19.0-s90c.1](#1190-s90c1): 2026-10-23, released as Moonlight S90C
@@ -10,6 +11,38 @@ What changed in each version of Moonlight Plus, in short, newest first.
 **Which file?** `Moonlight-ForceGM.wgt` on Tizen 9 and newer, `Moonlight.wgt` on Tizen 5.5 to 8.
 
 **TV refuses an update?** If the author certificate doesn't match, uninstall the old app first; this loses its settings and pairing.
+
+## 1.19.102
+
+*Pre-release, in testing.* A one-line statistics view, safer pairing, a Wake PC dialog that no longer hangs, and fixes for stability.
+
+> **Install:** by hand over 1.19.101 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
+>
+> **Tested:** with simulated TVs, hosts and controllers only, not yet on a TV or with a real Sunshine host.
+
+### New
+
+- Performance statistics in three levels: Off, Compact (one line at the top left) and Full, stepped with YELLOW
+- The full statistics show how evenly the frames leave the PC and reach the TV
+- Stream Menu: *Alt + Enter* switches a game between fullscreen and a window
+- *Continuous audio from the host* (on by default) asks Sunshine to keep sending sound during silence
+- Guide: surround sound with a soundbar, and how to check each channel
+
+### Improved
+
+- A stream that starts without any picture is started once more by itself before the error shows
+- Wake PC sends its request several times, to more addresses, and again while the dialog waits
+
+### Fixed
+
+- The Wake PC dialog no longer hangs after a failed request or after the PC woke up
+- An error in the interface during a stream no longer freezes the whole app
+- No more lost mouse movements, and a stop during "Starting…" ends the connection setup sooner
+
+### Security
+
+- Pairing checks that the PC really knows the PIN and reports a wrong PIN as such
+- Answers of the PC are checked for size, and the PIN and stream keys no longer appear in the log
 
 ## 1.19.101
 

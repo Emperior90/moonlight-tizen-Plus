@@ -30,12 +30,15 @@ test('Alt + Tab: Alt goes down first and up last, with the Alt flag only while A
 test('every key combination of the Stream Menu releases each key it pressed and ends without a modifier', () => {
   const menus = loadMenus();
   const combos = plain(menus.get('STREAM_MENU_KEYS'));
-  assert.deepEqual(Object.keys(combos), ['streamMenuKeyWin', 'streamMenuKeyAltTab', 'streamMenuKeyAltF4', 'streamMenuKeyEsc']);
+  assert.deepEqual(Object.keys(combos), ['streamMenuKeyWin', 'streamMenuKeyAltTab', 'streamMenuKeyAltF4', 'streamMenuKeyEsc',
+    'streamMenuKeyAltEnter']);
   assert.deepEqual(combos, {
     streamMenuKeyWin: [0x5B],
     streamMenuKeyAltTab: [0xA4, 0x09],
     streamMenuKeyAltF4: [0xA4, 0x73],
     streamMenuKeyEsc: [0x1B],
+    // Alt + Enter: fullscreen or window in the game
+    streamMenuKeyAltEnter: [0xA4, 0x0D],
   });
   Object.keys(combos).forEach((id) => {
     const events = plain(menus.get('buildKeyComboEvents')(combos[id]));

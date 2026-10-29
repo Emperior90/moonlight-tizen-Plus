@@ -169,6 +169,15 @@ int parseRtspMessage(PRTSP_MESSAGE msg, char* rtspMessage, int length) {
                 // endCheck points to the remainder of messageBuffer after the token
                 endCheck = &token[0] + strlen(token) + 1;
 
+                // A truncated message ends inside this token, which then runs up to the null terminator of
+                // messageBuffer, so endCheck points past the buffer and the reads below went 1 to 2 bytes beyond
+                // it. Such a message never got its double CRLF, so it is malformed. (The idea comes from the fork
+                // of samirmartins, 9a85af0.)
+                if (endCheck > messageBuffer + length) {
+                    exitCode = RTSP_ERROR_MALFORMED;
+                    goto ExitFailure;
+                }
+
                 // See if we've hit the end of the message. The first \r is missing because it's been tokenized
                 if (startsWith(endCheck, "\n") && endCheck[1] == '\0') {
                     // RTSP over ENet doesn't always have the second CRLF for some reason

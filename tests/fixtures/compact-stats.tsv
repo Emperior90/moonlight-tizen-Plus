@@ -1,0 +1,14 @@
+# Figures of the compact line of the performance statistics, with the message that wasm/wasmplayer.cpp then sends to the
+# front end and the line the front end shows for it. Both sides read this file: FormatCompactStatsMessage() in
+# wasm/compact_stats.hpp (tests/native/compact_stats_test.cpp) writes the message, and formatCompactStatsLine() in
+# wasm/platform/messages.js (tests/unit/compact-stats.test.js) builds the line from it, so the two stay the same.
+# Format, separated by tabs: width, height, frame rate, codec, bit depth, HDR (1 or 0), rendered frame rate, bitrate in
+# Mbps, RTT in ms (0 while unknown), network drops in percent, wait plus pacing in ms (a negative figure is unknown), the
+# message, the line (in English, with the separator ' · ').
+
+3840	2160	60	HEVC	10	1	59.94	74.2	3	0.1	6.3	StatCompactMsg: {"w":3840,"h":2160,"fps":60,"codec":"HEVC","bits":10,"hdr":1,"rfps":59.94,"mbps":74.2,"rtt":3,"drop":0.10,"delay":6.3}	4K60 HEVC HDR · 59.9 fps · 74 Mb/s · RTT 3 ms · Net drops 0.1% · Wait+pacing 6.3 ms
+1920	1080	120	H.264	8	0	119.5	38.04	12	0	0.4	StatCompactMsg: {"w":1920,"h":1080,"fps":120,"codec":"H.264","bits":8,"hdr":0,"rfps":119.50,"mbps":38.0,"rtt":12,"drop":0.00,"delay":0.4}	1080p120 H.264 · 119.5 fps · 38 Mb/s · RTT 12 ms · Net drops 0.0% · Wait+pacing 0.4 ms
+2560	1440	90	AV1	10	0	88.25	9.46	1	2.347	14.24	StatCompactMsg: {"w":2560,"h":1440,"fps":90,"codec":"AV1","bits":10,"hdr":0,"rfps":88.25,"mbps":9.5,"rtt":1,"drop":2.35,"delay":14.2}	1440p90 AV1 10-bit · 88.3 fps · 9.5 Mb/s · RTT 1 ms · Net drops 2.4% · Wait+pacing 14.2 ms
+3200	1800	60	HEVC	8	0	60	55	0	-1	-1	StatCompactMsg: {"w":3200,"h":1800,"fps":60,"codec":"HEVC","bits":8,"hdr":0,"rfps":60.00,"mbps":55.0,"rtt":null,"drop":null,"delay":null}	1800p60 HEVC · 60.0 fps · 55 Mb/s
+1280	720	30	HEVC	8	0	-1	-1	0	-1	-1	StatCompactMsg: {"w":1280,"h":720,"fps":30,"codec":"HEVC","bits":8,"hdr":0,"rfps":null,"mbps":null,"rtt":null,"drop":null,"delay":null}	720p30 HEVC
+1366	768	60	H.264	8	0	59.8	12.04	5	0.42	2	StatCompactMsg: {"w":1366,"h":768,"fps":60,"codec":"H.264","bits":8,"hdr":0,"rfps":59.80,"mbps":12.0,"rtt":5,"drop":0.42,"delay":2.0}	1366x768@60 H.264 · 59.8 fps · 12 Mb/s · RTT 5 ms · Net drops 0.4% · Wait+pacing 2.0 ms

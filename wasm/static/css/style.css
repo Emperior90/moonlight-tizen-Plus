@@ -2231,10 +2231,28 @@ dialog::backdrop {
   font-size: 26px;
   font-weight: 800;
 }
+/* The performance statistics on the dark surface of the theme, which keeps the white text readable over bright video
+   and stands out from dark video by its outline (no blur, which the TV would have to render over the video) */
 #performance-stats {
   left: 64px;
   font-size: 21px;
   font-weight: 700;
+  background: rgba(10, 13, 26, 0.72);
+  box-shadow: 0 0 0 1px var(--line-2);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+/* Nothing to show (e.g. while a stream starts again), also where a script left it displayed */
+#performance-stats:empty {
+  display: none !important;
+}
+/* The compact line: one line in a pill at the same place */
+#performance-stats.is-compact {
+  padding: 9px 20px;
+  border-radius: 24px;
+  font-size: 20px;
+  line-height: 1.2;
+  white-space: nowrap;
+  background: rgba(10, 13, 26, 0.8);
 }
 
 /* ===== Reduced motion (newer TVs and browsers that report it) ===== */

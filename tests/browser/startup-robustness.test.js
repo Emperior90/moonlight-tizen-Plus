@@ -143,7 +143,8 @@ test('a setting that can\'t be read shows its default for this start, and the fo
     // Both show their default, and the settings loaded after them are as stored
     assert.equal(shown.framePacing, true);
     assert.equal(shown.fullRange, false);
-    assert.equal(await app.page.evaluate(() => document.getElementById('performanceStatsSwitch').checked), true);
+    // (the true that the switch of earlier versions stored shows as the level Full)
+    assert.equal(await app.page.evaluate(() => $('#selectPerformanceStats').attr('data-value')), '2');
     // The stored values stay as they are, and the app started as usual with the stored certificate
     await app.page.waitForTimeout(300);
     assert.deepEqual(pick(await readStorage(app.page), ['framePacing', 'fullRange']), { framePacing: false, fullRange: true });

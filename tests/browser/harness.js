@@ -252,11 +252,13 @@ function readOtherSettings(page) {
       audioJitter: String($('#jitterSlider').val()),
       audioClockSync: switchState('audioClockSyncSwitch'),
       playHostAudio: switchState('playHostAudioSwitch'),
+      continuousAudio: switchState('continuousAudioSwitch'),
       decryptHostAudio: switchState('decryptHostAudioSwitch'),
       refFrameInvalidation: switchState('refFrameInvalidationSwitch'),
       hdrMetadata: switchState('hdrMetadataSwitch'),
       disableWarnings: switchState('disableWarningsSwitch'),
-      performanceStats: switchState('performanceStatsSwitch'),
+      // The level of the performance statistics: 0 Off, 1 Compact, 2 Full
+      performanceStats: Number($('#selectPerformanceStats').attr('data-value')),
     };
   });
 }

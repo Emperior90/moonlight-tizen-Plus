@@ -84,6 +84,26 @@ function readFirstArgument(source, start) {
   return null;
 }
 
+// List the EM_ASM-style macro calls of a source with their macro, line and code block (the first macro argument, with
+// its braces), skipping the definitions of the macros themselves and calls that are never closed
+function findBlocks(source) {
+  const blocks = [];
+  let match;
+  const pattern = new RegExp(MACRO_PATTERN.source, 'g');
+  while ((match = pattern.exec(source)) !== null) {
+    const lineStart = source.lastIndexOf('\n', match.index) + 1;
+    if (/^\s*#\s*define\b/.test(source.slice(lineStart, match.index))) {
+      continue;
+    }
+    const start = match.index + match[0].length;
+    const argument = readFirstArgument(source, start);
+    if (argument) {
+      blocks.push({ macro: match[1], line: lineOf(source, match.index), code: source.slice(start, argument.end).trim() });
+    }
+  }
+  return blocks;
+}
+
 // Check one file and return its problems
 function checkFile(file) {
   const source = fs.readFileSync(file, 'utf8');
@@ -136,4 +156,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { checkFile };
+module.exports = { checkFile, findBlocks };

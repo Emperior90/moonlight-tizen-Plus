@@ -34,16 +34,31 @@ static size_t _write_curl(void *contents, size_t size, size_t nmemb, void *userp
 {
   size_t realsize = size * nmemb;
   PHTTP_DATA mem = (PHTTP_DATA)userp;
- 
-  mem->memory = realloc(mem->memory, mem->size + realsize + 1);
-  if(mem->memory == NULL)
+
+  // Stop at the limit of the answer: curl ends the transfer when the callback takes less than it got
+  if ((nmemb != 0 && realsize / nmemb != size) || mem->size > mem->maxSize || realsize > mem->maxSize - mem->size) {
+    mem->tooLarge = 1;
     return 0;
+  }
+ 
+  char *memory = realloc(mem->memory, mem->size + realsize + 1);
+  if(memory == NULL)
+    return 0;
+  mem->memory = memory;
  
   memcpy(&(mem->memory[mem->size]), contents, realsize);
   mem->size += realsize;
   mem->memory[mem->size] = 0;
  
   return realsize;
+}
+
+// Log a request without its query, which holds the remote input key of a launch (rikey) and the secrets of the pairing
+static void log_request(const char* url, const char* ppkstr, CURLcode res) {
+  const char* query = strchr(url, '?');
+  int length = query != NULL ? (int)(query - url) : (int)strlen(url);
+  printf("CURL: %.*s%s (PPK: '%s') -> %s\n", length, url, query != NULL ? "?..." : "", ppkstr ? ppkstr : "<NULL>",
+         curl_easy_strerror(res));
 }
 
 static CURLcode sslctx_function(CURL * curl, void * sslctx, void * parm)
@@ -158,14 +173,19 @@ int http_request(const char* url, const char* ppkstr, PHTTP_DATA data) {
       goto cleanup;
     }
 
+    data->memory[0] = 0;
     data->size = 0;
   }
+  data->tooLarge = 0;
 
   CURLcode res = curl_easy_perform(curl);
 
-  printf("CURL: %s (PPK: '%s') -> %s\n", url, ppkstr ? ppkstr : "<NULL>", curl_easy_strerror(res));
+  log_request(url, ppkstr, res);
   
-  if (res == CURLE_SSL_PINNEDPUBKEYNOTMATCH) {
+  if (data->tooLarge) {
+    printf("CURL: the answer is larger than %lu bytes\n", (unsigned long)data->maxSize);
+    ret = GS_RESPONSE_TOO_LARGE;
+  } else if (res == CURLE_SSL_PINNEDPUBKEYNOTMATCH) {
     ret = GS_CERT_MISMATCH;
   } else if (res != CURLE_OK) {
     ret = GS_FAILED;
@@ -193,7 +213,10 @@ PHTTP_DATA http_create_data() {
     free(data);
     return NULL;
   }
+  data->memory[0] = 0;
   data->size = 0;
+  data->maxSize = HTTP_MAX_RESPONSE_SIZE;
+  data->tooLarge = 0;
 
   return data;
 }

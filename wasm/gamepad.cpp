@@ -281,32 +281,48 @@ static bool IsSameControllerState(const SentControllerState& a, const SentContro
     a.rightStickX == b.rightStickX && a.rightStickY == b.rightStickY;
 }
 
+// The result of the batched read below for an exception, which its JavaScript code logs itself
+static const int kGamepadReadException = -3;
+
 // Read every browser gamepad slot into events, marking the filled ones in slotPresent.
 // Returns the number of slots read (capped at kMaxControllers), or -1 on failure.
 static int ReadGamepadSlots(EmscriptenGamepadEvent* events, int* slotPresent) {
   // Each Emscripten gamepad function is proxied to the main thread on its own, which costs two
   // round trips plus one per slot on every poll. Read all slots in a single round trip instead,
   // so the main thread stays free for the audio scheduler while streaming.
+  // An exception counts as a failed read (-3, kGamepadReadException) instead of leaving the main thread unable to run
+  // proxied calls (see PostToJs() in main.cpp); the catch logs it the first and every 1000th time, since this runs
+  // every 5 ms, and the code below doesn't log it again.
   const int count = MAIN_THREAD_EM_ASM_INT({
-    // Use the individual Emscripten calls below if their internal helper is not available
-    if (typeof __fillGamepadEventData !== 'function') {
-      return -2;
-    }
-    var gamepads = navigator.getGamepads ? navigator.getGamepads() : (navigator.webkitGetGamepads ? navigator.webkitGetGamepads() : null);
-    if (!gamepads) {
-      return -1;
-    }
-    var count = Math.min(gamepads.length, $2);
-    for (var i = 0; i < count; ++i) {
-      if (gamepads[i]) {
-        __fillGamepadEventData($0 + i * $3, gamepads[i]);
-        HEAP32[($1 >> 2) + i] = 1;
+    try {
+      // Use the individual Emscripten calls below if their internal helper is not available
+      if (typeof __fillGamepadEventData !== 'function') {
+        return -2;
       }
+      var gamepads = navigator.getGamepads ? navigator.getGamepads() : (navigator.webkitGetGamepads ? navigator.webkitGetGamepads() : null);
+      if (!gamepads) {
+        return -1;
+      }
+      var count = Math.min(gamepads.length, $2);
+      for (var i = 0; i < count; ++i) {
+        if (gamepads[i]) {
+          __fillGamepadEventData($0 + i * $3, gamepads[i]);
+          HEAP32[($1 >> 2) + i] = 1;
+        }
+      }
+      return count;
+    } catch (e) {
+      window._mlGamepadReadErrors = (window._mlGamepadReadErrors || 0) + 1;
+      if (window._mlGamepadReadErrors % 1000 === 1) {
+        console.error('%c[gamepad.cpp, ReadGamepadSlots]', 'color: gray;', 'Error: Reading the gamepads failed (' + window._mlGamepadReadErrors + ' times):', e);
+      }
+      return -3;
     }
-    return count;
   }, events, slotPresent, kMaxControllers, (int)sizeof(EmscriptenGamepadEvent));
 
-  if (count == -1) {
+  if (count == kGamepadReadException) {
+    return -1;
+  } else if (count == -1) {
     MoonlightInstance::ClLogMessage("Failed to sample gamepad data!\n");
     return -1;
   } else if (count != -2) {
@@ -675,10 +691,16 @@ void MoonlightInstance::PollGamepads() {
     // data. Only advertise rumble when our existing feedback path can use it.
     const char* rumbleState = "off";
     if (rumbleFeedbackSwitch) {
+      // An exception counts as no rumble (see PostToJs() in main.cpp)
       const int hasRumble = MAIN_THREAD_EM_ASM_INT({
-        var gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-        var gamepad = gamepads[$0];
-        return !!(gamepad && gamepad.vibrationActuator && typeof gamepad.vibrationActuator.playEffect === 'function');
+        try {
+          var gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+          var gamepad = gamepads[$0];
+          return !!(gamepad && gamepad.vibrationActuator && typeof gamepad.vibrationActuator.playEffect === 'function');
+        } catch (e) {
+          console.error('%c[gamepad.cpp, PollGamepads]', 'color: gray;', 'Error: Checking the rumble of a gamepad failed:', e);
+          return 0;
+        }
       }, i);
       // Advertise rumble only when the actuator is actually available
       if (hasRumble) {

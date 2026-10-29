@@ -192,6 +192,14 @@
         selectCodec.textContent = t(selectedItem.getAttribute('data-i18n') || selectedItem.textContent.trim());
       }
     }
+
+    const selectPerformanceStats = document.getElementById('selectPerformanceStats');
+    if (selectPerformanceStats) {
+      const selectedItem = document.querySelector(`.performanceStatsMenu li[data-value="${selectPerformanceStats.dataset.value}"]`);
+      if (selectedItem) {
+        selectPerformanceStats.textContent = t(selectedItem.getAttribute('data-i18n') || selectedItem.textContent.trim());
+      }
+    }
   }
 
   function refreshUI() {

@@ -26,5 +26,10 @@
 #define GS_WRONG_STATE -4
 #define GS_IO_ERROR -5
 #define GS_NOT_SUPPORTED_4K -6
+// The host answered the pairing request with a hash that doesn't match the PIN, i.e. the PIN entered on the host was
+// wrong (or the host doesn't know the PIN at all)
+#define GS_PIN_WRONG -7
+// The answer of the host was larger than the limit of http.c
+#define GS_RESPONSE_TOO_LARGE -8
 
 #define GS_CERT_MISMATCH -100

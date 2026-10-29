@@ -36,6 +36,9 @@ function loadRemoteController(globals) {
       },
       cancelStreamLaunch: () => moduleCalls.push('cancelStreamLaunch'),
       toggleStreamMenu: () => moduleCalls.push('toggleStreamMenu'),
+      // The level of the performance statistics in the settings (index.js), Compact here
+      getPerformanceStatsLevel: () => 1,
+      savePerformanceStatsLevel: (level) => moduleCalls.push('savePerformanceStatsLevel ' + level),
       isInGame: false,
       wasmSessionStarted: false,
     }, globals || {}),
@@ -154,12 +157,17 @@ test('RED stops a running stream, cancels a starting one and ignores the auto-re
   assert.deepEqual(remote.moduleCalls, ['cancelStreamLaunch', 'stopStream']);
 });
 
-test('YELLOW toggles the performance statistics only while streaming', () => {
+test('YELLOW toggles the performance statistics only while streaming, and steps the setting while the stream starts', () => {
   const remote = loadRemoteController();
   remote.press('KEY_YELLOW');
+  assert.deepEqual(remote.moduleCalls, [], 'nothing in the menus');
+  // 'Starting...': the start request hands the next level of the setting to the module
   remote.platform.run('isInGame = true;');
   remote.press('KEY_YELLOW');
-  assert.deepEqual(remote.moduleCalls, ['toggleStats']);
+  assert.deepEqual(remote.moduleCalls, ['savePerformanceStatsLevel 2']);
+  remote.platform.run('wasmSessionStarted = true;');
+  remote.press('KEY_YELLOW');
+  assert.deepEqual(remote.moduleCalls, ['savePerformanceStatsLevel 2', 'toggleStats']);
 });
 
 test('Play/Pause, Play and Pause toggle the Stream Menu in a stream and open the menu of a host or app otherwise', () => {

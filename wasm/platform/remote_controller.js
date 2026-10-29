@@ -77,9 +77,13 @@ function remoteControllerHandler(e) {
       }
       break;
     case tvKey.KEY_YELLOW:
-      // Toggle performance stats overlay
-      if (isInGame === true) {
+      // Step the performance stats overlay to its next level: Off, Compact, Full, Off
+      if (isInGame === true && wasmSessionStarted) {
         Module.toggleStats();
+      } else if (isInGame === true) {
+        // The stream is still starting ('Starting...'): step the setting, which the start request then hands to the
+        // module. The module may still hold the level of an earlier stream, which its start request replaces.
+        savePerformanceStatsLevel((getPerformanceStatsLevel() + 1) % 3);
       }
       break;
     case tvKey.KEY_PLAY_PAUSE:

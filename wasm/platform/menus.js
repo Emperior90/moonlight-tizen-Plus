@@ -37,6 +37,9 @@ const STREAM_MENU_KEYS = {
   streamMenuKeyAltTab: [0xA4, 0x09], // Left Alt + Tab
   streamMenuKeyAltF4: [0xA4, 0x73], // Left Alt + F4
   streamMenuKeyEsc: [0x1B], // Esc
+  // The usual key of Windows games and emulators to switch between fullscreen and a window. The stream menu of
+  // Diogo8500 (brightcraft/moonlight-tizen pull request 177, 973a61b) offers F11 for this.
+  streamMenuKeyAltEnter: [0xA4, 0x0D], // Left Alt + Enter
 };
 // The modifier flag of each modifier key (MODIFIER_SHIFT, MODIFIER_CTRL, MODIFIER_ALT and MODIFIER_META of
 // moonlight-common-c), for the keys that are held while the next ones go down
@@ -94,13 +97,23 @@ function setStreamMenuInputPaused(paused) {
   }
 }
 
-// Show the state of a switch entry of a menu
-function setOverlayMenuValue(valueId, isOn) {
+// Show the state of an entry of a menu: a text, marked as on or not
+function setOverlayMenuText(valueId, text, isOn) {
   const value = document.getElementById(valueId);
   if (value) {
-    value.textContent = isOn ? t('On') : t('Off');
+    value.textContent = text;
     value.classList.toggle('is-on', isOn);
   }
+}
+
+// Show the state of a switch entry of a menu
+function setOverlayMenuValue(valueId, isOn) {
+  setOverlayMenuText(valueId, isOn ? t('On') : t('Off'), isOn);
+}
+
+// The name of a level of the performance statistics (PERFORMANCE_STATS_* in index.js)
+function getPerformanceStatsLevelName(level) {
+  return level === 2 ? t('Full') : level === 1 ? t('Compact') : t('Off');
 }
 
 // Select an entry of the Stream Menu again after the entries that show changed while it is open, or the last entry
@@ -122,15 +135,16 @@ function reselectStreamMenuEntry(entry) {
   focusElement(entries[index]);
 }
 
-// Fill the Stream Menu with the current state of the stream: the app and host, whether the performance statistics and
-// the mouse emulation are on, and the mouse emulation entry only while a controller is connected or the mouse emulation
-// is on. When that entry goes while the menu shows, e.g. after the mouse emulation was turned off on it and no
-// controller is connected any more, the selection moves to the entry before it.
+// Fill the Stream Menu with the current state of the stream: the app and host, the level of the performance statistics
+// (Off, Compact or Full), whether the mouse emulation is on, and the mouse emulation entry only while a controller is
+// connected or the mouse emulation is on. When that entry goes while the menu shows, e.g. after the mouse emulation was
+// turned off on it and no controller is connected any more, the selection moves to the entry before it.
 function updateStreamMenu() {
   const host = streamLaunchHost || api;
   const subtitle = [streamLaunchAppTitle, host && host.hostname ? host.hostname : ''].filter((text) => !!text).join(' · ');
   $('#streamMenuSubtitle').text(subtitle);
-  setOverlayMenuValue('streamMenuStatsValue', $('#performanceStatsSwitch').prop('checked') === true);
+  const statsLevel = getPerformanceStatsLevel();
+  setOverlayMenuText('streamMenuStatsValue', getPerformanceStatsLevelName(statsLevel), statsLevel !== 0);
   setOverlayMenuValue('streamMenuMouseValue', streamMouseEmulationActive);
   const mouseEntry = document.getElementById('streamMenuMouse');
   if (mouseEntry) {
@@ -249,7 +263,8 @@ function runStreamMenuAction(id) {
   if (id === 'streamMenuResume') {
     closeStreamMenu(true);
   } else if (id === 'streamMenuStats') {
-    // The overlay shows behind the menu; the switch of the settings follows the module synchronously (messages.js)
+    // The next level (Off, Compact, Full) shows behind the menu; the setting follows the module synchronously
+    // ('StatLevelMsg: ' in messages.js)
     Module.toggleStats();
     updateStreamMenu();
   } else if (id === 'streamMenuMouse') {

@@ -61,6 +61,7 @@ int failNextMouseButtons = 0; // number of upcoming mouse button events that fai
 int horizontalScrollResult = 0; // what LiSendHighResHScrollEvent() returns: LI_ERR_UNSUPPORTED on a GFE host
 uint64_t nowMs = 1000; // what LiGetMillis() returns
 bool useFallbackPath = false; // answer the batched read with -2, so gamepad.cpp uses the single Emscripten calls
+int batchedReadResult = 0; // when not 0, the batched read fails with this result, e.g. -3 for an exception in it
 bool hasRumbleActuator = false; // what the rumble probe of the arrival reports
 int numSlots = 4; // number of gamepad slots the browser exposes
 EmscriptenGamepadEvent slots[kMaxControllers];
@@ -92,6 +93,7 @@ inline void Reset(bool rumbleFeedback = false, bool mouseEmulation = false, bool
   failNextMouseButtons = 0;
   horizontalScrollResult = 0;
   useFallbackPath = false;
+  batchedReadResult = 0;
   hasRumbleActuator = false;
   numSlots = 4;
   std::memset(slots, 0, sizeof(slots));
@@ -148,6 +150,9 @@ inline int AnswerEmAsm(const char* code, va_list args) {
   if (std::strstr(code, "__fillGamepadEventData")) {
     if (useFallbackPath) {
       return -2;
+    }
+    if (batchedReadResult != 0) {
+      return batchedReadResult;
     }
     EmscriptenGamepadEvent* events = va_arg(args, EmscriptenGamepadEvent*);
     int* present = va_arg(args, int*);

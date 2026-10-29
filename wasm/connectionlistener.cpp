@@ -8,7 +8,33 @@
 #include <emscripten.h>
 #include <emscripten/threading.h>
 
+void MoonlightInstance::CancelPendingSetup() {
+  // Mark the connection as cancelled and wake up the media pipeline setup if it's waiting,
+  // so that the connection thread can return from LiStartConnection. The flag is set while
+  // holding the mutex, so that a wait that is just about to start can't miss the wake-up.
+  {
+    std::unique_lock<std::mutex> lock(m_Mutex);
+    m_ConnectionCancelled = true;
+    m_EmssStateChanged.notify_all();
+    m_EmssAudioStateChanged.notify_all();
+    m_EmssVideoStateChanged.notify_all();
+  }
+
+  // Interrupt a connection that is still being started, so that LiStartConnection gives up at its next step (the RTSP
+  // requests and the ENet waits check the flag) instead of setting up the whole stream for nothing: the host stops
+  // building the session sooner, and a quick restart waits less for the connection thread. A TCP connect or an RTSP
+  // receive that is already running still takes its time (up to 15 s). LiStartConnection clears the flag when it
+  // begins, so ClStageStarting() sets it again for a stop that came before that. The idea comes from the fork of
+  // mmadej20 (moonlight-tizen-modern, e7d877b).
+  LiInterruptConnection();
+}
+
 void MoonlightInstance::ClStageStarting(int stage) {
+  // LiStartConnection clears the interrupt flag at its start (Connection.c), after which a stop that came during the
+  // start of the connection thread would be lost. The first stage starts after that, so interrupt again here.
+  if (g_Instance && g_Instance->m_ConnectionCancelled) {
+    LiInterruptConnection();
+  }
   PostToJs(std::string("ProgressMsg: Starting ") + std::string(LiGetStageName(stage)) + std::string("..."));
 }
 

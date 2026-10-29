@@ -1,5 +1,7 @@
 #include "moonlight_wasm.hpp"
 #include "audio_stream_stats.hpp"
+#include "compact_stats.hpp"
+#include "frame_intervals.hpp"
 #include "video_track_rejection.hpp"
 
 #include <algorithm>
@@ -162,10 +164,17 @@ static int s_HostRateRepeats = 0;
 static float s_HostFrameRate = 0.0f;
 static std::atomic<bool> s_ExpectedIdrFrame{false};
 
+// The text of the full statistics, formatted on the video decoder thread only
 static std::string s_StatString = "";
-// Guards s_StatString, which the video decoder thread formats while TogglePerformanceStats() may read it on another
-// thread
-static std::mutex s_StatStringMutex;
+
+// The regularity of the frame intervals (see frame_intervals.hpp): the previous frame of the host and of the video
+// player, and their intervals in the current stats window (index s_FrameIntervalWindow) and the previous one. Only the
+// video decoder thread uses them.
+static FrameIntervalClock s_HostIntervalClock;
+static FrameIntervalClock s_PlayerIntervalClock;
+static FrameIntervalWindow s_HostIntervals[2];
+static FrameIntervalWindow s_PlayerIntervals[2];
+static int s_FrameIntervalWindow = 0;
 
 // The previous reading of the audio data rate for the overlay (see FormatAudioStreamStats), on the decoder thread
 static AudioRateWindow s_AudioRateWindow;
@@ -639,9 +648,14 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
   s_HdrMetadataEnabled = g_Instance->m_HdrMetadataEnabled;
 
   // Preallocate space for the performance stats string
-  {
-    std::lock_guard<std::mutex> statLock(s_StatStringMutex);
-    s_StatString.resize(2048);
+  s_StatString.assign(4096, 0);
+
+  // Start the frame intervals of the new stream without a previous frame
+  ResetFrameIntervalClock(s_HostIntervalClock);
+  ResetFrameIntervalClock(s_PlayerIntervalClock);
+  for (int i = 0; i < 2; i++) {
+    ResetFrameIntervals(s_HostIntervals[i]);
+    ResetFrameIntervals(s_PlayerIntervals[i]);
   }
 
   // Clear active window video statistics to start fresh
@@ -811,6 +825,26 @@ static TimeStamp CalculatePacingOffset(std::vector<double>& lateness) {
   std::nth_element(lateness.begin(), lateness.begin() + lateness.size() / 2, lateness.end());
   const double jitter = 3.0 * 1.4826 * lateness[lateness.size() / 2];
   return TimeStamp(median + std::min(jitter, s_frameDuration.count() / 2));
+}
+
+// The figures of the compact statistics line (see compact_stats.hpp) from the stats of the last two windows, with the
+// same formulas as the matching lines of FormatVideoStats()
+static CompactVideoStats GetCompactVideoStats(const VIDEO_STATS& stats) {
+  CompactVideoStats compact = {};
+  compact.width = s_Width;
+  compact.height = s_Height;
+  compact.fps = s_Framerate;
+  compact.codec = (s_VideoFormat & VIDEO_FORMAT_MASK_AV1) ? "AV1" : (s_VideoFormat & VIDEO_FORMAT_MASK_H265) ? "HEVC" : "H.264";
+  compact.tenBit = (s_VideoFormat & VIDEO_FORMAT_MASK_10BIT) != 0;
+  compact.hdr = compact.tenBit && LiGetCurrentHostDisplayHdrMode();
+  compact.renderedFps = stats.receivedFps > 0 ? stats.renderedFps : -1.0f;
+  compact.bitrateMbps = stats.receivedFps > 0 ? stats.receivedBitrate : -1.0f;
+  compact.rttMs = stats.lastRtt;
+  compact.networkDropPercent = stats.totalFrames != 0 ? (float)stats.networkDroppedFrames / stats.totalFrames * 100 : -1.0f;
+  compact.waitPacingMs = stats.renderedFrames != 0 && stats.decodedFrames != 0
+    ? (float)stats.totalDecodeTime / stats.decodedFrames + (float)stats.totalPacerTime / stats.renderedFrames
+    : -1.0f;
+  return compact;
 }
 
 int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
@@ -997,6 +1031,13 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
   // Measure the frame rate of the host from its capture timestamps
   UpdateHostFrameRate(decodeUnit->frameNumber, decodeUnit->presentationTimeMs, decodeUnit->frameHostProcessingLatency);
 
+  // Record the interval of the host from the capture times. Frames the host encoded again from the previous image carry
+  // no host processing latency and a send time instead (see UpdateHostFrameRate), so they are left out.
+  if (decodeUnit->frameHostProcessingLatency != 0) {
+    RecordHostFrameInterval(s_HostIntervalClock, s_HostIntervals[s_FrameIntervalWindow], decodeUnit->presentationTimeMs,
+      decodeUnit->frameNumber);
+  }
+
   // Frames the client dropped itself so far, e.g. when the decode unit queue overflowed
   const uint32_t clientDroppedFrames = LiGetClientDroppedVideoFrames();
 
@@ -1029,9 +1070,9 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
 
   // Flip performance stats window roughly every second
   if (m_ActiveWndVideoStats.measurementStartTimestamp + 1000 < nowMs) {
-    // Update performance stats overlay if it's enabled
-    if (g_Instance->m_PerformanceStatsEnabled.load()) {
-      std::lock_guard<std::mutex> statLock(s_StatStringMutex);
+    // Update performance stats overlay at its level: the figures of the compact line, or the text of the full statistics
+    const int statsLevel = g_Instance->m_PerformanceStatsLevel.load();
+    if (statsLevel != kPerformanceStatsOff) {
       // Create a container to hold aggregated stats for display
       VIDEO_STATS lastTwoWndStats = {};
       // Calculate the bitrate in megabits per second from the bytes received over the actual length of this window
@@ -1039,14 +1080,25 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
       // Add last window and current window to the aggregated stats
       AddVideoStats(m_LastWndVideoStats, lastTwoWndStats);
       AddVideoStats(m_ActiveWndVideoStats, lastTwoWndStats);
-      // Convert the aggregated stats to a display string
-      FormatVideoStats(lastTwoWndStats, s_StatString.data(), s_StatString.length());
-      // Send the formatted stats string to the JS frontend for overlay display, without waiting
-      // for the main thread, since that would hold up the next frames on this decoder thread
-      PostToJsAsync(std::string("StatMsg: ") + s_StatString.data());
-      // Clear the stats string buffer for the next use
-      std::fill(s_StatString.begin(), s_StatString.end(), 0);
+      // Send the stats to the JS frontend for overlay display, without waiting for the main thread, since that would
+      // hold up the next frames on this decoder thread
+      if (statsLevel == kPerformanceStatsCompact) {
+        char compactMessage[256];
+        if (FormatCompactStatsMessage(GetCompactVideoStats(lastTwoWndStats), compactMessage, sizeof(compactMessage)) > 0) {
+          PostToJsAsync(compactMessage);
+        }
+      } else {
+        // Convert the aggregated stats to a display string
+        FormatVideoStats(lastTwoWndStats, s_StatString.data(), s_StatString.length());
+        PostToJsAsync(std::string("StatMsg: ") + s_StatString.data());
+        // Clear the stats string buffer for the next use
+        std::fill(s_StatString.begin(), s_StatString.end(), 0);
+      }
     }
+    // Start the next window of the frame intervals, which replaces the one before the previous window
+    s_FrameIntervalWindow ^= 1;
+    ResetFrameIntervals(s_HostIntervals[s_FrameIntervalWindow]);
+    ResetFrameIntervals(s_PlayerIntervals[s_FrameIntervalWindow]);
     // Reset byte count for the next measurement interval, even while the overlay is hidden,
     // so that enabling the overlay mid-stream doesn't report every byte since the stream started
     total_bytes = 0;
@@ -1133,6 +1185,9 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     // Track total render time and count rendered frames
     m_ActiveWndVideoStats.totalRenderTime += afterRender - beforeRender;
     m_ActiveWndVideoStats.renderedFrames++;
+    // Record the interval at which the frames reach the video player
+    RecordPlayerFrameInterval(s_PlayerIntervalClock, s_PlayerIntervals[s_FrameIntervalWindow],
+      (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
     s_LastAppendSuccessMs = LiGetMillis();
     s_RejectedModeFailures = 0;
     s_AnyAppendSucceeded = true;
@@ -1362,6 +1417,27 @@ void MoonlightInstance::FormatVideoStats(VIDEO_STATS& stats, char* output, int l
     offset += ret;
   }
 
+  // Print how evenly the frames leave the host and reach the video player over the last two windows, once there are
+  // intervals to compare (see frame_intervals.hpp)
+  const uint32_t frameUs = 1000000 / std::max<uint32_t>(1, s_Framerate);
+  const int previousWindow = s_FrameIntervalWindow ^ 1;
+  const FrameIntervalSummary hostIntervals = SummarizeFrameIntervals(s_HostIntervals[previousWindow],
+    s_HostIntervals[s_FrameIntervalWindow], frameUs);
+  const FrameIntervalSummary playerIntervals = SummarizeFrameIntervals(s_PlayerIntervals[previousWindow],
+    s_PlayerIntervals[s_FrameIntervalWindow], frameUs);
+  ret = FormatFrameIntervalLine("Host", hostIntervals, &output[offset], length - offset);
+  if (ret < 0) {
+    assert(false);
+    return;
+  }
+  offset += ret;
+  ret = FormatFrameIntervalLine("TV player", playerIntervals, &output[offset], length - offset);
+  if (ret < 0) {
+    assert(false);
+    return;
+  }
+  offset += ret;
+
   // Show the totals of the whole session, so that brief drops between the overlay updates aren't missed
   if (m_GlobalVideoStats.totalFrames != 0) {
     // Print the network frame drops and the recovery keyframes since the stream started
@@ -1465,25 +1541,13 @@ void MoonlightInstance::FormatVideoStats(VIDEO_STATS& stats, char* output, int l
 }
 
 void MoonlightInstance::TogglePerformanceStats() {
-  // Toggle the performance stats overlay flag. The remote (main thread) and the gamepad combo (gamepad thread) can
-  // toggle it at the same time, so flip it in one atomic step (compare_exchange_weak() leaves the value it replaced in
-  // `enabled`).
-  bool enabled = m_PerformanceStatsEnabled.load();
-  while (!m_PerformanceStatsEnabled.compare_exchange_weak(enabled, !enabled)) {
-  }
-  enabled = !enabled;
+  // Step the performance stats overlay to its next level: Off, Compact, Full, Off. The remote (main thread) and the
+  // gamepad combo (gamepad thread) can press at the same time, so each press moves one level in one atomic step.
+  const int level = CyclePerformanceStatsLevel(m_PerformanceStatsLevel);
 
-  // Notify the JS code that performance stats overlay is enabled or disabled
-  if (enabled) {
-    std::string message;
-    {
-      std::lock_guard<std::mutex> statLock(s_StatStringMutex);
-      message = std::string("StatMsg: ") + s_StatString.data();
-    }
-    PostToJs(message);
-  } else {
-    PostToJs(std::string("NoStatMsg: "));
-  }
+  // Tell the JS code the new level. The figures for it follow from the video decoder thread at the next stats window,
+  // and the ones for the previous level that are still on their way are ignored there.
+  PostToJs(FormatPerformanceStatsLevelMessage(level));
 }
 
 bool MoonlightInstance::WaitFor(std::condition_variable* variable, std::function<bool()> condition, std::chrono::milliseconds timeout) {

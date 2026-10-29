@@ -37,6 +37,38 @@ function isRandomMacAddress(macAddress) {
   return (firstOctet & 0x02) !== 0;
 }
 
+// The broadcast address of the subnet of the TV, e.g. '192.168.1.255' for the address 192.168.1.20 with the mask
+// 255.255.255.0, which the magic packet of Wake-on-LAN goes to besides 255.255.255.255 (wasm/wake_on_lan.hpp). Empty
+// when the TV doesn't tell its address and mask (webapis.network), the mask isn't one of a subnet, or the subnet has
+// no broadcast address (/31 and /32). Ported from the fork of samirmartins (moonlight-tizen, getWakeBroadcastAddress()
+// of 97bfe5c), which reads the subnet of the TV instead of guessing a /24 from the address of the PC.
+function getSubnetBroadcastAddress() {
+  var parse = function(text) {
+    var parts = String(text).split('.');
+    if (parts.length !== 4 || !parts.every(function(part) { return /^\d{1,3}$/.test(part) && Number(part) <= 255; })) {
+      return null;
+    }
+    return parts.reduce(function(value, part) { return ((value << 8) | Number(part)) >>> 0; }, 0);
+  };
+  try {
+    var address = parse(webapis.network.getIp());
+    var mask = parse(webapis.network.getSubnetMask());
+    if (address === null || mask === null || address === 0) {
+      return '';
+    }
+    var hostBits = (~mask) >>> 0;
+    // The mask must be ones followed by zeros, with at least 2 host bits
+    if ((hostBits & (hostBits + 1)) !== 0 || hostBits < 3) {
+      return '';
+    }
+    var broadcast = (address | hostBits) >>> 0;
+    return [24, 16, 8, 0].map(function(shift) { return (broadcast >>> shift) & 255; }).join('.');
+  } catch (e) {
+    console.warn('%c[utils.js, getSubnetBroadcastAddress]', 'color: gray;', 'Warning: The address of the TV is unknown, Wake-on-LAN leaves out the broadcast address of its subnet:', e);
+    return '';
+  }
+}
+
 // The random IDs and the pairing PIN come from the cryptographic random generator of the browser (cryptoRand()) instead
 // of Math.random(), whose output can be predicted from earlier values. A unique ID that an install already stored stays
 // as it is (loadHTTPCertsCb() in wasm/platform/index.js only creates one when none is stored)
@@ -302,11 +334,8 @@ NvHTTP.prototype = {
 
     // Check if a stream session is already in progress
     if (isInGame === true) {
-      // Drain callbacks to avoid permanently blocking the deduplication guard
-      var completion;
-      while ((completion = this._pollCompletionCallbacks.pop())) {
-        completion(this); // Executes the callback so the caller isn't left hanging
-      }
+      // Drain callbacks to avoid permanently blocking the deduplication guard, so the caller isn't left hanging
+      this._completePoll();
       // Do not initiate any server polls while a streaming session is already in progress
       return;
     }
@@ -333,10 +362,7 @@ NvHTTP.prototype = {
       this.online = true;
 
       // Call all pending completion callbacks
-      var completion;
-      while ((completion = this._pollCompletionCallbacks.pop())) {
-        completion(this);
-      }
+      this._completePoll();
     }.bind(this), function() {
       // Set host to offline and clear the app list cache
       if (++this._consecutivePollFailures >= 2) {
@@ -345,11 +371,25 @@ NvHTTP.prototype = {
       }
 
       // Call all pending completion callbacks
-      var completion;
-      while ((completion = this._pollCompletionCallbacks.pop())) {
-        completion(this);
-      }
+      this._completePoll();
     }.bind(this));
+  },
+
+  // Call the callbacks that wait for the poll that just ended, in the order they came, each on its own: one that
+  // throws neither keeps the others from the result nor stays in the list, where it kept every later poll from starting
+  // (the check at the start of pollServer()). The list is taken first, so that a callback can start the next poll.
+  // Before, beginBackgroundPollingOfHost() in index.js emptied the list to recover from such a stuck poll, which also
+  // threw away the callback of a poll still running, e.g. the one of the Wake PC dialog that waited for the host.
+  _completePoll: function() {
+    var completions = this._pollCompletionCallbacks;
+    this._pollCompletionCallbacks = [];
+    completions.forEach(function(completion) {
+      try {
+        completion(this);
+      } catch (e) {
+        console.error('%c[utils.js, pollServer]', 'color: gray;', 'Error: A callback of the poll of ' + this.hostname + ' failed:', e);
+      }
+    }, this);
   },
 
   // Initially pings the server to try and figure out if it's routable by any means
@@ -982,21 +1022,27 @@ NvHTTP.prototype = {
     }
   },
 
-  launchApp: function(appId, mode, sops, rikey, rikeyid, enableHdr, localAudio, surroundAudioInfo, gamepadMask) {
+  // With continuousAudio, the host keeps sending audio packets during silence (Sunshine since v2026.516.143833 with
+  // fbcf2116, which leaves them out otherwise; other hosts ignore the parameter), so that the audio player of the TV
+  // and the link to a soundbar don't run dry, and the audio statistics count only real losses. moonlight-tv (1cd208b)
+  // sends it with every launch as well. Without it the request is the one of earlier versions.
+  launchApp: function(appId, mode, sops, rikey, rikeyid, enableHdr, localAudio, surroundAudioInfo, gamepadMask, continuousAudio) {
     return sendMessage('openUrl', [
       this._baseUrlHttps + '/launch?' + this._buildUidStr() + '&appid=' + appId + '&mode=' + mode +
       '&additionalStates=1&sops=' + sops + '&rikey=' + rikey + '&rikeyid=' + rikeyid + '&hdrMode=' + enableHdr +
       '&localAudioPlayMode=' + localAudio + '&surroundAudioInfo=' + surroundAudioInfo +
-      '&remoteControllersBitmap=' + gamepadMask + '&gcmap=' + gamepadMask, this.ppkstr, false
+      '&remoteControllersBitmap=' + gamepadMask + '&gcmap=' + gamepadMask + (continuousAudio ? '&continuousAudio=1' : ''),
+      this.ppkstr, false
     ]);
   },
 
-  resumeApp: function(mode, sops, rikey, rikeyid, enableHdr, localAudio, surroundAudioInfo, gamepadMask) {
+  resumeApp: function(mode, sops, rikey, rikeyid, enableHdr, localAudio, surroundAudioInfo, gamepadMask, continuousAudio) {
     return sendMessage('openUrl', [
       this._baseUrlHttps + '/resume?' + this._buildUidStr() + '&mode=' + mode +
       '&additionalStates=1&sops=' + sops + '&rikey=' + rikey + '&rikeyid=' + rikeyid + '&hdrMode=' + enableHdr +
       '&localAudioPlayMode=' + localAudio + '&surroundAudioInfo=' + surroundAudioInfo +
-      '&remoteControllersBitmap=' + gamepadMask + '&gcmap=' + gamepadMask, this.ppkstr, false
+      '&remoteControllersBitmap=' + gamepadMask + '&gcmap=' + gamepadMask + (continuousAudio ? '&continuousAudio=1' : ''),
+      this.ppkstr, false
     ]);
   },
 
@@ -1052,7 +1098,7 @@ NvHTTP.prototype = {
   },
 
   sendWOL: function() {
-    return sendMessage('wakeOnLan', [this.macAddress]);
+    return sendMessage('wakeOnLan', [this.macAddress, getSubnetBroadcastAddress()]);
   },
 
   _buildUidStr: function() {

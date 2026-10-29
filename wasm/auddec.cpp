@@ -198,9 +198,18 @@ static void DecodeAndScheduleFrame(OpusMSDecoder* decoder, const unsigned char* 
 
   // Hand the decoded samples to the audio scheduler running on the main thread. This is
   // asynchronous, so the audio thread is never blocked waiting on the browser event loop.
+  // A failure of the scheduler is logged (the first and every 1000th, since this runs every 5 ms) and doesn't leave the
+  // main thread unable to run proxied calls (see PostToJs() in main.cpp)
   MAIN_THREAD_ASYNC_EM_ASM({
-    if (typeof _audReceiveFrame === 'function') {
-      _audReceiveFrame($0, $1, $2, $3, $4, $5, $6);
+    try {
+      if (typeof _audReceiveFrame === 'function') {
+        _audReceiveFrame($0, $1, $2, $3, $4, $5, $6);
+      }
+    } catch (e) {
+      window._mlAudioFrameErrors = (window._mlAudioFrameErrors || 0) + 1;
+      if (window._mlAudioFrameErrors % 1000 === 1) {
+        console.error('%c[auddec.cpp, AudDecDecodeAndPlaySample]', 'color: gray;', 'Error: _audReceiveFrame() failed (' + window._mlAudioFrameErrors + ' times):', e);
+      }
     }
   }, (int)(size_t)slot, decodeLen, (int)s_channelCount, s_sampleRate,
      (int)kAudioSlotStride, sequence, arrivalGapMs);
@@ -286,7 +295,11 @@ int MoonlightInstance::AudDecInit(int audioConfiguration, POPUS_MULTISTREAM_CONF
 
     // Publish the jitter buffer target to the audio scheduler in platform/audio.js
     MAIN_THREAD_ASYNC_EM_ASM({
-      window._mlAudioTargetMs = $0;
+      try {
+        window._mlAudioTargetMs = $0;
+      } catch (e) {
+        console.error('%c[auddec.cpp, AudDecInit]', 'color: gray;', 'Error: Setting the jitter buffer failed:', e);
+      }
     }, audioJitterMs);
   } else {
     ClLogMessage("Selected the EMSS audio backend\n");
@@ -300,8 +313,12 @@ void MoonlightInstance::AudDecCleanup(void) {
   // before the streaming session ended
   if (s_AudioBackend == AudioBackend::WebAudio) {
     MAIN_THREAD_ASYNC_EM_ASM({
-      if (typeof stopAudioScheduler === 'function') {
-        stopAudioScheduler();
+      try {
+        if (typeof stopAudioScheduler === 'function') {
+          stopAudioScheduler();
+        }
+      } catch (e) {
+        console.error('%c[auddec.cpp, AudDecCleanup]', 'color: gray;', 'Error: stopAudioScheduler() failed:', e);
       }
     });
   }

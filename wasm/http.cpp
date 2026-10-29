@@ -100,6 +100,10 @@ void MoonlightInstance::OpenUrl_private(int callbackId, std::string url, std::st
     PostPromiseMessage(callbackId, "reject", "Error when creating data buffer.");
     return;
   }
+  // The binary answers are the box art (NvHTTP.getBoxArt() in utils.js), which gets a larger limit than the XML answers
+  if (binaryResponse) {
+    data->maxSize = HTTP_MAX_BOX_ART_RESPONSE_SIZE;
+  }
 
   err = http_request(url.c_str(), ppk.empty() ? NULL : ppk.c_str(), data);
   if (err) {

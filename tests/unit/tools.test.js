@@ -88,6 +88,25 @@ test('the EM_ASM check reports a comma outside parentheses in a code block', () 
   assert.ok(problems[0].indexOf('line 2:') === 0 && problems[1].indexOf('line 5:') === 0, problems.join('\n'));
 });
 
+test('the EM_ASM blocks are listed with their macro, line and code, without the macro definitions', () => {
+  const source = [
+    '#define MAIN_THREAD_EM_ASM(code, ...) emscripten_asm_const_int_sync_on_main_thread(#code)',
+    'void f(const char* text) {',
+    '  MAIN_THREAD_EM_ASM({',
+    '    try {',
+    '      handleMessage(UTF8ToString($0)); // a comment, with a comma',
+    '    } catch (e) {',
+    '    }',
+    '  }, text);',
+    '  const int n = EM_ASM_INT({ return 1; });',
+    '}',
+  ].join('\n');
+  const blocks = emAsm.findBlocks(source);
+  assert.deepEqual(blocks.map((block) => [block.macro, block.line]), [['MAIN_THREAD_EM_ASM', 3], ['EM_ASM_INT', 9]]);
+  assert.ok(blocks[0].code.indexOf('{\n    try {') === 0 && /\}\n {2}\}$/.test(blocks[0].code), blocks[0].code);
+  assert.equal(blocks[1].code, '{ return 1; }');
+});
+
 // Write the Markdown files into a temporary folder ({ relative path: content }), run the link check on the first one and
 // remove the folder again
 function checkMarkdown(files) {

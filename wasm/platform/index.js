@@ -27,6 +27,8 @@ var isInGame = false; // Flag indicating whether the game has started, initial v
 var streamLaunchId = 0; // Number of the latest stream launch, which replies of an older or cancelled launch are ignored by, initial value is 0
 var streamLaunchHost = null; // Host of the latest stream launch, initial value is null
 var streamLaunchAppTitle = ''; // Title of the app of the latest stream launch, which the Stream Menu shows, initial value is empty
+var streamLaunchAppId = null; // ID of the app of the latest stream launch, which a retry after no video starts again, initial value is null
+var streamNoVideoRetried = false; // Flag indicating whether the latest stream launch is the retry after no video (retryStreamAfterNoVideo()), initial value is false
 var wasmSessionStarted = false; // Flag indicating whether the start request of the current stream reached the WASM module, initial value is false
 var isDialogOpen = false; // Flag indicating whether the dialog is open, initial value is false
 var isPairingInProgress = false; // Flag indicating whether a pairing process is in progress, initial value is false
@@ -137,6 +139,7 @@ function attachListeners() {
   $('#audioClockSyncSwitch').on('click', saveAudioClockSync);
   $('#jitterSlider').on('input', saveAudioJitter);
   $('#playHostAudioSwitch').on('click', savePlayHostAudio);
+  $('#continuousAudioSwitch').on('click', saveContinuousAudio);
   $('#decryptHostAudioSwitch').on('click', saveDecryptHostAudio);
   $('.videoCodecMenu li').on('click', saveVideoCodec);
   $('#hdrModeSwitch').on('click', saveHdrMode);
@@ -147,7 +150,7 @@ function attachListeners() {
   $('#unlockAllFpsSwitch').on('click', saveUnlockAllFps);
   $('#optimizeBitrateSwitch').on('click', saveOptimizeBitrate);
   $('#disableWarningsSwitch').on('click', saveDisableWarnings);
-  $('#performanceStatsSwitch').on('click', savePerformanceStats);
+  $('.performanceStatsMenu li').on('click', choosePerformanceStatsLevel);
   $('#navigationGuideBtn').on('click', navigationGuideDialog);
   $('#checkUpdatesBtn').on('click', checkForAppUpdates);
   $('#restartAppBtn').on('click', restartAppDialog);
@@ -172,6 +175,7 @@ function attachListeners() {
   registerMenu('selectAudio', Views.SelectAudioMenu);
   registerMenu('selectAudioJitter', Views.SelectAudioJitterMenu);
   registerMenu('selectCodec', Views.SelectCodecMenu);
+  registerMenu('selectPerformanceStats', Views.SelectPerformanceStatsMenu);
 
   $(window).resize(fullscreenWasmModule);
 
@@ -374,6 +378,18 @@ function updateHostStatusIndicator(host) {
   }
 }
 
+// The Wake PC dialog that waits for its host to come online (autoWolDialog()), as { host, onOnline }, or null
+var wolDialogWait = null;
+
+// Show what the background polling found out about a host, and close the Wake PC dialog that waits for it once it's
+// online, since the poll of the dialog itself can wait behind a scan of the network or a slow request
+function onBackgroundPollResult(host) {
+  updateHostStatusIndicator(host);
+  if (host.online === true && wolDialogWait && wolDialogWait.host.serverUid === host.serverUid) {
+    wolDialogWait.onOnline();
+  }
+}
+
 function beginBackgroundPollingOfHost(host) {
   // Clear any existing polling interval for this host before starting a new one.
   // Without this, every call to beginBackgroundPollingOfHost (e.g. on each navigation
@@ -409,15 +425,12 @@ function beginBackgroundPollingOfHost(host) {
     host._memCachedApplist = null;
   }).finally(function() {
     // Update the UI after the network finishes
-    updateHostStatusIndicator(host);
+    onBackgroundPollResult(host);
 
     // A later start took over the polling of the host, whose loop may be polling already, so leave its state alone
     if (pollGenerations[host.serverUid] !== generation) return;
 
-    // Reset poll state so that recovery polls from the interval below start with
-    // a clean slate. Without this, stale _pollCompletionCallbacks entries from
-    // previous (leaked) intervals can block the deduplication guard and prevent
-    // pollServer from ever starting a new poll.
+    // Reset the failure count so that the polls below start with a clean slate.
     // Note: resetting _consecutivePollFailures to 0 here is always safe. If the
     // host was previously online, this counter was already 0 (it is reset to 0 on
     // every successful poll). Online *recovery* (host.online = true) is set
@@ -425,8 +438,10 @@ function beginBackgroundPollingOfHost(host) {
     // the counter only gates the *offline* direction (host.online = false after
     // >= 2 consecutive failures inside pollServer), so resetting it here does not
     // interfere with future offline detection either.
+    // The callbacks of a poll that is still running stay: pollServer() calls each of them once it ends, also when one
+    // of them throws, so none can block the next poll. Emptying the list here threw away the callback of the Wake PC
+    // dialog when its poll ran while the scan at startup ended, which left the dialog open after the PC woke up.
     host._consecutivePollFailures = 0;
-    host._pollCompletionCallbacks = [];
 
     var scheduleNextPoll = function(delay) {
       // Stop if the poll was canceled (ID removed from activePolls) or a later start took over
@@ -438,7 +453,7 @@ function beginBackgroundPollingOfHost(host) {
 
         host.pollServer(function(returnedHost) {
           // Update the UI after the network finishes
-          updateHostStatusIndicator(returnedHost);
+          onBackgroundPollResult(returnedHost);
 
           // In case it was canceled while the network request was running
           if (!isCurrentPoll()) return;
@@ -1279,7 +1294,8 @@ function pairingDialog(nvhttpHost, onSuccess, onFailure) {
       Navigation.pop();
     });
 
-    console.log('%c[index.js, pairingDialog]', 'color: green;', 'Sending pairing request to ' + nvhttpHost.hostname + ' with PIN ' + randomNumber);
+    // The PIN stays out of the log
+    console.log('%c[index.js, pairingDialog]', 'color: green;', 'Sending pairing request to ' + nvhttpHost.hostname);
     nvhttpHost.pair(randomNumber).then(function() {
       isPairingInProgress = false;
       snackbarLog('Successfully paired with %1$s', nvhttpHost.hostname);
@@ -1307,6 +1323,9 @@ function pairingDialog(nvhttpHost, onSuccess, onFailure) {
       // change the dialog text element to include the hostname and display the returned error message
       if (nvhttpHost.currentGame != 0) {
         $('#pairingDialogText').html(t('Error: %1$s is currently busy!<br><br>You must stop the running app in order to pair with the host.', escapeHTML(nvhttpHost.hostname)));
+      } else if (String(failedPairing) === '-7') {
+        // GS_PIN_WRONG of libgamestream/errors.h: the host answered with a hash that doesn't match the PIN (gs_pair())
+        $('#pairingDialogText').html(t('Error: The PIN entered on %1$s was wrong.<br><br>Please, try pairing with the host again and enter the new PIN.', escapeHTML(nvhttpHost.hostname)));
       } else {
         $('#pairingDialogText').html(t('Error: Failed to pair with %1$s.<br><br>Please, try pairing with the host again.', escapeHTML(nvhttpHost.hostname)));
       }
@@ -1314,6 +1333,9 @@ function pairingDialog(nvhttpHost, onSuccess, onFailure) {
     });
   });
 }
+
+// How often the Wake PC dialog sends the Wake-on-LAN request again while it waits for the host
+var WOL_RESEND_INTERVAL_MS = 10000;
 
 function autoWolDialog(host, onSuccess, onCancel) {
   var autoWolOverlay = document.querySelector('#autoWolDialogOverlay');
@@ -1345,32 +1367,68 @@ function autoWolDialog(host, onSuccess, onCancel) {
   focusElement('cancelAutoWol');
 
   var isPolling = true;
+  var isClosed = false;
   var pollTimeout = null;
+  var resendTimer = null;
   var hasFailed = false;
+  // The error of a failed request, which the Cancel/OK button logs. It lives here, since the button handler threw a
+  // ReferenceError after a failure while it was declared in the catch handler below, and the dialog stayed open.
+  var errorMessage = '';
 
   var stopPollingTasks = function() {
     isPolling = false;
     if (pollTimeout) clearTimeout(pollTimeout);
+    if (resendTimer) clearInterval(resendTimer);
     if (typeof abortSubnetScan === 'function') abortSubnetScan();
   };
 
+  // Close the dialog once, and only then stop its tasks (as upstream does since 0a35dfd)
   var cleanup = function() {
-    stopPollingTasks();
+    if (isClosed) return;
+    isClosed = true;
+    if (wolDialogWait === wait) wolDialogWait = null;
     autoWolOverlay.style.display = 'none';
     autoWolDialog.close();
     isDialogOpen = false;
     Navigation.pop();
+    stopPollingTasks();
   };
+
+  // The host is online: close the dialog and go on. Its own poll reports this, and so does the background polling of
+  // the hosts (onBackgroundPollResult()), whose poll can be the first to reach the host.
+  var onHostOnline = function(returnedHost) {
+    if (isClosed) return;
+    console.log('%c[index.js, autoWolDialog]', 'color: green;', host.hostname + ' is online, closing the Wake PC dialog.');
+    cleanup();
+    if (onSuccess) onSuccess();
+
+    // Instantly update the UI to remove the offline styling
+    updateHostStatusIndicator(returnedHost);
+  };
+  var wait = { host: host, onOnline: function() { onHostOnline(host); } };
+  wolDialogWait = wait;
 
   var sendWakeRequest = function() {
     $('#autoWolDialogText').html(t('Sending a Wake-on-LAN request to %1$s...', escapeHTML(host.hostname)));
 
     host.sendWOL().then(function(msg) {
+      // The dialog was closed while the request was being sent
+      if (!isPolling) return;
       if (msg) console.log('%c[index.js, autoWolDialog]', 'color: green;', msg);
       $('#autoWolDialogText').html(
         t('Wake-on-LAN request sent to %1$s.', escapeHTML(host.hostname)) + '<br><br>' +
         t('Waiting for the host PC to wake up and connect to the network...')
       );
+
+      // Send the request again now and then while waiting, for a packet that a network card in deep sleep, a switch
+      // that only just woke up or the Wi-Fi of the TV missed
+      resendTimer = setInterval(function() {
+        host.sendWOL().then(function(resendMsg) {
+          if (resendMsg) console.log('%c[index.js, autoWolDialog]', 'color: green;', 'Sent the Wake-on-LAN request again: ' + resendMsg);
+        }, function(error) {
+          console.warn('%c[index.js, autoWolDialog]', 'color: green;', 'Warning: Failed to send the Wake-on-LAN request again: ' + error);
+        });
+      }, WOL_RESEND_INTERVAL_MS);
 
       var pollLoop = function() {
         if (!isPolling) return;
@@ -1389,11 +1447,7 @@ function autoWolDialog(host, onSuccess, onCancel) {
             if (!isPolling) return; // In case the dialog was closed while pollServer was running
 
             if (returnedHost.online) {
-              cleanup();
-              if (onSuccess) onSuccess();
-
-              // Instantly update the UI to remove the offline styling
-              updateHostStatusIndicator(returnedHost);
+              onHostOnline(returnedHost);
             } else {
               // Wait 1 second AFTER the previous poll finished before starting the next one.
               // This prevents rapid CPU spinning if the network drops temporarily and requests 
@@ -1411,11 +1465,14 @@ function autoWolDialog(host, onSuccess, onCancel) {
       hasFailed = true;
       stopPollingTasks();
 
-      var errorMessage = typeof error === 'string' ? error : (error && error.message ? error.message : 'Unknown error');
+      errorMessage = typeof error === 'string' ? error : (error && error.message ? error.message : 'Unknown error');
       var translatedError = replaceKnownWolErrorLabels(errorMessage);
+      // Some TVs can't send the request at all (e.g. 'Failed to create socket', upstream issue 31), so point to another
+      // way to wake the PC
       $('#autoWolDialogText').html(
         t('Failed to send Wake-on-LAN request to %1$s!', escapeHTML(host.hostname)) + '<br><br>' +
-        t('Error: %1$s', translatedError)
+        t('Error: %1$s', translatedError) + '<br><br>' +
+        t('You can wake the PC with another device instead, e.g. with a Wake-on-LAN app on a phone.')
       );
       // Change the button text to "OK" to indicate that the user can acknowledge the failure
       $('#cancelAutoWol').html(t('OK'));
@@ -3276,17 +3333,18 @@ function fullscreenWasmModule() {
 function handleOnScreenOverlays() {
   // Find the existing toggle switch elements
   const disableWarningsSwitch = document.getElementById('disableWarningsSwitch');
-  const performanceStatsSwitch = document.getElementById('performanceStatsSwitch');
 
   // Check if the disable warnings switch is checked, then hide or show the connection warning messages
   disableWarningsSwitch.checked ? $('#connection-warnings').css('display', 'none') : $('#connection-warnings').css('display', 'inline-block');
 
-  // Check if the performance stats switch is checked, then show or hide the performance statistics information
-  performanceStatsSwitch.checked ? $('#performance-stats').css('display', 'inline-block') : $('#performance-stats').css('display', 'none');
+  // The performance statistics show once the first figures of the stream arrive (showPerformanceStats() in messages.js)
+  showPerformanceStats('', false);
 }
 
 // Start the given appID. If another app is running, offer to quit it. Otherwise, if the given app is already running, just resume it.
-function startGame(host, appID) {
+// isNoVideoRetry marks the start of the same app once more after no video arrived (retryStreamAfterNoVideo()), which
+// the launch screen of the first start still shows for.
+function startGame(host, appID, isNoVideoRetry) {
   if (!host || !host.paired) {
     console.error('%c[index.js, startGame]', 'color: green;', 'Error: Attempted to start a game, but the host was not initialized properly! Host object: ', host);
     return;
@@ -3298,7 +3356,7 @@ function startGame(host, appID) {
     return;
   }
   // Ignore a second start (e.g. from a Smart Hub deep link) while a stream is starting or running
-  if (isInGame) {
+  if (isInGame && !isNoVideoRetry) {
     console.warn('%c[index.js, startGame]', 'color: green;', 'Warning: Ignoring the start of app ' + appID + ' while a stream is active.');
     return;
   }
@@ -3308,6 +3366,8 @@ function startGame(host, appID) {
   // started (see cancelStreamLaunch)
   var launchId = ++streamLaunchId;
   streamLaunchHost = host;
+  streamLaunchAppId = appID;
+  streamNoVideoRetried = !!isNoVideoRetry;
   streamLaunchAppTitle = '';
   wasmSessionStarted = false;
   isStreamConnected = false;
@@ -3319,19 +3379,32 @@ function startGame(host, appID) {
   streamHiddenCount = 0;
   streamVideoTrackCloseCount = 0;
 
+  var startWebAudio = function() {
+    if (isWebAudioBackendSelected()) {
+      // Publish the clock sync setting to the audio scheduler in platform/audio.js
+      window._mlAudioClockSync = $('#audioClockSyncSwitch').parent().hasClass('is-checked');
+      startAudioScheduler();
+    }
+  };
   // Start the audio scheduler of the Web Audio backend while we are still running inside the
   // handler of the key press that started the stream, because the audio context of a device
-  // with an autoplay policy can only be created from a user gesture
-  if (isWebAudioBackendSelected()) {
-    // Publish the clock sync setting to the audio scheduler in platform/audio.js
-    window._mlAudioClockSync = $('#audioClockSyncSwitch').parent().hasClass('is-checked');
-    startAudioScheduler();
+  // with an autoplay policy can only be created from a user gesture. A retry has no key press, and starts it right
+  // after its start request instead: the stop of the stream that it retries closes the scheduler from the queue of the
+  // WebAssembly module (AudDecCleanup() in wasm/auddec.cpp), which the start request runs through at the latest.
+  if (!isNoVideoRetry) {
+    startWebAudio();
   }
 
   // Refresh the server info, because the user might have quit the game
   host.refreshServerInfo().then(function(ret) {
     host.getAppById(appID).then(function(appToStart) {
       if (launchId !== streamLaunchId) {
+        return;
+      }
+      // A retry only resumes the app that it started a moment ago, and asks nothing: one that can't ends like the
+      // stream it retries
+      if (isNoVideoRetry && (!appToStart || (host.currentGame != 0 && host.currentGame != appID))) {
+        endNoVideoRetry('the app ' + appID + ' is not available or another app runs on the host');
         return;
       }
       if (host.currentGame != 0 && host.currentGame != appID) {
@@ -3410,13 +3483,16 @@ function startGame(host, appID) {
       const audioSync = $('#audioSyncSwitch').parent().hasClass('is-checked') ? 1 : 0;
       const audioJitter = parseInt($('#jitterSlider').val());
       const playHostAudio = $('#playHostAudioSwitch').parent().hasClass('is-checked') ? 1 : 0;
+      const continuousAudio = $('#continuousAudioSwitch').parent().hasClass('is-checked') ? 1 : 0;
       const decryptHostAudio = $('#decryptHostAudioSwitch').parent().hasClass('is-checked') ? 1 : 0;
       var videoCodec = $('#selectCodec').data('value').toString();
       const hdrMode = $('#hdrModeSwitch').parent().hasClass('is-checked') ? 1 : 0;
       const fullRange = $('#fullRangeSwitch').parent().hasClass('is-checked') ? 1 : 0;
       const gameMode = $('#gameModeSwitch').parent().hasClass('is-checked') ? 1 : 0;
       const disableWarnings = $('#disableWarningsSwitch').parent().hasClass('is-checked') ? 1 : 0;
-      const performanceStats = $('#performanceStatsSwitch').parent().hasClass('is-checked') ? 1 : 0;
+      // The level as the launch starts, for the log: the start request reads it again, since YELLOW can step it while
+      // the launch request is on its way (remoteControllerHandler() in remote_controller.js)
+      const performanceStats = getPerformanceStatsLevel();
       const refFrameInvalidation = $('#refFrameInvalidationSwitch').parent().hasClass('is-checked') ? 1 : 0;
       const hdrMetadata = $('#hdrMetadataSwitch').parent().hasClass('is-checked') ? 1 : 0;
 
@@ -3439,13 +3515,14 @@ function startGame(host, appID) {
       '\n Audio synchronization: ' + audioSync + 
       '\n Audio jitter buffer: ' + audioJitter + ' ms' +
       '\n Play host audio: ' + playHostAudio + 
+      '\n Continuous audio from the host: ' + continuousAudio +
       '\n Decrypt host audio: ' + decryptHostAudio + 
       '\n Video codec: ' + videoCodec + 
       '\n Video HDR mode: ' + hdrMode + 
       '\n Full color range: ' + fullRange + 
       '\n Game Mode: ' + gameMode + 
       '\n Disable connection warnings: ' + disableWarnings + 
-      '\n Performance statistics: ' + performanceStats + 
+      '\n Performance statistics: ' + performanceStats + ' (0 off, 1 compact, 2 full)' +
       '\n Reference frame invalidation: ' + refFrameInvalidation +
       '\n HDR static metadata: ' + hdrMetadata +
       '\n Controller type sent to the PC: ' + controllerType);
@@ -3472,7 +3549,8 @@ function startGame(host, appID) {
           hdrMode, // Auto HDR video streaming
           playHostAudio, // Play audio on host and client device
           0x030002, // Surround channel mask << 16 | Surround channel count
-          gamepadMask // Connect gamepad mask
+          gamepadMask, // Connect gamepad mask
+          continuousAudio // Audio packets also during silence
         ).then(function(launchResult) {
           if (launchId !== streamLaunchId) {
             console.log('%c[index.js, startGame]', 'color: green;', 'Ignoring the reply to a cancelled resume request.');
@@ -3511,8 +3589,11 @@ function startGame(host, appID) {
               host.appVersion, host.gfeVersion, sessionUrl, codecModes,
               framePacing, optimizeGames, rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons,
               audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
-              gameMode, disableWarnings, performanceStats, refFrameInvalidation, hdrMetadata, controllerType
+              gameMode, disableWarnings, getPerformanceStatsLevel(), refFrameInvalidation, hdrMetadata, controllerType
             ]);
+            if (isNoVideoRetry) {
+              startWebAudio();
+            }
           });
         }, function(failedResumeApp) {
           if (launchId !== streamLaunchId) {
@@ -3539,7 +3620,8 @@ function startGame(host, appID) {
         hdrMode, // Auto HDR video streaming
         playHostAudio, // Play audio on host and client device
         0x030002, // Surround channel mask << 16 | Surround channel count
-        gamepadMask // Connect gamepad mask
+        gamepadMask, // Connect gamepad mask
+        continuousAudio // Audio packets also during silence
       ).then(function(launchResult) {
         if (launchId !== streamLaunchId) {
           console.log('%c[index.js, startGame]', 'color: green;', 'Ignoring the reply to a cancelled launch request.');
@@ -3583,8 +3665,11 @@ function startGame(host, appID) {
             host.appVersion, host.gfeVersion, sessionUrl, codecModes,
             framePacing, optimizeGames, rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons,
             audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
-            gameMode, disableWarnings, performanceStats, refFrameInvalidation, hdrMetadata, controllerType
+            gameMode, disableWarnings, getPerformanceStatsLevel(), refFrameInvalidation, hdrMetadata, controllerType
           ]);
+          if (isNoVideoRetry) {
+            startWebAudio();
+          }
         });
       }, function(failedLaunchApp) {
         if (launchId !== streamLaunchId) {
@@ -3603,7 +3688,63 @@ function startGame(host, appID) {
     });
   }, function(failedRefreshInfo) {
     console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to refresh server info! Returned error was: ' + failedRefreshInfo + ' and failed server was: ' + '\n', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
+    // The launch screen of a retry still shows
+    if (isNoVideoRetry && launchId === streamLaunchId) {
+      endNoVideoRetry('the server info of the host could not be refreshed');
+    }
   });
+}
+
+// How long a stream that ended without video at its start waits before it starts once more (retryStreamAfterNoVideo()),
+// so that the failed connection is closed on both sides first, as in StreamLight
+var NO_VIDEO_RETRY_DELAY_MS = 1500;
+// The ports of the host PC that the termination of the stream without video named, for the message of a failed retry
+var noVideoRetryBlockedPorts = '';
+
+// Start a stream once more, without a word, when no video arrived from the host at its start (ML_ERROR_NO_VIDEO_TRAFFIC,
+// error -100, called by handleMessage() in messages.js): a host can be too slow for the first start, e.g. when it
+// switches its display to 4K HDR or to a virtual display, and the app usually runs by the second one. The launch screen
+// shows meanwhile, where RED cancels the start as usual (cancelStreamLaunch()). Only once per launch, so that a port
+// that is really blocked shows its message about 10 seconds later, and never while Moonlight is in the background or
+// after the user ended the stream (which ends it without error). Returns whether the retry takes over the end of the
+// stream. The idea comes from StreamLight (FoggyBytes/StreamLight, app/gui/StreamSegue.qml), which retries the same way.
+function retryStreamAfterNoVideo(blockedPorts) {
+  var host = streamLaunchHost;
+  var appID = streamLaunchAppId;
+  if (streamNoVideoRetried || !host || appID === null || document.visibilityState !== 'visible' || isStreamStoppedInBackground) {
+    return false;
+  }
+  streamNoVideoRetried = true;
+  noVideoRetryBlockedPorts = blockedPorts || '';
+  var launchId = streamLaunchId;
+  console.warn('%c[index.js, retryStreamAfterNoVideo]', 'color: green;', 'Warning: No video arrived from the host at the start of the stream, starting it once more in ' + NO_VIDEO_RETRY_DELAY_MS + ' ms.');
+  // Back to the launch screen: the stream view stays, the video goes, and the stream counts as starting again
+  isInGame = true;
+  $('#connection-warnings, #performance-stats').css('background', 'transparent').text('');
+  $('#wasm_module').css('display', 'none');
+  $('body').css('backgroundColor', '');
+  $('#loadingSpinner').css('display', 'inline-block');
+  $('#loadingSpinnerMessage').text(t('Starting %1$s...', streamLaunchAppTitle));
+  setTimeout(function() {
+    // Cancelled meanwhile with RED, or since Moonlight went to the background (endStreamInBackground())
+    if (launchId !== streamLaunchId || isInGame !== true) {
+      return;
+    }
+    console.log('%c[index.js, retryStreamAfterNoVideo]', 'color: green;', 'Starting app ' + appID + ' once more.');
+    startGame(host, appID, true);
+  }, NO_VIDEO_RETRY_DELAY_MS);
+  return true;
+}
+
+// End a retry after no video that couldn't start the stream once more, like the stream that it retried: back to the
+// app list, with the message about the ports of the host PC
+function endNoVideoRetry(reason) {
+  console.warn('%c[index.js, endNoVideoRetry]', 'color: green;', 'Warning: The stream can\'t be started once more: ' + reason + '.');
+  streamLaunchId++;
+  isInGame = false;
+  wasmSessionStarted = false;
+  leaveStreamView(streamLaunchHost || api);
+  showNoVideoMessage(noVideoRetryBlockedPorts);
 }
 
 // Cancel a stream that is still starting, i.e. whose start request hasn't reached the WASM module yet, and return to
@@ -4476,6 +4617,14 @@ function savePlayHostAudio() {
   }, 100);
 }
 
+function saveContinuousAudio() {
+  setTimeout(() => {
+    const chosenContinuousAudio = $('#continuousAudioSwitch').parent().hasClass('is-checked');
+    console.log('%c[index.js, saveContinuousAudio]', 'color: green;', 'Saving continuous audio state: ' + chosenContinuousAudio);
+    storeData('continuousAudio', chosenContinuousAudio, null);
+  }, 100);
+}
+
 function saveDecryptHostAudio() {
   setTimeout(() => {
     const chosenDecryptHostAudio = $('#decryptHostAudioSwitch').parent().hasClass('is-checked');
@@ -4689,12 +4838,46 @@ function saveDisableWarnings() {
   }, 100);
 }
 
-function savePerformanceStats() {
-  setTimeout(() => {
-    const chosenPerformanceStats = $('#performanceStatsSwitch').parent().hasClass('is-checked');
-    console.log('%c[index.js, savePerformanceStats]', 'color: green;', 'Saving performance stats state: ' + chosenPerformanceStats);
-    storeData('performanceStats', chosenPerformanceStats, null);
-  }, 100);
+// Levels of the performance statistics overlay, the same as kPerformanceStats* in wasm/compact_stats.hpp: Off, one compact
+// line (formatCompactStatsLine() in messages.js) or every figure. The setting stores the number.
+const PERFORMANCE_STATS_OFF = 0;
+const PERFORMANCE_STATS_COMPACT = 1;
+const PERFORMANCE_STATS_FULL = 2;
+
+// The level of a stored or chosen value: 0, 1 or 2. The switch of earlier versions stored true (now Full) or false (Off),
+// and anything else is Off.
+function parsePerformanceStatsLevel(value) {
+  if (value === true) {
+    return PERFORMANCE_STATS_FULL;
+  }
+  const level = typeof value === 'number' || typeof value === 'string' ? Number(value) : NaN;
+  return level === PERFORMANCE_STATS_COMPACT || level === PERFORMANCE_STATS_FULL ? level : PERFORMANCE_STATS_OFF;
+}
+
+// The level that the settings show, which the next stream starts with and the stats key of a running stream changes
+function getPerformanceStatsLevel() {
+  return parsePerformanceStatsLevel($('#selectPerformanceStats').attr('data-value'));
+}
+
+// Show a level in the settings
+function showPerformanceStatsLevel(level) {
+  const chosenLevel = parsePerformanceStatsLevel(level);
+  const item = $('.performanceStatsMenu li[data-value="' + chosenLevel + '"]');
+  $('#selectPerformanceStats').text(t(item.attr('data-i18n') || 'Off')).attr('data-value', chosenLevel).data('value', chosenLevel);
+}
+
+// Show and save a level: chosen in the settings, or reached with the stats key during a stream ('StatLevelMsg: ' of the
+// WebAssembly module, see messages.js)
+function savePerformanceStatsLevel(level) {
+  const chosenLevel = parsePerformanceStatsLevel(level);
+  showPerformanceStatsLevel(chosenLevel);
+  console.log('%c[index.js, savePerformanceStatsLevel]', 'color: green;', 'Saving performance stats level: ' + chosenLevel);
+  storeData('performanceStats', chosenLevel, null);
+}
+
+// Save the level chosen in the menu of the settings
+function choosePerformanceStatsLevel() {
+  savePerformanceStatsLevel($(this).attr('data-value'));
 }
 
 function saveRefFrameInvalidation() {
@@ -5025,6 +5208,10 @@ function restoreDefaultsSettingsValues() {
   document.querySelector('#playHostAudioBtn').MaterialSwitch.off();
   storeData('playHostAudio', defaultPlayHostAudio, null);
 
+  const defaultContinuousAudio = true;
+  document.querySelector('#continuousAudioBtn').MaterialSwitch.on();
+  storeData('continuousAudio', defaultContinuousAudio, null);
+
   const defaultDecryptHostAudio = false;
   document.querySelector('#decryptHostAudioBtn').MaterialSwitch.off();
   storeData('decryptHostAudio', defaultDecryptHostAudio, null);
@@ -5041,8 +5228,8 @@ function restoreDefaultsSettingsValues() {
   document.querySelector('#disableWarningsBtn').MaterialSwitch.off();
   storeData('disableWarnings', defaultDisableWarnings, null);
 
-  const defaultPerformanceStats = false;
-  document.querySelector('#performanceStatsBtn').MaterialSwitch.off();
+  const defaultPerformanceStats = PERFORMANCE_STATS_OFF;
+  showPerformanceStatsLevel(defaultPerformanceStats);
   storeData('performanceStats', defaultPerformanceStats, null);
 }
 
@@ -5533,6 +5720,16 @@ function loadStoredSettings() {
     }
   });
 
+  // On unless turned off: the host keeps sending audio during silence (continuousAudio of the launch request)
+  console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored continuousAudio preferences.');
+  getData('continuousAudio', function(previousValue) {
+    if (previousValue.continuousAudio == false) {
+      document.querySelector('#continuousAudioBtn').MaterialSwitch.off();
+    } else {
+      document.querySelector('#continuousAudioBtn').MaterialSwitch.on(); // Also the default state
+    }
+  });
+
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored decryptHostAudio preferences.');
   getData('decryptHostAudio', function(previousValue) {
     if (previousValue.decryptHostAudio == null) {
@@ -5700,13 +5897,8 @@ function loadStoredSettings() {
 
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored performanceStats preferences.');
   getData('performanceStats', function(previousValue) {
-    if (previousValue.performanceStats == null) {
-      document.querySelector('#performanceStatsBtn').MaterialSwitch.off(); // Set the default state
-    } else if (previousValue.performanceStats == false) {
-      document.querySelector('#performanceStatsBtn').MaterialSwitch.off();
-    } else {
-      document.querySelector('#performanceStatsBtn').MaterialSwitch.on();
-    }
+    // Off without a stored value, Full for the true that the switch of earlier versions stored
+    showPerformanceStatsLevel(parsePerformanceStatsLevel(previousValue.performanceStats));
   });
 }
 

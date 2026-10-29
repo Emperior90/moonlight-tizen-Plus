@@ -1309,6 +1309,7 @@ const Views = {
       isAudioOutputDisabled() ? null : isWebAudioBackendSelected() ? 'selectAudioJitter' : 'audioSyncBtn',
       isAudioOutputDisabled() || !isWebAudioBackendSelected() ? null : 'audioClockSyncBtn',
       'playHostAudioBtn',
+      'continuousAudioBtn',
       isAudioOutputDisabled() ? null : 'decryptHostAudioBtn'
     ].filter(Boolean)),
     up: function() {
@@ -1550,12 +1551,44 @@ const Views = {
       unmark(this.view.current());
     },
   },
+  SelectPerformanceStatsMenu: {
+    isActive: () => isPopupMenuActive('performanceStatsMenu'),
+    view: new ListView(() =>
+      document.getElementById('performanceStatsMenu')
+      .parentNode.children[3].children[1].children),
+    up: function() {
+      this.view.prevOption();
+    },
+    down: function() {
+      this.view.nextOption();
+    },
+    left: function() {},
+    right: function() {},
+    accept: function() {
+      clickElement(this.view.current());
+      closeActiveVisibleMenu();
+      setTimeout(() => focusElement('selectPerformanceStats'), 250);
+    },
+    back: function() {
+      closePopupMenu('selectPerformanceStats');
+      closeActiveVisibleMenu();
+      focusElement('selectPerformanceStats');
+    },
+    press: function() {},
+    switch: function() {},
+    enter: function() {
+      mark(this.view.current());
+    },
+    leave: function() {
+      unmark(this.view.current());
+    },
+  },
   AdvancedSettings: {
     view: new ListView(() => [
       'unlockAllFpsBtn',
       'optimizeBitrateBtn',
       'disableWarningsBtn',
-      'performanceStatsBtn'
+      'selectPerformanceStats'
     ]),
     up: function() {
       this.view.prevOption();

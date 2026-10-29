@@ -20,7 +20,7 @@ How to read it:
 8. [Host settings (Sunshine)](#8-host-settings-sunshine)
 9. [ForceGM variant and game mode](#9-forcegm-variant-and-game-mode)
 10. [HDR](#10-hdr)
-11. [Audio](#11-audio)
+11. [Audio](#11-audio), with [surround sound with a soundbar](#surround-sound-with-a-soundbar)
 12. [When Moonlight goes to the background](#12-when-moonlight-goes-to-the-background)
 13. [Known limits](#13-known-limits)
 14. [Troubleshooting](#14-troubleshooting)
@@ -138,7 +138,7 @@ This table shows what the button applies. A test checks it against the code of t
 
 A higher bitrate gives a sharper picture in fast motion until the network or the decoder of the TV can't keep up. Find the highest bitrate that stays clean:
 
-1. Turn on Settings → Advanced Settings → *Performance statistics*. During the stream, the YELLOW key shows and hides them.
+1. Set Settings → Advanced Settings → *Performance statistics* to *Full*. During the stream, the YELLOW key steps through *Off*, *Compact* and *Full*.
 2. Start at the recommendation of the button.
 3. Play the same demanding scene (fast camera turns, foliage, particles) for 15 to 20 minutes.
 4. The step passes when, for the whole time:
@@ -183,7 +183,15 @@ When the decoder check counts and says No for AV1, the codec menu labels AV1 "ma
 
 ## 7. Performance statistics
 
-Turn them on in Settings → Advanced Settings → *Performance statistics*. In the stream, the YELLOW key (or the controller combo Select + LB + RB + X) shows and hides them, and so does *Performance statistics* in the [Stream Menu](#16-stream-menu-and-app-menu). Some lines only appear when they have something to say.
+Choose the level in Settings → Advanced Settings → *Performance statistics*: *Off*, *Compact* or *Full*. In the stream, the YELLOW key steps *Off* → *Compact* → *Full* → *Off*, and so do the controller combo Select + LB + RB + X, Ctrl + Alt + Shift + S on a keyboard and *Performance statistics* in the [Stream Menu](#16-stream-menu-and-app-menu). The setting keeps the last level for the next stream.
+
+**Compact** shows one line at the top left of the picture, e.g.:
+
+`4K60 HEVC HDR · 59.9 fps · 74 Mb/s · RTT 3 ms · Net drops 0.1% · Wait+pacing 6.3 ms`
+
+That is the stream as set up, the frames handed to the video player of the TV per second, the bitrate that arrives, the round-trip time to the host, the share of frames lost on the network in the last two seconds, and the *Average frame wait time* plus the *Average frame pacing delay* of the full statistics. A figure that isn't known yet is left out.
+
+**Full** shows every line below. Some lines only appear when they have something to say.
 
 **Stream and host**
 
@@ -206,6 +214,8 @@ Turn them on in Settings → Advanced Settings → *Performance statistics*. In 
 | Average frame pacing delay | Time the frame pacing holds a frame back (*Video frame pacing*) |
 | Average rendering time | Time to hand a frame to the video player of the TV |
 | Pending frames | Frames waiting on the TV, with the highest count of the last second |
+| Host frame intervals | How evenly the host sends new frames, from its capture times over the last two seconds: the standard deviation and the 95th percentile (p95) of the time between two frames, and the share of intervals more than a quarter of a frame off the frame time (*off cadence*). Frames lost on the network don't count here. The capture times come in whole milliseconds, so a perfect 60 FPS host shows a deviation of about 0.47 ms and a p95 of 17.0 ms. |
+| TV player frame intervals | The same for the moments the frames reach the video player of the TV. Every frame that didn't arrive counts as a long interval. If the host line is even and this line isn't, the stutter comes from the network or the TV; if both are uneven, from the PC. Compare it with *Video frame pacing* on and off. |
 
 **Session totals since the stream started**
 
@@ -225,7 +235,7 @@ Turn them on in Settings → Advanced Settings → *Performance statistics*. In 
 | UDP receive buffer | The receive buffer that the app asked for, and the one that the TV reports |
 | WASM heap top | Memory of the streaming engine against its fixed size. A steady climb over hours points to a memory leak; please report it. |
 | Network connection | Ethernet (with the reminder of the 100 Mbps port), or Wi-Fi with the signal strength in percent when the TV reports it, refreshed every 5 seconds |
-| Audio stream | The audio that the host sends: codec, channel layout and packet duration as negotiated (e.g. *Opus 5.1 surround (6 channels), 5 ms packets*) and its data rate. If you chose 5.1 or 7.1 and it shows *Stereo*, the host only offers stereo. |
+| Audio stream | The audio that the host sends: codec, channel layout and packet duration as negotiated (e.g. *Opus 5.1 surround (6 channels), 5 ms packets*) and its data rate. If you chose 5.1 or 7.1 and it shows *Stereo*, the host only offers stereo. For 5.1 on a soundbar, see [section 11](#surround-sound-with-a-soundbar). |
 | Session audio packets lost by network | Audio packets that the network lost and the error correction couldn't repair, which the TV covers up with concealed sound. A steady rise means packet loss on the network. Errors of the audio decoder and rejections of the audio player of the TV show in a further line once there are any. |
 | Audio buffer, Audio session | Only with the Web Audio backend: jitter buffer, schedule lead, browser latency, underruns, skipped and lost audio frames, the correction of *Audio clock sync* and a suggested buffer size (see [section 11](#11-audio)). While the audio output of the browser isn't running, a single line *Audio (Web Audio)* shows its state instead. |
 | Moonlight hidden during the stream | How often the app was hidden during the stream and how often the TV closed its video (see [section 12](#12-when-moonlight-goes-to-the-background)) |
@@ -295,7 +305,49 @@ Settings → Audio Settings → *Audio backend*:
   - If the sound drops out (*underruns* rise), raise the jitter buffer by 25 ms.
 - **Disabled** turns the sound of the TV off.
 
-*Audio configuration* offers Stereo, 5.1 and 7.1 surround (experimental).
+*Audio configuration* offers Stereo, 5.1 and 7.1 surround (experimental). For 5.1 through a soundbar, see [Surround sound with a soundbar](#surround-sound-with-a-soundbar).
+
+*Continuous audio from the host* (on by default) asks the host to keep sending audio during silence. Without it, Sunshine on Windows sends no audio at all while the PC is silent, and the audio player of the TV and the link to a soundbar run dry. It needs Sunshine v2026.516.143833 or newer; older hosts and other host software ignore it. If the first sound after a long silence is cut off, or sound and picture drift apart over a long session, compare a session with it off.
+
+### Surround sound with a soundbar
+
+Moonlight Plus can play the 5.1 sound of the PC through a soundbar or an AV receiver. Whether all six channels arrive one by one depends on the connection and on the settings of the TV and the soundbar. Untested: nobody has confirmed discrete 5.1 from the app on a TV yet, also not on the S90C. The check below tells you what your setup gets.
+
+**What the connection carries**
+
+| Connection to the soundbar | What it carries |
+|---|---|
+| HDMI eARC | Multichannel PCM up to 5.1 channels, on Samsung TVs from 2021 on (AU7000 and higher), according to [Samsung's support page on eARC](https://www.samsung.com/sg/support/tv-audio-video/what-is-earc-and-how-to-set-on-samsung-smart-tv/). 7.1 PCM is not supported. Samsung asks for an HDMI cable that supports HEAC or HEC. |
+| HDMI ARC, optical | Stereo PCM only. 5.1 over these needs a Dolby bitstream, which the app can't send (see [below](#why-there-is-no-dolby-passthrough-yet)). Choose Stereo. |
+
+The PC sends the sound as Opus. With 5.1, the app decodes it to 6-channel PCM for the media player of the TV, and the TV passes it on to the soundbar.
+
+**Settings**
+
+1. **Moonlight Plus:** Settings → Audio Settings → *Audio configuration*: *5.1 Surround Sound*, and *Audio backend*: *EMSS* (the default). Web Audio plays through the output of the browser, which the app leaves at two channels, so it mixes 5.1 down to stereo. Don't choose 7.1, since Samsung TVs pass at most 5.1 channels of PCM over eARC.
+2. **TV:** Settings → All Settings → Sound → *Sound Output*: the soundbar over HDMI eARC. Then Sound → *Expert Settings*: *HDMI-eARC Mode* on *Auto* and *Digital Output Audio Format* on *Auto*, so that the TV picks a format that the soundbar supports. The menu names come from Samsung's support pages and differ by model and year; they were not checked on a TV.
+3. **Soundbar:** the sound mode *Standard*, not *Surround* or *Adaptive Sound*. Those modes spread stereo over all speakers, so you can't hear whether the channels arrive on their own.
+4. **PC:** Sunshine plays the sound of the PC into the virtual *Steam Streaming Speakers* and sets them to the channel layout that the stream asks for. Its setting `install_steam_audio_drivers` (on by default) installs them when Steam is installed (see the [Sunshine configuration documentation](https://github.com/LizardByte/Sunshine/blob/master/docs/configuration.md)).
+
+**Check each channel**
+
+1. Start a stream. The *Audio stream* line of the full [performance statistics](#7-performance-statistics) should say *Opus 5.1 surround (6 channels)*. If it says *Stereo*, the host only offers stereo.
+2. On the PC, open the sound control panel (Windows 11: Settings → System → Sound → *More sound settings*), select *Steam Streaming Speakers* on the *Playback* tab, then *Configure* → *5.1 Surround* → *Test*. Windows plays a sound from each speaker in turn; a click on a speaker in the picture plays only that one.
+3. Listen at the soundbar:
+   - Each sound comes from its own speaker (front left, center, front right, the two rear speakers, the subwoofer): discrete 5.1 works.
+   - The rear sounds come from the front, or each sound comes from everywhere: the TV mixes the sound down to stereo, and the soundbar spreads it again. Check the settings above.
+   - The display of the soundbar often shows only *PCM*, which doesn't tell stereo from 5.1. Trust your ears.
+
+#### Why there is no Dolby passthrough yet
+
+Over ARC or optical, 5.1 needs a compressed Dolby Digital (AC-3) or Dolby Digital Plus (E-AC-3) stream that the TV passes on to the soundbar. The app doesn't offer it yet:
+
+- The host would have to encode it. Sunshine doesn't; the pull request for it ([LizardByte/Sunshine #5917](https://github.com/LizardByte/Sunshine/pull/5917)) was still open in October 2026. Some other host programs encode it, mostly in test builds and with two protocols that don't fit each other.
+- A Dolby packet carries 32 ms of sound instead of the 5 ms of Opus, so the sound arrives at least 27 ms later, and a lost packet leaves a gap that isn't covered up.
+- Whether the media player of a Samsung TV takes a Dolby track during a stream, also with the *Game mode* switch on, is untested.
+- Over eARC, 5.1 PCM already gives discrete channels without the extra delay.
+
+The fork [moonlight-tizen-ac3](https://github.com/fidoboy/moonlight-tizen-ac3) by fidoboy is a separate app that adds Dolby together with a test build of Sunshine. Its [troubleshooting guide](https://github.com/fidoboy/moonlight-tizen-ac3/blob/master/docs/Troubleshooting-Guide.md) gives the same order: Stereo first, then 5.1 once the TV and the soundbar or receiver support it, and no 7.1 for Dolby.
 
 ## 12. When Moonlight goes to the background
 
@@ -322,7 +374,7 @@ The app ends a failed stream with a message instead of a frozen or black picture
 
 | Message | Cause and what to do |
 |---|---|
-| "No video received from host." (-100) | Check the firewall of the host PC and the port forwarding of your router. The message names the ports the video and audio need (UDP 47998 and UDP 48000, or the ports of the host's port setting, e.g. UDP 50009 and UDP 50011 for Sunshine with the port 50000). |
+| "No video received from host." (-100) | Moonlight Plus first starts the stream once more by itself, without a message, since a host that switches its display (e.g. to 4K HDR or a virtual display) can be too slow for the first start. If the message shows, the second start failed as well: check the firewall of the host PC and the port forwarding of your router. The message names the ports the video and audio need (UDP 47998 and UDP 48000, or the ports of the host's port setting, e.g. UDP 50009 and UDP 50011 for Sunshine with the port 50000). |
 | "RTSP handshake failed (error …)" and other "… failed (error …)" messages of the connection | The connection to the host failed at this step. When the step needs certain ports, the message names them (e.g. TCP 48010, UDP 48000 and UDP 48010 for the RTSP handshake, UDP 47999 for the control stream; a host with another port setting gets its own ports, e.g. TCP 50021, UDP 50011 and UDP 50021 for Sunshine with the port 50000); check that the firewall of the host PC and your router let them through. |
 | "… is still running on …, probably because another device started it." | *Quit Running App* didn't quit the app, usually because another device started it. Quit it on that device or on the PC. |
 | "Your network connection isn't performing well." (-101) | Lower the bitrate, or use a faster connection. |
@@ -337,6 +389,8 @@ The app ends a failed stream with a message instead of a frozen or black picture
 | "Stop the current stream first (RED button)." | A Smart Hub tile was opened during a stream. |
 | "The host PC can't encode the selected codec, so the stream uses HEVC instead." | The host has no encoder for the selected codec (e.g. AV1). |
 | "… has a non-standard button layout …" | See [CONTROLLERS.md](CONTROLLERS.md). |
+| "Error: The PIN entered on … was wrong." | The PC answered the pairing without proof that it knows the PIN, so Moonlight Plus stopped before it trusts the PC. Usually the PIN was mistyped in the web interface of Sunshine. Pair again and enter the new PIN. |
+| "Failed to send Wake-on-LAN request to …!" | Some TVs can't send the request at all (e.g. "Failed to create socket"). Wake the PC with another device instead, e.g. a Wake-on-LAN app on a phone. "The PC hasn't reported its MAC address" means the app never got it: the PC reports it only to a paired TV, so pair it and let the app reach it once while the PC is on. While the *Wake PC* dialog waits, it sends the request again every 10 seconds and closes once the PC answers. |
 
 Other problems:
 
@@ -345,6 +399,7 @@ Other problems:
 - **The PC isn't in the list, or it got a new IP address:** press UP in the host list and select *Rescan network* (the circular arrow, the first round button of the header) to search the local network again. The app searches for hosts on its own at startup.
 - **The picture freezes on Tizen 9.0 or newer:** turn the *Game mode* switch off, and use the ForceGM variant for the Game Mode of the TV.
 - **Colors look washed out:** HDR is on in the app but off on the host display, or the TV doesn't support HDR (see [section 10](#10-hdr)).
+- **Only stereo from a soundbar or receiver:** see [Surround sound with a soundbar](#surround-sound-with-a-soundbar).
 - **Crackling sound with EMSS:** lower the bitrate by one step, or switch to Web Audio.
 - **Stutter after some time:** look at the session totals of the performance statistics at that moment (see [section 7](#7-performance-statistics)).
 
@@ -361,9 +416,9 @@ The earlier release of this fork, v1.19.0-s90c.1 (shown on the TV as *Moonlight 
 | Entry | What it does |
 |---|---|
 | Resume | Returns to the game |
-| Performance statistics | Shows or hides the [statistics](#7-performance-statistics), like YELLOW. The menu stays open and shows *On* or *Off*. |
+| Performance statistics | Steps the [statistics](#7-performance-statistics) through *Off*, *Compact* and *Full*, like YELLOW. The menu stays open and shows the level. |
 | Mouse emulation | Only shows with a controller connected. Switches the [mouse mode](CONTROLLERS.md#7-mouse-emulation) of the controllers on or off, also when the setting *Mouse emulation* is off (the setting only allows the hold of Start). |
-| Windows key, Alt + Tab, Alt + F4, Esc | Presses the keys on the PC and releases them again in reverse order, so that no key stays held, and returns to the game |
+| Windows key, Alt + Tab, Alt + F4, Esc, Alt + Enter | Presses the keys on the PC and releases them again in reverse order, so that no key stays held, and returns to the game. Alt + Enter switches most Windows games and emulators between fullscreen and a window. |
 | Disconnect | Ends the stream, like RED. The game keeps running on the PC. |
 | Disconnect and quit the app on the PC | Ends the stream and then quits the app on the PC, like *Quit Running App*. Unsaved progress in the game is lost. |
 

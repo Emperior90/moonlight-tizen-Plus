@@ -9,6 +9,9 @@
 // - the controller type that System information shows when the setting overrides the detection
 // - the Start of a hold that switches the mouse emulation on, which the game sees (wasm/gamepad.cpp)
 // - the version suffix of a release promoted from a pre-release, and what the earlier release v1.19.0-s90c.1 offers
+// - the audio path that the section on surround sound with a soundbar describes: the 5.1 entry of the audio
+//   configuration, the 6-channel PCM track that only the EMSS backend adds, the two channels of the Web Audio output and
+//   the Audio stream line that the check reads
 // The release notes of a release (docs/RELEASE_NOTES_STABLE.md) only give the essentials, so the statements that they
 // carried until 1.19.100 are checked in the guide and the patch notes (docs/PATCH_NOTES.md), where they are now.
 
@@ -110,4 +113,36 @@ test('the documents explain the version of a promoted release and what the earli
   assert.match(archive.split('\n').slice(0, 4).join('\n'), /\*\*Correction:\*\* the note under \*Hinweise\* that the update check/);
   // Tizen Studio always needs a Samsung account for the Samsung certificate, Apps2Samsung only on Tizen 7.0 and newer
   assert.match(GUIDE, /Apps2Samsung asks for a Samsung account on Tizen 7\.0 and newer\. Tizen Studio always needs one/);
+});
+
+test('the section on surround sound with a soundbar describes the audio path of the app as the code does', () => {
+  const start = GUIDE.indexOf('### Surround sound with a soundbar');
+  assert.ok(start > GUIDE.indexOf('## 11. Audio') && start < GUIDE.indexOf('## 12. '), 'a part of section 11');
+  const section = GUIDE.slice(start, GUIDE.indexOf('## 12. '));
+  // The entry of the audio configuration that the section names, and EMSS as the default backend
+  const html = read('wasm/index.html');
+  assert.match(html, /data-value="51Surround" data-i18n="5\.1 Surround Sound"/);
+  assert.match(html, /id="selectAudioBackend"[^>]*data-value="EMSS"/);
+  assert.match(read('wasm/platform/index.js'), /const defaultAudioBackend = 'EMSS';/);
+  assert.match(section, /\*Audio configuration\*: \*5\.1 Surround Sound\*, and \*Audio backend\*: \*EMSS\* \(the default\)/);
+  // Only the EMSS backend gives the media player of the TV an audio track: PCM with the 5.1 layout for 6 channels
+  const player = read('wasm/wasmplayer.cpp');
+  assert.match(player, /if \(g_Instance->m_AudioBackend == AudioBackend::Emss\) \{[\s\S]*?case 6:\s*channelLayout = samsung::wasm::ChannelLayout::k5_1;[\s\S]*?"audio\/webm; codecs=\\"pcm\\""/);
+  assert.match(section, /With 5\.1, the app decodes it to 6-channel PCM for the media player of the TV/);
+  // Web Audio plays every frame into the destination of the audio context and never raises its channel count from the
+  // default of two, so the browser mixes 5.1 down to stereo
+  const audio = read('wasm/platform/audio.js');
+  assert.match(audio, /source\.connect\(_audContext\.destination\)/);
+  assert.doesNotMatch(audio, /\.channelCount\s*=|channelCountMode|channelInterpretation/);
+  assert.match(section, /Web Audio plays through the output of the browser, which the app leaves at two channels, so it mixes 5\.1 down to stereo/);
+  // The Audio stream line names the layout as the check quotes it
+  const stats = read('wasm/audio_stream_stats.hpp');
+  assert.match(stats, /case 6:\s*return "5\.1 surround";/);
+  assert.match(stats, /"%s \(%d channels\)", layoutName, channels/);
+  assert.match(stats, /case 2:\s*return "Stereo";/);
+  assert.match(section, /should say \*Opus 5\.1 surround \(6 channels\)\*\. If it says \*Stereo\*, the host only offers stereo\./);
+  // Untested, as the guide marks it, with the sources it names
+  assert.match(section, /Untested: nobody has confirmed discrete 5\.1 from the app on a TV yet/);
+  assert.ok(section.indexOf('](https://www.samsung.com/sg/support/tv-audio-video/what-is-earc-and-how-to-set-on-samsung-smart-tv/)') > 0);
+  assert.ok(section.indexOf('](https://github.com/fidoboy/moonlight-tizen-ac3/blob/master/docs/Troubleshooting-Guide.md)') > 0);
 });

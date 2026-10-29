@@ -135,11 +135,12 @@ const CUSTOMIZED_SETTINGS = {
   audioJitter: '50',
   audioClockSync: true,
   playHostAudio: true,
+  continuousAudio: false,
   decryptHostAudio: true,
   refFrameInvalidation: true,
   hdrMetadata: true,
   disableWarnings: true,
-  performanceStats: true,
+  performanceStats: 1,
 };
 
 // The other settings after Restore Defaults, as shown and as stored
@@ -158,11 +159,13 @@ const DEFAULT_OTHER_SETTINGS = {
   audioJitter: '100',
   audioClockSync: false,
   playHostAudio: false,
+  // On by default, so that the host keeps sending audio during silence
+  continuousAudio: true,
   decryptHostAudio: false,
   refFrameInvalidation: false,
   hdrMetadata: false,
   disableWarnings: false,
-  performanceStats: false,
+  performanceStats: 0,
 };
 
 // The video settings the settings screen shows on a fresh install, after the button and after Restore Defaults. The

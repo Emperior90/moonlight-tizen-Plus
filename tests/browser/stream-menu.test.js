@@ -164,7 +164,7 @@ test('Play/Pause opens the Stream Menu over the stream, the remote moves in it, 
     assert.deepEqual(state, {
       open: true, shown: 'flex', focused: 'streamMenuResume', subtitle: 'Game 8 · GAMING-PC',
       entries: ['streamMenuResume', 'streamMenuStats', 'streamMenuKeyWin', 'streamMenuKeyAltTab', 'streamMenuKeyAltF4',
-        'streamMenuKeyEsc', 'streamMenuDisconnect', 'streamMenuQuit'],
+        'streamMenuKeyEsc', 'streamMenuKeyAltEnter', 'streamMenuDisconnect', 'streamMenuQuit'],
     });
     assert.deepEqual(await moduleCalls(app.page), ['setStreamMenuOpen true'], 'the module stops the controller input of the PC');
     // The video keeps playing behind the menu
@@ -322,9 +322,18 @@ test('the gamepad combo opens the Stream Menu, the gamepad moves in it without t
     await app.page.waitForTimeout(AFTER_DELAY_MS);
     await app.page.evaluate(() => window.__setButton(0, 0, false));
     assert.deepEqual(await moduleCalls(app.page), ['setStreamMenuOpen true', 'toggleStats']);
-    // The module answers the toggle with the first statistics at once
-    await app.page.evaluate(() => handleMessage('StatMsg: Video stream: 3840x2160 60.00 FPS'));
-    assert.equal(await app.page.evaluate(() => $('#streamMenuStatsValue').text()), 'On');
+    // The module answers the toggle with the next level at once (Off, Compact, Full, Off)
+    assert.equal(await app.page.evaluate(() => $('#streamMenuStatsValue').text()), 'Compact');
+    assert.equal((await menuState(app.page)).open, true);
+    for (const level of ['Full', 'Off', 'Compact']) {
+      // The polling has to see A released before the next press counts
+      await app.page.waitForTimeout(50);
+      await app.page.evaluate(() => window.__setButton(0, 0, true));
+      await app.page.waitForTimeout(AFTER_DELAY_MS);
+      await app.page.evaluate(() => window.__setButton(0, 0, false));
+      assert.equal(await app.page.evaluate(() => $('#streamMenuStatsValue').text()), level);
+    }
+    assert.deepEqual(await moduleCalls(app.page), ['setStreamMenuOpen true', 'toggleStats', 'toggleStats', 'toggleStats', 'toggleStats']);
     assert.equal((await menuState(app.page)).open, true);
 
     // B resumes the stream, and the gamepads of the menus are no longer polled
@@ -333,7 +342,8 @@ test('the gamepad combo opens the Stream Menu, the gamepad moves in it without t
     state = await menuState(app.page);
     assert.equal(state.open, false);
     assert.equal(state.focused, 'wasm_module');
-    assert.deepEqual(await moduleCalls(app.page), ['setStreamMenuOpen true', 'toggleStats', 'setStreamMenuOpen false']);
+    assert.deepEqual(await moduleCalls(app.page), ['setStreamMenuOpen true', 'toggleStats', 'toggleStats', 'toggleStats', 'toggleStats',
+      'setStreamMenuOpen false']);
     const readsAfter = await app.page.evaluate(() => window.__padReads);
     await app.page.waitForTimeout(100);
     assert.equal(await app.page.evaluate(() => window.__padReads), readsAfter);
@@ -361,9 +371,9 @@ test('the mouse emulation entry asks the module and shows its answer, the key en
       'sendKeyboardEvent 32777,4,4', 'sendKeyboardEvent 32932,4,0']);
     assert.deepEqual(await menuState(app.page).then((state) => [state.open, state.focused]), [false, 'wasm_module']);
 
-    // The Windows key, Alt + F4 and Esc
+    // The Windows key, Alt + F4, Esc and Alt + Enter
     const sent = {};
-    for (const id of ['streamMenuKeyWin', 'streamMenuKeyAltF4', 'streamMenuKeyEsc']) {
+    for (const id of ['streamMenuKeyWin', 'streamMenuKeyAltF4', 'streamMenuKeyEsc', 'streamMenuKeyAltEnter']) {
       await remoteKey(app.page, ...PLAY_PAUSE);
       await app.page.evaluate(() => window.__wasmCalls.splice(0));
       await app.page.evaluate((entry) => $('#' + entry).click(), id);
@@ -373,6 +383,8 @@ test('the mouse emulation entry asks the module and shows its answer, the key en
       streamMenuKeyWin: ['32859,3,8', '32859,4,0'],
       streamMenuKeyAltF4: ['32932,3,4', '32883,3,4', '32883,4,4', '32932,4,0'],
       streamMenuKeyEsc: ['32795,3,0', '32795,4,0'],
+      // Alt down, Enter down with the Alt flag, Enter up, Alt up without it
+      streamMenuKeyAltEnter: ['32932,3,4', '32781,3,4', '32781,4,4', '32932,4,0'],
     });
     assert.deepEqual(app.errors, []);
   } finally {

@@ -11,6 +11,10 @@
   };
   window.__wasmCalls = [];
   window.__startStreamArgs = null;
+  // The level of the performance statistics: startStream() takes it (its 30th argument), and toggleStats() steps it Off,
+  // Compact, Full, Off and reports the new level at once, like TogglePerformanceStats() of the module
+  // (wasm/compact_stats.hpp). The figures that the module sends for a level are up to the tests.
+  var statsLevel = 0;
 
   Module.makeCert = function() {
     record('makeCert', arguments);
@@ -23,6 +27,7 @@
   Module.startStream = function() {
     record('startStream', arguments);
     window.__startStreamArgs = Array.prototype.slice.call(arguments);
+    statsLevel = [0, 1, 2].indexOf(arguments[29]) >= 0 ? arguments[29] : 0;
     return ok();
   };
   Module.stopStream = function() {
@@ -39,6 +44,8 @@
   };
   Module.toggleStats = function() {
     record('toggleStats', arguments);
+    statsLevel = (statsLevel + 1) % 3;
+    handleMessage('StatLevelMsg: ' + statsLevel);
   };
   Module.setStreamMenuOpen = function() {
     record('setStreamMenuOpen', arguments);

@@ -2,6 +2,8 @@
 
 #include <Limelight.h>
 
+#include <algorithm>
+#include <cmath>
 #include <set>
 
 #define KEY_PREFIX 0x80
@@ -71,8 +73,8 @@ EM_BOOL MoonlightInstance::HandleMouseMove(const EmscriptenMouseEvent &event) {
     return EM_FALSE;
   }
 
-  m_MouseDeltaX += event.movementX;
-  m_MouseDeltaY += event.movementY;
+  m_MouseDeltaX.fetch_add(static_cast<int32_t>(event.movementX));
+  m_MouseDeltaY.fetch_add(static_cast<int32_t>(event.movementY));
 
   m_MouseLastPosX = event.screenX;
   m_MouseLastPosY = event.screenY;
@@ -96,8 +98,10 @@ EM_BOOL MoonlightInstance::HandleWheel(const EmscriptenWheelEvent &event) {
     return EM_FALSE;
   }
 
-  // Inverted delta y-axis to restore correct wheel direction
-  m_AccumulatedTicks -= event.deltaY;
+  // Inverted delta y-axis to restore correct wheel direction, in thousandths of a tick (bounded, so that the conversion
+  // of an absurd delta can't overflow)
+  const double milliTicks = std::max(-1000000.0, std::min(1000000.0, -event.deltaY * 1000.0));
+  m_AccumulatedMilliTicks.fetch_add(static_cast<int32_t>(std::lround(milliTicks)));
   return EM_TRUE;
 }
 
@@ -192,17 +196,32 @@ EM_BOOL handlePointerLockError(int eventType, const void *reserved, void *userDa
   return true;
 }
 
+// The part of a movement or scroll amount that fits the 16-bit field of its packet
+static short ClampToShort(int64_t value) {
+  return static_cast<short>(std::max<int64_t>(-32768, std::min<int64_t>(32767, value)));
+}
+
 void MoonlightInstance::ReportMouseMovement() {
-  if (m_MouseDeltaX != 0 || m_MouseDeltaY != 0) {
-    LiSendMouseMoveEvent(m_MouseDeltaX, m_MouseDeltaY);
-    m_MouseDeltaX = m_MouseDeltaY = 0;
+  // Take what the main thread added up and reset it in one step, so that a movement that arrives meanwhile stays for
+  // the next report instead of being reset unsent. The idea comes from the fork of samirmartins (moonlight-tizen,
+  // 78ef238).
+  int32_t deltaX = m_MouseDeltaX.exchange(0);
+  int32_t deltaY = m_MouseDeltaY.exchange(0);
+  // A movement beyond the 16 bits of a packet (e.g. after the input thread was held up) goes out in several packets
+  // instead of wrapping around
+  while (deltaX != 0 || deltaY != 0) {
+    const short x = ClampToShort(deltaX);
+    const short y = ClampToShort(deltaY);
+    LiSendMouseMoveEvent(x, y);
+    deltaX -= x;
+    deltaY -= y;
   }
 
-  if (m_AccumulatedTicks != 0) {
+  const int32_t milliTicks = m_AccumulatedMilliTicks.exchange(0);
+  if (milliTicks != 0) {
     // We can have fractional ticks here, so multiply by WHEEL_DELTA
     // to get actual scroll distance and use the high-res variant.
-    LiSendHighResScrollEvent(m_AccumulatedTicks * 5);
-    m_AccumulatedTicks = 0;
+    LiSendHighResScrollEvent(ClampToShort(static_cast<int64_t>(milliTicks) * 5 / 1000));
   }
 }
 
