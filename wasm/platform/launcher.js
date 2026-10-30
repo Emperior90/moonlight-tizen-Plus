@@ -1,7 +1,7 @@
 // Spotlight UI: the hero of the focused host or app, the chips of the host cards and of the header, the current settings
-// row, the value tiles of the optimal settings dialog and the start screen of a stream. It only reads the state of
-// index.js and of the page. It follows the 'mouseenter' event of mark() in navigation.js with one capturing listener,
-// and ignores those of a real mouse pointer.
+// row, the value tiles of the optimal settings dialog and the start screen of a stream, and it keeps the tooltips of the
+// header buttons inside the screen. It only reads the state of index.js and of the page. It follows the 'mouseenter'
+// event of mark() in navigation.js with one capturing listener, and ignores those of a real mouse pointer.
 
 // Tell the stylesheet which screen shows: 'hosts', 'apps', 'settings', 'stream' or 'loading'
 function setUiView(view) {
@@ -417,6 +417,53 @@ const Launcher = (function() {
     setContent('header-profile', icon('video') + escapeHTML(text), true);
   }
 
+  // Place a tooltip of a header button once material.min.js placed it: it centres the tooltip under its button and only
+  // keeps its left edge on the screen, so that a long text under a button near the right edge (e.g. 'Restablecer
+  // ajustes') would run off the screen. The text is as wide as the language and the fonts of the TV make it, so the
+  // tooltip is moved after it was measured: centred under its button where that stays inside the safe area of the screen,
+  // else flush with the right (or left) edge of its button, and never outside the safe area.
+  function placeTooltip(tooltip, button) {
+    const rect = button.getBoundingClientRect();
+    // material.min.js has just put the left edge of the fixed tooltip at the middle of its button (with a negative
+    // margin), where the right edge of the screen squeezes it: measured there, a long text would wrap and the tooltip
+    // would grow again once moved. It is measured at the left edge of the screen instead, at its own width.
+    tooltip.style.left = '0px';
+    tooltip.style.marginLeft = '0';
+    const width = tooltip.offsetWidth;
+    const safe = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--safe-x')) || 96;
+    const maxLeft = window.innerWidth - safe - width;
+    const centre = rect.left + rect.width / 2;
+    let left = centre - width / 2;
+    if (left > maxLeft) {
+      left = Math.min(rect.right - width, maxLeft);
+    } else if (left < safe) {
+      left = Math.max(rect.left, safe);
+    }
+    left = Math.max(safe, Math.min(left, maxLeft));
+    tooltip.style.left = Math.round(left) + 'px';
+    tooltip.style.marginLeft = '0';
+    // It still grows in from below the middle of its button
+    tooltip.style.transformOrigin = Math.round(centre - left) + 'px 0';
+  }
+
+  // Let every tooltip that material.min.js upgrades from now on (on the load event of the page) go through placeTooltip()
+  function keepTooltipsOnScreen() {
+    const Tooltip = window.MaterialTooltip;
+    if (typeof Tooltip !== 'function' || typeof Tooltip.prototype.handleMouseEnter_ !== 'function' ||
+      Tooltip.prototype.handleMouseEnter_.keepsOnScreen) {
+      return;
+    }
+    const handleMouseEnter = Tooltip.prototype.handleMouseEnter_;
+    const placed = function(event) {
+      handleMouseEnter.call(this, event);
+      if (this.element_ && event && event.target && typeof event.target.getBoundingClientRect === 'function') {
+        placeTooltip(this.element_, event.target);
+      }
+    };
+    placed.keepsOnScreen = true;
+    Tooltip.prototype.handleMouseEnter_ = placed;
+  }
+
   return {
     // Add the icon tile, the chips and the options icon to a new host card (addHostToGrid())
     decorateHostCard: function(container, host) {
@@ -502,6 +549,7 @@ const Launcher = (function() {
       refreshProfile();
     },
     init: function() {
+      keepTooltipsOnScreen();
       document.addEventListener('mouseenter', onMark, true);
       const game = byId('game-grid');
       if (game) {

@@ -6,9 +6,10 @@
 // step Off, Compact, Full, Off, and the setting, the Stream Menu and the overlay follow; YELLOW during 'Starting...'
 // steps the setting, which the stream then starts with; the overlay shows only the figures of its level
 // ('StatCompactMsg: ' as the compact line, 'StatMsg: ' as the full text) and drops the ones still on their way from
-// another level or after the end of the stream; and the compact line sits top-left in one line on the dark surface of the theme, also in
-// every other language of the app. The module stub steps the level like the module (tests/browser/mocks/moonlight-wasm.js); the native side is
-// checked by tests/native/compact_stats_test.cpp and tests/native/stats_overlay_test.cpp.
+// another level or after the end of the stream; and the compact line sits top-left in one line on the dark surface of
+// the theme, also in every other language of the app and with text 10 % wider than this machine draws it
+// (tests/browser/text-stress.js). The module stub steps the level like the module (tests/browser/mocks/moonlight-wasm.js);
+// the native side is checked by tests/native/compact_stats_test.cpp and tests/native/stats_overlay_test.cpp.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -16,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const { REPO_ROOT } = require('../lib/dev-modules');
 const { openApp, readStorage, reloadApp, startHarness, waitForStorage } = require('./harness');
+const { forEachTextWidth } = require('./text-stress');
 
 let harness;
 before(async () => {
@@ -312,7 +314,7 @@ test('the Stream Menu shows the level, steps it, and follows a level the gamepad
   }
 });
 
-test('the compact line sits top-left in one line on the dark surface of the theme, also in every other language', async () => {
+test('the compact line sits top-left in one line on the dark surface of the theme, also in every other language and with 10 % wider text', async () => {
   const localesDir = path.join(REPO_ROOT, 'wasm/static/locales');
   const languages = fs.readdirSync(localesDir).filter((name) => name.endsWith('.json')).map((name) => name.replace(/\.json$/, ''));
   assert.ok(languages.indexOf('pt-BR') >= 0 && languages.indexOf('de-DE') >= 0, languages.join(' '));
@@ -327,34 +329,36 @@ test('the compact line sits top-left in one line on the dark surface of the them
       // The longest line: every figure with two-digit and three-digit numbers
       await app.page.evaluate(() => handleMessage('StatCompactMsg: {"w":1920,"h":1080,"fps":120,"codec":"HEVC","bits":10,"hdr":1,' +
         '"rfps":119.88,"mbps":148.6,"rtt":120,"drop":12.50,"delay":16.7}'));
-      const layout = await app.page.evaluate(() => {
-        const overlay = document.getElementById('performance-stats');
-        const rect = overlay.getBoundingClientRect();
-        const style = getComputedStyle(overlay);
-        return {
-          text: overlay.textContent,
-          left: Math.round(rect.left), top: Math.round(rect.top), right: rect.right, height: rect.height,
-          lineHeight: parseFloat(style.lineHeight), padding: parseFloat(style.paddingTop) + parseFloat(style.paddingBottom),
-          whiteSpace: style.whiteSpace, color: style.color, background: style.backgroundColor,
-          filter: style.filter, backdrop: style.backdropFilter || style.webkitBackdropFilter || 'none',
-          warningsLeft: document.getElementById('connection-warnings').getBoundingClientRect().left,
-        };
-      });
       const label = messages['Net drops'];
       if (lang !== 'en-US') {
         assert.notEqual(label, 'Net drops', lang + ' translates the label');
       }
-      assert.ok(layout.text.indexOf('1080p120 HEVC HDR · 119.9 fps · 149 Mb/s · RTT 120 ms · ' + label + ' 12.5%') === 0, layout.text);
-      // Where the overlay was before, inside the screen, and in one line
-      assert.deepEqual([layout.left, layout.top], [64, 48]);
-      assert.ok(layout.right < 1920 - 64, 'inside the screen: ' + layout.right);
-      assert.equal(layout.whiteSpace, 'nowrap');
-      assert.ok(layout.height <= layout.lineHeight + layout.padding + 1, JSON.stringify(layout));
-      // White text on the dark surface of the theme, without a blur over the video
-      assert.equal(layout.color, 'rgb(255, 255, 255)');
-      assert.equal(layout.background, 'rgba(10, 13, 26, 0.8)');
-      assert.equal(layout.filter, 'none');
-      assert.equal(layout.backdrop, 'none');
+      await forEachTextWidth(app.page, async (stress) => {
+        const layout = await app.page.evaluate(() => {
+          const overlay = document.getElementById('performance-stats');
+          const rect = overlay.getBoundingClientRect();
+          const style = getComputedStyle(overlay);
+          return {
+            text: overlay.textContent,
+            left: Math.round(rect.left), top: Math.round(rect.top), right: rect.right, height: rect.height,
+            lineHeight: parseFloat(style.lineHeight), padding: parseFloat(style.paddingTop) + parseFloat(style.paddingBottom),
+            whiteSpace: style.whiteSpace, color: style.color, background: style.backgroundColor,
+            filter: style.filter, backdrop: style.backdropFilter || style.webkitBackdropFilter || 'none',
+            warningsLeft: document.getElementById('connection-warnings').getBoundingClientRect().left,
+          };
+        });
+        assert.ok(layout.text.indexOf('1080p120 HEVC HDR · 119.9 fps · 149 Mb/s · RTT 120 ms · ' + label + ' 12.5%') === 0, layout.text);
+        // Where the overlay was before, inside the screen, and in one line
+        assert.deepEqual([layout.left, layout.top], [64, 48]);
+        assert.ok(layout.right < 1920 - 64, lang + stress + ' inside the screen: ' + layout.right);
+        assert.equal(layout.whiteSpace, 'nowrap');
+        assert.ok(layout.height <= layout.lineHeight + layout.padding + 1, lang + stress + ' ' + JSON.stringify(layout));
+        // White text on the dark surface of the theme, without a blur over the video
+        assert.equal(layout.color, 'rgb(255, 255, 255)');
+        assert.equal(layout.background, 'rgba(10, 13, 26, 0.8)');
+        assert.equal(layout.filter, 'none');
+        assert.equal(layout.backdrop, 'none');
+      });
       assert.deepEqual(app.errors, []);
     } finally {
       await app.context.close();

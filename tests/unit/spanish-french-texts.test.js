@@ -119,9 +119,9 @@ test('the key names stay as printed on the remote and the gamepad, the other key
   assert.deepEqual(remoteKeys.map((key) => french[key]),
     ['HAUT', 'BAS', 'GAUCHE', 'DROITE', 'ROUGE', 'JAUNE', 'CH+', 'CH-', 'VOL+', 'VOL-', 'MUTE']);
   assert.equal(spanish['App options: CH+ or Play/Pause on the remote, Select on a gamepad'],
-    'Opciones: CH+ o Play/Pause en el mando a distancia, Select en el mando');
+    'Opciones: CH+ o Play/Pause (mando a distancia), Select (mando)');
   assert.equal(french['App options: CH+ or Play/Pause on the remote, Select on a gamepad'],
-    'Options' + NBSP + ': CH+ ou Play/Pause sur la télécommande, Select sur une manette');
+    'Options' + NBSP + ': CH+ ou Play/Pause (télécommande), Select (manette)');
   // The colour keys in sentences
   assert.match(spanish['Stop the current stream first (RED button).'], /botón rojo/);
   assert.match(french['Stop the current stream first (RED button).'], /touche rouge/);

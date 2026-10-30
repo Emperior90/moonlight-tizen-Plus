@@ -4,9 +4,10 @@
 // wasm/platform/launcher.js) on the UI that 1.19.101 added: every icon of the page, also those that the scripts build
 // for the host cards, the hero, the network chip and the update button, is a symbol of the sprite and no Material icon
 // is left; the icon of the Rescan network button turns while a scan runs; the hint of the app menu is one quiet line
-// in the header; the running app has one look (a mint ring and the mint Running badge with a play mark) and a hidden
-// app is dimmed with its Hidden badge; the Stream Menu lies on the live video as an opaque panel with white focus,
-// a group label, a separator and the On/Off value of its switches; the app menu marks the running app and shows Quit
+// in the header, which fits in every language, also with text 10 % wider (tests/browser/text-stress.js); the running
+// app has one look (a mint ring and the mint Running badge with a play mark) and a hidden app is dimmed with its Hidden
+// badge; the Stream Menu lies on the live video as an opaque panel with white focus, a group label, a separator and
+// the On/Off value of its switches; the app menu marks the running app and shows Quit
 // as a destructive entry. Running is mint on the hosts screen as well; the host menu is a list like the app menu; the
 // octets of the Add Host dialog have the chevron and the white focus of the theme; the pairing PIN is large; the count
 // of the update button sits on its corner; and a focused dialog button keeps a gap to its neighbour.
@@ -15,6 +16,7 @@
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { openApp, startHarness } = require('./harness');
+const { forEachTextWidth } = require('./text-stress');
 
 let harness;
 before(async () => {
@@ -202,7 +204,7 @@ test('the hint of the app menu is one quiet line in the header with a key cap', 
   }
 });
 
-test('the hint of the app menu fits the header without an ellipsis in every language', async () => {
+test('the hint of the app menu fits the header without an ellipsis in every language, also with 10 % wider text', async () => {
   const app = await openAppList();
   try {
     const languages = await app.page.evaluate(() => i18n.getSupportedLocales());
@@ -210,11 +212,13 @@ test('the hint of the app menu fits the header without an ellipsis in every lang
     for (const language of languages) {
       await app.page.evaluate((locale) => i18n.setLanguage(locale), language);
       await app.page.waitForFunction((locale) => document.documentElement.getAttribute('lang') === locale, language);
-      const hint = await app.page.evaluate(() => {
-        const element = document.getElementById('appMenuHint');
-        return { text: element.textContent, fits: element.scrollWidth <= element.clientWidth + 1 };
+      await forEachTextWidth(app.page, async (stress) => {
+        const hint = await app.page.evaluate(() => {
+          const element = document.getElementById('appMenuHint');
+          return { text: element.textContent, fits: element.scrollWidth <= element.clientWidth + 1 };
+        });
+        assert.equal(hint.fits, true, language + stress + ' ' + JSON.stringify(hint));
       });
-      assert.equal(hint.fits, true, language + ' ' + JSON.stringify(hint));
     }
     assert.deepEqual(app.errors, []);
   } finally {

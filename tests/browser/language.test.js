@@ -6,9 +6,11 @@
 // chosen with the remote and with a gamepad. Picking a language translates the page at once and stores it; Auto follows
 // the TV again. Every data-i18n text of the page is a key of the locale files (the browser decodes &amp; in the
 // attribute) and shows translated in every language, System information names the connection in the language of the
-// app, and the tooltips of the header buttons stay inside the screen in every language. The rules of
-// wasm/platform/i18n.js itself are in tests/unit/i18n-locales.test.js, the German texts in tests/unit/german-texts.test.js,
-// the Spanish and French texts in tests/unit/spanish-french-texts.test.js.
+// app, and the tooltips of the header buttons (also Quit Running App and the button of a new update) take one line
+// inside the safe area of the screen under their button in every language, also with text 10 % wider than this machine
+// draws it (tests/browser/text-stress.js). The rules of wasm/platform/i18n.js itself are in
+// tests/unit/i18n-locales.test.js, the German texts in tests/unit/german-texts.test.js, the Spanish and French texts in
+// tests/unit/spanish-french-texts.test.js.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -16,6 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const { REPO_ROOT } = require('../lib/dev-modules');
 const { openApp, startHarness, waitForStorage } = require('./harness');
+const { forEachTextWidth } = require('./text-stress');
 
 let harness;
 before(async () => {
@@ -276,33 +279,64 @@ test('System information names the network connection in the language of the app
   }
 });
 
-test('the tooltips of the header buttons stay inside the screen in every language', async () => {
+test('the tooltips of the header buttons take one line inside the safe area of the screen in every language, also with 10 % wider text', async () => {
   const languages = fs.readdirSync(path.join(REPO_ROOT, 'wasm/static/locales')).filter((name) => name.endsWith('.json'))
     .map((name) => name.replace(/\.json$/, ''));
-  // The tooltip as material.min.js places it for its button (centred under it, its left edge kept on the screen), from
-  // its left position and size, since it grows in from a scale of 0
+  // The tooltip as the page places it for its button (material.min.js, then placeTooltip() of launcher.js), from its left
+  // position and size, since it grows in from a scale of 0
   const tooltipBox = (page, button) => page.evaluate((id) => {
     document.getElementById(id).dispatchEvent(new MouseEvent('mouseenter'));
     const tooltip = document.querySelector('.mdl-tooltip[for="' + id + '"]');
+    const rect = document.getElementById(id).getBoundingClientRect();
+    const style = getComputedStyle(tooltip);
     const left = parseFloat(tooltip.style.left) + (parseFloat(tooltip.style.marginLeft) || 0);
-    const box = { text: tooltip.textContent.trim(), left: Math.round(left), right: Math.round(left + tooltip.offsetWidth), width: innerWidth };
+    const box = { text: tooltip.textContent.trim(), left: Math.round(left), right: Math.round(left + tooltip.offsetWidth), width: innerWidth,
+      button: [Math.round(rect.left), Math.round(rect.right)],
+      lines: Math.round((tooltip.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)) / parseFloat(style.lineHeight)) };
     document.getElementById(id).dispatchEvent(new MouseEvent('mouseleave'));
     return box;
   }, button);
+  const check = async (page, buttons, where) => {
+    await forEachTextWidth(page, async (stress) => {
+      for (const button of buttons) {
+        const box = await tooltipBox(page, button);
+        const message = where + stress + ' ' + button + ' ' + JSON.stringify(box);
+        // Inside the safe area of the screen (96 px from each edge, as the rest of the UI), which some TVs crop
+        assert.ok(box.left >= 96 && box.right <= box.width - 96, message);
+        // Under its button: centred, or flush with an edge of the button near the edge of the screen
+        assert.ok(box.left <= box.button[1] && box.right >= box.button[0], message);
+        assert.equal(box.lines, 1, message);
+      }
+    });
+  };
   for (const language of languages) {
     const app = await openApp(harness, { tv: TV, stored: { languagePreference: language } });
     try {
-      const boxes = [];
-      for (const button of ['rescanNetworkBtn', 'settingsBtn', 'supportBtn']) {
-        boxes.push(await tooltipBox(app.page, button));
-      }
+      // The hosts screen with the button of a new update
+      await app.page.evaluate(() => updateAppButton('9.0.0'));
+      await check(app.page, ['updateAppBtn', 'rescanNetworkBtn', 'settingsBtn', 'supportBtn'], language + ' hosts');
+      // The apps of a host whose app runs: Quit Running App, the rightmost button with the longest tooltips
+      await app.page.evaluate(async () => {
+        const host = {
+          paired: true, online: true, serverUid: 'HOST1', hostname: 'GAMING-PC', address: '10.0.0.2', httpPort: 47989, currentGame: 13,
+          appVersion: '7.1.431.-1', gfeVersion: '', serverCodecModeSupport: 0x1F03,
+          refreshServerInfo: () => Promise.resolve(),
+          getAppList: () => Promise.resolve([{ id: 12, title: 'Steam Big Picture' }, { id: 13, title: 'Cyberpunk 2077' }]),
+          getAppById: (id) => Promise.resolve({ id: Number(id), title: 'Cyberpunk 2077' }),
+          getBoxArt: () => Promise.resolve('static/res/placeholder_game.svg'),
+          pollServer: (callback) => callback(host),
+          toString: () => 'GAMING-PC',
+        };
+        api = host;
+        await showApps(host);
+        Navigation.switch();
+        Navigation.change(Views.Apps);
+      });
+      await app.page.waitForFunction(() => $('#game-grid .game-container').length > 0 && $('#quitRunningAppBtn').is(':visible'), null, { timeout: 5000 });
+      await check(app.page, ['quitRunningAppBtn'], language + ' apps');
       await app.page.evaluate(() => showSettings());
       await app.page.waitForFunction(() => $('#settings-list').is(':visible') && !$('#wasmSpinner').is(':visible'));
-      for (const button of ['goBackBtn', 'restoreDefaultsBtn']) {
-        boxes.push(await tooltipBox(app.page, button));
-      }
-      // Clear of the edge of the screen, which some TVs crop
-      boxes.forEach((box) => assert.ok(box.left >= 24 && box.right <= box.width - 24, language + ' ' + JSON.stringify(box)));
+      await check(app.page, ['goBackBtn', 'restoreDefaultsBtn'], language + ' settings');
       assert.deepEqual(app.errors, []);
     } finally {
       await app.context.close();

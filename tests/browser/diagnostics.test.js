@@ -77,7 +77,8 @@ test('the diagnostic log under About: app and native lines, secrets hidden, scro
       const now = Date.now();
       // Lines of the module from before and after a line of the app, one with the RTSP address of a stream
       window.__nativeLog = (now - 2) + '\tEMSS::OnOpen\n' + (now + 2) + '\tRTSP handshake with rtsp://10.0.0.2:48010\n';
-      console.log('%c[utils.js, openUrl]', 'color: gray;', 'https://10.0.0.2:47984/launch?uniqueid=0123456789ABCDEF&rikey=00112233445566778899aabbccddeeff&rikeyid=777');
+      // The key ID has more digits than any time of the log (e.g. 20:15:03.777), so that it can't show there by chance
+      console.log('%c[utils.js, openUrl]', 'color: gray;', 'https://10.0.0.2:47984/launch?uniqueid=0123456789ABCDEF&rikey=00112233445566778899aabbccddeeff&rikeyid=1946282817');
       for (let i = 0; i < 80; i++) {
         console.log('Filler line ' + i);
       }
@@ -112,7 +113,7 @@ test('the diagnostic log under About: app and native lines, secrets hidden, scro
     const launch = shown.text.indexOf('[utils.js, openUrl] https://10.0.0.2:47984/launch?uniqueid=<hidden>&rikey=<hidden>&rikeyid=<hidden>');
     const rtsp = shown.text.indexOf('native RTSP handshake with rtsp://<hidden>');
     assert.ok(native >= 0 && launch > native && rtsp > launch, shown.text.slice(0, 2000));
-    ['0123456789ABCDEF', '00112233445566778899aabbccddeeff', '777', '10.0.0.2:48010', uniqueId].forEach((secret) => {
+    ['0123456789ABCDEF', '00112233445566778899aabbccddeeff', '1946282817', '10.0.0.2:48010', uniqueId].forEach((secret) => {
       assert.equal(shown.text.indexOf(secret), -1, secret);
     });
     assert.ok(shown.text.indexOf('client UID: <hidden>') > 0, 'the host line is in the log');

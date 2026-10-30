@@ -3,12 +3,15 @@
 // Checks the parts of the theme that show the settings in the real page (wasm/static/css/style.css,
 // wasm/platform/launcher.js and the hooks in wasm/platform/index.js): the option rows put the help text across the
 // whole row and show the label of a switch only where an option has no help text, so that no label wraps to three lines
-// in English or any other language of the app (German is the longest); each section carries its colour into the header, the bar of its tile, the focused
-// row and its switches; the optimal settings dialog shows the values that deriveOptimalSettings() returns as tiles; the
-// header shows the stream profile of the settings and follows every change; and chips and badges are at least 16 px.
+// in English or any other language of the app (German is the longest); each section carries its colour into the header,
+// the bar of its tile, the focused row and its switches; the optimal settings dialog shows the values that
+// deriveOptimalSettings() returns as tiles; the header shows the stream profile of the settings and follows every
+// change; and chips and badges are at least 16 px, and the chips of the host cards and the hero fit in every language.
 // The rows are opaque, so that the stars of the backdrop never show between their letters, and rows that scroll out at
-// the top of their pane fade out instead of ending in a hard cut. Long dialogs fit the screen in Brazilian Portuguese,
-// and a dialog that is too long scrolls only its text, so that its title and buttons stay in view.
+// the top of their pane fade out instead of ending in a hard cut. Long dialogs fit the screen in every language, and a
+// dialog that is too long scrolls only its text, so that its title and buttons stay in view. Each check of a fit in
+// the languages also runs with text 10 % wider than this machine draws it (tests/browser/text-stress.js), since text
+// metrics differ between machines and on the TV.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -16,6 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { REPO_ROOT } = require('../lib/dev-modules');
 const { openApp, startHarness } = require('./harness');
+const { forEachTextWidth } = require('./text-stress');
 
 let harness;
 before(async () => {
@@ -64,7 +68,8 @@ async function openSettings(page, language) {
 }
 
 // The layout of every shown option row of a settings section: how many lines its title and the label of its switch take,
-// whether that label shows, how wide the help text is next to the row, and whether its control stays inside the row
+// whether the title stays inside its column, whether that label shows, how wide the help text is next to the row, and
+// whether its control stays inside the row
 const rowLayout = (page, category) => page.evaluate((name) => {
   handleSettingsView(name);
   const lines = (element) => {
@@ -77,9 +82,12 @@ const rowLayout = (page, category) => page.evaluate((name) => {
       const switchLabel = row.querySelector('.mdl-switch__label');
       const control = row.querySelector(':scope > div[id]');
       const rowRect = row.getBoundingClientRect();
+      const label = row.querySelector(':scope > label');
       const result = {
-        title: row.querySelector(':scope > label').textContent.trim().split('\n')[0],
-        titleLines: lines(row.querySelector(':scope > label')),
+        title: label.textContent.trim().split('\n')[0],
+        titleLines: lines(label),
+        // No word of the title runs out of its column
+        titleInside: label.scrollWidth <= label.clientWidth + 1,
         helpText: help.textContent.trim() !== '',
         controlInside: control.getBoundingClientRect().right <= rowRect.right + 1 &&
           Array.prototype.every.call(control.querySelectorAll('.mdl-button'), (button) => button.scrollWidth <= button.clientWidth + 1),
@@ -98,31 +106,34 @@ const rowLayout = (page, category) => page.evaluate((name) => {
     });
 }, category);
 
-test('the help text runs across each row, a switch label shows only without help text, and no label takes three lines', async () => {
+test('the help text runs across each row, a switch label shows only without help text, and no label takes three lines or runs out of its column, also with 10 % wider text', async () => {
   assert.ok(LANGUAGES.indexOf('pt-BR') >= 0 && LANGUAGES.indexOf('de-DE') >= 0, JSON.stringify(LANGUAGES));
   for (const language of LANGUAGES) {
     const app = await openApp(harness, { tv: TV });
     try {
       await openSettings(app.page, language);
-      for (const category of CATEGORIES) {
-        const rows = await rowLayout(app.page, category);
-        assert.ok(rows.length > 0, category);
-        rows.forEach((row) => {
-          const where = (language || 'en-US') + ' ' + category + ' ' + row.title + ': ' + JSON.stringify(row);
-          assert.ok(row.titleLines <= 2, where);
-          assert.equal(row.controlInside, true, where);
-          if (row.helpText) {
-            assert.equal(row.helpAcrossRow, true, where);
-          }
-          if ('switchLabel' in row) {
-            // The label repeats the help text, so it shows only in place of a missing one, on one line
-            assert.equal(row.switchLabel, row.helpText ? 'hidden' : 'shown', where);
-            if (!row.helpText) {
-              assert.equal(row.switchLabelLines, 1, where);
+      await forEachTextWidth(app.page, async (stress) => {
+        for (const category of CATEGORIES) {
+          const rows = await rowLayout(app.page, category);
+          assert.ok(rows.length > 0, category);
+          rows.forEach((row) => {
+            const where = (language || 'en-US') + stress + ' ' + category + ' ' + row.title + ': ' + JSON.stringify(row);
+            assert.ok(row.titleLines <= 2, where);
+            assert.equal(row.titleInside, true, where);
+            assert.equal(row.controlInside, true, where);
+            if (row.helpText) {
+              assert.equal(row.helpAcrossRow, true, where);
             }
-          }
-        });
-      }
+            if ('switchLabel' in row) {
+              // The label repeats the help text, so it shows only in place of a missing one, on one line
+              assert.equal(row.switchLabel, row.helpText ? 'hidden' : 'shown', where);
+              if (!row.helpText) {
+                assert.equal(row.switchLabelLines, 1, where);
+              }
+            }
+          });
+        }
+      });
       // The rows of the Input Settings without help text, the switches of rumble and mouse emulation: the label of the
       // switch takes its place. The rows of the button mapping, the input test and the controller type have help texts.
       const input = await rowLayout(app.page, 'inputSettings');
@@ -134,48 +145,50 @@ test('the help text runs across each row, a switch label shows only without help
   }
 });
 
-test('a badge stays on the line of its title in every language: the button of the optimal settings wraps instead', async () => {
+test('a badge stays on the line of its title in every language: the button of the optimal settings wraps instead, also with 10 % wider text', async () => {
   for (const language of LANGUAGES) {
     const app = await openApp(harness, { tv: TV });
     try {
       await openSettings(app.page, language);
-      const badges = [];
-      for (const category of CATEGORIES) {
-        await app.page.evaluate((name) => handleSettingsView(name), category);
-        await app.page.waitForTimeout(300);
-        badges.push(...await app.page.evaluate((name) => Array.prototype.filter.call(document.querySelectorAll('#' + name + ' .badge'),
-          (badge) => badge.offsetParent !== null).map((badge) => {
-          const row = badge.closest('.setting-option');
-          const lines = badge.parentElement.querySelector('span:not(.badge)').getClientRects();
-          const last = lines[lines.length - 1];
-          const box = badge.getBoundingClientRect();
-          const control = row.querySelector(':scope > div[id]').getBoundingClientRect();
-          return {
-            badge: badge.textContent.trim(),
-            onTitleLine: box.top + box.height / 2 > last.top && box.top + box.height / 2 < last.bottom && box.left >= last.right,
-            // The badge ends before the control, and the control inside the row
-            clear: box.right + 20 <= control.left && control.right <= row.getBoundingClientRect().right,
-          };
-        }), category));
-      }
-      assert.equal(badges.length, 6, JSON.stringify(badges));
-      badges.forEach((badge) => assert.deepEqual([badge.onTitleLine, badge.clear], [true, true], (language || 'en-US') + ' ' +
-        JSON.stringify(badges)));
-      // The button of the optimal settings: one line in English, two in Brazilian Portuguese and German (at most two in
-      // another language), inside its row either way
-      const button = await app.page.evaluate(() => {
-        handleSettingsView('basicSettings');
-        const element = document.getElementById('optimalSettingsBtn');
-        const span = element.querySelector('span');
-        return { lines: Math.round(span.getBoundingClientRect().height / parseFloat(getComputedStyle(span).lineHeight)),
-          inside: element.scrollWidth <= element.clientWidth + 1 };
+      await forEachTextWidth(app.page, async (stress) => {
+        const where = (language || 'en-US') + stress;
+        const badges = [];
+        for (const category of CATEGORIES) {
+          await app.page.evaluate((name) => handleSettingsView(name), category);
+          await app.page.waitForTimeout(300);
+          badges.push(...await app.page.evaluate((name) => Array.prototype.filter.call(document.querySelectorAll('#' + name + ' .badge'),
+            (badge) => badge.offsetParent !== null).map((badge) => {
+            const row = badge.closest('.setting-option');
+            const lines = badge.parentElement.querySelector('span:not(.badge)').getClientRects();
+            const last = lines[lines.length - 1];
+            const box = badge.getBoundingClientRect();
+            const control = row.querySelector(':scope > div[id]').getBoundingClientRect();
+            return {
+              badge: badge.textContent.trim(),
+              onTitleLine: box.top + box.height / 2 > last.top && box.top + box.height / 2 < last.bottom && box.left >= last.right,
+              // The badge ends before the control, and the control inside the row
+              clear: box.right + 20 <= control.left && control.right <= row.getBoundingClientRect().right,
+            };
+          }), category));
+        }
+        assert.equal(badges.length, 6, JSON.stringify(badges));
+        badges.forEach((badge) => assert.deepEqual([badge.onTitleLine, badge.clear], [true, true], where + ' ' + JSON.stringify(badges)));
+        // The button of the optimal settings: one line in English, two in Brazilian Portuguese and German, at most two in
+        // another language and with wider text (where the English one wraps as well), inside its row either way
+        const button = await app.page.evaluate(() => {
+          handleSettingsView('basicSettings');
+          const element = document.getElementById('optimalSettingsBtn');
+          const span = element.querySelector('span');
+          return { lines: Math.round(span.getBoundingClientRect().height / parseFloat(getComputedStyle(span).lineHeight)),
+            inside: element.scrollWidth <= element.clientWidth + 1 };
+        });
+        const expectedLines = { 'en-US': 1, 'pt-BR': 2, 'de-DE': 2 }[language || 'en-US'];
+        if (expectedLines && !stress) {
+          assert.deepEqual(button, { lines: expectedLines, inside: true }, where);
+        } else {
+          assert.ok(button.lines <= 2 && button.inside, where + ' ' + JSON.stringify(button));
+        }
       });
-      const expectedLines = { 'en-US': 1, 'pt-BR': 2, 'de-DE': 2 }[language || 'en-US'];
-      if (expectedLines) {
-        assert.deepEqual(button, { lines: expectedLines, inside: true }, language || 'en-US');
-      } else {
-        assert.ok(button.lines <= 2 && button.inside, language + ' ' + JSON.stringify(button));
-      }
       assert.deepEqual(app.errors, []);
     } finally {
       await app.context.close();
@@ -183,26 +196,28 @@ test('a badge stays on the line of its title in every language: the button of th
   }
 });
 
-test('the name and the subtitle of each settings section fit its tile in every language, without an ellipsis', async () => {
+test('the name and the subtitle of each settings section fit its tile in every language, without an ellipsis, also with 10 % wider text', async () => {
   assert.ok(LANGUAGES.indexOf('es-ES') >= 0 && LANGUAGES.indexOf('fr-FR') >= 0, JSON.stringify(LANGUAGES));
   for (const language of LANGUAGES) {
     const app = await openApp(harness, { tv: TV });
     try {
       await openSettings(app.page, language);
-      const tiles = await app.page.evaluate(() => Array.prototype.map.call(document.querySelectorAll('.settings-category'), (tile) => {
-        const label = tile.querySelector('label');
-        const sub = tile.querySelector('.settings-category-sub');
-        const right = tile.getBoundingClientRect().right;
-        return {
-          name: label.textContent.trim(),
-          sub: sub.textContent.trim(),
-          // The subtitle cuts its text with an ellipsis when it is wider than its column
-          subFits: sub.scrollWidth <= sub.clientWidth + 1,
-          nameInside: label.getBoundingClientRect().right <= right + 1 && label.getBoundingClientRect().height < 2 * parseFloat(getComputedStyle(label).lineHeight),
-        };
-      }));
-      assert.equal(tiles.length, CATEGORIES.length);
-      tiles.forEach((tile) => assert.ok(tile.subFits && tile.nameInside, (language || 'en-US') + ' ' + JSON.stringify(tile)));
+      await forEachTextWidth(app.page, async (stress) => {
+        const tiles = await app.page.evaluate(() => Array.prototype.map.call(document.querySelectorAll('.settings-category'), (tile) => {
+          const label = tile.querySelector('label');
+          const sub = tile.querySelector('.settings-category-sub');
+          const right = tile.getBoundingClientRect().right;
+          return {
+            name: label.textContent.trim(),
+            sub: sub.textContent.trim(),
+            // The subtitle cuts its text with an ellipsis when it is wider than its column
+            subFits: sub.scrollWidth <= sub.clientWidth + 1,
+            nameInside: label.getBoundingClientRect().right <= right + 1 && label.getBoundingClientRect().height < 2 * parseFloat(getComputedStyle(label).lineHeight),
+          };
+        }));
+        assert.equal(tiles.length, CATEGORIES.length);
+        tiles.forEach((tile) => assert.ok(tile.subFits && tile.nameInside, (language || 'en-US') + stress + ' ' + JSON.stringify(tile)));
+      });
       assert.deepEqual(app.errors, []);
     } finally {
       await app.context.close();
@@ -401,49 +416,70 @@ test('the header shows the stream profile of the settings, follows every change 
   }
 });
 
-test('chips and badges are at least 16 px, and the chip of a host card fits in Brazilian Portuguese', async () => {
-  const app = await openApp(harness, { tv: TV });
-  try {
-    await app.page.evaluate(() => i18n.setLanguage('pt-BR'));
-    await app.page.waitForTimeout(400);
-    await app.page.evaluate(() => {
-      window.beginBackgroundPollingOfHost = function() {};
-      const make = (uid, name, online, paired, currentGame) => ({
-        serverUid: uid, hostname: name, online: online, paired: paired, currentGame: currentGame || 0, address: '10.0.0.1',
-        externalPort: 47989, httpPort: 47989, httpsPort: 47984, macAddress: '00:11:22:33:44:55', appVersion: '7.1.431.-1',
-        gfeVersion: '', serverCodecModeSupport: 0x1F03, toString: () => name, updateExternalAddressIP4() {}, clearBoxArt() {},
-        refreshServerInfo: () => Promise.resolve(), pollServer(callback) {
-          callback(this);
-        },
+test('chips and badges are at least 16 px, and the chips of the host cards and the hero fit in every language, also with 10 % wider text', async () => {
+  for (const language of LANGUAGES) {
+    const app = await openApp(harness, { tv: TV });
+    try {
+      if (language) {
+        await app.page.evaluate((locale) => i18n.setLanguage(locale), language);
+        await app.page.waitForTimeout(400);
+      }
+      await app.page.evaluate(() => {
+        window.beginBackgroundPollingOfHost = function() {};
+        const make = (uid, name, online, paired, currentGame) => ({
+          serverUid: uid, hostname: name, online: online, paired: paired, currentGame: currentGame || 0, address: '10.0.0.1',
+          externalPort: 47989, httpPort: 47989, httpsPort: 47984, macAddress: '00:11:22:33:44:55', appVersion: '7.1.431.-1',
+          gfeVersion: '', serverCodecModeSupport: 0x1F03, toString: () => name, updateExternalAddressIP4() {}, clearBoxArt() {},
+          refreshServerInfo: () => Promise.resolve(), pollServer(callback) {
+            callback(this);
+          },
+        });
+        [make('A', 'GAMING-PC', true, true, 7), make('BB', 'HTPC', false, true), make('CCC', 'OFFICE', true, false)]
+          .forEach((host) => addHostToGrid(host));
+        updateAppButton('9.0.0');
       });
-      [make('A', 'GAMING-PC', true, true, 7), make('BB', 'HTPC', false, true), make('CCC', 'OFFICE', true, false)]
-        .forEach((host) => addHostToGrid(host));
-      updateAppButton('9.0.0');
-    });
-    await app.page.keyboard.press('ArrowRight');
-    await app.page.waitForTimeout(300);
-    const sizes = await app.page.evaluate(() => {
-      const size = (element, pseudo) => parseFloat(getComputedStyle(element, pseudo || null).fontSize);
-      const chips = Array.prototype.map.call(document.querySelectorAll('.status-chip'), (chip) => size(chip));
-      const cards = Array.prototype.map.call(document.querySelectorAll('.host-chips'), (box) => ({
-        chips: box.children.length,
-        fits: Array.prototype.every.call(box.children, (chip) => chip.getBoundingClientRect().right <= box.getBoundingClientRect().right),
-      }));
-      return {
-        chips: chips.length >= 6 && Math.min.apply(null, chips),
-        badges: Math.min.apply(null, Array.prototype.map.call(document.querySelectorAll('.badge'), (badge) => size(badge))),
-        updateBadge: size(document.querySelector('.mdl-badge'), '::after'),
-        cards,
-      };
-    });
-    assert.ok(sizes.chips >= 16, JSON.stringify(sizes));
-    assert.ok(sizes.badges >= 16, JSON.stringify(sizes));
-    assert.ok(sizes.updateBadge >= 16, JSON.stringify(sizes));
-    // One chip per card (RUNNING, OFFLINE, NÃO PAREADO), which fits
-    assert.deepEqual(sizes.cards, [{ chips: 1, fits: true }, { chips: 1, fits: true }, { chips: 1, fits: true }]);
-    assert.deepEqual(app.errors, []);
-  } finally {
-    await app.context.close();
+      await app.page.keyboard.press('ArrowRight');
+      await app.page.waitForTimeout(300);
+      if (language === 'pt-BR') {
+        const sizes = await app.page.evaluate(() => {
+          const size = (element, pseudo) => parseFloat(getComputedStyle(element, pseudo || null).fontSize);
+          const chips = Array.prototype.map.call(document.querySelectorAll('.status-chip'), (chip) => size(chip));
+          return {
+            chips: chips.length >= 6 && Math.min.apply(null, chips),
+            badges: Math.min.apply(null, Array.prototype.map.call(document.querySelectorAll('.badge'), (badge) => size(badge))),
+            updateBadge: size(document.querySelector('.mdl-badge'), '::after'),
+          };
+        });
+        assert.ok(sizes.chips >= 16, JSON.stringify(sizes));
+        assert.ok(sizes.badges >= 16, JSON.stringify(sizes));
+        assert.ok(sizes.updateBadge >= 16, JSON.stringify(sizes));
+      }
+      await forEachTextWidth(app.page, async (stress) => {
+        const where = (language || 'en-US') + stress;
+        const fit = await app.page.evaluate(() => {
+          const right = (element) => element.getBoundingClientRect().right;
+          const cards = Array.prototype.map.call(document.querySelectorAll('.host-chips'), (box) => ({
+            chips: box.children.length,
+            fits: Array.prototype.every.call(box.children, (chip) => right(chip) <= right(box)),
+          }));
+          // The hero of the focused host: its chips and key hints inside its text column, its overline without an ellipsis
+          const copy = document.querySelector('.hero-copy');
+          const end = right(copy) - parseFloat(getComputedStyle(copy).paddingRight) + 1;
+          const overline = document.getElementById('hero-overline');
+          const parts = Array.prototype.slice.call(document.querySelectorAll('#hero-chips > *, #hero-hints > *'));
+          return {
+            cards,
+            hero: { parts: parts.length, inside: parts.every((part) => right(part) <= end), overline: overline.scrollWidth <= overline.clientWidth + 1 },
+          };
+        });
+        // One chip per card (e.g. RUNNING, OFFLINE, UNPAIRED), which fits
+        assert.deepEqual(fit.cards, [{ chips: 1, fits: true }, { chips: 1, fits: true }, { chips: 1, fits: true }], where);
+        assert.ok(fit.hero.parts >= 2 && fit.hero.inside && fit.hero.overline, where + ' ' + JSON.stringify(fit.hero));
+      });
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.context.close();
+    }
   }
 });
 
@@ -604,7 +640,7 @@ test('the arrow keys move through every row of a long section without scrolling 
   }
 });
 
-test('long dialogs fit the screen in Brazilian Portuguese on 4K TVs, and a text that is too long scrolls on its own', async () => {
+test('long dialogs fit the screen in every language on 4K TVs, also with 10 % wider text, and a text that is too long scrolls on its own', async () => {
   // The open dialog: whether it or its text scrolls, and whether its title, badge and buttons lie inside it on the screen
   const measure = (page) => page.evaluate(() => {
     const dialog = Array.prototype.find.call(document.querySelectorAll('dialog'), (element) => element.open);
@@ -627,15 +663,21 @@ test('long dialogs fit the screen in Brazilian Portuguese on 4K TVs, and a text 
   for (const tv of ['s90c', 'uhd']) {
     const app = await openApp(harness, { tv: { tv, conn: 'ethernet' } });
     try {
-      await app.page.evaluate(() => i18n.setLanguage('pt-BR'));
-      await app.page.waitForTimeout(400);
-      for (const open of ['navigationGuideDialog', 'optimalSettingsDialog', 'appSupportDialog']) {
-        await app.page.evaluate((name) => window[name](), open);
-        await app.page.waitForTimeout(300);
-        const dialog = await measure(app.page);
-        const where = tv + ' ' + JSON.stringify(dialog);
-        assert.deepEqual([dialog.dialogScrolls, dialog.textScrolls, dialog.title, dialog.buttons], [false, false, true, true], where);
-        assert.notEqual(dialog.badge, false, where);
+      // English first, then every other language; the last one, Brazilian Portuguese, stays for the text that is too long
+      assert.equal(LANGUAGES[LANGUAGES.length - 1], 'pt-BR');
+      for (const language of LANGUAGES) {
+        await app.page.evaluate((locale) => i18n.setLanguage(locale || 'en-US'), language);
+        await app.page.waitForTimeout(400);
+        await forEachTextWidth(app.page, async (stress) => {
+          for (const open of ['navigationGuideDialog', 'optimalSettingsDialog', 'appSupportDialog']) {
+            await app.page.evaluate((name) => window[name](), open);
+            await app.page.waitForTimeout(300);
+            const dialog = await measure(app.page);
+            const where = tv + ' ' + (language || 'en-US') + stress + ' ' + JSON.stringify(dialog);
+            assert.deepEqual([dialog.dialogScrolls, dialog.textScrolls, dialog.title, dialog.buttons], [false, false, true, true], where);
+            assert.notEqual(dialog.badge, false, where);
+          }
+        });
       }
       // A text far too long for the screen: only the text scrolls, the title, the badge and the buttons stay in view
       await app.page.evaluate(() => warningDialog('Warning', Array(40).fill('A line of a long warning.').join('<br>')));

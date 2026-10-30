@@ -6,13 +6,15 @@
 // through it while no key reaches the stream (a listener on the video element stands in for the keyboard handler of the
 // module), RETURN and B close it and resume the stream, and its entries run: the performance statistics, the mouse
 // emulation, the keys for the PC (every key released again), Disconnect and 'Disconnect and quit the app on the PC'. It
-// stays inside the safe area of the screen with every entry showing without scrolling, and the video keeps showing. The
-// bitrate entry and 'Type text…' are checked by stream-menu-entries.test.js. The controller side (the combo and the
-// controller input while the menu is open) is pinned by tests/native/stream_menu_combo_test.cpp.
+// stays inside the safe area of the screen with every entry showing without scrolling and every label on one line in
+// every language, also with text 10 % wider than this machine draws it (tests/browser/text-stress.js), and the video
+// keeps showing. The bitrate entry and 'Type text…' are checked by stream-menu-entries.test.js. The controller side (the
+// combo and the controller input while the menu is open) is pinned by tests/native/stream_menu_combo_test.cpp.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { openApp, startHarness } = require('./harness');
+const { forEachTextWidth } = require('./text-stress');
 
 const XBOX_ID = 'Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)';
 // delayedNavigation() runs the gamepad buttons of the menus 150 ms later (NAVIGATION_DELAY), and the gamepads are
@@ -298,7 +300,7 @@ test('the Stream Menu stays inside the safe area of the screen', async () => {
   }
 });
 
-test('in every language the Stream Menu shows every entry without scrolling, and each label and bitrate note takes one line', async () => {
+test('in every language the Stream Menu shows every entry without scrolling, and each label and bitrate note takes one line, also with 10 % wider text', async () => {
   const app = await openStreaming({ gamepad: true });
   try {
     await remoteKey(app.page, ...PLAY_PAUSE);
@@ -308,26 +310,28 @@ test('in every language the Stream Menu shows every entry without scrolling, and
       await app.page.evaluate((locale) => i18n.setLanguage(locale), language);
       await app.page.waitForFunction((locale) => document.documentElement.getAttribute('lang') === locale, language);
       // Both notes of the bitrate entry: the one of a changed bitrate and the one of OK on an unchanged bitrate
-      for (const note of ['changed', 'unchanged']) {
-        const fit = await app.page.evaluate((which) => {
-          if (which === 'changed') {
-            changeStreamMenuBitrate(-1);
-          } else {
-            changeStreamMenuBitrate(1);
-            applyStreamMenuBitrate();
-          }
-          const menu = document.getElementById('streamMenu');
-          const oneLine = (element) => element.getBoundingClientRect().height < 2 * parseFloat(getComputedStyle(element).lineHeight);
-          const labels = Array.prototype.filter.call(menu.querySelectorAll('.overlay-menu-label'), (label) => label.offsetParent !== null);
-          return {
-            note: $('#streamMenuBitrateNote').text(),
-            noteOneLine: oneLine(document.getElementById('streamMenuBitrateNote')),
-            longLabels: labels.filter((label) => !oneLine(label)).map((label) => label.textContent),
-            scrolls: menu.scrollHeight > menu.clientHeight,
-          };
-        }, note);
-        assert.ok(fit.note !== '' && fit.noteOneLine && fit.longLabels.length === 0 && !fit.scrolls, language + ' ' + JSON.stringify(fit));
-      }
+      await forEachTextWidth(app.page, async (stress) => {
+        for (const note of ['changed', 'unchanged']) {
+          const fit = await app.page.evaluate((which) => {
+            if (which === 'changed') {
+              changeStreamMenuBitrate(-1);
+            } else {
+              changeStreamMenuBitrate(1);
+              applyStreamMenuBitrate();
+            }
+            const menu = document.getElementById('streamMenu');
+            const oneLine = (element) => element.getBoundingClientRect().height < 2 * parseFloat(getComputedStyle(element).lineHeight);
+            const labels = Array.prototype.filter.call(menu.querySelectorAll('.overlay-menu-label'), (label) => label.offsetParent !== null);
+            return {
+              note: $('#streamMenuBitrateNote').text(),
+              noteOneLine: oneLine(document.getElementById('streamMenuBitrateNote')),
+              longLabels: labels.filter((label) => !oneLine(label)).map((label) => label.textContent),
+              scrolls: menu.scrollHeight > menu.clientHeight,
+            };
+          }, note);
+          assert.ok(fit.note !== '' && fit.noteOneLine && fit.longLabels.length === 0 && !fit.scrolls, language + stress + ' ' + JSON.stringify(fit));
+        }
+      });
     }
     assert.deepEqual(app.errors, []);
   } finally {
