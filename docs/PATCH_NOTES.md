@@ -2,7 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
-- [1.19.102](#119102): pre-release, in testing
+- [2.0.0](#200): pre-release, in testing
 - [1.19.101](#119101): 2026-10-29, a new look and two new menus
 - [1.19.100](#119100): 2026-10-26, the first release as Moonlight Plus
 - [1.19.0-s90c.1](#1190-s90c1): 2026-10-23, released as Moonlight S90C
@@ -12,7 +12,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 **TV refuses an update?** If the author certificate doesn't match, uninstall the old app first; this loses its settings and pairing.
 
-## 1.19.102
+## 2.0.0
 
 *Pre-release, in testing.* A one-line statistics view, safer pairing, a Wake PC dialog that no longer hangs, and fixes for stability.
 

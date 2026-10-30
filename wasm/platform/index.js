@@ -1476,6 +1476,15 @@ function autoWolDialog(host, onSuccess, onCancel) {
       );
       // Change the button text to "OK" to indicate that the user can acknowledge the failure
       $('#cancelAutoWol').html(t('OK'));
+      // Select OK, so that OK on the remote closes the dialog: the selection starts on the Auto-WOL switch
+      // (Views.AutoWolDialog.view.reset() above), whose focus enter() of the view restores 100 ms after the dialog opened
+      if (!isClosed) {
+        var wolView = Views.AutoWolDialog.view;
+        if (elementId(wolView.current()) !== 'cancelAutoWol') {
+          wolView.next();
+        }
+        focusElement('cancelAutoWol');
+      }
     });
   };
 

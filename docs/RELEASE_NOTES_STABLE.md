@@ -10,6 +10,6 @@
 
 **Install** over the old app (settings and pairing normally stay), or next to the regular Moonlight app (pair your PC once).
 
-**Moonlight S90C (v1.19.0-s90c.1)** won't announce 1.19.102: install it by hand.
+**Moonlight S90C (v1.19.0-s90c.1)** won't announce 2.0.0: install it by hand.
 
 Tested with simulated TVs, hosts and controllers.

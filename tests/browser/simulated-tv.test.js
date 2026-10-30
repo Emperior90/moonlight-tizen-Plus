@@ -155,7 +155,7 @@ test('System information shows the app, the model strings and what the app detec
     {
       tv: { tv: 's90c', conn: 'ethernet' },
       lines: [
-        'App Version: Moonlight Plus v1.19.102',
+        'App Version: Moonlight Plus v2.0.0',
         'Platform Version: Tizen 9.0',
         'TV Model Series: 23_PONTUSM_OLED',
         'TV Model Name: QE55S90CAT',
@@ -175,7 +175,7 @@ test('System information shows the app, the model strings and what the app detec
     {
       tv: { tv: 'fhd', conn: 'wifi' },
       lines: [
-        'App Version: Moonlight Plus v1.19.102',
+        'App Version: Moonlight Plus v2.0.0',
         'Platform Version: Tizen 5.5',
         'TV Model Series: 20_KANTM2_FHD',
         'TV Model Name: UE43T5300AU',
@@ -195,7 +195,7 @@ test('System information shows the app, the model strings and what the app detec
     {
       tv: { tv: '8k', conn: 'unknown', modelCode: 'NOYEAR' },
       lines: [
-        'App Version: Moonlight Plus v1.19.102',
+        'App Version: Moonlight Plus v2.0.0',
         'Platform Version: Tizen 6.5',
         'TV Model Series: 22_PONTUSM_8K',
         'TV Model Name: QE65QN900BT',

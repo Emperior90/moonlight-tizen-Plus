@@ -37,6 +37,7 @@ const remoteKey = (page, keyCode, key) => page.evaluate(({ code, name }) => {
   });
 }, { code: keyCode, name: key });
 const RETURN = [10009, 'XF86Back'];
+const OK = [13, 'Enter'];
 
 // The first key after the start only gives the menus the focus (Navigation in navigation.js), so press LEFT, which
 // doesn't move on the Add Host card, and wait for the card to have the focus
@@ -115,6 +116,29 @@ test('after a failed request, OK closes the dialog, which names the error and an
     assert.deepEqual([state.open, state.overlay, state.isDialogOpen], [false, 'none', false]);
     assert.deepEqual(await events(app.page), ['wol', 'cancel'], 'one request, no poll after the failure');
     assert.ok(app.logs.some((line) => line.indexOf('Wake-on-LAN request failed: Failed to create socket') >= 0));
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('after a failed request, OK is selected, so that OK on the remote closes the dialog and leaves Auto-WOL as it was', async () => {
+  const app = await openWithOfflineHost({ wol: 'Failed to create socket' });
+  try {
+    await takeFocus(app.page);
+    const autoWolBefore = await app.page.evaluate(() => document.querySelector('#autoWolCheckboxSwitch').checked);
+    await app.page.evaluate(() => window.openWolDialog());
+    await app.page.waitForFunction(() => $('#cancelAutoWol').text().trim() === 'OK', null, { timeout: 3000 });
+    // Past the 100 ms after which enter() of the view focuses its selection again
+    await app.page.waitForTimeout(250);
+    assert.equal(await app.page.evaluate(() => document.activeElement.id), 'cancelAutoWol');
+    assert.equal(await app.page.evaluate(() => elementId(Views.AutoWolDialog.view.current())), 'cancelAutoWol');
+    await remoteKey(app.page, ...OK);
+    const state = await dialogState(app.page);
+    assert.deepEqual([state.open, state.overlay, state.isDialogOpen], [false, 'none', false]);
+    assert.equal(await app.page.evaluate(() => document.querySelector('#autoWolCheckboxSwitch').checked), autoWolBefore,
+      'OK did not switch Auto-WOL');
+    assert.deepEqual(await events(app.page), ['wol', 'cancel']);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

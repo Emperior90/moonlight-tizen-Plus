@@ -1,4 +1,4 @@
-**Moonlight Plus 1.19.102 (pre-release).** Installs over 1.19.101 and earlier; settings and pairing normally stay.
+**Moonlight Plus 2.0.0 (pre-release).** Installs over 1.19.101 and earlier; settings and pairing normally stay.
 
 **Which file?** Tizen 9 and newer: `Moonlight-ForceGM.wgt` (keep the app's *Game mode* switch off). Tizen 5.5 to 8: `Moonlight.wgt`.
 
