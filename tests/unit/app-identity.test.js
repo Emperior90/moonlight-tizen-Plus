@@ -129,7 +129,7 @@ test('the simulated TV of the tests reports the IDs, name and version of config.
 
 // The support path of the fork (plan gap A8 and decision D11): the Support dialog and the help texts of the app lead to
 // the guide and the issue tracker of Moonlight Plus, not to the wiki of upstream Moonlight Tizen
-const FORK_GUIDE_URL = 'https://github.com/Emperior90/moonlight-tizen-S90c/blob/HEAD/docs/GUIDE.md';
+const FORK_GUIDE_URL = 'https://github.com/Emperior90/moonlight-tizen-Plus/blob/HEAD/docs/GUIDE.md';
 
 test('the Support dialog names Moonlight Plus and its issue tracker, and its QR code leads to the guide of the fork', () => {
   const html = read('wasm/index.html');

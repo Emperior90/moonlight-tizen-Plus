@@ -64,7 +64,7 @@ Not sure which Tizen version your TV has? Install `Moonlight.wgt`, then look at 
 
 ### Install the file
 
-1. Download the file from the [releases page of this fork](https://github.com/Emperior90/moonlight-tizen-S90c/releases). Take the release marked *Latest*. Pre-releases are test builds, and the next test build of the same branch replaces them.
+1. Download the file from the [releases page of this fork](https://github.com/Emperior90/moonlight-tizen-Plus/releases). Take the release marked *Latest*. Pre-releases are test builds, and the next test build of the same branch replaces them.
 2. Turn on the developer mode of the TV. In short: open Apps → App Settings, press 1 2 3 4 5 on the remote (or the on-screen number pad), switch *Developer mode* on, enter the local IP address of the PC you install from, and restart the TV by holding the power button for at least 5 seconds.
 3. Install the file with one of the methods that work for Moonlight Tizen:
    - **Apps2Samsung:** choose *Custom WGT File* in the release field and select the downloaded file.
@@ -403,7 +403,7 @@ Other problems:
 - **Crackling sound with EMSS:** lower the bitrate by one step, or switch to Web Audio.
 - **Stutter after some time:** look at the session totals of the performance statistics at that moment (see [section 7](#7-performance-statistics)).
 
-Still stuck? Open an issue on the [issue tracker of this fork](https://github.com/Emperior90/moonlight-tizen-S90c/issues) with a photo of System information. Please don't report problems with Moonlight Plus to the upstream Moonlight Tizen project.
+Still stuck? Open an issue on the [issue tracker of this fork](https://github.com/Emperior90/moonlight-tizen-Plus/issues) with a photo of System information. Please don't report problems with Moonlight Plus to the upstream Moonlight Tizen project.
 
 ## 15. Updating from the earlier release v1.19.0-s90c.1
 

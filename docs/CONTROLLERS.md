@@ -2,7 +2,7 @@
 
 This page describes how Moonlight Plus handles game controllers: in the menus, during a stream, and what the PC gets. For setting up the app, see the [guide](GUIDE.md).
 
-**Testing status:** the controller changes of Moonlight Plus (menus, controller type, rumble, mouse emulation, the Stream Menu combo) were tested with simulated controllers and native tests of the controller code. None of them was checked with real controllers on a TV yet. Reports from real controllers are welcome on the [issue tracker of this fork](https://github.com/Emperior90/moonlight-tizen-S90c/issues).
+**Testing status:** the controller changes of Moonlight Plus (menus, controller type, rumble, mouse emulation, the Stream Menu combo) were tested with simulated controllers and native tests of the controller code. None of them was checked with real controllers on a TV yet. Reports from real controllers are welcome on the [issue tracker of this fork](https://github.com/Emperior90/moonlight-tizen-Plus/issues).
 
 ## Contents
 

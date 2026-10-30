@@ -8,7 +8,7 @@ body:
       value: |
         This is the issue tracker of **Moonlight Plus**, an unofficial fork of Moonlight Tizen. Please report problems with the regular Moonlight Tizen app to the Moonlight Tizen project instead.
 
-        Before you report, check the troubleshooting section of the [guide](https://github.com/Emperior90/moonlight-tizen-S90c/blob/HEAD/docs/GUIDE.md#14-troubleshooting) and, for controllers, the [controller page](https://github.com/Emperior90/moonlight-tizen-S90c/blob/HEAD/docs/CONTROLLERS.md).
+        Before you report, check the troubleshooting section of the [guide](https://github.com/Emperior90/moonlight-tizen-Plus/blob/HEAD/docs/GUIDE.md#14-troubleshooting) and, for controllers, the [controller page](https://github.com/Emperior90/moonlight-tizen-Plus/blob/HEAD/docs/CONTROLLERS.md).
 
         ## TV
   - type: input

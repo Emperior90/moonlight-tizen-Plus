@@ -4,7 +4,7 @@ Moonlight Plus is an unofficial fork of [Moonlight Tizen](https://github.com/bri
 
 > [!NOTE]
 >
-> Moonlight Plus is not made or supported by the Moonlight Tizen project, the Moonlight project or Samsung. Please report problems with Moonlight Plus on the [issue tracker of this fork](https://github.com/Emperior90/moonlight-tizen-S90c/issues), not to Moonlight Tizen.
+> Moonlight Plus is not made or supported by the Moonlight Tizen project, the Moonlight project or Samsung. Please report problems with Moonlight Plus on the [issue tracker of this fork](https://github.com/Emperior90/moonlight-tizen-Plus/issues), not to Moonlight Tizen.
 
 ---
 
@@ -42,7 +42,7 @@ What changed in each version, in short: [patch notes](docs/PATCH_NOTES.md). Ever
 
 ## Installation
 
-Download the file from the [releases page of this fork](https://github.com/Emperior90/moonlight-tizen-S90c/releases). Take the release marked *Latest*. Pre-releases are test builds. The [patch notes](docs/PATCH_NOTES.md) say what each version changed.
+Download the file from the [releases page of this fork](https://github.com/Emperior90/moonlight-tizen-Plus/releases). Take the release marked *Latest*. Pre-releases are test builds. The [patch notes](docs/PATCH_NOTES.md) say what each version changed.
 
 | Your TV | File |
 |---|---|
@@ -72,7 +72,7 @@ Moonlight Plus installs **next to** the regular Moonlight app, with its own sett
 
 ## Support
 
-Open an issue on the [issue tracker of this fork](https://github.com/Emperior90/moonlight-tizen-S90c/issues/new/choose). Please add a photo of Settings → About → *System information*, your host GPU and the controller you use. The [troubleshooting section](docs/GUIDE.md#14-troubleshooting) of the guide explains the common messages.
+Open an issue on the [issue tracker of this fork](https://github.com/Emperior90/moonlight-tizen-Plus/issues/new/choose). Please add a photo of Settings → About → *System information*, your host GPU and the controller you use. The [troubleshooting section](docs/GUIDE.md#14-troubleshooting) of the guide explains the common messages.
 
 ---
 

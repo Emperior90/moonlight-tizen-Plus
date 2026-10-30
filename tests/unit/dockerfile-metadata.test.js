@@ -111,9 +111,9 @@ test('a release or development build fails clearly without the repository owner 
   const cases = [
     { BUILD_TYPE: 'release' },
     { BUILD_TYPE: 'release', REPO_OWNER: 'someone' },
-    { BUILD_TYPE: 'release', REPO_NAME: 'moonlight-tizen-S90c' },
+    { BUILD_TYPE: 'release', REPO_NAME: 'moonlight-tizen-Plus' },
     { BUILD_TYPE: 'development' },
-    { BUILD_TYPE: 'development', REPO_NAME: 'moonlight-tizen-S90c' },
+    { BUILD_TYPE: 'development', REPO_NAME: 'moonlight-tizen-Plus' },
   ];
   cases.forEach((buildArgs) => {
     const result = runMetadataStep(buildArgs);
@@ -137,13 +137,13 @@ test('a release or development build fails clearly with a repository owner or na
 
 test('a complete build injects the repository, and its update check reads the releases of that repository', { skip: SKIP }, async () => {
   for (const buildType of ['release', 'development']) {
-    const result = runMetadataStep({ BUILD_TYPE: buildType, REPO_OWNER: 'Some-Owner', REPO_NAME: 'moonlight-tizen-S90c' });
+    const result = runMetadataStep({ BUILD_TYPE: buildType, REPO_OWNER: 'Some-Owner', REPO_NAME: 'moonlight-tizen-Plus' });
     assert.equal(result.status, 0, result.output);
     assert.ok(result.index.includes("const REPO_OWNER = 'Some-Owner';"));
-    assert.ok(result.index.includes("const REPO_NAME = 'moonlight-tizen-S90c';"));
+    assert.ok(result.index.includes("const REPO_NAME = 'moonlight-tizen-Plus';"));
     assert.ok(result.index.includes(`const BUILD_TYPE = '${buildType}';`));
     assert.equal(/__REPO_(OWNER|NAME)__/.test(result.index), false, 'a repository placeholder is left');
-    assert.equal(await updateCheckUrl(result.index), 'https://api.github.com/repos/Some-Owner/moonlight-tizen-S90c/releases/latest');
+    assert.equal(await updateCheckUrl(result.index), 'https://api.github.com/repos/Some-Owner/moonlight-tizen-Plus/releases/latest');
   }
 });
 

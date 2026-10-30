@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: Moonlight Plus guide
-    url: https://github.com/Emperior90/moonlight-tizen-S90c/blob/HEAD/docs/GUIDE.md
+    url: https://github.com/Emperior90/moonlight-tizen-Plus/blob/HEAD/docs/GUIDE.md
     about: Installation, settings for your TV, known limits and troubleshooting
   - name: Regular Moonlight Tizen app
     url: https://github.com/brightcraft/moonlight-tizen

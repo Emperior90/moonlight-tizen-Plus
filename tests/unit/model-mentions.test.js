@@ -32,11 +32,6 @@ const ALLOW_LIST = [
     reason: 'the tested profile in VERIFIED_PROFILES, selected by the same model check as before',
   },
   {
-    file: 'wasm/static/res/support_qr_code.svg',
-    pattern: /^<!-- QR code of https:\/\/github\.com\/Emperior90\/moonlight-tizen-S90c\/blob\/HEAD\/docs\/GUIDE\.md \(the guide of Moonlight Plus\) -->$/,
-    reason: 'the URL that the QR code of the Support dialog encodes: the guide in the repository of this fork, whose name decision D3 keeps',
-  },
-  {
     file: 'wasm/static/js/utils.js',
     pattern: /^var SMART_HUB_PREVIEW_FILE_PREFIX = 'preview-s90c-';/,
     reason: 'the file prefix of the Smart Hub preview images, an internal ID kept by decision D2',
