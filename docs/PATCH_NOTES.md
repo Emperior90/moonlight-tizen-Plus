@@ -2,7 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
-- [2.1.0](#210): pre-release, in testing
+- [2.1.0](#210): 2026-10-30, five languages and new tools in the Stream Menu
 - [2.0.0](#200): pre-release only, its changes come with 2.1.0
 - [1.19.101](#119101): 2026-10-29, a new look and two new menus
 - [1.19.100](#119100): 2026-10-26, the first release as Moonlight Plus
@@ -15,7 +15,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ## 2.1.0
 
-*Pre-release, in testing.* Five languages, the bitrate changed during a game, text typed on the PC, favorites, and tools to test controllers and find problems.
+*2026-10-30.* Five languages, the bitrate changed during a game, text typed on the PC, favorites, and tools to test controllers and find problems.
 
 > **Install:** by hand over 2.0.0, 1.19.101 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >
