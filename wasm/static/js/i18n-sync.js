@@ -44,6 +44,20 @@ function decodeString(value) {
     .replace(/\\t/g, '\t');
 }
 
+// The browser decodes the character references of an attribute value (&amp; becomes &), so i18n.js looks up the
+// decoded text (after the escapes of a JavaScript string that holds the HTML)
+function decodeHtmlAttribute(value) {
+  return value
+    .replace(/&#(\d+);/g, (match, code) => String.fromCharCode(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (match, code) => String.fromCharCode(parseInt(code, 16)))
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, '\u00a0')
+    .replace(/&amp;/g, '&');
+}
+
 function extractFromContent(content, keys) {
   const tPattern = /\bt\(\s*(['"`])((?:\\.|(?!\1).)*)\1\s*(?:,|\))/g;
   const nPattern = /\b_n\(\s*(['"`])((?:\\.|(?!\1).)*)\1\s*,\s*(['"`])((?:\\.|(?!\3).)*)\3\s*,/g;
@@ -98,14 +112,14 @@ function extractFromContent(content, keys) {
   }
 
   while ((match = htmlPattern.exec(content)) !== null) {
-    const key = decodeString(match[2]);
+    const key = decodeHtmlAttribute(decodeString(match[2]));
     if (key) {
       keys.add(key);
     }
   }
 
   while ((match = placeholderPattern.exec(content)) !== null) {
-    const key = decodeString(match[2]);
+    const key = decodeHtmlAttribute(decodeString(match[2]));
     if (key) {
       keys.add(key);
     }

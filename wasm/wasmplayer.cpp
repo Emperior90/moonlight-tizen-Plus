@@ -2,6 +2,7 @@
 #include "audio_stream_stats.hpp"
 #include "compact_stats.hpp"
 #include "frame_intervals.hpp"
+#include "session_report.hpp"
 #include "video_track_rejection.hpp"
 
 #include <algorithm>
@@ -149,6 +150,9 @@ static uintptr_t s_HeapTopAtSetup = 0;
 
 // Size of the WASM memory, which is fixed (TOTAL_MEMORY in CMakeLists.txt)
 static constexpr uint32_t kWasmMemoryMb = 128;
+
+// When the video decoder of the stream was set up, for the duration in the report of the session (session_report.hpp)
+static uint64_t s_SessionStartMs = 0;
 
 // Highest number of frames waiting in the decode unit queue during the current stats window
 static int s_PendingFramesMax = 0;
@@ -699,8 +703,9 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
   s_TerminatingStream = false;
   s_VideoSourceFailed = false;
 
-  // Remember the top of the heap, for the heap growth of this stream
+  // Remember the top of the heap, for the heap growth of this stream, and its start for the report of the session
   s_HeapTopAtSetup = (uintptr_t)sbrk(0);
+  s_SessionStartMs = LiGetMillis();
 
   // Reset the host frame rate measurement so that no figure from a previous stream is shown
   s_HostRateWindowOpen = false;
@@ -725,8 +730,38 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
 void MoonlightInstance::VidDecCleanup(void) {
   // Log the top of the heap, so that a leak over long sessions shows up in the log even without the overlay
   const uintptr_t heapTop = (uintptr_t)sbrk(0);
+  const uint32_t heapGrowthMb = (uint32_t)((heapTop > s_HeapTopAtSetup ? heapTop - s_HeapTopAtSetup : 0) >> 20);
   ClLogMessage("WASM heap top after the stream: %u of %u MB (+%u MB this stream)\n",
-    (unsigned)(heapTop >> 20), kWasmMemoryMb, (unsigned)((heapTop > s_HeapTopAtSetup ? heapTop - s_HeapTopAtSetup : 0) >> 20));
+    (unsigned)(heapTop >> 20), kWasmMemoryMb, (unsigned)heapGrowthMb);
+
+  // Send the totals of the session for its report (session_report.hpp), with the stats window that was still open. The
+  // decoder thread has ended by now, so its figures hold still. The main thread may be waiting for the stop thread that
+  // runs this, so the message doesn't wait for it.
+  VIDEO_STATS totals = m_GlobalVideoStats;
+  AddVideoStats(m_ActiveWndVideoStats, totals);
+  VIDEO_NETWORK_STATS networkStats = {};
+  LiGetVideoNetworkStats(&networkStats);
+  SessionReport report;
+  report.durationMs = LiGetMillis() - s_SessionStartMs;
+  report.codec = VideoFormatReportName((int)s_VideoFormat);
+  report.width = s_Width;
+  report.height = s_Height;
+  report.fps = s_Framerate;
+  report.bitrateKbps = g_Instance ? (uint32_t)std::max(0, g_Instance->m_StreamConfig.bitrate) : 0;
+  report.frames = totals.totalFrames;
+  report.networkDroppedFrames = totals.networkDroppedFrames;
+  report.tvDroppedFrames = s_SessionTvDroppedFrames;
+  report.videoResets = LiGetClientVideoResets();
+  report.recoveryKeyframes = s_RecoveryIdrFrames;
+  report.fecRecoveredBlocks = networkStats.fecRecoveredBlocks;
+  report.fecFailures = networkStats.fecRecoveryFailures;
+  report.heapTopMb = (uint32_t)(heapTop >> 20);
+  report.heapTotalMb = kWasmMemoryMb;
+  report.heapGrowthMb = heapGrowthMb;
+  const std::string reportMessage = FormatSessionReportMessage(report);
+  if (!reportMessage.empty()) {
+    PostToJsAsync(reportMessage);
+  }
 
   // Clear the decode buffer
   s_DecodeBuffer.clear();
@@ -1088,9 +1123,11 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
           PostToJsAsync(compactMessage);
         }
       } else {
-        // Convert the aggregated stats to a display string
+        // Convert the aggregated stats to a display string, after the point of the graph: the round-trip time and the
+        // frames lost on the network in the window that just ended
         FormatVideoStats(lastTwoWndStats, s_StatString.data(), s_StatString.length());
-        PostToJsAsync(std::string("StatMsg: ") + s_StatString.data());
+        const StatsGraphPoint graphPoint = { lastTwoWndStats.lastRtt, m_ActiveWndVideoStats.networkDroppedFrames };
+        PostToJsAsync(FormatFullStatsMessage(graphPoint, s_StatString.data()));
         // Clear the stats string buffer for the next use
         std::fill(s_StatString.begin(), s_StatString.end(), 0);
       }

@@ -273,6 +273,22 @@ function changeIpNumericFieldValue(adjust) {
   }
 }
 
+// How far UP and DOWN scroll System information, about four of its lines
+const SYSTEM_INFO_SCROLL_PX = 128;
+
+// Scroll System information while it is focused and has lines beyond its edge in the given direction (-1 up, 1 down):
+// with the report of the last session it can be taller than the screen (style.css). Returns whether it scrolled, so
+// that UP and DOWN move to the next row once its first or last line shows.
+function scrollSystemInfo(current, direction) {
+  const box = current === 'systemInfoBtn' ? document.getElementById('systemInfoBtn') : null;
+  if (!box || box.scrollHeight <= box.clientHeight + 1) {
+    return false;
+  }
+  const before = box.scrollTop;
+  box.scrollTop = before + direction * SYSTEM_INFO_SCROLL_PX;
+  return box.scrollTop !== before;
+}
+
 class ListView {
   constructor(func) {
     this.index = 0;
@@ -1220,7 +1236,7 @@ const Views = {
   },
   HostSettings: {
     view: new ListView(() => [
-      'sortAppsListBtn',
+      'selectSortAppsList',
       'optimizeGamesBtn',
       'removeAllHostsBtn'
     ]),
@@ -1262,8 +1278,8 @@ const Views = {
     view: new ListView(() => [
       'rumbleFeedbackBtn',
       'mouseEmulationBtn',
-      'flipABfaceButtonsBtn',
-      'flipXYfaceButtonsBtn',
+      'buttonMappingBtn',
+      'inputTestBtn',
       'selectControllerType'
     ]),
     up: function() {
@@ -1583,12 +1599,77 @@ const Views = {
       unmark(this.view.current());
     },
   },
+  SelectStatsPositionMenu: {
+    isActive: () => isPopupMenuActive('statsPositionMenu'),
+    view: new ListView(() =>
+      document.getElementById('statsPositionMenu')
+      .parentNode.children[3].children[1].children),
+    up: function() {
+      this.view.prevOption();
+    },
+    down: function() {
+      this.view.nextOption();
+    },
+    left: function() {},
+    right: function() {},
+    accept: function() {
+      clickElement(this.view.current());
+      closeActiveVisibleMenu();
+      setTimeout(() => focusElement('selectStatsPosition'), 250);
+    },
+    back: function() {
+      closePopupMenu('selectStatsPosition');
+      closeActiveVisibleMenu();
+      focusElement('selectStatsPosition');
+    },
+    press: function() {},
+    switch: function() {},
+    enter: function() {
+      mark(this.view.current());
+    },
+    leave: function() {
+      unmark(this.view.current());
+    },
+  },
+  SelectSortAppsListMenu: {
+    isActive: () => isPopupMenuActive('sortAppsListMenu'),
+    view: new ListView(() =>
+      document.getElementById('sortAppsListMenu')
+      .parentNode.children[3].children[1].children),
+    up: function() {
+      this.view.prevOption();
+    },
+    down: function() {
+      this.view.nextOption();
+    },
+    left: function() {},
+    right: function() {},
+    accept: function() {
+      clickElement(this.view.current());
+      closeActiveVisibleMenu();
+      setTimeout(() => focusElement('selectSortAppsList'), 250);
+    },
+    back: function() {
+      closePopupMenu('selectSortAppsList');
+      closeActiveVisibleMenu();
+      focusElement('selectSortAppsList');
+    },
+    press: function() {},
+    switch: function() {},
+    enter: function() {
+      mark(this.view.current());
+    },
+    leave: function() {
+      unmark(this.view.current());
+    },
+  },
   AdvancedSettings: {
     view: new ListView(() => [
       'unlockAllFpsBtn',
       'optimizeBitrateBtn',
       'disableWarningsBtn',
-      'selectPerformanceStats'
+      'selectPerformanceStats',
+      'selectStatsPosition'
     ]),
     up: function() {
       this.view.prevOption();
@@ -1627,15 +1708,23 @@ const Views = {
   AboutSettings: {
     view: new ListView(() => [
       'systemInfoBtn',
+      'diagnosticLogBtn',
       'navigationGuideBtn',
       'checkUpdatesBtn',
       'restartAppBtn'
     ]),
     up: function() {
+      // System information first scrolls its own lines when they don't fit
+      if (scrollSystemInfo(this.view.current(), -1)) {
+        return;
+      }
       this.view.prevOption();
       focusElement(this.view.current());
     },
     down: function() {
+      if (scrollSystemInfo(this.view.current(), 1)) {
+        return;
+      }
       this.view.nextOption();
       focusElement(this.view.current());
     },
@@ -1664,6 +1753,51 @@ const Views = {
     leave: function() {
       unmark(this.view.current());
     },
+  },
+  DiagnosticLogDialog: {
+    // The diagnostic log (diagnostics.js): UP and DOWN scroll it, OK and RETURN close it
+    view: new ListView(() => ['closeDiagnosticLog']),
+    up: function() {
+      scrollDiagnosticLog(-1);
+    },
+    down: function() {
+      scrollDiagnosticLog(1);
+    },
+    left: function() {},
+    right: function() {},
+    accept: function() {
+      closeDiagnosticLog();
+    },
+    back: function() {
+      closeDiagnosticLog();
+    },
+    press: function() {},
+    switch: function() {
+      focusElement(this.view.current());
+    },
+    enter: function() {
+      mark(this.view.current());
+      setTimeout(() => focusElement(this.view.current()), 100);
+    },
+    leave: function() {
+      unmark(this.view.current());
+      setTimeout(() => blurElement(this.view.current()), 100);
+    },
+  },
+  InputTestDialog: {
+    // The input test (input_test.js) takes every key itself, so that each one shows, and leaves with RETURN or a hold of B;
+    // the gamepad input of the menus does nothing here, so that every button can be tested
+    view: new ListView(() => []),
+    up: function() {},
+    down: function() {},
+    left: function() {},
+    right: function() {},
+    accept: function() {},
+    back: function() {},
+    press: function() {},
+    switch: function() {},
+    enter: function() {},
+    leave: function() {},
   },
   NavigationGuideDialog: {
     view: new ListView(() => [
@@ -1880,8 +2014,78 @@ const Views = {
       blurElement(this.view.current());
     },
   },
+  ButtonMappingMenu: {
+    // The rows of the button mapping (button_mapping.js): LEFT and RIGHT choose the controller in its row and the button
+    // that a button presses in the others
+    view: new ListView(() => getOverlayMenuItems('buttonMappingPanel')),
+    up: function() {
+      this.view.prevOption();
+      focusElement(this.view.current());
+    },
+    down: function() {
+      this.view.nextOption();
+      focusElement(this.view.current());
+    },
+    left: function() {
+      ButtonMappingMenu.step(resolveElement(this.view.current()), -1);
+    },
+    right: function() {
+      ButtonMappingMenu.step(resolveElement(this.view.current()), 1);
+    },
+    accept: function() {
+      const id = elementId(this.view.current());
+      if (id === 'buttonMappingSelect' || /^buttonMappingRow/.test(id)) {
+        // OK on a row steps it forward too, for a remote or gamepad that the menus reach with OK only
+        ButtonMappingMenu.step(resolveElement(this.view.current()), 1);
+      } else {
+        clickElement(this.view.current());
+      }
+    },
+    back: function() {
+      ButtonMappingMenu.close();
+    },
+    press: function() {},
+    switch: function() {
+      focusElement(this.view.current());
+    },
+    enter: function() {
+      mark(this.view.current());
+      focusElement(this.view.current());
+    },
+    leave: function() {
+      unmark(this.view.current());
+      blurElement(this.view.current());
+    },
+  },
+  ButtonCalibration: {
+    // The calibration of the sticks (button_mapping.js): the sticks are moved during it, so they don't move the focus
+    view: new ListView(() => ['buttonCalibrationContinue', 'buttonCalibrationCancel']),
+    up: function() {},
+    down: function() {},
+    left: function() {},
+    right: function() {},
+    accept: function() {
+      ButtonMappingMenu.continueCalibration();
+    },
+    back: function() {
+      ButtonMappingMenu.cancelCalibration();
+    },
+    press: function() {},
+    switch: function() {
+      focusElement(this.view.current());
+    },
+    enter: function() {
+      mark(this.view.current());
+      focusElement(this.view.current());
+    },
+    leave: function() {
+      unmark(this.view.current());
+      blurElement(this.view.current());
+    },
+  },
   StreamMenu: {
-    // The entries of the Stream Menu that show (menus.js). Back closes it and resumes the stream.
+    // The entries of the Stream Menu that show (menus.js). Back closes it and resumes the stream, LEFT and RIGHT change
+    // the bitrate of the bitrate entry.
     view: new ListView(() => getOverlayMenuItems('streamMenu')),
     up: function() {
       this.view.prevOption();
@@ -1891,13 +2095,57 @@ const Views = {
       this.view.nextOption();
       focusElement(this.view.current());
     },
-    left: function() {},
-    right: function() {},
+    left: function() {
+      if (elementId(this.view.current()) === 'streamMenuBitrate') {
+        changeStreamMenuBitrate(-1);
+      }
+    },
+    right: function() {
+      if (elementId(this.view.current()) === 'streamMenuBitrate') {
+        changeStreamMenuBitrate(1);
+      }
+    },
     accept: function() {
       clickElement(this.view.current());
     },
     back: function() {
       closeStreamMenu(true);
+    },
+    press: function() {},
+    switch: function() {
+      focusElement(this.view.current());
+    },
+    enter: function() {
+      mark(this.view.current());
+      focusElement(this.view.current());
+    },
+    leave: function() {
+      unmark(this.view.current());
+      blurElement(this.view.current());
+    },
+  },
+  StreamText: {
+    // The text panel of 'Type text…' in the Stream Menu (menus.js): the field, Send and Cancel. OK on the field opens the
+    // keyboard of the TV for it; while it takes the text, the field gets the keys (handleStreamTextKey()). Back returns
+    // to the entries of the Stream Menu.
+    view: new ListView(() => ['streamTextInput', 'streamTextSend', 'streamTextCancel']),
+    up: function() {
+      selectStreamTextItem(Math.max(0, this.view.index - 1));
+    },
+    down: function() {
+      selectStreamTextItem(Math.min(2, this.view.index + 1));
+    },
+    left: function() {},
+    right: function() {},
+    accept: function() {
+      if (this.view.index === 0) {
+        startStreamTextEditing();
+      } else {
+        clickElement(this.view.current());
+      }
+    },
+    back: function() {
+      cancelStreamText();
     },
     press: function() {},
     switch: function() {

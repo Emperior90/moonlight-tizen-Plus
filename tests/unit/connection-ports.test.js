@@ -114,3 +114,32 @@ test('the start of a stream drops the ports named for the termination of an earl
   assert.equal(starts, 2);
   assert.equal((index.match(/terminationBlockedPorts = '';\s*rejectedVideoTrack = null;\s*sendMessage\('startRequest'/g) || []).length, starts);
 });
+
+test('the progress line of a stage is one sentence in each language, and the overline of the start screen a word of its own', () => {
+  // The line that ClStageStarting() of wasm/connectionlistener.cpp sends (pinned by tests/native/connection_interrupt_test.cpp)
+  assert.match(read('wasm/connectionlistener.cpp'), /PostToJs\(std::string\("ProgressMsg: Starting "\) \+ std::string\(LiGetStageName\(stage\)\) \+ std::string\("\.\.\."\)\);/);
+  const expected = {
+    'en-US': ['Starting the RTSP handshake...', 'Starting the control stream initialization...'],
+    'de-DE': ['RTSP-Handshake wird gestartet …', 'Steuer-Stream-Initialisierung wird gestartet …'],
+    'es-ES': ['Iniciando negociación RTSP…', 'Iniciando inicialización del flujo de control…'],
+    'fr-FR': ['Démarrage : négociation RTSP…', 'Démarrage : initialisation du flux de contrôle…'],
+    'pt-BR': ['Iniciando handshake RTSP...', 'Iniciando inicialização do fluxo de controle...'],
+  };
+  Object.keys(expected).forEach((locale) => {
+    const app = loadMessages(locale);
+    assert.deepEqual(['Starting RTSP handshake...', 'Starting control stream initialization...'].map((line) => app.translate(line)),
+      expected[locale], locale);
+    // Each language puts the stage into its own template, never a separate word in front of it
+    const texts = readLocale(locale);
+    assert.ok(texts['Starting the %1$s...'].indexOf('%1$s') >= 0, locale);
+    // A message that only names a stage still gets the name of the stage
+    assert.equal(app.translate('RTSP handshake failed (error 10060)'),
+      texts['%1$s failed (error %2$s)'].replace('%1$s', texts['RTSP handshake']).replace('%2$s', '10060'), locale);
+  });
+  // The overline of the start screen (index.html) reads as a status, not as a command: 'Starte' alone would be one in
+  // German
+  assert.match(read('wasm/index.html'), /<div class="hero-overline launch-overline" data-i18n="Starting">Starting<\/div>/);
+  assert.equal(readLocale('de-DE')['Starting'], 'Wird gestartet');
+  // The ellipsis of the glossary in German, Spanish and French
+  ['de-DE', 'es-ES', 'fr-FR'].forEach((locale) => assert.ok(/…$/.test(readLocale(locale)['Starting the %1$s...']), locale));
+});

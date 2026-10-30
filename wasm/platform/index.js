@@ -20,6 +20,7 @@ var isHostsLoaded = false; // Indicates if IndexedDB has finished loading hosts
 var isSubnetScanFinished = false; // Indicates if the initial subnet scan has completed
 var activePolls = {}; // Hosts currently being polled. An associated array of polling IDs, keyed by server UID
 var pollGenerations = {}; // Number of the latest start of the polling of each host, keyed by server UID
+var appGridGeneration = 0; // Number of the latest build of the app grid (showApps()), whose box art downloads are the only ones still wanted
 var pairingCert; // Loads the generated certificate
 var myUniqueid;
 var api; // The `api` should only be set if we're in a host-specific screen, on the initial screen it should always be null
@@ -29,6 +30,8 @@ var streamLaunchHost = null; // Host of the latest stream launch, initial value 
 var streamLaunchAppTitle = ''; // Title of the app of the latest stream launch, which the Stream Menu shows, initial value is empty
 var streamLaunchAppId = null; // ID of the app of the latest stream launch, which a retry after no video starts again, initial value is null
 var streamNoVideoRetried = false; // Flag indicating whether the latest stream launch is the retry after no video (retryStreamAfterNoVideo()), initial value is false
+var streamBitrateMbps = 0; // Bitrate in Mbps of the latest stream launch, which the bitrate entry of the Stream Menu starts from, initial value is 0
+var pendingBitrateRestartMbps = 0; // Bitrate in Mbps that the stream reconnects with once it ended for the bitrate entry of the Stream Menu (restartStreamWithBitrate()), or 0
 var wasmSessionStarted = false; // Flag indicating whether the start request of the current stream reached the WASM module, initial value is false
 var isDialogOpen = false; // Flag indicating whether the dialog is open, initial value is false
 var isPairingInProgress = false; // Flag indicating whether a pairing process is in progress, initial value is false
@@ -125,13 +128,21 @@ function attachListeners() {
   $('#framePacingSwitch').on('click', saveFramePacing);
   $('#ipAddressFieldModeSwitch').on('click', saveIpAddressFieldMode);
   $('#ipAddressTextInput').on('input', updateIpAddressInputValidationState);
-  $('#sortAppsListSwitch').on('click', saveSortAppsList);
+  $('.sortAppsListMenu li').on('click', chooseAppSortOrder);
   $('#optimizeGamesSwitch').on('click', saveOptimizeGames);
   $('#removeAllHostsBtn').on('click', deleteAllHostsDialog);
   $('#rumbleFeedbackSwitch').on('click', saveRumbleFeedback);
   $('#mouseEmulationSwitch').on('click', saveMouseEmulation);
-  $('#flipABfaceButtonsSwitch').on('click', saveFlipABfaceButtons);
-  $('#flipXYfaceButtonsSwitch').on('click', saveFlipXYfaceButtons);
+  $('#buttonMappingBtn').on('click', ButtonMappingMenu.open);
+  $('#inputTestBtn').on('click', InputTest.open);
+  $('#buttonMappingCalibrate').on('click', ButtonMappingMenu.startCalibration);
+  $('#buttonMappingReset').on('click', ButtonMappingMenu.reset);
+  $('#buttonMappingClose').on('click', ButtonMappingMenu.close);
+  $('#buttonMappingSelect, .mapping-row').on('click', function() {
+    ButtonMappingMenu.step(this, 1);
+  });
+  $('#buttonCalibrationContinue').on('click', ButtonMappingMenu.continueCalibration);
+  $('#buttonCalibrationCancel').on('click', ButtonMappingMenu.cancelCalibration);
   $('.controllerTypeMenu li').on('click', saveControllerType);
   $('.audioBackendMenu li').on('click', saveAudioBackend);
   $('.audioConfigMenu li').on('click', saveAudioConfiguration);
@@ -151,6 +162,9 @@ function attachListeners() {
   $('#optimizeBitrateSwitch').on('click', saveOptimizeBitrate);
   $('#disableWarningsSwitch').on('click', saveDisableWarnings);
   $('.performanceStatsMenu li').on('click', choosePerformanceStatsLevel);
+  $('.statsPositionMenu li').on('click', chooseStatsPosition);
+  $('#diagnosticLogBtn').on('click', showDiagnosticLog);
+  $('#closeDiagnosticLog').on('click', closeDiagnosticLog);
   $('#navigationGuideBtn').on('click', navigationGuideDialog);
   $('#checkUpdatesBtn').on('click', checkForAppUpdates);
   $('#restartAppBtn').on('click', restartAppDialog);
@@ -176,6 +190,8 @@ function attachListeners() {
   registerMenu('selectAudioJitter', Views.SelectAudioJitterMenu);
   registerMenu('selectCodec', Views.SelectCodecMenu);
   registerMenu('selectPerformanceStats', Views.SelectPerformanceStatsMenu);
+  registerMenu('selectStatsPosition', Views.SelectStatsPositionMenu);
+  registerMenu('selectSortAppsList', Views.SelectSortAppsListMenu);
 
   $(window).resize(fullscreenWasmModule);
 
@@ -262,6 +278,13 @@ function startRepeatAction(operation, source) {
   repeatTimeout = setTimeout(() => {
     repeatFrame = requestAnimationFrame(repeatActionHandler);
   }, REPEAT_DELAY);
+}
+
+// Drop the gamepad navigation that is on its way: the operation of a button or stick that waits for the navigation delay
+// and the repeat of a held one, e.g. of a stick that was moved for the calibration of the sticks (button_mapping.js)
+function cancelGamepadNavigation() {
+  clearTimeout(navigationTimeout);
+  stopRepeatAction();
 }
 
 // Stop the repeat action, its pending start and its animation frame loop
@@ -649,6 +672,8 @@ function restoreUiAfterWasmLoad() {
   // Navigate to the Hosts view
   Navigation.push(Views.Hosts);
   showHostsMode();
+  // Say once that the app ended during the last stream the last time (diagnostics.js)
+  reportUnfinishedStream();
   // Set focus to current item and/or scroll to the current host row
   setTimeout(() => Navigation.switch(), 100);
 
@@ -734,7 +759,7 @@ function hostChosen(host, onSuccessCallback) {
     } else {
       // Let the user know what to do to bring the host back online and until then, we'll be back to the previous view.
       console.error('%c[index.js, hostChosen]', 'color: green;', 'Error: Connection to host failed or host is offline!');
-      snackbarLogLong('Failed to connect to %1$s. Ensure Sunshine is running on your host PC or GameStream is enabled in GeForce Experience SHIELD settings.', 'the host');
+      snackbarLogLong('Failed to connect to %1$s. Ensure Sunshine is running on your host PC or GameStream is enabled in GeForce Experience SHIELD settings.', t('the host'));
     }
     return;
   }
@@ -1263,7 +1288,7 @@ function pairingDialog(nvhttpHost, onSuccess, onFailure) {
     var randomNumber = generatePairingPin();
 
     // Rollback to 'Cancel' button text when opening
-    $('#cancelPairing').text('Cancel');
+    $('#cancelPairing').attr('data-i18n', 'Cancel').text(t('Cancel'));
 
     // Change the dialog text element to include the random PIN number, in bold (style.css shows it large)
     $('#pairingDialogText').html(
@@ -1316,8 +1341,8 @@ function pairingDialog(nvhttpHost, onSuccess, onFailure) {
       }
       console.error('%c[index.js, pairingDialog]', 'color: green;', 'Error: Failed API object:\n', nvhttpHost, '\n' + nvhttpHost.toString()); // Logging both object (for console) and toString-ed object (for text logs)
       snackbarLog('Failed to pair with %1$s', nvhttpHost.hostname);
-      // Keep the modal opened, but change the button for "Close"
-      $('#cancelPairing').text('Close');
+      // Keep the modal opened, but change the button for "Close" (also for the translation pass of a change of the language)
+      $('#cancelPairing').attr('data-i18n', 'Close').text(t('Close'));
 
       // If the host is already in a streaming session or failed during pairing,
       // change the dialog text element to include the hostname and display the returned error message
@@ -2887,20 +2912,59 @@ function stylizeBoxArts(freshApi, appsList) {
   });
 }
 
-// Sort the app titles
-function sortTitles(list, sortOrder) {
-  return list.sort((a, b) => {
-    // Ascending order (A - Z)
-    if (sortOrder === 'ASC') {
-      return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
-    }
+// The order of the setting 'Sort the list of apps' that the settings show (APP_SORT_ORDERS in menus.js)
+function getAppSortOrder() {
+  return parseAppSortOrder($('#selectSortAppsList').attr('data-value'));
+}
 
-    // Descending order (Z - A)
-    if (sortOrder === 'DESC') {
-      return b.title.localeCompare(a.title, undefined, { numeric: true, sensitivity: 'base' });
-    }
+// The apps of a host in the order of its app grid, as a new list: its favorites first, then the order of the setting
+// 'Sort the list of apps' (orderAppList() in menus.js). appList is in the order of the host.
+function orderHostApps(serverUid, appList) {
+  return orderAppList(appList, getAppSortOrder(), loadFavoriteApps(serverUid), loadRecentApps(serverUid));
+}
 
-    return 0;
+// The apps of the Smart Hub tiles of a host from its app list (in the order of the host), in the order of the setting
+// 'Sort the list of apps'. Each one keeps its place in the list of the host (hostIndex), so that the order can change
+// later (reorderPreviewApps()), and the image of the earlier tiles. The favorites come first when the tiles are made
+// (updatePreviewData()), so that they can change without a new app list.
+function buildPreviewApps(serverUid, appList) {
+  var oldApps = (_previewApps[serverUid] && _previewApps[serverUid].apps) || [];
+  var previewApps = appList.map(function(app, index) {
+    var oldApp = oldApps.find(function(a) {
+      return a.id === app.id;
+    });
+    var newApp = {
+      id: app.id, title: app.title, hostIndex: index
+    };
+    if (oldApp) {
+      if (oldApp.imageUri) {
+        newApp.imageUri = oldApp.imageUri;
+      }
+      if (oldApp.txtPath) {
+        newApp.txtPath = oldApp.txtPath;
+      }
+    }
+    return newApp;
+  });
+  return orderAppList(previewApps, getAppSortOrder(), [], loadRecentApps(serverUid));
+}
+
+// Order the apps of every Smart Hub section again for the setting 'Sort the list of apps', starting from the order of
+// the host (the apps of an earlier version, without hostIndex, start from the order they have)
+function reorderPreviewApps() {
+  Object.keys(_previewApps).forEach(function(serverUid) {
+    var entry = _previewApps[serverUid];
+    if (!entry || !entry.apps) {
+      return;
+    }
+    var hostOrder = entry.apps.map(function(app, index) {
+      return { app: app, place: typeof app.hostIndex === 'number' ? app.hostIndex : index };
+    }).sort(function(a, b) {
+      return a.place - b.place;
+    }).map(function(item) {
+      return item.app;
+    });
+    entry.apps = orderAppList(hostOrder, getAppSortOrder(), [], loadRecentApps(serverUid));
   });
 }
 
@@ -2976,6 +3040,11 @@ function showApps(host) {
     // Remove all game container elements from the game grid and from any other div elements
     $('#game-grid').empty();
     $('div.game-container').remove();
+    // The box art downloads of an earlier build of the grid that still wait are dropped (NvHTTP.getBoxArt() in utils.js)
+    var gridGeneration = ++appGridGeneration;
+    var isBoxArtStale = function() {
+      return gridGeneration !== appGridGeneration;
+    };
 
     setTimeout(() => {
       host.getAppList().then(function(appList) {
@@ -3000,36 +3069,17 @@ function showApps(host) {
           return;
         }
 
-        // Find the existing switch element
-        const sortAppsListSwitch = document.getElementById('sortAppsListSwitch');
-        // Defines the sort order based on the state of the switch
-        const sortOrder = sortAppsListSwitch.checked ? 'DESC' : 'ASC';
-        // If game grid is populated, sort the app list
-        const sortedAppList = sortTitles(appList, sortOrder);
+        // The favorites first, then the order of the setting 'Sort the list of apps'
+        const sortedAppList = orderHostApps(host.serverUid, appList);
+        const favoriteApps = loadFavoriteApps(host.serverUid);
+        // The app menu tells the apps of this host apart with them (findAppEntry() in menus.js)
+        appGridApps = { serverUid: host.serverUid, apps: sortedAppList };
 
         if (_isSmartHubSupported) {
-          var oldApps = (_previewApps[host.serverUid] && _previewApps[host.serverUid].apps) || [];
-
           _previewApps[host.serverUid] = {
             hostname: host.hostname,
             address: host.address,
-            apps: sortedAppList.map(function(app) {
-              var oldApp = oldApps.find(function(a) {
-                return a.id === app.id;
-              });
-              var newApp = {
-                id: app.id, title: app.title
-              };
-              if (oldApp) {
-                if (oldApp.imageUri) {
-                  newApp.imageUri = oldApp.imageUri;
-                }
-                if (oldApp.txtPath) {
-                  newApp.txtPath = oldApp.txtPath;
-                }
-              }
-              return newApp;
-            })
+            apps: buildPreviewApps(host.serverUid, appList)
           };
         }
 
@@ -3069,6 +3119,10 @@ function showApps(host) {
             // Dim a hidden app that shows after 'Show hidden apps'
             if (gridApp.hidden) {
               setAppTileBadge(gameContainer[0], 'hidden', true);
+            }
+            // Mark a favorite with a star
+            if (isAppListed(favoriteApps, app, sortedAppList)) {
+              setAppTileBadge(gameContainer[0], 'favorite', true);
             }
 
             // Create the game cell to serve as a holder for the game box
@@ -3130,7 +3184,7 @@ function showApps(host) {
             return a.id === app.id; 
           }) : null;
           var boxArtPromise = new Promise(function(resolveBoxArt) {
-            host.getBoxArt(app.id, _isSmartHubSupported).then(function(resolvedPromise) {
+            host.getBoxArt(app.id, _isSmartHubSupported, isBoxArtStale).then(function(resolvedPromise) {
               boxArtPlaceholderImg.src = resolvedPromise;
               // The resolvedPromise is now the absolute file URI (or data URL if it failed to save).
               if (_isSmartHubSupported && _previewApps[host.serverUid] && appEntry) {
@@ -3171,8 +3225,11 @@ function showApps(host) {
               }
               resolveBoxArt();
             }, function(failedPromise) {
-              console.error('%c[index.js, showApps]', 'color: green;', 'Error: Failed to retrieve box art for app ID: ' + app.id + '. Returned value was: ' + failedPromise + '. Host object: ', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
-              boxArtPlaceholderImg.src = 'static/res/placeholder_error.svg';
+              // A download that was dropped (the grid was built again, or a stream starts) is no error
+              if (failedPromise !== BOX_ART_DOWNLOAD_DROPPED) {
+                console.error('%c[index.js, showApps]', 'color: green;', 'Error: Failed to retrieve box art for app ID: ' + app.id + '. Returned value was: ' + failedPromise + '. Host object: ', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
+                boxArtPlaceholderImg.src = 'static/res/placeholder_error.svg';
+              }
               resolveBoxArt();
             });
           });
@@ -3306,6 +3363,10 @@ function showStreamMode() {
   $('#main-content').addClass('fullscreen');
   $('#listener').addClass('fullscreen');
   $('#loadingSpinner').css('display', 'inline-block');
+  // The box art downloads of the app grid would hold up the requests that start the stream (utils.js)
+  if (typeof cancelBoxArtDownloads === 'function') {
+    cancelBoxArtDownloads();
+  }
 
   isInGame = true;
   fullscreenWasmModule();
@@ -3350,10 +3411,105 @@ function handleOnScreenOverlays() {
   showPerformanceStats('', false);
 }
 
+// The kinds of a start of the same app once more over the launch screen of the stream before it (startGame())
+const STREAM_RESTART_NO_VIDEO = 'noVideo';
+const STREAM_RESTART_BITRATE = 'bitrate';
+
+// Apollo answers the app list of a client without its permission 'List Apps' with one app of its own, 'Permission
+// Denied' with the ID 114514 (Apollo src/nvhttp.cpp; Vibepollo names it 'Permission denied - enable "List
+// applications" for this device in the host's Web UI'). Starting it can only fail, so the app explains instead what
+// to allow (hostPermissionDialog()).
+const HOST_PERMISSION_TILE_ID = '114514';
+
+// Whether an app of the app list is the 'Permission Denied' tile of Apollo or Vibepollo
+function isHostPermissionTile(app) {
+  return !!app && String(app.id) === HOST_PERMISSION_TILE_ID && /^permission denied/i.test(String(app.title || ''));
+}
+
+// The UUID of the 'Terminate' tile of Apollo and Vibepollo (TERMINATE_APP_UUID of their src/process.h), which they list
+// while an app runs, and which ends that app on the host and answers the launch with 410 'App terminated.'
+const HOST_TERMINATE_TILE_UUID = 'E16CBE1B-295D-4632-9A76-EC4180C857D3';
+
+// Whether an app of the app list is the 'Terminate' tile of Apollo or Vibepollo, which starts without the question to
+// quit the running app first, since ending it is what it does
+function isHostTerminateTile(app) {
+  return !!app && String(app.uuid || '').toUpperCase() === HOST_TERMINATE_TILE_UUID;
+}
+
+// What the answer of the host to a launch or resume request means when it starts no session (a status code other than
+// 200): 'notice' for 410, which Apollo and Vibepollo answer when one of their control tiles did its job without a
+// stream (Terminate, and Disconnect of Remote Monitor or Remote Input in Vibepollo) or when Vibepollo asks to launch
+// an app again within 60 seconds to confirm it (Apollo and Vibepollo src/nvhttp.cpp; StreamLight shows it as a message
+// too, app/streaming/session.cpp); 'permission' for 403 'Permission denied', which a client without the permission to
+// launch apps gets; 'error' for anything else
+function classifyLaunchAnswer(statusCode, statusMessage) {
+  if (String(statusCode) === '410') {
+    return 'notice';
+  }
+  if (String(statusCode) === '403' && /permission denied/i.test(String(statusMessage || ''))) {
+    return 'permission';
+  }
+  return 'error';
+}
+
+// Explain what to allow when Apollo or Vibepollo doesn't let this TV start apps: after its 'Permission Denied' tile,
+// or with the message of the host after a launch that it answered with 'Permission denied'. Apollo gives full
+// permissions only to the first client paired with it (Apollo README), so a TV paired later may see the apps without
+// starting them, or neither.
+function hostPermissionDialog(host, hostMessage) {
+  var text = t('%1$s doesn\'t allow this TV to start apps. In the web UI of Apollo or Vibepollo, open the paired devices (Device Management or Client Management) and allow "List Apps", "Launch Apps" and the input permissions for this TV. Then open the host again.', host.hostname);
+  if (hostMessage) {
+    text += '\n\n' + t('The host says: %1$s', hostMessage);
+  }
+  warningDialog(t('Permission needed'), formatDialogText(text));
+}
+
+// Return to the app list after a launch or resume request that the host answered without a session: a notice of
+// Apollo or Vibepollo shows as information (the running app may have ended, so the server info is refreshed first), a
+// missing permission with the advice of hostPermissionDialog(), and anything else as an error
+function endLaunchWithAnswer(host, statusCode, statusMessage) {
+  var kind = classifyLaunchAnswer(statusCode, statusMessage);
+  console.warn('%c[index.js, endLaunchWithAnswer]', 'color: green;', 'Warning: The host answered the launch with ' + statusCode + ' (' + statusMessage + '), taken as ' + kind + '.');
+  stopHeartbeatOfFailedStart('the host answered the launch with ' + statusCode);
+  var backToApps = function() {
+    showApps(host).then(() => {
+      // Scroll to the current game row
+      Navigation.switch();
+      // Switch to Apps view
+      Navigation.change(Views.Apps);
+      if (kind === 'permission') {
+        hostPermissionDialog(host, statusMessage);
+      }
+    });
+  };
+  if (kind === 'notice') {
+    // 'App terminated.' after the Terminate tile; the other notices tell what to do, e.g. to launch the app again
+    var notice = statusMessage === 'App terminated.' ? t('%1$s ended the running app.', host.hostname) : String(statusMessage || '');
+    snackbarLogLong(notice);
+    host.refreshServerInfo().then(backToApps, backToApps);
+    return;
+  }
+  if (kind === 'error') {
+    snackbarLogLong('Error %1$s: %2$s', statusCode, statusMessage);
+  }
+  backToApps();
+}
+
+// End the heartbeat of a stream whose launch or resume request failed (diagnostics.js): such a start returns to the app
+// list without leaveStreamView() (messages.js), and a heartbeat that kept running in the menus would report a stream
+// that never ran at the next start of the app
+function stopHeartbeatOfFailedStart(reason) {
+  if (typeof StreamHeartbeat !== 'undefined') {
+    StreamHeartbeat.stop(reason);
+  }
+}
+
 // Start the given appID. If another app is running, offer to quit it. Otherwise, if the given app is already running, just resume it.
-// isNoVideoRetry marks the start of the same app once more after no video arrived (retryStreamAfterNoVideo()), which
-// the launch screen of the first start still shows for.
-function startGame(host, appID, isNoVideoRetry) {
+// restartKind marks the start of the same app once more, which the launch screen of the stream before it still shows
+// for: STREAM_RESTART_NO_VIDEO after no video arrived (retryStreamAfterNoVideo()), STREAM_RESTART_BITRATE after the
+// Stream Menu changed the bitrate (resumeStreamAfterBitrateChange()).
+function startGame(host, appID, restartKind) {
+  var isRestart = !!restartKind;
   if (!host || !host.paired) {
     console.error('%c[index.js, startGame]', 'color: green;', 'Error: Attempted to start a game, but the host was not initialized properly! Host object: ', host);
     return;
@@ -3365,7 +3521,7 @@ function startGame(host, appID, isNoVideoRetry) {
     return;
   }
   // Ignore a second start (e.g. from a Smart Hub deep link) while a stream is starting or running
-  if (isInGame && !isNoVideoRetry) {
+  if (isInGame && !isRestart) {
     console.warn('%c[index.js, startGame]', 'color: green;', 'Warning: Ignoring the start of app ' + appID + ' while a stream is active.');
     return;
   }
@@ -3376,13 +3532,20 @@ function startGame(host, appID, isNoVideoRetry) {
   var launchId = ++streamLaunchId;
   streamLaunchHost = host;
   streamLaunchAppId = appID;
-  streamNoVideoRetried = !!isNoVideoRetry;
-  streamLaunchAppTitle = '';
+  // A reconnect with a new bitrate still gets its retry after no video
+  streamNoVideoRetried = restartKind === STREAM_RESTART_NO_VIDEO;
+  pendingBitrateRestartMbps = 0;
+  // A start once more is for the app of the stream before it, whose title its messages name
+  if (!isRestart) {
+    streamLaunchAppTitle = '';
+  }
   wasmSessionStarted = false;
   isStreamConnected = false;
   // The Stream Menu state of an earlier stream doesn't belong to this one (menus.js)
   streamMouseEmulationActive = false;
   quitAppAfterStream = false;
+  // The graph of the full statistics starts with this stream (messages.js)
+  resetStatsGraph();
   isStreamVideoTrackClosed = false;
   streamVideoTrackCloseReason = -1;
   streamHiddenCount = 0;
@@ -3397,10 +3560,10 @@ function startGame(host, appID, isNoVideoRetry) {
   };
   // Start the audio scheduler of the Web Audio backend while we are still running inside the
   // handler of the key press that started the stream, because the audio context of a device
-  // with an autoplay policy can only be created from a user gesture. A retry has no key press, and starts it right
-  // after its start request instead: the stop of the stream that it retries closes the scheduler from the queue of the
+  // with an autoplay policy can only be created from a user gesture. A start once more has no key press, and starts it
+  // right after its start request instead: the stop of the stream before it closes the scheduler from the queue of the
   // WebAssembly module (AudDecCleanup() in wasm/auddec.cpp), which the start request runs through at the latest.
-  if (!isNoVideoRetry) {
+  if (!isRestart) {
     startWebAudio();
   }
 
@@ -3410,13 +3573,24 @@ function startGame(host, appID, isNoVideoRetry) {
       if (launchId !== streamLaunchId) {
         return;
       }
-      // A retry only resumes the app that it started a moment ago, and asks nothing: one that can't ends like the
-      // stream it retries
-      if (isNoVideoRetry && (!appToStart || (host.currentGame != 0 && host.currentGame != appID))) {
-        endNoVideoRetry('the app ' + appID + ' is not available or another app runs on the host');
+      // The 'Permission Denied' tile of Apollo or Vibepollo is never started
+      if (isHostPermissionTile(appToStart)) {
+        console.warn('%c[index.js, startGame]', 'color: green;', 'Warning: Not starting the Permission Denied tile of ' + host.hostname + '.');
+        if (!isRestart && isWebAudioBackendSelected() && typeof stopAudioScheduler === 'function') {
+          stopAudioScheduler();
+        }
+        hostPermissionDialog(host, '');
         return;
       }
-      if (host.currentGame != 0 && host.currentGame != appID) {
+      // A start once more only resumes the app that ran a moment ago, and asks nothing: one that can't ends
+      // (endStreamRestart()). The reconnect with a new bitrate also ends when nothing runs on the host any more (the
+      // game closed on the PC meanwhile), instead of launching the game anew; the retry after no video may launch it.
+      if (isRestart && (!appToStart || (host.currentGame != 0 && host.currentGame != appID) ||
+          (restartKind === STREAM_RESTART_BITRATE && host.currentGame == 0))) {
+        endStreamRestart(restartKind, 'the app ' + appID + ' is not available, no longer runs or another app runs on the host');
+        return;
+      }
+      if (host.currentGame != 0 && host.currentGame != appID && !isHostTerminateTile(appToStart)) {
         host.getAppById(host.currentGame).then(function(currentApp) {
           // Find the existing overlay and dialog elements
           var quitAppOverlay = document.querySelector('#quitAppDialogOverlay');
@@ -3479,13 +3653,17 @@ function startGame(host, appID, isNoVideoRetry) {
       var bitrate = parseFloat($('#bitrateSlider').val()) * 1000;
       var rikey = generateRemoteInputKey();
       var rikeyid = generateRemoteInputKeyId();
+      // The diagnostic log hides the remote input key of this start wherever it appears (diagnostics.js)
+      if (typeof hideDiagnosticValue === 'function') {
+        hideDiagnosticValue('rikey', rikey);
+      }
       var gamepadMask = getConnectedGamepadMask();
       const framePacing = $('#framePacingSwitch').parent().hasClass('is-checked') ? 1 : 0;
       const optimizeGames = $('#optimizeGamesSwitch').parent().hasClass('is-checked') ? 1 : 0;
       const rumbleFeedback = $('#rumbleFeedbackSwitch').parent().hasClass('is-checked') ? 1 : 0;
       const mouseEmulation = $('#mouseEmulationSwitch').parent().hasClass('is-checked') ? 1 : 0;
-      const flipABfaceButtons = $('#flipABfaceButtonsSwitch').parent().hasClass('is-checked') ? 1 : 0;
-      const flipXYfaceButtons = $('#flipXYfaceButtonsSwitch').parent().hasClass('is-checked') ? 1 : 0;
+      // The button mapping and the stick calibration of the controllers, as text for the module (button_mapping.js)
+      const controllerMappings = serializeButtonMappings(buttonMappings);
       var controllerType = $('#selectControllerType').data('value').toString();
       var audioBackend = $('#selectAudioBackend').data('value').toString();
       var audioConfig = $('#selectAudio').data('value').toString();
@@ -3517,8 +3695,7 @@ function startGame(host, appID, isNoVideoRetry) {
       '\n Optimize game settings: ' + optimizeGames + 
       '\n Rumble feedback: ' + rumbleFeedback + 
       '\n Mouse emulation: ' + mouseEmulation + 
-      '\n Flip A/B face buttons: ' + flipABfaceButtons + 
-      '\n Flip X/Y face buttons: ' + flipXYfaceButtons + 
+      '\n Button mapping: ' + (controllerMappings ? controllerMappings.split('\n').length + ' controller lines' : 'none') +
       '\n Audio backend: ' + audioBackend + 
       '\n Audio configuration: ' + audioConfig + 
       '\n Audio synchronization: ' + audioSync + 
@@ -3539,12 +3716,27 @@ function startGame(host, appID, isNoVideoRetry) {
       // Hide on-screen overlays until the streaming session begins
       $('#connection-warnings, #performance-stats').css('background', 'transparent').text('');
 
-      // Shows a loading message to launch the application and start stream mode
-      $('#loadingSpinnerMessage').text(t('Starting %1$s...', appToStart.title));
+      // Shows a loading message to launch the application and start stream mode, or the new bitrate of a reconnect
+      $('#loadingSpinnerMessage').text(restartKind === STREAM_RESTART_BITRATE ?
+        t('Reconnecting with %1$s Mbps...', parseFloat($('#bitrateSlider').val())) : t('Starting %1$s...', appToStart.title));
       streamLaunchAppTitle = appToStart.title;
+      streamBitrateMbps = parseFloat($('#bitrateSlider').val());
+      // The order 'Recently played' of the app list puts the app first once the host accepted its start, but never the
+      // Terminate tile of Apollo or Vibepollo, which ends an app instead of streaming one (menus.js)
+      var rememberStartedApp = function() {
+        if (typeof rememberRecentApp === 'function' && !isHostTerminateTile(appToStart)) {
+          rememberRecentApp(host.serverUid, appToStart, getAppGridApps(host.serverUid));
+        }
+      };
       // Show the app and its box art on the launch screen (launcher.js)
       if (typeof Launcher !== 'undefined') {
         Launcher.prepareStart(host, appID, appToStart.title);
+      }
+      // A new stream starts a new session of the diagnostic log and its heartbeat; a start once more of the same stream
+      // stays in its session (diagnostics.js)
+      if (!isRestart) {
+        DiagnosticLog.startSession('stream');
+        StreamHeartbeat.start();
       }
       showStreamMode();
 
@@ -3571,13 +3763,7 @@ function startGame(host, appID, isNoVideoRetry) {
           var status_message = $root.attr('status_message');
           if (status_code != 200) {
             $('#loadingSpinnerMessage').text('');
-            snackbarLogLong('Error %1$s: %2$s', status_code, status_message);
-            showApps(host).then(() => {
-              // Scroll to the current game row
-              Navigation.switch();
-              // Switch to Apps view
-              Navigation.change(Views.Apps);
-            });
+            endLaunchWithAnswer(host, status_code, status_message);
             return;
           }
           // Read the session URL now, because refreshing the server info replaces the global $root
@@ -3589,6 +3775,7 @@ function startGame(host, appID, isNoVideoRetry) {
               return;
             }
             wasmSessionStarted = true;
+            rememberStartedApp();
             // A video format that the TV rejected and the ports named for the termination of an earlier stream don't
             // belong to this one (messages.js)
             terminationBlockedPorts = '';
@@ -3596,11 +3783,11 @@ function startGame(host, appID, isNoVideoRetry) {
             sendMessage('startRequest', [
               host.address, host.httpPort, streamWidth, streamHeight, frameRate, bitrate.toString(), rikey, rikeyid.toString(),
               host.appVersion, host.gfeVersion, sessionUrl, codecModes,
-              framePacing, optimizeGames, rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons,
+              framePacing, optimizeGames, rumbleFeedback, mouseEmulation, controllerMappings,
               audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
               gameMode, disableWarnings, getPerformanceStatsLevel(), refFrameInvalidation, hdrMetadata, controllerType
             ]);
-            if (isNoVideoRetry) {
+            if (isRestart) {
               startWebAudio();
             }
           });
@@ -3609,6 +3796,7 @@ function startGame(host, appID, isNoVideoRetry) {
             return;
           }
           console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to resume app with id: ' + appID + '\n Returned error was: ' + failedResumeApp + '!');
+          stopHeartbeatOfFailedStart('the resume request failed');
           snackbarLog('Failed to resume %1$s', appToStart.title);
           showApps(host).then(() => {
             // Scroll to the current game row
@@ -3647,13 +3835,7 @@ function startGame(host, appID, isNoVideoRetry) {
             status_message = t('Audio capture device is missing. Please reinstall the audio drivers.');
           }
           $('#loadingSpinnerMessage').text('');
-          snackbarLogLong('Error %1$s: %2$s', status_code, status_message);
-          showApps(host).then(() => {
-            // Scroll to the current game row
-            Navigation.switch();
-            // Switch to Apps view
-            Navigation.change(Views.Apps);
-          });
+          endLaunchWithAnswer(host, status_code, status_message);
           return;
         }
         // Read the session URL now, because refreshing the server info replaces the global $root
@@ -3665,6 +3847,7 @@ function startGame(host, appID, isNoVideoRetry) {
             return;
           }
           wasmSessionStarted = true;
+          rememberStartedApp();
           // A video format that the TV rejected and the ports named for the termination of an earlier stream don't
           // belong to this one (messages.js)
           terminationBlockedPorts = '';
@@ -3672,11 +3855,11 @@ function startGame(host, appID, isNoVideoRetry) {
           sendMessage('startRequest', [
             host.address, host.httpPort, streamWidth, streamHeight, frameRate, bitrate.toString(), rikey, rikeyid.toString(),
             host.appVersion, host.gfeVersion, sessionUrl, codecModes,
-            framePacing, optimizeGames, rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons,
+            framePacing, optimizeGames, rumbleFeedback, mouseEmulation, controllerMappings,
             audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
             gameMode, disableWarnings, getPerformanceStatsLevel(), refFrameInvalidation, hdrMetadata, controllerType
           ]);
-          if (isNoVideoRetry) {
+          if (isRestart) {
             startWebAudio();
           }
         });
@@ -3685,6 +3868,7 @@ function startGame(host, appID, isNoVideoRetry) {
           return;
         }
         console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to launch app with id: ' + appID + '\n Returned error was: ' + failedLaunchApp + '!');
+        stopHeartbeatOfFailedStart('the launch request failed');
         snackbarLog('Failed to launch %1$s', appToStart.title);
         showApps(host).then(() => {
           // Scroll to the current game row
@@ -3697,9 +3881,9 @@ function startGame(host, appID, isNoVideoRetry) {
     });
   }, function(failedRefreshInfo) {
     console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to refresh server info! Returned error was: ' + failedRefreshInfo + ' and failed server was: ' + '\n', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
-    // The launch screen of a retry still shows
-    if (isNoVideoRetry && launchId === streamLaunchId) {
-      endNoVideoRetry('the server info of the host could not be refreshed');
+    // The launch screen of a start once more still shows
+    if (isRestart && launchId === streamLaunchId) {
+      endStreamRestart(restartKind, 'the server info of the host could not be refreshed');
     }
   });
 }
@@ -3740,20 +3924,79 @@ function retryStreamAfterNoVideo(blockedPorts) {
       return;
     }
     console.log('%c[index.js, retryStreamAfterNoVideo]', 'color: green;', 'Starting app ' + appID + ' once more.');
-    startGame(host, appID, true);
+    startGame(host, appID, STREAM_RESTART_NO_VIDEO);
   }, NO_VIDEO_RETRY_DELAY_MS);
   return true;
 }
 
-// End a retry after no video that couldn't start the stream once more, like the stream that it retried: back to the
-// app list, with the message about the ports of the host PC
-function endNoVideoRetry(reason) {
-  console.warn('%c[index.js, endNoVideoRetry]', 'color: green;', 'Warning: The stream can\'t be started once more: ' + reason + '.');
+// End a start once more that couldn't start the stream, back to the app list: a retry after no video like the stream
+// that it retried, with the message about the ports of the host PC, and a reconnect with a new bitrate with a message
+// of its own
+function endStreamRestart(restartKind, reason) {
+  console.warn('%c[index.js, endStreamRestart]', 'color: green;', 'Warning: The stream can\'t be started once more: ' + reason + '.');
   streamLaunchId++;
   isInGame = false;
   wasmSessionStarted = false;
   leaveStreamView(streamLaunchHost || api);
-  showNoVideoMessage(noVideoRetryBlockedPorts);
+  if (restartKind === STREAM_RESTART_BITRATE) {
+    snackbarLogLong('Unable to resume %1$s with the new bitrate. Start it again from the app list.', streamLaunchAppTitle);
+  } else {
+    showNoVideoMessage(noVideoRetryBlockedPorts);
+  }
+}
+
+// How long the stream waits after it ended for a new bitrate before it resumes the app (resumeStreamAfterBitrateChange()),
+// so that the host has closed the session first. StreamLight (FoggyBytes/StreamLight, app/gui/StreamSegue.qml) resumes
+// after 700 ms on a PC; the TV waits a little longer, like the retry after no video.
+var BITRATE_RESTART_DELAY_MS = 1000;
+
+// Reconnect the running stream with a new bitrate (the bitrate entry of the Stream Menu, menus.js): the stream ends
+// without quitting the app on the PC, and resumeStreamAfterBitrateChange() resumes the app with the bitrate setting a
+// moment later. Since the bitrate goes to the host with the start of a stream, this works with every host. The idea
+// comes from StreamLight (FoggyBytes/StreamLight, app/gui/StreamSegue.qml), which reconnects for changed stream settings
+// the same way. Returns whether the stream ends for it.
+function restartStreamWithBitrate(mbps) {
+  if (isInGame !== true || !wasmSessionStarted || !streamLaunchHost || streamLaunchAppId === null) {
+    return false;
+  }
+  console.log('%c[index.js, restartStreamWithBitrate]', 'color: green;', 'Reconnecting the stream with a bitrate of ' + mbps + ' Mbps.');
+  pendingBitrateRestartMbps = mbps;
+  quitAppAfterStream = false;
+  closeStreamMenu(false);
+  // The module ends the stream and reports it with 'streamTerminated: 0' (handleMessage() in messages.js)
+  Module.stopStream();
+  return true;
+}
+
+// Resume the app with the new bitrate once the stream ended for restartStreamWithBitrate() (called by handleMessage()
+// in messages.js with the error code of the end of the stream): the launch screen shows meanwhile, with the new
+// bitrate, where RED cancels as usual (cancelStreamLaunch()). Not when the stream ended for another reason, or while
+// Moonlight is in the background. Returns whether the reconnect takes over the end of the stream.
+function resumeStreamAfterBitrateChange(errorCode) {
+  var mbps = pendingBitrateRestartMbps;
+  pendingBitrateRestartMbps = 0;
+  var host = streamLaunchHost;
+  var appID = streamLaunchAppId;
+  if (!mbps || errorCode !== 0 || !host || appID === null || document.visibilityState !== 'visible' || isStreamStoppedInBackground) {
+    return false;
+  }
+  var launchId = streamLaunchId;
+  console.log('%c[index.js, resumeStreamAfterBitrateChange]', 'color: green;', 'Resuming app ' + appID + ' with a bitrate of ' + mbps + ' Mbps in ' + BITRATE_RESTART_DELAY_MS + ' ms.');
+  // Back to the launch screen: the stream view stays, the video goes, and the stream counts as starting again
+  isInGame = true;
+  $('#connection-warnings, #performance-stats').css('background', 'transparent').text('');
+  $('#wasm_module').css('display', 'none');
+  $('body').css('backgroundColor', '');
+  $('#loadingSpinner').css('display', 'inline-block');
+  $('#loadingSpinnerMessage').text(t('Reconnecting with %1$s Mbps...', mbps));
+  setTimeout(function() {
+    // Cancelled meanwhile with RED, or since Moonlight went to the background (endStreamInBackground())
+    if (launchId !== streamLaunchId || isInGame !== true) {
+      return;
+    }
+    startGame(host, appID, STREAM_RESTART_BITRATE);
+  }, BITRATE_RESTART_DELAY_MS);
+  return true;
 }
 
 // Cancel a stream that is still starting, i.e. whose start request hasn't reached the WASM module yet, and return to
@@ -4449,26 +4692,25 @@ function saveIpAddressFieldMode() {
   }, 100);
 }
 
-function saveSortAppsList() {
-  setTimeout(() => {
-    const chosenSortAppsList = $('#sortAppsListSwitch').parent().hasClass('is-checked');
-    console.log('%c[index.js, saveSortAppsList]', 'color: green;', 'Saving sort apps list state: ' + chosenSortAppsList);
-    storeData('sortAppsList', chosenSortAppsList, null);
-    
-    // Instantly update the Smart Hub Preview to reflect the new sort order
-    const sortOrder = chosenSortAppsList ? 'DESC' : 'ASC';
-    let updated = false;
-    Object.keys(_previewApps).forEach(function(serverUid) {
-      if (_previewApps[serverUid] && _previewApps[serverUid].apps) {
-        _previewApps[serverUid].apps = sortTitles(_previewApps[serverUid].apps, sortOrder);
-        updated = true;
-      }
-    });
-    if (updated) {
-      savePreviewApps();
-      updatePreviewData();
-    }
-  }, 100);
+// Show an order of the setting 'Sort the list of apps' in the settings (APP_SORT_ORDERS in menus.js)
+function showAppSortOrder(order) {
+  const chosenOrder = parseAppSortOrder(order);
+  const item = $('.sortAppsListMenu li[data-value="' + chosenOrder + '"]');
+  $('#selectSortAppsList').text(t(item.attr('data-i18n') || 'A to Z')).attr('data-value', chosenOrder).data('value', chosenOrder);
+}
+
+// Save the order chosen in the menu of the settings, and put the Smart Hub tiles in that order at once
+function chooseAppSortOrder() {
+  const chosenOrder = parseAppSortOrder($(this).attr('data-value'));
+  showAppSortOrder(chosenOrder);
+  console.log('%c[index.js, chooseAppSortOrder]', 'color: green;', 'Saving the order of the app list: ' + chosenOrder);
+  storeData('sortAppsList', chosenOrder, null);
+
+  if (Object.keys(_previewApps).length > 0) {
+    reorderPreviewApps();
+    savePreviewApps();
+    updatePreviewData();
+  }
 }
 
 function saveOptimizeGames() {
@@ -4492,22 +4734,6 @@ function saveMouseEmulation() {
     const chosenMouseEmulation = $('#mouseEmulationSwitch').parent().hasClass('is-checked');
     console.log('%c[index.js, saveMouseEmulation]', 'color: green;', 'Saving mouse emulation state: ' + chosenMouseEmulation);
     storeData('mouseEmulation', chosenMouseEmulation, null);
-  }, 100);
-}
-
-function saveFlipABfaceButtons() {
-  setTimeout(() => {
-    const chosenFlipABfaceButtons = $('#flipABfaceButtonsSwitch').parent().hasClass('is-checked');
-    console.log('%c[index.js, saveFlipABfaceButtons]', 'color: green;', 'Saving flip A/B face buttons state: ' + chosenFlipABfaceButtons);
-    storeData('flipABfaceButtons', chosenFlipABfaceButtons, null);
-  }, 100);
-}
-
-function saveFlipXYfaceButtons() {
-  setTimeout(() => {
-    const chosenFlipXYfaceButtons = $('#flipXYfaceButtonsSwitch').parent().hasClass('is-checked');
-    console.log('%c[index.js, saveFlipXYfaceButtons]', 'color: green;', 'Saving flip X/Y face buttons state: ' + chosenFlipXYfaceButtons);
-    storeData('flipXYfaceButtons', chosenFlipXYfaceButtons, null);
   }, 100);
 }
 
@@ -4889,6 +5115,36 @@ function choosePerformanceStatsLevel() {
   savePerformanceStatsLevel($(this).attr('data-value'));
 }
 
+// The corners where the performance statistics can show during a stream (setting 'Statistics position'), the first one
+// being the default. The idea and the four corners come from the fork of fidoboy (moonlight-tizen-ac3, GPL-3.0, 5bc0c57).
+const STATS_POSITIONS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+
+// The corner of a stored or chosen value, top left for anything else
+function parseStatsPosition(value) {
+  return STATS_POSITIONS.indexOf(value) >= 0 ? value : STATS_POSITIONS[0];
+}
+
+// Show a corner in the settings and move the statistics there, at the compact and the full level. At the top right they
+// take the place of the connection warnings, which move to the top left.
+function showStatsPosition(position) {
+  const chosenPosition = parseStatsPosition(position);
+  const item = $('.statsPositionMenu li[data-value="' + chosenPosition + '"]');
+  $('#selectStatsPosition').text(t(item.attr('data-i18n') || 'Top left')).attr('data-value', chosenPosition).data('value', chosenPosition);
+  const overlay = document.getElementById('performance-stats');
+  if (overlay) {
+    STATS_POSITIONS.forEach((corner) => overlay.classList.toggle('stats-' + corner, corner === chosenPosition));
+  }
+  $('#connection-warnings').toggleClass('is-left', chosenPosition === 'top-right');
+}
+
+// Save the corner chosen in the menu of the settings
+function chooseStatsPosition() {
+  const chosenPosition = parseStatsPosition($(this).attr('data-value'));
+  showStatsPosition(chosenPosition);
+  console.log('%c[index.js, chooseStatsPosition]', 'color: green;', 'Saving the position of the performance statistics: ' + chosenPosition);
+  storeData('statsPosition', chosenPosition, null);
+}
+
 function saveRefFrameInvalidation() {
   setTimeout(() => {
     const chosenRefFrameInvalidation = $('#refFrameInvalidationSwitch').parent().hasClass('is-checked');
@@ -5162,8 +5418,8 @@ function restoreDefaultsSettingsValues() {
   // Show the IP address fields of the restored mode
   handleIpAddressFieldMode();
 
-  const defaultSortAppsList = false;
-  document.querySelector('#sortAppsListBtn').MaterialSwitch.off();
+  const defaultSortAppsList = APP_SORT_ORDERS[0];
+  showAppSortOrder(defaultSortAppsList);
   storeData('sortAppsList', defaultSortAppsList, null);
 
   const defaultOptimizeGames = false;
@@ -5178,13 +5434,8 @@ function restoreDefaultsSettingsValues() {
   document.querySelector('#mouseEmulationBtn').MaterialSwitch.off();
   storeData('mouseEmulation', defaultMouseEmulation, null);
 
-  const defaultFlipABfaceButtons = false;
-  document.querySelector('#flipABfaceButtonsBtn').MaterialSwitch.off();
-  storeData('flipABfaceButtons', defaultFlipABfaceButtons, null);
-
-  const defaultFlipXYfaceButtons = false;
-  document.querySelector('#flipXYfaceButtonsBtn').MaterialSwitch.off();
-  storeData('flipXYfaceButtons', defaultFlipXYfaceButtons, null);
+  // Every button presses itself again, and no stick is calibrated (button_mapping.js)
+  saveButtonMappings(emptyButtonMappings());
 
   const defaultControllerType = 'Auto';
   $('#selectControllerType').text(t('Auto')).attr('data-value', defaultControllerType).data('value', defaultControllerType);
@@ -5240,7 +5491,14 @@ function restoreDefaultsSettingsValues() {
   const defaultPerformanceStats = PERFORMANCE_STATS_OFF;
   showPerformanceStatsLevel(defaultPerformanceStats);
   storeData('performanceStats', defaultPerformanceStats, null);
+
+  const defaultStatsPosition = STATS_POSITIONS[0];
+  showStatsPosition(defaultStatsPosition);
+  storeData('statsPosition', defaultStatsPosition, null);
 }
+
+// The keys of the remote that Moonlight registered, for the input test (input_test.js)
+var registeredTvKeys = [];
 
 function initSamsungKeys() {
   console.log('%c[index.js, initSamsungKeys]', 'color: green;', 'Initializing TV keys...');
@@ -5271,9 +5529,11 @@ function initSamsungKeys() {
   // Register the media keys one by one: Play/Pause (or Play and Pause) opens the Stream Menu during a stream and the menu
   // of a host or app otherwise (remote_controller.js). A TV that refuses one of them, e.g. for a remote without it, must
   // not stop the others, so RED, YELLOW and the gamepad combo stay the fallback.
+  registeredTvKeys = handler.buttonsToRegister.slice();
   ['MediaPlayPause', 'MediaPlay', 'MediaPause'].forEach(function(keyName) {
     try {
       tizen.tvinputdevice.registerKey(keyName);
+      registeredTvKeys.push(keyName);
     } catch (error) {
       console.warn('%c[index.js, initSamsungKeys]', 'color: green;', 'Warning: Failed to register the key ' + keyName + ': ' + error);
     }
@@ -5302,6 +5562,22 @@ function initSpecialKeys() {
       var isMenuKey = isStreamMenuOpen || isMenuKeyEvent(e);
       var isHeldMenuKey = streamMenuKeyCode !== null && e.keyCode === streamMenuKeyCode;
       if (!(isMenuKey || isHeldMenuKey)) {
+        return;
+      }
+      // While the field of 'Type text…' in the Stream Menu takes the text, its keys go to the field and nowhere else:
+      // stopping them here keeps them from the key handler of the menus and from the stream, and typing in the field
+      // is their default action, which stays. Only the keys that send, cancel or leave the field and the keys of the
+      // remote with an action in the menu are handled (handleStreamTextKey() in menus.js).
+      if (isStreamMenuOpen && isStreamTextFieldEvent(e)) {
+        e.stopPropagation();
+        if (e.type === 'keyup') {
+          if (isHeldMenuKey) {
+            streamMenuKeyCode = null;
+          }
+        } else if (handleStreamTextKey(e)) {
+          e.preventDefault();
+          streamMenuKeyCode = e.keyCode;
+        }
         return;
       }
       e.preventDefault();
@@ -5375,6 +5651,37 @@ function describeGamepadType(info, controllerTypeSetting) {
   return detectedType;
 }
 
+// The report of the last stream and the settings it is judged with (diagnostics.js), shown in System information
+var lastSessionReport = null;
+var lastSessionReportOptions = {};
+
+// Keep the report of a stream that ended (the message of VidDecCleanup() in wasm/wasmplayer.cpp, handleMessage() in
+// messages.js), and log it with its hints
+function keepSessionReport(json) {
+  const report = parseSessionReport(json);
+  if (!report) {
+    console.warn('%c[index.js, keepSessionReport]', 'color: green;', 'Warning: The report of the session can\'t be read: ' + json);
+    return;
+  }
+  lastSessionReport = report;
+  lastSessionReportOptions = { refFrameInvalidation: $('#refFrameInvalidationSwitch').parent().hasClass('is-checked') };
+  console.log('%c[index.js, keepSessionReport]', 'color: green;', 'Hints of the session report: ' +
+    getSessionReportHints(report, lastSessionReportOptions).join(', '));
+  // The lines that the module logged at the end of the stream belong to its session
+  DiagnosticLog.takeNative();
+}
+
+// Tell once that the app ended during the last stream the last time it ran (StreamHeartbeat in diagnostics.js)
+function reportUnfinishedStream() {
+  const previousRun = StreamHeartbeat.takePreviousRun();
+  if (!previousRun) {
+    return;
+  }
+  console.warn('%c[index.js, reportUnfinishedStream]', 'color: green;', 'Warning: The app ended during a stream the last time it ran: the stream had run for about ' +
+    previousRun.minutes + ' minutes, its last heartbeat was at ' + new Date(previousRun.lastBeat).toISOString() + '.');
+  snackbarLogLong('Moonlight ended during the last stream, e.g. after a crash or when the TV was switched off. Its diagnostic log was in memory only.');
+}
+
 function loadSystemInfo() {
   console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Loading system information...');
   const systemInfoPlaceholder = document.getElementById('systemInfoBtn');
@@ -5401,7 +5708,7 @@ function loadSystemInfo() {
   // Get the system information from the TV
   if (systemInfoPlaceholder) {
     const controllerTypeSetting = String($('#selectControllerType').data('value') || 'Auto');
-    const gamepadsText = connectedGamepads.length === 0 ? t('Gamepads: %1$s', t('None')) : connectedGamepads.map((info) =>
+    const gamepadsText = connectedGamepads.length === 0 ? t('Gamepads: None') : connectedGamepads.map((info) =>
       t('Gamepad %1$s: %2$s (%3$s, %4$s buttons, %5$s axes, rumble: %6$s, type: %7$s)', info.index, info.name ? info.name : t('Unknown'),
         info.mapping === 'standard' ? t('standard layout') : t('non-standard layout'), info.buttons, info.axes,
         info.rumble ? t('Yes') : t('No'), describeGamepadType(info, controllerTypeSetting))
@@ -5431,12 +5738,13 @@ function loadSystemInfo() {
       t('Model Year (from the model group): %1$s', modelYearHint ? modelYearHint : t('Unknown')) + '\n' +
       t('Panel: %1$s', panelText) + '\n' +
       t('HDR Support: %1$s', isHdrCapable ? t('Yes') : t('No')) + '\n' +
-      t('Network Connection Type: %1$s', connectionText ? connectionText : t('Unknown')) + '\n' +
-      t('Tested Profile: %1$s', testedProfile ? testedProfile : t('None')) + '\n' +
+      t('Network Connection Type: %1$s', connectionText ? t(connectionText) : t('Unknown')) + '\n' +
+      (testedProfile ? t('Tested Profile: %1$s', testedProfile) : t('Tested Profile: None')) + '\n' +
       t('Ultra Low Latency mode (Game mode): %1$s', ultraLowLatencyText) + '\n' +
       t('WASM player API levels: %1$s', apiLevelsText ? apiLevelsText : t('Unknown')) + '\n' +
       videoDecoderLines.map((line) => line + '\n').join('') +
-      gamepadsText;
+      gamepadsText + '\n\n' +
+      describeSessionReport(lastSessionReport, lastSessionReportOptions).join('\n');
   } else {
     // Without its element there is nowhere to show the system information, so only log it
     console.error('%c[index.js, loadSystemInfo]', 'color: green;', 'Error: Failed to load system information, since its element is missing!');
@@ -5586,13 +5894,8 @@ function loadStoredSettings() {
 
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored sortAppsList preferences.');
   getData('sortAppsList', function(previousValue) {
-    if (previousValue.sortAppsList == null) {
-      document.querySelector('#sortAppsListBtn').MaterialSwitch.off(); // Set the default state
-    } else if (previousValue.sortAppsList == false) {
-      document.querySelector('#sortAppsListBtn').MaterialSwitch.off();
-    } else {
-      document.querySelector('#sortAppsListBtn').MaterialSwitch.on();
-    }
+    // A to Z without a stored value, Z to A for the true that the switch of earlier versions stored
+    showAppSortOrder(parseAppSortOrder(previousValue.sortAppsList));
   });
 
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored optimizeGames preferences.');
@@ -5628,25 +5931,24 @@ function loadStoredSettings() {
     }
   });
 
-  console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored flipABfaceButtons preferences.');
-  getData('flipABfaceButtons', function(previousValue) {
-    if (previousValue.flipABfaceButtons == null) {
-      document.querySelector('#flipABfaceButtonsBtn').MaterialSwitch.off(); // Set the default state
-    } else if (previousValue.flipABfaceButtons == false) {
-      document.querySelector('#flipABfaceButtonsBtn').MaterialSwitch.off();
+  console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored controllerMappings preferences.');
+  getMultipleData(['controllerMappings', 'flipABfaceButtons', 'flipXYfaceButtons'], function(storedValues) {
+    if (storedValues === null) {
+      // Without the stored values, every button presses itself, and nothing is stored, so the next start reads them again
+      console.warn('%c[index.js, loadUserDataCb]', 'color: green;', 'Warning: Failed to read the stored button mapping, so the buttons stay as printed.');
+      buttonMappings = emptyButtonMappings();
+    } else if (storedValues.controllerMappings != null) {
+      buttonMappings = normalizeButtonMappings(storedValues.controllerMappings);
     } else {
-      document.querySelector('#flipABfaceButtonsBtn').MaterialSwitch.on();
-    }
-  });
-
-  console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored flipXYfaceButtons preferences.');
-  getData('flipXYfaceButtons', function(previousValue) {
-    if (previousValue.flipXYfaceButtons == null) {
-      document.querySelector('#flipXYfaceButtonsBtn').MaterialSwitch.off(); // Set the default state
-    } else if (previousValue.flipXYfaceButtons == false) {
-      document.querySelector('#flipXYfaceButtonsBtn').MaterialSwitch.off();
-    } else {
-      document.querySelector('#flipXYfaceButtonsBtn').MaterialSwitch.on();
+      // The earlier switches 'Flip A/B face buttons' and 'Flip X/Y face buttons' become the mapping for every controller,
+      // once (button_mapping.js)
+      const flipAB = storedValues.flipABfaceButtons != null && storedValues.flipABfaceButtons != false;
+      const flipXY = storedValues.flipXYfaceButtons != null && storedValues.flipXYfaceButtons != false;
+      buttonMappings = migrateFaceButtonSwaps(flipAB, flipXY);
+      if (flipAB || flipXY) {
+        console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Moving the stored face button swaps into the button mapping: A/B ' + flipAB + ', X/Y ' + flipXY);
+        storeData('controllerMappings', buttonMappings, null);
+      }
     }
   });
 
@@ -5909,6 +6211,12 @@ function loadStoredSettings() {
     // Off without a stored value, Full for the true that the switch of earlier versions stored
     showPerformanceStatsLevel(parsePerformanceStatsLevel(previousValue.performanceStats));
   });
+
+  console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored statsPosition preferences.');
+  getData('statsPosition', function(previousValue) {
+    // Top left without a stored value
+    showStatsPosition(parseStatsPosition(previousValue.statsPosition));
+  });
 }
 
 function loadHTTPCerts() {
@@ -5944,6 +6252,10 @@ function loadHTTPCertsCb() {
         const freshInstallData = { uniqueid: myUniqueid };
         freshInstallData[SETTINGS_SCHEMA_KEY] = SETTINGS_SCHEMA_VERSION;
         storeMultipleData(freshInstallData, null);
+      }
+      // The diagnostic log hides the unique ID wherever it appears from now on (diagnostics.js)
+      if (typeof hideDiagnosticValue === 'function') {
+        hideDiagnosticValue('uniqueid', myUniqueid);
       }
 
       if (!pairingCert) { // We couldn't load a cert. Let's attempt to generate a new one.
@@ -6090,38 +6402,13 @@ function waitForHostAndNavigateToApp(serverUid, appId) {
 
       // Host is online: check whether the requested app still exists
       host.getAppListWithCacheFlush().then(function(appList) {
-        // Find the existing switch element
-        const sortAppsListSwitch = document.getElementById('sortAppsListSwitch');
-        // Defines the sort order based on the state of the switch
-        const sortOrder = sortAppsListSwitch.checked ? 'DESC' : 'ASC';
-        // If game grid is populated, sort the app list
-        const sortedAppList = sortTitles(appList, sortOrder);
-
         if (_isSmartHubSupported) {
-          // Preserve existing image paths from the previous preview cache
-          var oldApps = (_previewApps[serverUid] && _previewApps[serverUid].apps) || [];
-
-          // Update the preview with the latest app list from this successful connection
+          // Update the preview with the latest app list from this successful connection, keeping the images of the
+          // earlier tiles
           _previewApps[serverUid] = {
             hostname: host.hostname,
             address: host.address,
-            apps: sortedAppList.map(function(app) {
-              var oldApp = oldApps.find(function(a) {
-                return a.id === app.id; 
-              });
-              var newApp = {
-                id: app.id, title: app.title
-              };
-              if (oldApp) {
-                if (oldApp.imageUri) {
-                  newApp.imageUri = oldApp.imageUri;
-                }
-                if (oldApp.txtPath) {
-                  newApp.txtPath = oldApp.txtPath;
-                }
-              }
-              return newApp;
-            })
+            apps: buildPreviewApps(serverUid, appList)
           };
           savePreviewApps();
           updatePreviewData();
@@ -6255,18 +6542,20 @@ function updatePreviewData() {
         return;
       }
 
-      // Only include as many apps as can fit within the remaining tile limit, without the apps that the user hid (menus.js)
+      // Only include as many apps as can fit within the remaining tile limit, without the apps that the user hid and
+      // with the favorites first (menus.js)
       var remainingTiles = SMART_HUB_MAX_TILES - totalTiles;
       var hiddenApps = loadHiddenApps(serverUid);
-      var apps = entry.apps.filter(function(app) {
+      // ('host' keeps the order of the stored list)
+      var apps = orderAppList(entry.apps.filter(function(app) {
         return !isAppHidden(hiddenApps, app);
-      }).slice(0, remainingTiles);
+      }), 'host', loadFavoriteApps(serverUid), []).slice(0, remainingTiles);
 
       // Create a tile for each app in the host's app list, including the title, subtitle, and action data
       var tiles = apps.map(function(app, index) {
         // Each tile object accepts a `position` attribute. By explicitly setting
         // the global position, we override the native behavior and enforce our
-        // custom sorting (A-Z or Z-A).
+        // custom sorting (the favorites first, then the setting 'Sort the list of apps').
         var tile = {
           title: app.title,
           subtitle: entry.hostname,

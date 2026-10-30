@@ -27,8 +27,8 @@ after(async () => {
 });
 
 // Position of the game mode in the arguments of the start request (SyncFunctions.startRequest in messages.js)
-const START_ARG_VIDEO_CODEC = 24;
-const START_ARG_GAME_MODE = 27;
+const START_ARG_VIDEO_CODEC = 23;
+const START_ARG_GAME_MODE = 26;
 
 const ULL_LINE = 'Ultra Low Latency mode (Game mode): ';
 const LEVELS_LINE = 'WASM player API levels: ';

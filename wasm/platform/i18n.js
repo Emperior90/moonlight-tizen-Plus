@@ -3,12 +3,18 @@
 
   const LANGUAGE_SETTING_KEY = 'languagePreference';
   const SOURCE_LOCALE = 'en-US';
-  const SUPPORTED_LOCALES = ['en-US', 'pt-BR'];
-  const LOCALE_LABELS = {
-    'auto': 'Auto',
-    'en-US': 'English (United States)',
-    'pt-BR': 'Português (Brasil)',
-  };
+  // The languages of the app, in the order of the language menu after Auto. Each one is named in its own language, so
+  // that it can be found whatever language the app shows. Every language costs about 60 KB in the package, so the
+  // list stays short (docs/TRANSLATING.md). A locale file in static/locales needs its entry here, and the other way
+  // round (tests/tools/i18n-check.js).
+  const LOCALES = [
+    { code: 'en-US', name: 'English' },
+    { code: 'de-DE', name: 'Deutsch' },
+    { code: 'es-ES', name: 'Español' },
+    { code: 'fr-FR', name: 'Français' },
+    { code: 'pt-BR', name: 'Português (Brasil)' },
+  ];
+  const SUPPORTED_LOCALES = LOCALES.map((locale) => locale.code);
 
   const state = {
     localePreference: 'auto',
@@ -41,25 +47,40 @@
     return count === 1 ? t(singular, count) : t(plural, count);
   }
 
-  function normalizeDetectedLocale(rawLocale) {
+  // The supported locale for a language tag of the TV or the browser, e.g. 'de_AT' or 'pt-PT': the locale itself, else
+  // the locale of the same language (de-AT and de-CH get de-DE, pt-PT gets pt-BR), else '' for a language the app
+  // doesn't have
+  function matchLocale(rawLocale) {
     if (!rawLocale || typeof rawLocale !== 'string') {
-      return SOURCE_LOCALE;
+      return '';
     }
 
-    const locale = rawLocale.trim().replace(/_/g, '-');
-    if (SUPPORTED_LOCALES.includes(locale)) {
-      return locale;
+    const locale = rawLocale.trim().replace(/_/g, '-').toLowerCase();
+    const exact = SUPPORTED_LOCALES.find((supportedLocale) => supportedLocale.toLowerCase() === locale);
+    if (exact) {
+      return exact;
     }
 
     const langPrefix = locale.split('-')[0];
-    const match = SUPPORTED_LOCALES.find((supportedLocale) => supportedLocale.split('-')[0] === langPrefix);
-    return match || SOURCE_LOCALE;
+    return SUPPORTED_LOCALES.find((supportedLocale) => supportedLocale.split('-')[0].toLowerCase() === langPrefix) || '';
   }
 
+  // The locale that the app shows for a language of the TV: a supported one, or English for any other language
+  function normalizeDetectedLocale(rawLocale) {
+    return matchLocale(rawLocale) || SOURCE_LOCALE;
+  }
+
+  // The first language of the browser that the app has (on a TV the browser has the language of the TV)
   function detectLocaleFromNavigator() {
     const browserLocales = Array.isArray(navigator.languages) ? navigator.languages : [];
-    const preferredBrowserLocale = browserLocales[0] || navigator.language || SOURCE_LOCALE;
-    return normalizeDetectedLocale(preferredBrowserLocale);
+    const candidates = browserLocales.concat([navigator.language]);
+    for (let i = 0; i < candidates.length; i++) {
+      const match = matchLocale(candidates[i]);
+      if (match) {
+        return match;
+      }
+    }
+    return SOURCE_LOCALE;
   }
 
   function detectLocale() {
@@ -138,11 +159,25 @@
     document.documentElement.setAttribute('lang', locale || SOURCE_LOCALE);
   }
 
+  // The entry of the language menu for a preference: Auto in the language of the app, a language by its own name
+  function findLocale(code) {
+    return LOCALES.find((locale) => locale.code === code) || null;
+  }
+
+  function showLanguageLabel(element, value) {
+    const locale = findLocale(value);
+    element.textContent = locale ? locale.name : t('Auto');
+    if (locale) {
+      element.setAttribute('lang', locale.code);
+    } else {
+      element.removeAttribute('lang');
+    }
+  }
+
   function updateLocalizedSelections() {
     const selectLanguage = document.getElementById('selectLanguage');
     if (selectLanguage) {
-      const value = selectLanguage.getAttribute('data-value') || state.localePreference || 'auto';
-      selectLanguage.textContent = LOCALE_LABELS[value] || LOCALE_LABELS.auto;
+      showLanguageLabel(selectLanguage, selectLanguage.getAttribute('data-value') || state.localePreference || 'auto');
     }
 
     const selectResolution = document.getElementById('selectResolution');
@@ -200,6 +235,22 @@
         selectPerformanceStats.textContent = t(selectedItem.getAttribute('data-i18n') || selectedItem.textContent.trim());
       }
     }
+
+    const selectStatsPosition = document.getElementById('selectStatsPosition');
+    if (selectStatsPosition) {
+      const selectedItem = document.querySelector(`.statsPositionMenu li[data-value="${selectStatsPosition.dataset.value}"]`);
+      if (selectedItem) {
+        selectStatsPosition.textContent = t(selectedItem.getAttribute('data-i18n') || selectedItem.textContent.trim());
+      }
+    }
+
+    const selectSortAppsList = document.getElementById('selectSortAppsList');
+    if (selectSortAppsList) {
+      const selectedItem = document.querySelector(`.sortAppsListMenu li[data-value="${selectSortAppsList.dataset.value}"]`);
+      if (selectedItem) {
+        selectSortAppsList.textContent = t(selectedItem.getAttribute('data-i18n') || selectedItem.textContent.trim());
+      }
+    }
   }
 
   function refreshUI() {
@@ -224,17 +275,24 @@
     state.refreshCallbacks.forEach((cb) => cb());
   }
 
+  // Fill the language menu: Auto (the language of the TV), then each language by its own name
   function populateLanguageMenu(onSelect) {
     const menu = document.querySelector('ul.languageMenu');
     const button = document.getElementById('selectLanguage');
     if (!menu) return;
 
-    // Build <li> items from LOCALE_LABELS
-    Object.entries(LOCALE_LABELS).forEach(([value, label]) => {
+    while (menu.firstChild) {
+      menu.removeChild(menu.firstChild);
+    }
+    ['auto'].concat(SUPPORTED_LOCALES).forEach((value) => {
       const li = document.createElement('li');
       li.className = 'mdl-menu__item';
       li.setAttribute('data-value', value);
-      li.textContent = label;
+      showLanguageLabel(li, value);
+      if (value === 'auto') {
+        // The translation pass of refreshUI() translates Auto again after a change of the language
+        li.setAttribute('data-i18n', 'Auto');
+      }
       if (typeof onSelect === 'function') {
         li.addEventListener('click', onSelect);
       }
@@ -243,8 +301,7 @@
 
     // Set the button text to match the current data-value
     if (button) {
-      const currentValue = button.getAttribute('data-value') || 'auto';
-      button.textContent = LOCALE_LABELS[currentValue] || LOCALE_LABELS['auto'];
+      showLanguageLabel(button, button.getAttribute('data-value') || 'auto');
     }
   }
 
@@ -255,7 +312,9 @@
   }
 
   function setLanguage(preference) {
-    const selectedPreference = preference || state.localePreference || 'auto';
+    const requestedPreference = preference || state.localePreference || 'auto';
+    // A language that the app doesn't have (any more) follows the TV like Auto
+    const selectedPreference = SUPPORTED_LOCALES.includes(requestedPreference) ? requestedPreference : 'auto';
     const selectLanguage = document.getElementById('selectLanguage');
     if (selectLanguage) {
       selectLanguage.setAttribute('data-value', selectedPreference);
@@ -263,7 +322,7 @@
 
     const resolveLocalePromise = selectedPreference === 'auto'
       ? detectLocale()
-      : Promise.resolve(SUPPORTED_LOCALES.includes(selectedPreference) ? selectedPreference : SOURCE_LOCALE);
+      : Promise.resolve(selectedPreference);
 
     return resolveLocalePromise.then((effectiveLocale) => loadLocaleFile(effectiveLocale).then((dict) => {
       state.effectiveLocale = effectiveLocale;
@@ -315,6 +374,9 @@
     getPreference: () => state.localePreference,
     getLocale: () => state.effectiveLocale,
     getSupportedLocales: () => SUPPORTED_LOCALES.slice(),
+    getLocaleNames: () => LOCALES.map((locale) => ({ code: locale.code, name: locale.name })),
+    resolveLocale: normalizeDetectedLocale,
+    detectLocale,
     onRefresh: (cb) => { state.refreshCallbacks.push(cb); },
   };
 

@@ -7,6 +7,8 @@
 // statistics, and handleMessage() in wasm/platform/messages.js builds the line from it, so it never parses the
 // translated text, e.g.
 //   4K60 HEVC HDR · 59.9 fps · 74 Mb/s · RTT 3 ms · Net drops 0.1% · Wait+pacing 6.3 ms
+// While the level is Full, the text of the full statistics follows the figures of one point of their graph in the same
+// message (FormatFullStatsMessage()), so the graph needs no message of its own either.
 // The compact line was asked for in upstream issue #67, and Artemis, StreamLight and moonlight-tv (f4b1a4a) show one;
 // sending figures beside the text follows the fork of fidoboy (moonlight-tizen-ac3, 262477c, 'GraphMsg: ').
 // The header has no other dependencies, so the native tests can check it on its own (tests/native/compact_stats_test.cpp).
@@ -108,4 +110,29 @@ inline int FormatCompactStatsMessage(const CompactVideoStats& stats, char* outpu
     return -1;
   }
   return ret;
+}
+
+// The figures of one point of the graph of the full statistics: the round-trip time in ms, 0 while unknown, and the
+// frames lost on the network in the stats window that just ended. The front end draws the last 60 of them under the
+// text (drawStatsGraph() in wasm/platform/messages.js), which the graph of the fork of fidoboy (moonlight-tizen-ac3,
+// 262477c, 5bc0c57) suggested; the points come with the text of the full statistics instead of a message of their own.
+struct StatsGraphPoint {
+  uint32_t rttMs;
+  uint32_t networkDroppedFrames;
+};
+
+// Write the message of the full statistics: the figures of the graph as a small JSON object on the first line, then the
+// text, e.g.
+//   StatMsg: {"rtt":3,"lost":0}
+//   Video stream: 3840x2160 60.00 FPS (Codec: HEVC 10-bit HDR)
+//   ...
+// An unknown round-trip time is null.
+inline std::string FormatFullStatsMessage(const StatsGraphPoint& point, const char* text) {
+  char figures[64];
+  if (point.rttMs != 0) {
+    snprintf(figures, sizeof(figures), "{\"rtt\":%u,\"lost\":%u}\n", point.rttMs, point.networkDroppedFrames);
+  } else {
+    snprintf(figures, sizeof(figures), "{\"rtt\":null,\"lost\":%u}\n", point.networkDroppedFrames);
+  }
+  return std::string("StatMsg: ") + figures + (text != nullptr ? text : "");
 }

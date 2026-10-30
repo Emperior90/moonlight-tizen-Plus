@@ -3,7 +3,8 @@
 // Checks the result of a pairing in the pairing dialog (pairingDialog() of wasm/platform/index.js): a wrong PIN, which
 // gs_pair() of libgamestream/pairing.c reports as GS_PIN_WRONG (-7) once the host answered with a hash that doesn't
 // match the PIN (native/pairing_test.c), is shown as such, any other failure keeps the general message, and the log
-// names the host without the PIN. The pairing itself is answered by the test through the pair() of the host.
+// names the host without the PIN. The button reads Cancel, then Close after a failure, in the language of the app. The
+// pairing itself is answered by the test through the pair() of the host.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -75,6 +76,28 @@ test('another pairing failure keeps the general message', async () => {
     const dialog = await failPairing(app, '-1');
     assert.equal(dialog.text, 'Error: Failed to pair with OFFICE.Please, try pairing with the host again.');
     assert.equal(dialog.button, 'Close');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('the button reads Cancel and then Close in the language of the app, also after a translation pass', async () => {
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, stored: { languagePreference: 'de-DE' } });
+  const button = () => app.page.evaluate(() => document.getElementById('cancelPairing').textContent.trim());
+  try {
+    await openPairingDialog(app);
+    assert.equal(await button(), 'Abbrechen');
+    const dialog = await failPairing(app, '-7');
+    assert.equal(dialog.button, 'Schließen');
+    assert.match(dialog.text, /^Fehler: Die auf OFFICE eingegebene PIN war falsch\./);
+    // A translation pass while the dialog shows its result keeps Close
+    await app.page.evaluate(() => i18n.refreshUI());
+    assert.equal(await button(), 'Schließen');
+    // The next pairing starts with Cancel again
+    await app.page.evaluate(() => document.getElementById('cancelPairing').click());
+    await openPairingDialog(app);
+    assert.equal(await button(), 'Abbrechen');
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

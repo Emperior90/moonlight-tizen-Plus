@@ -1,5 +1,6 @@
 #include "moonlight_wasm.hpp"
 #include "controller_type.hpp"
+#include "controller_mapping.hpp"
 
 #include <iostream>
 #include <array>
@@ -39,9 +40,9 @@ bool rumbleFeedbackSwitch = false;
 bool mouseEmulationSwitch = false;
 bool mouseEmulationActive = false;
 
-// Flags for gamepad to track face buttons state
-bool flipABfaceButtonsSwitch = false;
-bool flipXYfaceButtonsSwitch = false;
+// The button mapping and the stick calibration of the setting "Button mapping" (controller_mapping.hpp), set at the start
+// of every stream before the input polling starts
+static ControllerMappings controllerMappings;
 
 // Controller type of the setting "Controller type sent to the PC", or LI_CTYPE_UNKNOWN to detect it from the id of
 // each controller (Auto, see controller_type.hpp)
@@ -78,6 +79,7 @@ struct ControllerSlotState {
   bool announced = false; // true after LiSendControllerArrivalEvent succeeded
   std::string id; // last known Gamepad.id (used to detect replacements)
   uint8_t type = LI_CTYPE_UNKNOWN; // controller type announced to the host (detected or from the setting)
+  int mapping = -1; // index of the mapping of this controller in controllerMappings, or -1 for none
 };
 
 static ControllerSlotState slotState[kMaxControllers];
@@ -183,11 +185,10 @@ static double pendingScrollX = 0.0;
 static double pendingScrollY = 0.0;
 static uint64_t lastScrollMs = 0; // 0 until the first poll in mouse mode
 
-// Flag that the host gets for a button of the standard layout, with the A/B and X/Y swaps applied. The extra button 17
-// is the touchpad button for a PlayStation controller, which Sunshine passes on to its emulated DualShock 4, and the
-// misc button (Share or Capture) for the others; a GFE host gets the Guide button for the misc button instead
-// (moonlight-common-c).
-static int GetButtonFlag(int index, uint8_t type, bool flipAB, bool flipXY) {
+// Flag that the host gets for a button of the standard layout. The extra button 17 is the touchpad button for a
+// PlayStation controller, which Sunshine passes on to its emulated DualShock 4, and the misc button (Share or Capture)
+// for the others; a GFE host gets the Guide button for the misc button instead (moonlight-common-c).
+static int GetButtonFlag(int index, uint8_t type) {
   // Standard Gamepad layout; triggers are analog so they contribute no flags
   static constexpr int kButtons[] = {
     A_FLAG, B_FLAG, X_FLAG, Y_FLAG,
@@ -203,30 +204,32 @@ static int GetButtonFlag(int index, uint8_t type, bool flipAB, bool flipXY) {
     return type == LI_CTYPE_PS ? TOUCHPAD_FLAG : MISC_FLAG;
   } else if (index < 0 || index > GamepadButton::Special) {
     return 0;
-  } else if (flipAB && index < 2) {
-    return kButtons[1 - index]; // swap A ↔ B
-  } else if (flipXY && index >= 2 && index < 4) {
-    return kButtons[5 - index]; // swap X ↔ Y
   }
   return kButtons[index];
 }
 
-// Build the supported-buttons mask advertised in the arrival event (respects face-button flips). Button 17 is only
-// advertised for a controller that reports it, i.e. with 18 buttons or more.
-static uint32_t GetSupportedButtons(int numButtons, uint8_t type, bool flipAB, bool flipXY) {
+// The mapping of a controller (controller_mapping.hpp), or nullptr for the buttons and sticks as they are
+static const ControllerMapping* GetControllerMapping(int index) {
+  return index >= 0 && index < static_cast<int>(controllerMappings.size()) ? &controllerMappings[index] : nullptr;
+}
+
+// Build the supported-buttons mask advertised in the arrival event: the buttons that the buttons of the controller press
+// with its mapping. Button 17 is only advertised for a controller that reports it, i.e. with 18 buttons or more.
+static uint32_t GetSupportedButtons(int numButtons, uint8_t type, const ControllerMapping* mapping) {
   uint32_t flags = 0;
   const int limit = std::min(numButtons, static_cast<int>(GamepadButton::Count));
 
   // Iterate through the buttons and set the appropriate flags
   for (int i = 0; i < limit; ++i) {
-    flags |= static_cast<uint32_t>(GetButtonFlag(i, type, flipAB, flipXY));
+    const int target = (mapping && i < kMappedButtons) ? mapping->targets[i] : i;
+    flags |= static_cast<uint32_t>(GetButtonFlag(target, type));
   }
 
   return flags;
 }
 
 // Function to map gamepad buttons to flags. They take an int, since the touchpad and misc buttons lie above 16 bits.
-static int GetButtonFlags(const EmscriptenGamepadEvent& gamepad, uint8_t type, bool flipAB, bool flipXY) {
+static int GetButtonFlags(const EmscriptenGamepadEvent& gamepad, uint8_t type) {
   // Triggers are considered analog buttons in the "Emscripten API", however they need
   // to be passed in separate arguments for "Limelight" (it even lacks flags for them).
   int result = 0;
@@ -235,17 +238,16 @@ static int GetButtonFlags(const EmscriptenGamepadEvent& gamepad, uint8_t type, b
   // Iterate through the gamepad buttons and set the corresponding flags
   for (int i = 0; i < limit; ++i) {
     if (gamepad.digitalButton[i] == EM_TRUE) {
-      result |= GetButtonFlag(i, type, flipAB, flipXY);
+      result |= GetButtonFlag(i, type);
     }
   }
 
   return result;
 }
 
-// The input of one controller on this poll, in the ranges of the protocol
+// The input of one controller on this poll, in the ranges of the protocol, as the host gets it
 struct ControllerInput {
-  int buttonFlags = 0; // with the A/B and X/Y swaps of the settings, as the host gets them
-  int physicalFlags = 0; // without the swaps, for the button combos and the mouse emulation toggle
+  int buttonFlags = 0; // with the button mapping of the controller
   double leftTrigger = 0.0;
   double rightTrigger = 0.0;
   double leftStickX = 0.0;
@@ -254,22 +256,69 @@ struct ControllerInput {
   double rightStickY = 0.0;
 };
 
-static ControllerInput ReadControllerInput(const EmscriptenGamepadEvent& gamepad, uint8_t type) {
+// Read the input of a controller as the host gets it: the physical buttons in passedFlags that are pressed (the flags of
+// the physical buttons that pass, never Back and Start), Back and Start in comboFlags as the Stream Menu combo passes
+// them on (pressed, also when they are replayed after their release) and the triggers, with the button mapping and the
+// stick calibration of the controller applied after the browser filled the event (__fillGamepadEventData() in
+// ReadGamepadSlots()). The button combos run on the physical buttons before this.
+static ControllerInput ReadControllerInput(const EmscriptenGamepadEvent& gamepad, uint8_t type, const ControllerMapping* mapping,
+                                           int passedFlags, int comboFlags) {
   ControllerInput input;
-  input.buttonFlags = GetButtonFlags(gamepad, type, flipABfaceButtonsSwitch, flipXYfaceButtonsSwitch);
-  input.physicalFlags = GetButtonFlags(gamepad, type, false, false);
-  input.leftTrigger = gamepad.analogButton[GamepadButton::LeftTrigger]
-    * std::numeric_limits<unsigned char>::max();
-  input.rightTrigger = gamepad.analogButton[GamepadButton::RightTrigger]
-    * std::numeric_limits<unsigned char>::max();
-  input.leftStickX = gamepad.axis[GamepadAxis::LeftX]
-    * std::numeric_limits<short>::max();
-  input.leftStickY = -gamepad.axis[GamepadAxis::LeftY]
-    * std::numeric_limits<short>::max();
-  input.rightStickX = gamepad.axis[GamepadAxis::RightX]
-    * std::numeric_limits<short>::max();
-  input.rightStickY = -gamepad.axis[GamepadAxis::RightY]
-    * std::numeric_limits<short>::max();
+  passedFlags &= ~STREAM_MENU_BUTTONS;
+  comboFlags &= STREAM_MENU_BUTTONS;
+  double leftTrigger = gamepad.analogButton[GamepadButton::LeftTrigger];
+  double rightTrigger = gamepad.analogButton[GamepadButton::RightTrigger];
+  double axes[4] = {
+    gamepad.axis[GamepadAxis::LeftX], gamepad.axis[GamepadAxis::LeftY],
+    gamepad.axis[GamepadAxis::RightX], gamepad.axis[GamepadAxis::RightY],
+  };
+  if (!mapping) {
+    input.buttonFlags = (GetButtonFlags(gamepad, type) & passedFlags) | comboFlags;
+  } else {
+    // The physical buttons that pass, of which the triggers always do, mapped to the buttons of the game
+    int pressedButtons[GamepadButton::Count] = {};
+    double buttonValues[GamepadButton::Count] = {};
+    const int limit = std::min(gamepad.numButtons, static_cast<int>(GamepadButton::Count));
+    for (int i = 0; i < limit; ++i) {
+      const int flag = GetButtonFlag(i, type);
+      if (flag & STREAM_MENU_BUTTONS) {
+        pressedButtons[i] = (comboFlags & flag) != 0;
+        buttonValues[i] = pressedButtons[i] ? 1.0 : 0.0;
+      } else if (flag == 0 || (passedFlags & flag)) {
+        pressedButtons[i] = gamepad.digitalButton[i] == EM_TRUE;
+        buttonValues[i] = gamepad.analogButton[i];
+      }
+    }
+    bool pressed[kMappedButtons];
+    double values[kMappedButtons];
+    MapButtons(mapping->targets, pressedButtons, buttonValues, limit, pressed, values);
+    for (int i = 0; i < kMappedButtons; ++i) {
+      if (pressed[i]) {
+        input.buttonFlags |= GetButtonFlag(i, type);
+      }
+    }
+    // The Guide button and button 17 keep their meaning
+    for (int i = GamepadButton::Special; i < limit; ++i) {
+      if (pressedButtons[i]) {
+        input.buttonFlags |= GetButtonFlag(i, type);
+      }
+    }
+    leftTrigger = values[kMappedLeftTrigger];
+    rightTrigger = values[kMappedRightTrigger];
+    for (int stick = 0; stick < 2; ++stick) {
+      const StickCalibration& calibration = mapping->sticks[stick];
+      if (calibration.valid) {
+        axes[stick * 2] = CalibrateAxis(axes[stick * 2], calibration.centreX, calibration.minX, calibration.maxX);
+        axes[stick * 2 + 1] = CalibrateAxis(axes[stick * 2 + 1], calibration.centreY, calibration.minY, calibration.maxY);
+      }
+    }
+  }
+  input.leftTrigger = leftTrigger * std::numeric_limits<unsigned char>::max();
+  input.rightTrigger = rightTrigger * std::numeric_limits<unsigned char>::max();
+  input.leftStickX = axes[0] * std::numeric_limits<short>::max();
+  input.leftStickY = -axes[1] * std::numeric_limits<short>::max();
+  input.rightStickX = axes[2] * std::numeric_limits<short>::max();
+  input.rightStickY = -axes[3] * std::numeric_limits<short>::max();
   return input;
 }
 
@@ -428,10 +477,10 @@ static bool ComboButtonReachesHost(const ComboButton& button, uint64_t nowMs) {
 }
 
 // Run the Stream Menu combo of a controller on its physical buttons, open the Stream Menu once Back and Start were held
-// together and alone for kStreamMenuHoldMs, and return the buttons that the host gets: those of the poll, with Back and
-// Start as the combo passes them on. The menu opens once per hold, and a press of Start that came first and already
-// reached the host is released there when the menu opens.
-static int UpdateStreamMenuCombo(int controller, int buttonFlags, int physicalFlags, uint64_t nowMs) {
+// together and alone for kStreamMenuHoldMs, and return which of the physical Back and Start the host gets on this poll
+// (BACK_FLAG and PLAY_FLAG), as the combo passes them on. The menu opens once per hold, and a press of Start that came
+// first and already reached the host is released there when the menu opens.
+static int UpdateStreamMenuCombo(int controller, int physicalFlags, uint64_t nowMs) {
   StreamMenuCombo& combo = streamMenuCombo[controller];
   const bool chord = physicalFlags == STREAM_MENU_BUTTONS;
   // Another button is held, which rules out the combo
@@ -460,7 +509,7 @@ static int UpdateStreamMenuCombo(int controller, int buttonFlags, int physicalFl
     combo.opened = false;
   }
 
-  int flags = buttonFlags & ~STREAM_MENU_BUTTONS;
+  int flags = 0;
   if (ComboButtonReachesHost(combo.back, nowMs)) {
     flags |= BACK_FLAG;
   }
@@ -583,8 +632,9 @@ static void SendScroll(double speedX, double speedY, uint64_t nowMs) {
 
 // Called at the start of every stream with its gamepad settings, before the input polling starts (the native tests also
 // call it to change a setting). It clears the announced flags so arrival is re-sent with updated data, and starts the
-// stream without the mouse emulation, held combos and mouse buttons of the previous stream.
-void MoonlightInstance::HandleGamepadInputState(bool rumbleFeedback, bool mouseEmulation, bool flipABfaceButtons, bool flipXYfaceButtons,
+// stream without the mouse emulation, held combos and mouse buttons of the previous stream. The button mapping comes as
+// the text of controller_mapping.hpp.
+void MoonlightInstance::HandleGamepadInputState(bool rumbleFeedback, bool mouseEmulation, const std::string& buttonMappings,
                                                 uint8_t controllerType) {
   // Force re-announce on next poll so the host gets the updated button map / capabilities
   for (int i = 0; i < kMaxControllers; ++i) {
@@ -606,9 +656,8 @@ void MoonlightInstance::HandleGamepadInputState(bool rumbleFeedback, bool mouseE
   // Store the new settings for use during polling
   rumbleFeedbackSwitch = rumbleFeedback;
   mouseEmulationSwitch = mouseEmulation;
-  flipABfaceButtonsSwitch = flipABfaceButtons;
-  flipXYfaceButtonsSwitch = flipXYfaceButtons;
   controllerTypeSetting = controllerType;
+  controllerMappings = ParseControllerMappings(buttonMappings);
 }
 
 // Function to poll gamepad input
@@ -682,7 +731,8 @@ void MoonlightInstance::PollGamepads() {
     // The type from the setting "Controller type sent to the PC", or the one detected from the id with Auto
     const uint8_t detectedType = GetControllerType(gamepad.id);
     const uint8_t type = controllerTypeSetting != LI_CTYPE_UNKNOWN ? controllerTypeSetting : detectedType;
-    const uint32_t buttons = GetSupportedButtons(gamepad.numButtons, type, flipABfaceButtonsSwitch, flipXYfaceButtonsSwitch);
+    const int mapping = FindControllerMapping(controllerMappings, gamepad.id);
+    const uint32_t buttons = GetSupportedButtons(gamepad.numButtons, type, GetControllerMapping(mapping));
 
     // Only advertise capabilities the browser actually provides
     uint16_t capabilities = (gamepad.numButtons > 7) ? LI_CCAP_ANALOG_TRIGGERS : 0;
@@ -713,6 +763,7 @@ void MoonlightInstance::PollGamepads() {
     if (LiSendControllerArrivalEvent(i, activeGamepadMask, type, buttons, capabilities) == 0) {
       slotState[i].announced = true;
       slotState[i].type = type;
+      slotState[i].mapping = mapping;
       // Send the full state of the new controller on this poll
       sentState[i] = {};
       // Log what the controller reports as separate fields, so a support log shows how the browser maps it (a mapping
@@ -725,6 +776,13 @@ void MoonlightInstance::PollGamepads() {
       }
       MoonlightInstance::ClLogMessage("Controller %d announced: id=\"%s\", mapping=\"%s\", buttons=%d, axes=%d, rumble=%s, type=%s\n",
         i, gamepad.id, gamepad.mapping, gamepad.numButtons, gamepad.numAxes, rumbleState, typeText.c_str());
+      // Say which button mapping of the setting "Button mapping" it got, if any
+      const ControllerMapping* buttonMapping = GetControllerMapping(mapping);
+      if (buttonMapping) {
+        MoonlightInstance::ClLogMessage("Controller %d uses the button mapping %s%s\n", i,
+          buttonMapping->id == kAllControllersId ? "of all controllers" : "of its own",
+          (buttonMapping->sticks[0].valid || buttonMapping->sticks[1].valid) ? ", with a stick calibration" : "");
+      }
     }
   }
 
@@ -763,26 +821,24 @@ void MoonlightInstance::PollGamepads() {
     }
 
     // Process input for active gamepad
-    inputs[gamepadID] = ReadControllerInput(events[gamepadID], slotState[gamepadID].type);
     hasInput[gamepadID] = true;
-    // While the Stream Menu is open, its buttons belong to the menus of the UI
+    // While the Stream Menu is open, its buttons belong to the menus of the UI, and the host gets nothing of them
     if (paused) {
       continue;
     }
-    ControllerInput& input = inputs[gamepadID];
-    const int physicalFlags = input.physicalFlags;
+    const EmscriptenGamepadEvent& event = events[gamepadID];
+    const int physicalFlags = GetButtonFlags(event, slotState[gamepadID].type);
 
     // The buttons that were held when the Stream Menu closed reach the host once they were released and pressed again
     if (resumed) {
-      heldSinceMenu[gamepadID] = input.buttonFlags;
+      heldSinceMenu[gamepadID] = physicalFlags;
     }
-    heldSinceMenu[gamepadID] &= input.buttonFlags;
-    input.buttonFlags &= ~heldSinceMenu[gamepadID];
+    heldSinceMenu[gamepadID] &= physicalFlags;
     // The physical buttons without Back and Start held since then, which mustn't count as a new combo or hold either
     const int liveFlags = physicalFlags & ~(heldSinceMenu[gamepadID] & STREAM_MENU_BUTTONS);
 
-    // Check the button combinations on the physical buttons, before the A/B and X/Y swaps, so they are the same with
-    // every swap setting (the Navigation Guide documents them in the Xbox layout: A bottom, X left)
+    // Check the button combinations on the physical buttons, before the button mapping, so they are the same with every
+    // mapping (the Navigation Guide documents them in the Xbox layout: A bottom, X left)
     if (physicalFlags == STOP_STREAM_BUTTONS) {
       // Terminate the connection
       stopStream();
@@ -800,10 +856,17 @@ void MoonlightInstance::PollGamepads() {
     }
 
     // Open the Stream Menu with a hold of Back + Start, which the host doesn't get
-    input.buttonFlags = UpdateStreamMenuCombo(gamepadID, input.buttonFlags, liveFlags, nowMs);
+    const int comboFlags = UpdateStreamMenuCombo(gamepadID, liveFlags, nowMs);
 
     // Toggle mouse emulation on and off based on how long the PLAY/START button is pressed
     UpdateMouseEmulationToggle(gamepadID, liveFlags, nowMs);
+
+    // The physical buttons that the host gets: not those held since the Stream Menu closed, Back and Start as the combo
+    // passes them on, and not the hold of Start that toggled the mouse emulation until Start is released, so turning
+    // the mouse emulation off doesn't press Start in the game. Then the button mapping of the controller.
+    const int startHeld = mouseEmulationHold[gamepadID].toggled ? PLAY_FLAG : 0;
+    inputs[gamepadID] = ReadControllerInput(event, slotState[gamepadID].type, GetControllerMapping(slotState[gamepadID].mapping),
+                                            physicalFlags & ~heldSinceMenu[gamepadID], comboFlags & ~startHeld);
   }
 
   if (paused) {
@@ -863,9 +926,7 @@ void MoonlightInstance::PollGamepads() {
 
       SentControllerState state;
       state.activeGamepadMask = activeGamepadMask;
-      // The host doesn't get the hold of Start that toggled the mouse emulation until Start is released, so turning the
-      // mouse emulation off doesn't press Start in the game
-      state.buttonFlags = mouseEmulationHold[gamepadID].toggled ? (input.buttonFlags & ~PLAY_FLAG) : input.buttonFlags;
+      state.buttonFlags = input.buttonFlags;
       state.leftTrigger = static_cast<unsigned char>(input.leftTrigger);
       state.rightTrigger = static_cast<unsigned char>(input.rightTrigger);
       state.leftStickX = static_cast<short>(input.leftStickX);

@@ -122,12 +122,21 @@ const CUSTOMIZED_SETTINGS = {
   optimizeBitrate: true,
   autoAdjustBitrate: true,
   ipAddressFieldMode: false,
-  sortAppsList: true,
+  sortAppsList: 'recent',
   optimizeGames: true,
   rumbleFeedback: true,
   mouseEmulation: true,
-  flipABfaceButtons: true,
-  flipXYfaceButtons: true,
+  controllerMappings: {
+    version: 1,
+    controllers: {
+      '*': { name: '', buttons: [1, 0, 3, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] },
+      'Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product': {
+        name: 'Xbox Wireless Controller',
+        buttons: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 14],
+        sticks: [{ centreX: 0.05, centreY: -0.02, minX: -0.9, maxX: 0.88, minY: -0.92, maxY: 0.95 }, null],
+      },
+    },
+  },
   controllerType: 'PlayStation',
   audioBackend: 'WebAudio',
   audioConfig: '51Surround',
@@ -141,17 +150,18 @@ const CUSTOMIZED_SETTINGS = {
   hdrMetadata: true,
   disableWarnings: true,
   performanceStats: 1,
+  statsPosition: 'bottom-right',
 };
 
 // The other settings after Restore Defaults, as shown and as stored
 const DEFAULT_OTHER_SETTINGS = {
   ipAddressFieldMode: true,
-  sortAppsList: false,
+  sortAppsList: 'az',
   optimizeGames: false,
   rumbleFeedback: false,
   mouseEmulation: false,
-  flipABfaceButtons: false,
-  flipXYfaceButtons: false,
+  // Every button presses itself again, and no stick is calibrated
+  controllerMappings: { version: 1, controllers: {} },
   controllerType: 'Auto',
   audioBackend: 'EMSS',
   audioConfig: 'Stereo',
@@ -166,6 +176,7 @@ const DEFAULT_OTHER_SETTINGS = {
   hdrMetadata: false,
   disableWarnings: false,
   performanceStats: 0,
+  statsPosition: 'top-left',
 };
 
 // The video settings the settings screen shows on a fresh install, after the button and after Restore Defaults. The
@@ -314,6 +325,8 @@ for (const tvName of Object.keys(TVS)) {
           if (tv.storedGameMode !== undefined) {
             assert.equal(loaded.gameMode, !tv.storedGameMode);
           }
+          // The stored button mapping is loaded as it is
+          assert.deepEqual((await readOtherSettings(app.page)).controllerMappings, CUSTOMIZED_SETTINGS.controllerMappings);
 
           await app.page.evaluate(() => $('#restoreDefaultsBtn').trigger('click'));
           await app.page.evaluate(() => $('#continueRestoreDefaults').trigger('click'));

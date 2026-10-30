@@ -92,7 +92,7 @@ test('config.xml has a numeric x.y.z version that Tizen accepts', () => {
   assert.ok(match, 'version ' + version + ' is not x.y.z');
   // The limits believed to apply to Tizen widget versions (plan A10): x and y up to 255, z up to 65535
   assert.ok(Number(match[1]) <= 255 && Number(match[2]) <= 255 && Number(match[3]) <= 65535, version);
-  assert.equal(version, '2.0.0');
+  assert.equal(version, '2.1.0');
 });
 
 test('the header of the app shows the display name of config.xml, translated through its own locale key', () => {

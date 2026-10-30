@@ -1,4 +1,5 @@
 #include "moonlight_wasm.hpp"
+#include "text_input.hpp"
 
 #include <Limelight.h>
 
@@ -218,10 +219,14 @@ void MoonlightInstance::ReportMouseMovement() {
   }
 
   const int32_t milliTicks = m_AccumulatedMilliTicks.exchange(0);
-  if (milliTicks != 0) {
-    // We can have fractional ticks here, so multiply by WHEEL_DELTA
-    // to get actual scroll distance and use the high-res variant.
-    LiSendHighResScrollEvent(ClampToShort(static_cast<int64_t>(milliTicks) * 5 / 1000));
+  // We can have fractional ticks here, so multiply by WHEEL_DELTA to get actual scroll distance and use the high-res
+  // variant. More scrolling than a packet holds (over 6553 ticks, e.g. after the input thread was held up) goes out in
+  // several packets like a large movement, instead of being cut at 16 bits.
+  int64_t scroll = static_cast<int64_t>(milliTicks) * 5 / 1000;
+  while (scroll != 0) {
+    const short amount = ClampToShort(scroll);
+    LiSendHighResScrollEvent(amount);
+    scroll -= amount;
   }
 }
 
@@ -258,6 +263,14 @@ void sendKeyboardEvent(uint32_t keyCode, uint16_t action, char modifiers) {
   LiSendKeyboardEvent(KEY_PREFIX << 8 | keyCode, action, modifiers);
 }
 
+// Send a text that the user typed on the TV to the host as Unicode text (wasm/text_input.hpp), whole or not at all.
+// JavaScript calls it as Module.sendText(text) on the main thread during a stream; LiSendUtf8TextEvent() only queues the
+// text for the input thread. Returns a TextInputResult. The text can be a password, so it is never logged.
+int sendText(std::string text) {
+  return SendTextInput(text, LiSendUtf8TextEvent);
+}
+
 EMSCRIPTEN_BINDINGS(input) {
   emscripten::function("sendKeyboardEvent", &sendKeyboardEvent);
+  emscripten::function("sendText", &sendText);
 }

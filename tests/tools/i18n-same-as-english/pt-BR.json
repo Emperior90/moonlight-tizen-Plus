@@ -50,6 +50,22 @@
     "Tizen %1$s",
     "Ethernet",
     "Wi-Fi",
-    "Mono"
+    "Mono",
+    "LB",
+    "RB",
+    "LT",
+    "RT",
+    "LS",
+    "RS",
+    "%1$s min %2$s s",
+    "%1$s s",
+    "Guide",
+    "Gamepad %1$s: %2$s",
+    "RETURN",
+    "PLAY/PAUSE",
+    "SELECT",
+    "START",
+    "SELECT + START + LB + RB",
+    "SELECT + LB + RB + X"
   ]
 }

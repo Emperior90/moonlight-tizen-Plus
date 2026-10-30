@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const { REPO_ROOT } = require('../lib/dev-modules');
 const { readCodePoints } = require('./helpers/woff2');
+const { readAppLocales } = require('../tools/i18n-check');
 
 const read = (file) => fs.readFileSync(path.join(REPO_ROOT, file), 'utf8');
 // The stylesheets of this app (material.min.css is the unchanged library of Material Design Lite)
@@ -126,7 +127,8 @@ test('the icons are symbols of one sprite on a 24 px grid, referenced with xlink
   symbols.forEach((symbol) => assert.equal(symbol.viewBox, '0 0 24 24', symbol.id));
   // Every reference in the page and in the scripts uses xlink:href (Chromium 69 also knows href, older SVG code only
   // xlink:href) and names a symbol of the sprite
-  const sources = [INDEX_HTML, 'wasm/platform/index.js', 'wasm/platform/launcher.js', 'wasm/platform/menus.js'];
+  const sources = [INDEX_HTML, 'wasm/platform/index.js', 'wasm/platform/launcher.js', 'wasm/platform/menus.js',
+    'wasm/platform/button_mapping.js', 'wasm/platform/input_test.js', 'wasm/platform/diagnostics.js'];
   sources.forEach((file) => {
     const text = read(file).replace(/<!--[\s\S]*?-->/g, '');
     const uses = text.match(/<use\b[^>]*>/g) || [];
@@ -189,12 +191,16 @@ test('the Manrope face lists exactly the characters of its font file, and that f
   const hex = (c) => 'U+' + c.toString(16).toUpperCase().padStart(4, '0');
   assert.deepEqual(Array.from(range).filter((c) => c >= 0x20 && !font.has(c)).map(hex), []);
   assert.deepEqual(Array.from(font).filter((c) => c >= 0x20 && !range.has(c)).map(hex), []);
-  // The texts of the page and of both languages
+  // The texts of the page and of every language
   const texts = [read(INDEX_HTML).replace(/<[^>]*>/g, ' ')];
-  ['en-US', 'pt-BR'].forEach((locale) => {
-    const messages = JSON.parse(read('wasm/static/locales/' + locale + '.json'));
+  const locales = fs.readdirSync(path.join(REPO_ROOT, 'wasm/static/locales')).filter((name) => name.endsWith('.json'));
+  assert.ok(locales.length >= 3, locales.join(' '));
+  locales.forEach((name) => {
+    const messages = JSON.parse(read('wasm/static/locales/' + name));
     Object.keys(messages).forEach((key) => texts.push(messages[key].replace(/<[^>]*>/g, ' ')));
   });
+  // and the names of the languages in the language menu
+  readAppLocales(read('wasm/platform/i18n.js')).forEach((locale) => texts.push(locale.name));
   const missing = new Set();
   texts.join(' ').replace(/&[a-z]+;|&#\d+;/g, ' ').split('').forEach((character) => {
     const c = character.codePointAt(0);

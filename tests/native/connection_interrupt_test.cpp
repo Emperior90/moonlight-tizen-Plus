@@ -2,14 +2,17 @@
 // (wasm/connectionlistener.cpp): CancelPendingSetup(), which StopConnection() and a termination by the host call, sets
 // the interrupt flag of LiInterruptConnection(), so that LiStartConnection gives up at its next step instead of setting
 // up the whole stream. LiStartConnection clears that flag when it begins (Connection.c), so a stop that came before
-// would be lost; ClStageStarting(), which runs for every stage after that, sets it again. connectionlistener.cpp is
-// included directly; the functions below stand in for moonlight-common-c and the rest of the module.
+// would be lost; ClStageStarting(), which runs for every stage after that, sets it again. It also checks that every line
+// that the module logs with ClLogMessage() goes into the ring of the diagnostic log (wasm/diagnostic_log.hpp), from which
+// the front end takes it. connectionlistener.cpp is included directly; the functions below stand in for
+// moonlight-common-c and the rest of the module.
 
 #include "../../wasm/connectionlistener.cpp"
 
 #include "test_support.h"
 
 #include <cstring>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -96,10 +99,35 @@ static void TestNoInterruptWithoutAStop() {
   CHECK_EQ(posted.size(), 2u);
 }
 
+static void TestLoggedLinesGoIntoTheDiagnosticLog() {
+  GetDiagnosticLog().Take();
+  const uint64_t before = DiagnosticLogNowMs();
+  MoonlightInstance::ClLogMessage("Starting %s on port %d\n", "RTSP handshake", 48010);
+  MoonlightInstance::ClLogMessage("Video stream is %dx%dx%d (format 0x%x)\n", 3840, 2160, 60, 0x100);
+  const uint64_t after = DiagnosticLogNowMs();
+  // One record "<time>\t<text>\n" per line, with the wall clock of the line and without the line break of the message
+  std::vector<std::string> texts;
+  std::istringstream records(GetDiagnosticLog().Take());
+  std::string record;
+  while (std::getline(records, record)) {
+    const size_t tab = record.find('\t');
+    CHECK(tab != std::string::npos);
+    const uint64_t time = std::stoull(record.substr(0, tab));
+    CHECK(time >= before && time <= after);
+    texts.push_back(record.substr(tab + 1));
+  }
+  CHECK_EQ(texts.size(), 2u);
+  CHECK_EQ(texts[0], std::string("Starting RTSP handshake on port 48010"));
+  CHECK_EQ(texts[1], std::string("Video stream is 3840x2160x60 (format 0x100)"));
+  const std::string rest = GetDiagnosticLog().Take();
+  CHECK_EQ(rest, std::string());
+}
+
 int main() {
   test_support::RunTest("a stop during the connection setup interrupts it", TestStopDuringTheSetupInterruptsIt);
   test_support::RunTest("a stop before LiStartConnection cleared the interrupt flag is not lost",
                         TestStopBeforeTheSetupBeganIsNotLost);
   test_support::RunTest("without a stop the setup is not interrupted", TestNoInterruptWithoutAStop);
+  test_support::RunTest("the lines that the module logs go into the diagnostic log", TestLoggedLinesGoIntoTheDiagnosticLog);
   return test_support::Summary();
 }

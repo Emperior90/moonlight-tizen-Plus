@@ -8,6 +8,72 @@ var SMART_HUB_PREVIEW_FILE_PREFIX = 'preview-s90c-';
 // reports as error 599 as well
 var QUIT_APP_STILL_RUNNING_ERROR = 599;
 
+// Box art shares the one HTTP thread of the module with every other request, where it waits behind them (sendMessage()
+// in messages.js). Opening a host with a cold cache asks for the box art of every app, so at most two downloads are on
+// their way at once, in the order of the app list; a download that is no longer wanted (its app list was left or built
+// again) is dropped before it reaches the network, and cancelBoxArtDownloads() drops them all when a stream starts.
+// Ported from the fork of mmadej20 (moonlight-tizen-modern, GPL-3.0, createRequestLimiter() of f4eff8e).
+var BOX_ART_MAX_DOWNLOADS = 2;
+// The error of a box art download that was dropped or canceled
+var BOX_ART_DOWNLOAD_DROPPED = 'BOX_ART_DOWNLOAD_DROPPED';
+
+// A queue that runs at most maxRunning requests at once: run(start, isStale) calls start() for the request (which
+// returns its promise) once a place is free, unless isStale() then says that it is no longer wanted
+function createRequestLimiter(maxRunning) {
+  var waiting = [];
+  var running = 0;
+
+  function pump() {
+    while (running < maxRunning && waiting.length > 0) {
+      var entry = waiting.shift();
+      if (entry.isStale && entry.isStale()) {
+        entry.reject(BOX_ART_DOWNLOAD_DROPPED);
+        continue;
+      }
+      running++;
+      var release = function(settleWith, value) {
+        running--;
+        settleWith(value);
+        pump();
+      };
+      var request;
+      try {
+        request = Promise.resolve(entry.start());
+      } catch (error) {
+        request = Promise.reject(error);
+      }
+      request.then(release.bind(null, entry.resolve), release.bind(null, entry.reject));
+    }
+  }
+
+  return {
+    run: function(start, isStale) {
+      return new Promise(function(resolve, reject) {
+        waiting.push({ start: start, isStale: isStale, resolve: resolve, reject: reject });
+        pump();
+      });
+    },
+    // Drop the requests that wait
+    dropWaiting: function() {
+      waiting.splice(0).forEach(function(entry) {
+        entry.reject(BOX_ART_DOWNLOAD_DROPPED);
+      });
+    },
+  };
+}
+
+var boxArtDownloads = createRequestLimiter(BOX_ART_MAX_DOWNLOADS);
+
+// Drop the box art downloads that wait and cancel the ones on their way, e.g. when a stream starts (showStreamMode() in
+// index.js): the requests that start it would wait behind them
+function cancelBoxArtDownloads() {
+  boxArtDownloads.dropWaiting();
+  if (typeof dropBoxArtRequests === 'function') {
+    var dropped = dropBoxArtRequests(BOX_ART_DOWNLOAD_DROPPED);
+    console.log('%c[utils.js, cancelBoxArtDownloads]', 'color: gray;', 'Dropped the box art downloads (' + dropped + ' in the HTTP queue).');
+  }
+}
+
 // Safely wraps IPv6 addresses in brackets for URL construction.
 // IPv4 addresses and DNS hostnames do not contain colons, so they are untouched.
 function formatAddressForUrl(address) {
@@ -612,10 +678,17 @@ NvHTTP.prototype = {
       var appList = [];
 
       for (var i = 0, len = appElements.length; i < len; i++) {
-        appList.push({
+        var app = {
           id: parseInt(appElements[i].getElementsByTagName('ID')[0].textContent.trim(), 10),
           title: appElements[i].getElementsByTagName('AppTitle')[0].textContent.trim(),
-        });
+        };
+        // Apollo and Vibepollo also name each app by a UUID, which marks their control tiles (isHostTerminateTile() in
+        // index.js)
+        var uuidElement = appElements[i].getElementsByTagName('UUID')[0];
+        if (uuidElement && uuidElement.textContent.trim()) {
+          app.uuid = uuidElement.textContent.trim();
+        }
+        appList.push(app);
       }
 
       this._memCachedApplist = appList;
@@ -640,7 +713,9 @@ NvHTTP.prototype = {
   // Returns the original PNG box art based on the the given app Id and generates an optimized JPEG preview when Smart Hub Preview is supported.
   // The original PNG box art is stored in private storage, while the optimized JPEG preview is generated and stored asynchronously,
   // in the public documents directory so that the Smart Hub Preview background service process can access it directly.
-  getBoxArt: function(appId, isSmartHubSupported) {
+  // A download from the host waits for a place among the box art downloads (boxArtDownloads), and is dropped with
+  // BOX_ART_DOWNLOAD_DROPPED if isStale() says by then that the box art is no longer wanted.
+  getBoxArt: function(appId, isSmartHubSupported, isStale) {
     return new Promise(function(resolve, reject) {
       // Store the original PNG box art in the private directory
       var boxArtDir = 'wgt-private/' + this.hostname;
@@ -650,9 +725,11 @@ NvHTTP.prototype = {
       
       var fetchBoxArt = function() {
         // Fetch the new box art from the network
-        sendMessage('openUrl', [
-          self._baseUrlHttps + '/appasset?' + self._buildUidStr() + '&appid=' + appId + '&AssetType=2&AssetIdx=0', self.ppkstr, true
-        ]).then(function(boxArtBuffer) {
+        boxArtDownloads.run(function() {
+          return sendMessage('openUrl', [
+            self._baseUrlHttps + '/appasset?' + self._buildUidStr() + '&appid=' + appId + '&AssetType=2&AssetIdx=0', self.ppkstr, true
+          ]);
+        }, isStale).then(function(boxArtBuffer) {
           // Convert the binary response into a Blob so it can be converted to a data URL
           var blob = new Blob([boxArtBuffer], { type: 'image/png' });
           var reader = new FileReader();
@@ -705,7 +782,11 @@ NvHTTP.prototype = {
 
           reader.readAsDataURL(blob);
         }, function(error) {
-          console.error('%c[utils.js, getBoxArt]', 'color: gray;', 'Error: Failed to retrieve original box art from network: ', error);
+          if (error === BOX_ART_DOWNLOAD_DROPPED) {
+            console.log('%c[utils.js, getBoxArt]', 'color: gray;', 'Dropped the box art download of app ID ' + appId + '.');
+          } else {
+            console.error('%c[utils.js, getBoxArt]', 'color: gray;', 'Error: Failed to retrieve original box art from network: ', error);
+          }
           reject(error);
         });
       };

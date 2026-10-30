@@ -1,8 +1,8 @@
 // Checks the mouse movement and wheel of a stream in wasm/input.cpp, which two threads share: the main thread adds the
 // movements and wheel ticks up (HandleMouseMove(), HandleWheel()) while the input thread sends and resets them every
 // 5 ms (ReportMouseMovement()). With plain fields, a movement that arrived between the read and the reset of the input
-// thread was lost; with atomic exchanges every movement reaches the host. A movement beyond the 16 bits of a packet
-// goes out in several packets instead of wrapping around. input.cpp is included directly; the functions below stand in
+// thread was lost; with atomic exchanges every movement reaches the host. A movement or a scroll beyond the 16 bits of a
+// packet goes out in several packets instead of wrapping around or being cut off. input.cpp is included directly; the functions below stand in
 // for moonlight-common-c and add up what it sends.
 
 #include "../../wasm/input.cpp"
@@ -19,6 +19,7 @@ static long long sentX = 0;
 static long long sentY = 0;
 static long long sentScroll = 0;
 static std::vector<short> moves;
+static std::vector<short> scrolls;
 
 MoonlightInstance* g_Instance = nullptr;
 
@@ -36,6 +37,10 @@ int LiSendMouseMoveEvent(short deltaX, short deltaY) {
 }
 int LiSendHighResScrollEvent(short amount) {
   sentScroll += amount;
+  scrolls.push_back(amount);
+  return 0;
+}
+int LiSendUtf8TextEvent(const char*, unsigned int) {  // sendText(), which text_input_test.cpp checks
   return 0;
 }
 void MoonlightInstance::ClLogMessage(const char*, ...) {}
@@ -56,6 +61,7 @@ static void Reset() {
   Instance()->ReportMouseMovement();
   sentX = sentY = sentScroll = 0;
   moves.clear();
+  scrolls.clear();
 }
 
 static EmscriptenMouseEvent Move(long x, long y) {
@@ -134,10 +140,32 @@ static void TestWheelKeepsItsAmount() {
   CHECK(moves.empty());
 }
 
+static void TestLargeScrollGoesOutInSeveralPackets() {
+  // More wheel ticks than the 16 bits of a packet hold (6553 ticks of 5), e.g. after the input thread was held up while
+  // the main thread went on adding them, which the test above can meet on a busy machine: nothing is cut off
+  Reset();
+  for (int i = 0; i < 7000; ++i) {
+    Instance()->HandleWheel(Wheel(-1));
+  }
+  Instance()->ReportMouseMovement();
+  CHECK_EQ(sentScroll, 35000LL);
+  const std::vector<short> up = { 32767, 2233 };
+  CHECK(scrolls == up);
+  Reset();
+  for (int i = 0; i < 14000; ++i) {
+    Instance()->HandleWheel(Wheel(1));
+  }
+  Instance()->ReportMouseMovement();
+  CHECK_EQ(sentScroll, -70000LL);
+  const std::vector<short> down = { -32768, -32768, -4464 };
+  CHECK(scrolls == down);
+}
+
 int main() {
   test_support::RunTest("no mouse movement or wheel tick is lost between the main and the input thread",
                         TestNoMovementIsLostBetweenTheThreads);
   test_support::RunTest("a movement beyond 16 bits goes out in several packets", TestLargeMovementGoesOutInSeveralPackets);
   test_support::RunTest("the wheel keeps its amount and direction", TestWheelKeepsItsAmount);
+  test_support::RunTest("a scroll beyond 16 bits goes out in several packets", TestLargeScrollGoesOutInSeveralPackets);
   return test_support::Summary();
 }

@@ -17,7 +17,7 @@ How to read it:
 5. [Finding your bitrate](#5-finding-your-bitrate)
 6. [System information](#6-system-information)
 7. [Performance statistics](#7-performance-statistics)
-8. [Host settings (Sunshine)](#8-host-settings-sunshine)
+8. [Host settings (Sunshine)](#8-host-settings-sunshine), with [Apollo and Vibepollo](#apollo-and-vibepollo)
 9. [ForceGM variant and game mode](#9-forcegm-variant-and-game-mode)
 10. [HDR](#10-hdr)
 11. [Audio](#11-audio), with [surround sound with a soundbar](#surround-sound-with-a-soundbar)
@@ -27,6 +27,8 @@ How to read it:
 15. [Updating from the earlier release v1.19.0-s90c.1](#15-updating-from-the-earlier-release-v1190-s90c1)
 16. [Stream Menu and app menu](#16-stream-menu-and-app-menu)
 17. [The screens of the app](#17-the-screens-of-the-app)
+18. [Language](#18-language)
+19. [Input test and button mapping](#19-input-test-and-button-mapping)
 
 ## 1. Requirements
 
@@ -146,7 +148,7 @@ A higher bitrate gives a sharper picture in fast motion until the network or the
    - *Session recovery keyframes* stays at 0
    - *Rendering frame rate* stays at the chosen frame rate
    - the sound has no dropouts (with Web Audio: the *underruns* of the *Audio session* line stay at 0)
-5. If it passes, end the stream and raise the bitrate by about 15 to 20 %. In the bitrate menu, UP and DOWN change it in 5 Mbps steps, LEFT and RIGHT in 0.5 Mbps steps. Start a new stream for every step, since the bitrate only changes when a stream starts.
+5. If it passes, raise the bitrate by about 15 to 20 %. In the bitrate menu, UP and DOWN change it in 5 Mbps steps, LEFT and RIGHT in 0.5 Mbps steps; start a new stream for every step, since the bitrate only changes when a stream starts. Faster: *Bitrate* in the [Stream Menu](#16-stream-menu-and-app-menu) changes it in 5 Mbps steps and reconnects the stream with it, without quitting the game.
 6. Stop at the end of the ladder of your TV class (see the table), or at the first step that fails.
 7. Use the highest step that passed, or one step below it to keep some headroom.
 
@@ -161,7 +163,7 @@ If a long session stutters after a while, note the time and the lines above: the
 
 ## 6. System information
 
-Settings → About → *System information* shows what the app detected. A photo of this screen is the most useful part of a bug report.
+Settings → About → *System information* shows what the app detected. A photo of this screen is the most useful part of a bug report. When its lines don't fit on the screen (e.g. with the report of the last session and several controllers), UP and DOWN scroll them while it is selected: take a photo of the top and one of the end.
 
 | Line | Meaning |
 |---|---|
@@ -178,20 +180,29 @@ Settings → About → *System information* shows what the app detected. A photo
 | Video decoders (MediaSource check) | What the browser of the TV answers for H.264, HEVC, HEVC Main10, AV1 and AV1 Main10. The answers only count when the browser also rejects a made-up codec and accepts H.264; otherwise the line says Unknown. |
 | Video decoders at level 5.2 (4K above 60 FPS) | The same check at level 5.2, which 4K streams above 60 FPS use |
 | Gamepad N | Each connected controller: name, standard or non-standard layout, buttons, axes, rumble support and the controller type sent to the PC. When the setting *Controller type sent to the PC* overrides the detection, the detected type follows, e.g. *PlayStation (setting, detected: Xbox)* (see [CONTROLLERS.md](CONTROLLERS.md)). |
+| Last session | The totals of the last stream since the app started, after an empty line: its length, codec, resolution, frame rate and bitrate; the frames lost on the network; the frames the TV dropped, the resets of the video pipeline and the keyframes the host sent to recover; the losses that error correction (FEC) repaired or couldn't; the WASM heap at its end. Then 1 to 3 hints in plain language, e.g. *Many frames were lost on the network: use a cable or lower the bitrate.*, or *No problems found in this session.* The report is kept in memory only, so it is gone after a restart. |
 
 When the decoder check counts and says No for AV1, the codec menu labels AV1 "may not be supported by this TV". It stays selectable, because the check was only tested in simulations, not on real TVs.
+
+### Diagnostic log
+
+Settings → About → *Diagnostic log* shows the log of the app for this session and the one before, oldest first: the lines of the app and the lines of its streaming engine, by their time. A session starts with the app and with each stream (a start once more of the same stream stays in its session). UP and DOWN scroll, OK or RETURN close it.
+
+- The log is kept only in the memory of the TV, at most 600 lines per session. It is never written to a file or sent anywhere; it leaves the TV only if you take a photo of it.
+- The PIN, the remote input keys, the unique ID of the TV, the private key of its pairing certificate and the RTSP address of a stream are hidden (*&lt;hidden&gt;*).
+- If Moonlight ended during a stream the last time (a crash, a freeze that you ended, or the TV was switched off), the next start says so once. The log of that session is gone, since it was in memory only, but the notice tells you that it happened; describe what you saw in the report.
 
 ## 7. Performance statistics
 
 Choose the level in Settings → Advanced Settings → *Performance statistics*: *Off*, *Compact* or *Full*. In the stream, the YELLOW key steps *Off* → *Compact* → *Full* → *Off*, and so do the controller combo Select + LB + RB + X, Ctrl + Alt + Shift + S on a keyboard and *Performance statistics* in the [Stream Menu](#16-stream-menu-and-app-menu). The setting keeps the last level for the next stream.
 
-**Compact** shows one line at the top left of the picture, e.g.:
+**Compact** shows one line at the top left of the picture, or in the corner chosen in Settings → Advanced Settings → *Statistics position* (top left, top right, bottom left or bottom right, for both levels; at the top right the connection warnings move to the top left), e.g.:
 
 `4K60 HEVC HDR · 59.9 fps · 74 Mb/s · RTT 3 ms · Net drops 0.1% · Wait+pacing 6.3 ms`
 
 That is the stream as set up, the frames handed to the video player of the TV per second, the bitrate that arrives, the round-trip time to the host, the share of frames lost on the network in the last two seconds, and the *Average frame wait time* plus the *Average frame pacing delay* of the full statistics. A figure that isn't known yet is left out.
 
-**Full** shows every line below. Some lines only appear when they have something to say.
+**Full** shows every line below. Some lines only appear when they have something to say. Above them, a slim graph shows the last 60 seconds: one bar per second for the round-trip time to the host, green below 5 ms, yellow from 5 ms, orange from 10 ms and red from 20 ms (grey while it isn't known), on a scale of 0–25 ms that grows with the highest value, and a red mark above every second in which frames were lost on the network. A gap means that no frames arrived in that second. The graph starts again when the level changes.
 
 **Stream and host**
 
@@ -269,6 +280,14 @@ The values below are the defaults from the [Sunshine configuration documentation
 
 - Defaults: `qsv_preset` = `medium` (from `veryfast` to `veryslow`), `qsv_slow_hevc` off.
 - A slower preset trades encoding time for quality.
+
+### Apollo and Vibepollo
+
+Apollo and Vibepollo are hosts based on Sunshine that keep permissions for each paired device and add control tiles to the app list. Moonlight Plus pairs and streams with them like with Sunshine. This part is untested with a real Apollo or Vibepollo host: it describes what the app does with the answers that their source code gives.
+
+- **Permissions.** Apollo gives full permissions only to the first device paired with it, and a device paired later may only see the apps and watch streams. When the app list of the host shows a single tile *Permission Denied*, or the host answers a start with "Permission denied", Moonlight Plus starts nothing and shows *Permission needed* with what to allow. In the web UI of Apollo, open *PIN* → *Device Management* (in Vibepollo *Client Management*), select this TV and allow *List Apps*, *Launch Apps* and the input permissions it needs (*Controller Input*, *Keyboard Input*, *Mouse Input*). A TV that was paired without a device name shows as *Legacy Moonlight Client* there. Then open the host again.
+- **Control tiles.** While an app runs, Apollo with its input-only mode lists *Remote Input* and *Terminate* next to it. *Terminate* ends the running app on the host: Moonlight Plus starts it without asking to quit the running app first, and shows "… ended the running app." instead of the "Error 410: App terminated." of earlier versions. When Vibepollo asks to launch a tile or an app again within 60 seconds to confirm, the app shows that message of the host; press OK on the tile again to confirm.
+- **Order of the apps.** Apollo can put the apps in an order of your choice in its web UI. Choose *As on the host* under Settings → Host Settings → *Sort the list of apps* to see them in that order (see [section 16](#16-stream-menu-and-app-menu)).
 
 ## 9. ForceGM variant and game mode
 
@@ -389,12 +408,14 @@ The app ends a failed stream with a message instead of a frozen or black picture
 | "Stop the current stream first (RED button)." | A Smart Hub tile was opened during a stream. |
 | "The host PC can't encode the selected codec, so the stream uses HEVC instead." | The host has no encoder for the selected codec (e.g. AV1). |
 | "… has a non-standard button layout …" | See [CONTROLLERS.md](CONTROLLERS.md). |
+| "Moonlight ended during the last stream, …" | The app ended during the last stream without closing it (see [Diagnostic log](#diagnostic-log)). If it happens again, note what was on the screen and report it with System information. |
 | "Error: The PIN entered on … was wrong." | The PC answered the pairing without proof that it knows the PIN, so Moonlight Plus stopped before it trusts the PC. Usually the PIN was mistyped in the web interface of Sunshine. Pair again and enter the new PIN. |
 | "Failed to send Wake-on-LAN request to …!" | Some TVs can't send the request at all (e.g. "Failed to create socket"). Wake the PC with another device instead, e.g. a Wake-on-LAN app on a phone. "The PC hasn't reported its MAC address" means the app never got it: the PC reports it only to a paired TV, so pair it and let the app reach it once while the PC is on. While the *Wake PC* dialog waits, it sends the request again every 10 seconds and closes once the PC answers. |
 
 Other problems:
 
-- **Play/Pause doesn't open the Stream Menu:** some TVs may not pass the key to apps (untested). Hold Select + Start on a controller for 1 second instead; RED and YELLOW keep working.
+- **Play/Pause doesn't open the Stream Menu:** some TVs may not pass the key to apps (untested). Hold Select + Start on a controller for 1 second instead; RED and YELLOW keep working. Settings → Input Settings → *Input test* shows whether the key reaches the app and whether Moonlight registered it ([CONTROLLERS.md](CONTROLLERS.md#9-input-test)).
+- **A button of a controller does the wrong thing in games:** change it in Settings → Input Settings → *Button mapping*; a worn stick that drifts or doesn't reach the edge can be calibrated there ([CONTROLLERS.md](CONTROLLERS.md#8-button-mapping-and-stick-calibration)).
 - **An app is missing from the app list:** it may be hidden. Open the menu of any app (CH+ or Play/Pause) and choose *Show hidden apps* (see [section 16](#16-stream-menu-and-app-menu)).
 - **The PC isn't in the list, or it got a new IP address:** press UP in the host list and select *Rescan network* (the circular arrow, the first round button of the header) to search the local network again. The app searches for hosts on its own at startup.
 - **The picture freezes on Tizen 9.0 or newer:** turn the *Game mode* switch off, and use the ForceGM variant for the Game Mode of the TV.
@@ -403,7 +424,7 @@ Other problems:
 - **Crackling sound with EMSS:** lower the bitrate by one step, or switch to Web Audio.
 - **Stutter after some time:** look at the session totals of the performance statistics at that moment (see [section 7](#7-performance-statistics)).
 
-Still stuck? Open an issue on the [issue tracker of this fork](https://github.com/Emperior90/moonlight-tizen-Plus/issues) with a photo of System information. Please don't report problems with Moonlight Plus to the upstream Moonlight Tizen project.
+Still stuck? Open an issue on the [issue tracker of this fork](https://github.com/Emperior90/moonlight-tizen-Plus/issues) with a photo of System information (with the report of the last session) and, if it helps, of the end of the [diagnostic log](#diagnostic-log). Please don't report problems with Moonlight Plus to the upstream Moonlight Tizen project.
 
 ## 15. Updating from the earlier release v1.19.0-s90c.1
 
@@ -418,13 +439,15 @@ The earlier release of this fork, v1.19.0-s90c.1 (shown on the TV as *Moonlight 
 | Resume | Returns to the game |
 | Performance statistics | Steps the [statistics](#7-performance-statistics) through *Off*, *Compact* and *Full*, like YELLOW. The menu stays open and shows the level. |
 | Mouse emulation | Only shows with a controller connected. Switches the [mouse mode](CONTROLLERS.md#7-mouse-emulation) of the controllers on or off, also when the setting *Mouse emulation* is off (the setting only allows the hold of Start). |
+| Bitrate | Shows the bitrate of the stream. LEFT and RIGHT (or the D-pad) change it in 5 Mbps steps, from 5 Mbps up to the decoder cap of the TV (100 Mbps on the tested S90C profile, 80 Mbps on other 4K and 8K TVs, 50 Mbps on Full HD TVs). OK reconnects with the new bitrate: the stream ends without quitting the game, the start screen shows *Reconnecting with … Mbps* for a few seconds, and the game resumes. The new bitrate becomes the bitrate setting. This works with every host, since the bitrate goes to the host when a stream starts. |
+| Type text… | Opens a text field with the keyboard of the TV. Its *Done* key, or *Send to the PC*, types the text on the PC as Unicode, whatever the keyboard layout of the PC, e.g. for a login or a search; RETURN, the *Cancel* key of the keyboard or B return to the menu without sending anything. Up to 1024 bytes (about 1000 Latin letters) at once, without line breaks. The keys go only to the field while it is open, and the app never logs or keeps the text. The keyboard of the TV is used with the remote; a USB keyboard types into the field as well, with Enter to send. |
 | Windows key, Alt + Tab, Alt + F4, Esc, Alt + Enter | Presses the keys on the PC and releases them again in reverse order, so that no key stays held, and returns to the game. Alt + Enter switches most Windows games and emulators between fullscreen and a window. |
 | Disconnect | Ends the stream, like RED. The game keeps running on the PC. |
 | Disconnect and quit the app on the PC | Ends the stream and then quits the app on the PC, like *Quit Running App*. Unsaved progress in the game is lost. |
 
 - The menu opens once the picture shows, not during "Starting…". RED and YELLOW keep working while it is open.
 - The buttons that are still held when the menu closes (e.g. A on *Resume*) reach the game only after you release them, and so does the key of the remote or keyboard that closed it (e.g. OK on *Resume*). Keyboard keys and mouse buttons that are held when the menu opens are released on the PC. [CONTROLLERS.md](CONTROLLERS.md#4-buttons-during-a-stream) describes the controller combo.
-- Untested on real TVs: whether every remote and firmware passes Play/Pause to the app. The combo and the color keys work without it.
+- Untested on real TVs: whether every remote and firmware passes Play/Pause to the app (the combo and the color keys work without it), and the *Done* and *Cancel* keys of the keyboard of the TV in *Type text…*.
 
 **App menu.** In the app list, press **CH+** or **Play/Pause** on the remote, or **Select** on a controller, to open the menu of the selected app. The header of the app list names these keys, and the app that runs on the PC has a mint ring and a mint *Running* badge.
 
@@ -432,11 +455,14 @@ The earlier release of this fork, v1.19.0-s90c.1 (shown on the TV as *Moonlight 
 |---|---|
 | Resume or Start | *Resume* for the running app, *Start* for the others: the same as OK on the tile |
 | Quit app | Only for the running app: quits it on the PC after a confirmation, like *Quit Running App* |
+| Add to favorites, Remove from favorites | Puts the app first in the app list and the Smart Hub tiles of this host, with an amber star on its tile, or takes it back |
 | Hide app, Show app again | Leaves the app out of the app list and the Smart Hub tiles of this host, or brings it back |
 | Show hidden apps (N), Hide hidden apps | Shows the hidden apps of the host dimmed, with a *Hidden* badge, until you choose *Hide hidden apps* or restart Moonlight |
 
-- The TV stores the hidden apps of each host, by ID and title, so an app stays hidden when Sunshine gives it a new ID. Deleting the host forgets them.
+- The TV stores the hidden apps and the favorites of each host, by ID and title, so an app stays hidden or a favorite when Sunshine gives it a new ID. Deleting the host forgets them.
 - The running app always shows, also when it is hidden, so you can resume or quit it. When every app of a host is hidden, all of them show.
+
+**Order of the app list.** Settings → Host Settings → *Sort the list of apps* offers *A to Z* (the default), *Z to A*, *Recently played* (the last 20 apps you started on this host first, the latest first, then the others from A to Z) and *As on the host* (the order in which the host lists them, e.g. the order set in Apollo). The favorites always come first, in the same order among themselves. The Smart Hub tiles follow the same order.
 
 ## 17. The screens of the app
 
@@ -454,8 +480,25 @@ A *New update* button with a download arrow appears in the header when a newer r
 
 **Hosts.** The top of the screen shows the selected PC in large type: its address, its state as chips (*Running*, *Online*, *Paired*, *Unpaired*, *Offline*), one sentence on what OK does and the keys to press, next to a drawing of a PC that changes with the state. Below, each PC has a card with a colored tile (mint while a game runs, amber when not paired, gray when offline) and its most important state. The ⋯ button of a card opens its menu (*Refresh apps*, *Wake PC*, *Delete PC*, *View Details*): UP reaches it from the first row of cards, and CH+ or Play/Pause opens the menu from any row, as the hint *↑ Options* or *⋯ Options* says. When the focus is in the header or a menu, the top shows the last PC without the keys, or a summary of all PCs.
 
-**App list.** The top shows the selected app with its box art, and the colors of the box art light up the screen once the selection rests on the app. A white ring marks the selected tile. The app that runs on the PC has a mint ring and a *Running* badge, and hidden apps, when shown, are dimmed with a *Hidden* badge (see [section 16](#16-stream-menu-and-app-menu)). An app without box art shows its title on its tile.
+**App list.** The top shows the selected app with its box art, and the colors of the box art light up the screen once the selection rests on the app. A white ring marks the selected tile. The app that runs on the PC has a mint ring and a *Running* badge, a favorite has an amber star in the top right corner of its tile and a *Favorite* chip at the top, and hidden apps, when shown, are dimmed with a *Hidden* badge (see [section 16](#16-stream-menu-and-app-menu)). An app without box art shows its title on its tile. The box art of a new host loads two apps at a time, and never holds up the start, resume or quit of an app: starting a stream drops the box art that hasn't arrived yet, and it loads when you return to the app list.
 
 **Settings.** The sections are colored tiles on the left, with a line on what each holds. Each option is a row with its title and control at the top and its help text below. The color of the open section marks its tile, the selected row and the switches that are on.
 
 **Start of a stream.** The box art of the app, and next to it its title, the PC and the progress of the connection, centred on the screen.
+
+## 18. Language
+
+The app shows the language of the TV when it has it: English, German, Spanish, French or Brazilian Portuguese. A TV set to another variant of one of these languages gets that language, e.g. German on Austrian and Swiss TVs, Spanish in Mexico and the rest of the Americas, French in Canada, Belgium and Switzerland, and Brazilian Portuguese in Portugal. Every other language gets English.
+
+To choose another one, open Settings → UI Settings → *Language*. The menu names each language in its own language (*English*, *Deutsch*, *Español*, *Français*, *Português (Brasil)*), so you find yours whatever language the app shows. The choice applies at once and is kept; *Auto* follows the TV again.
+
+- German addresses you with the informal *du*, Spanish with *tú* and French with *vous*. The names of the keys stay as printed on the remote (OK, RETURN, Play/Pause, CH+).
+- Only these five languages ship, since each one adds about 60 KB to the app.
+- A text that is wrong or still English: report it on the [issue tracker of this fork](https://github.com/Emperior90/moonlight-tizen-Plus/issues) with a photo. How the translations are kept complete: [TRANSLATING.md](TRANSLATING.md).
+
+## 19. Input test and button mapping
+
+Settings → Input Settings has two tools for the remote and the controllers. [CONTROLLERS.md](CONTROLLERS.md) describes them in full.
+
+- *Input test* shows every key of the remote or a keyboard with its name, key code and how long it was held, each connected controller as a live drawing with its buttons, triggers and sticks, and the media keys of the TV that Moonlight registered or leaves to the TV. A key that doesn't show is one the TV doesn't pass to the app, e.g. Play/Pause on some remotes. RETURN shows the key first and then leaves the test; on a controller, hold B for 2 seconds. Details: [Input test](CONTROLLERS.md#9-input-test).
+- *Button mapping* lets each of the 16 buttons of a controller press another one in games, for all controllers or for one, and calibrates the centre and range of worn sticks, without a dead zone of its own. The combos of the Stream Menu and the stop use the physical buttons, so a mapping can't take them away. It replaces the switches *Flip A/B face buttons* and *Flip X/Y face buttons*; a switch that was on is kept as the same swap. Details: [Button mapping and stick calibration](CONTROLLERS.md#8-button-mapping-and-stick-calibration).

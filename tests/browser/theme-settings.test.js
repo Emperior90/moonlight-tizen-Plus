@@ -3,7 +3,7 @@
 // Checks the parts of the theme that show the settings in the real page (wasm/static/css/style.css,
 // wasm/platform/launcher.js and the hooks in wasm/platform/index.js): the option rows put the help text across the
 // whole row and show the label of a switch only where an option has no help text, so that no label wraps to three lines
-// in English or Brazilian Portuguese; each section carries its colour into the header, the bar of its tile, the focused
+// in English or any other language of the app (German is the longest); each section carries its colour into the header, the bar of its tile, the focused
 // row and its switches; the optimal settings dialog shows the values that deriveOptimalSettings() returns as tiles; the
 // header shows the stream profile of the settings and follows every change; and chips and badges are at least 16 px.
 // The rows are opaque, so that the stars of the backdrop never show between their letters, and rows that scroll out at
@@ -12,6 +12,9 @@
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
+const { REPO_ROOT } = require('../lib/dev-modules');
 const { openApp, startHarness } = require('./harness');
 
 let harness;
@@ -25,6 +28,9 @@ after(async () => {
 });
 
 const TV = { tv: 's90c', conn: 'wifi' };
+// English (null: the language of the simulated TV) and every other language of the app, which can be longer
+const LANGUAGES = [null].concat(fs.readdirSync(path.join(REPO_ROOT, 'wasm/static/locales')).filter((name) => name.endsWith('.json'))
+  .map((name) => name.replace(/\.json$/, '')).filter((locale) => locale !== 'en-US').sort());
 const CATEGORIES = ['basicSettings', 'interfaceSettings', 'hostSettings', 'inputSettings', 'audioSettings', 'videoSettings',
   'advancedSettings', 'aboutSettings'];
 
@@ -93,7 +99,8 @@ const rowLayout = (page, category) => page.evaluate((name) => {
 }, category);
 
 test('the help text runs across each row, a switch label shows only without help text, and no label takes three lines', async () => {
-  for (const language of [null, 'pt-BR']) {
+  assert.ok(LANGUAGES.indexOf('pt-BR') >= 0 && LANGUAGES.indexOf('de-DE') >= 0, JSON.stringify(LANGUAGES));
+  for (const language of LANGUAGES) {
     const app = await openApp(harness, { tv: TV });
     try {
       await openSettings(app.page, language);
@@ -116,9 +123,10 @@ test('the help text runs across each row, a switch label shows only without help
           }
         });
       }
-      // The rows of the Input Settings without help text: the label of the switch takes its place
+      // The rows of the Input Settings without help text, the switches of rumble and mouse emulation: the label of the
+      // switch takes its place. The rows of the button mapping, the input test and the controller type have help texts.
       const input = await rowLayout(app.page, 'inputSettings');
-      assert.ok(input.filter((row) => row.switchLabel === 'shown').length >= 4, JSON.stringify(input));
+      assert.deepEqual(input.map((row) => row.switchLabel === 'shown'), [true, true, false, false, false], JSON.stringify(input));
       assert.deepEqual(app.errors, []);
     } finally {
       await app.context.close();
@@ -126,8 +134,8 @@ test('the help text runs across each row, a switch label shows only without help
   }
 });
 
-test('a badge stays on the line of its title in both languages: the button of the optimal settings wraps instead', async () => {
-  for (const language of [null, 'pt-BR']) {
+test('a badge stays on the line of its title in every language: the button of the optimal settings wraps instead', async () => {
+  for (const language of LANGUAGES) {
     const app = await openApp(harness, { tv: TV });
     try {
       await openSettings(app.page, language);
@@ -153,7 +161,8 @@ test('a badge stays on the line of its title in both languages: the button of th
       assert.equal(badges.length, 6, JSON.stringify(badges));
       badges.forEach((badge) => assert.deepEqual([badge.onTitleLine, badge.clear], [true, true], (language || 'en-US') + ' ' +
         JSON.stringify(badges)));
-      // The button of the optimal settings: one line in English, two in Brazilian Portuguese, inside its row either way
+      // The button of the optimal settings: one line in English, two in Brazilian Portuguese and German (at most two in
+      // another language), inside its row either way
       const button = await app.page.evaluate(() => {
         handleSettingsView('basicSettings');
         const element = document.getElementById('optimalSettingsBtn');
@@ -161,7 +170,39 @@ test('a badge stays on the line of its title in both languages: the button of th
         return { lines: Math.round(span.getBoundingClientRect().height / parseFloat(getComputedStyle(span).lineHeight)),
           inside: element.scrollWidth <= element.clientWidth + 1 };
       });
-      assert.deepEqual(button, { lines: language ? 2 : 1, inside: true });
+      const expectedLines = { 'en-US': 1, 'pt-BR': 2, 'de-DE': 2 }[language || 'en-US'];
+      if (expectedLines) {
+        assert.deepEqual(button, { lines: expectedLines, inside: true }, language || 'en-US');
+      } else {
+        assert.ok(button.lines <= 2 && button.inside, language + ' ' + JSON.stringify(button));
+      }
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
+test('the name and the subtitle of each settings section fit its tile in every language, without an ellipsis', async () => {
+  assert.ok(LANGUAGES.indexOf('es-ES') >= 0 && LANGUAGES.indexOf('fr-FR') >= 0, JSON.stringify(LANGUAGES));
+  for (const language of LANGUAGES) {
+    const app = await openApp(harness, { tv: TV });
+    try {
+      await openSettings(app.page, language);
+      const tiles = await app.page.evaluate(() => Array.prototype.map.call(document.querySelectorAll('.settings-category'), (tile) => {
+        const label = tile.querySelector('label');
+        const sub = tile.querySelector('.settings-category-sub');
+        const right = tile.getBoundingClientRect().right;
+        return {
+          name: label.textContent.trim(),
+          sub: sub.textContent.trim(),
+          // The subtitle cuts its text with an ellipsis when it is wider than its column
+          subFits: sub.scrollWidth <= sub.clientWidth + 1,
+          nameInside: label.getBoundingClientRect().right <= right + 1 && label.getBoundingClientRect().height < 2 * parseFloat(getComputedStyle(label).lineHeight),
+        };
+      }));
+      assert.equal(tiles.length, CATEGORIES.length);
+      tiles.forEach((tile) => assert.ok(tile.subFits && tile.nameInside, (language || 'en-US') + ' ' + JSON.stringify(tile)));
       assert.deepEqual(app.errors, []);
     } finally {
       await app.context.close();
@@ -237,19 +278,27 @@ test('the switches keep no fades or layers of the framework, only the thumb move
       assert.match(line, /: (none|transform), will-change auto$/, line);
     });
     assert.ok(motion.some((line) => /^mdl-switch__thumb: transform/.test(line)), JSON.stringify(motion));
-    // DOWN through the switches of the input settings: the focused switch paints no box of its own, its track shows the ring
-    const look = () => app.page.evaluate(() => {
-      const element = document.querySelector('#inputSettings .mdl-switch.hovered');
+    // DOWN through the switches of the input settings, then of the advanced settings: the focused switch paints no box of
+    // its own, its track shows the ring
+    const look = (section) => app.page.evaluate((sectionId) => {
+      const element = document.querySelector('#' + sectionId + ' .mdl-switch.hovered');
       return element && [element.id, getComputedStyle(element).backgroundColor,
         getComputedStyle(element.querySelector('.mdl-switch__track')).boxShadow.indexOf('rgb(255, 255, 255)') >= 0];
-    });
+    }, section);
     const seen = [];
-    for (let i = 0; i < 4; i++) {
-      seen.push(await look());
+    for (let i = 0; i < 2; i++) {
+      seen.push(await look('inputSettings'));
       await app.page.keyboard.press('ArrowDown');
       await app.page.waitForTimeout(150);
     }
-    assert.deepEqual(seen, ['rumbleFeedbackBtn', 'mouseEmulationBtn', 'flipABfaceButtonsBtn', 'flipXYfaceButtonsBtn'].map((id) =>
+    await app.page.evaluate(() => handleSettingsView('advancedSettings'));
+    await app.page.waitForTimeout(400);
+    for (let i = 0; i < 3; i++) {
+      seen.push(await look('advancedSettings'));
+      await app.page.keyboard.press('ArrowDown');
+      await app.page.waitForTimeout(150);
+    }
+    assert.deepEqual(seen, ['rumbleFeedbackBtn', 'mouseEmulationBtn', 'unlockAllFpsBtn', 'optimizeBitrateBtn', 'disableWarningsBtn'].map((id) =>
       [id, 'rgba(0, 0, 0, 0)', true]));
     assert.deepEqual(app.errors, []);
   } finally {
@@ -457,9 +506,9 @@ test('the arrow keys move through every row of a long section without scrolling 
       window.__prevented = [];
       document.addEventListener('keydown', (event) => window.__prevented.push(event.key + ':' + event.defaultPrevented));
     });
-    // Video Settings (6 rows) and About (4 tall rows) need the pane to scroll for their last rows, Basic Settings (5 rows)
+    // Video Settings (6 rows) and About (5 tall rows) need the pane to scroll for their last rows, Basic Settings (5 rows)
     // fits on the screen
-    const ROWS = { videoSettings: 6, aboutSettings: 4, basicSettings: 5 };
+    const ROWS = { videoSettings: 6, aboutSettings: 5, basicSettings: 5 };
     for (const section of Object.keys(ROWS)) {
       await app.page.evaluate((name) => handleSettingsView(name), section);
       await app.page.waitForTimeout(400);
@@ -514,7 +563,7 @@ test('the arrow keys move through every row of a long section without scrolling 
       assert.equal(Math.max.apply(null, scrolls) > 0, section !== 'basicSettings', section + ': ' + JSON.stringify(scrolls));
     }
     const prevented = await app.page.evaluate(() => window.__prevented);
-    assert.equal(prevented.length, 2 * 2 * (6 + 4 + 5), JSON.stringify(prevented));
+    assert.equal(prevented.length, 2 * 2 * (6 + 5 + 5), JSON.stringify(prevented));
     assert.ok(prevented.every((entry) => /:true$/.test(entry)), JSON.stringify(prevented));
 
     // During a stream the arrow keys keep their own action, for the PC

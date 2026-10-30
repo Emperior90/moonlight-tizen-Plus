@@ -11,7 +11,7 @@
   };
   window.__wasmCalls = [];
   window.__startStreamArgs = null;
-  // The level of the performance statistics: startStream() takes it (its 30th argument), and toggleStats() steps it Off,
+  // The level of the performance statistics: startStream() takes it (its 29th argument), and toggleStats() steps it Off,
   // Compact, Full, Off and reports the new level at once, like TogglePerformanceStats() of the module
   // (wasm/compact_stats.hpp). The figures that the module sends for a level are up to the tests.
   var statsLevel = 0;
@@ -27,7 +27,7 @@
   Module.startStream = function() {
     record('startStream', arguments);
     window.__startStreamArgs = Array.prototype.slice.call(arguments);
-    statsLevel = [0, 1, 2].indexOf(arguments[29]) >= 0 ? arguments[29] : 0;
+    statsLevel = [0, 1, 2].indexOf(arguments[28]) >= 0 ? arguments[28] : 0;
     return ok();
   };
   Module.stopStream = function() {
@@ -55,6 +55,20 @@
   };
   Module.sendKeyboardEvent = function() {
     record('sendKeyboardEvent', arguments);
+  };
+  // A text typed on the TV is queued for the host, like the module answers during a stream (kTextInputOk of
+  // wasm/text_input.hpp)
+  Module.sendText = function() {
+    record('sendText', arguments);
+    return 0;
+  };
+  // The lines of the native diagnostic log since the last call (takeDiagnosticLog() of wasm/main.cpp), one per line as
+  // '<time>\t<text>': those that a test puts into window.__nativeLog
+  window.__nativeLog = '';
+  Module.takeDiagnosticLog = function() {
+    var lines = window.__nativeLog;
+    window.__nativeLog = '';
+    return lines;
   };
   Module.stun = function() {
     record('stun', arguments);

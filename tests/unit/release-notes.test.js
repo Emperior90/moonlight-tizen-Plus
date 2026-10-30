@@ -218,6 +218,16 @@ test('the stable release notes keep the manual update of v1.19.0-s90c.1, and the
   assert.ok(lines.some((line) => line.indexOf('v1.19.0-s90c.1') >= 0), 'the dialog shows the note about v1.19.0-s90c.1');
 });
 
+test('the stable release notes list what is new since the last full release, which the installs of it have', () => {
+  // The newest version of the list of docs/PATCH_NOTES.md with a date is the last full release; the versions above it
+  // are pre-releases, which a promotion of this version may skip
+  const patchNotes = fs.readFileSync(path.join(REPO_ROOT, 'docs', 'PATCH_NOTES.md'), 'utf8');
+  const released = /^- \[(\d+\.\d+\.\d+)\]\(#\d+\): \d{4}-\d{2}-\d{2},/m.exec(patchNotes);
+  assert.ok(released, 'the patch notes list a full release');
+  const notes = fs.readFileSync(path.join(REPO_ROOT, 'docs', 'RELEASE_NOTES_STABLE.md'), 'utf8');
+  assert.equal(notes.split('\n')[0], '**New since ' + released[1] + ':**');
+});
+
 // Return the shell blocks of a workflow that write release_notes.md ('{' ... '} > release_notes.md'), without the
 // redirection, so that they print the description instead of writing into the repository
 function releaseNoteBlocks(workflowFile) {

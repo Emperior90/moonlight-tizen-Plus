@@ -74,10 +74,11 @@ inline MoonlightInstance* Instance() {
   return reinterpret_cast<MoonlightInstance*>(storage);
 }
 
-// Clear what was recorded and the state of gamepad.cpp, as at the start of a new stream with the given settings. The
-// controller type is that of the setting "Controller type sent to the PC", LI_CTYPE_UNKNOWN for Auto.
-inline void Reset(bool rumbleFeedback = false, bool mouseEmulation = false, bool flipAB = false, bool flipXY = false,
-                  uint8_t controllerType = LI_CTYPE_UNKNOWN) {
+// Clear what was recorded and the state of gamepad.cpp, as at the start of a new stream with the given settings and the
+// given text of the button mapping (wasm/controller_mapping.hpp). The controller type is that of the setting "Controller
+// type sent to the PC", LI_CTYPE_UNKNOWN for Auto.
+inline void ResetWithMapping(bool rumbleFeedback, bool mouseEmulation, const std::string& buttonMappings,
+                             uint8_t controllerType = LI_CTYPE_UNKNOWN) {
   padPackets.clear();
   arrivals.clear();
   mouseButtons.clear();
@@ -105,7 +106,35 @@ inline void Reset(bool rumbleFeedback = false, bool mouseEmulation = false, bool
     sent = {};
   }
   // What the app does when a stream starts
-  Instance()->HandleGamepadInputState(rumbleFeedback, mouseEmulation, flipAB, flipXY, controllerType);
+  Instance()->HandleGamepadInputState(rumbleFeedback, mouseEmulation, buttonMappings, controllerType);
+}
+
+// The text of the button mapping (wasm/controller_mapping.hpp) that the earlier switches 'Flip A/B face buttons' and
+// 'Flip X/Y face buttons' became for every controller (migrateFaceButtonSwaps() in wasm/platform/button_mapping.js), or
+// none without a swap
+inline std::string FaceButtonSwapMapping(bool flipAB, bool flipXY) {
+  if (!flipAB && !flipXY) {
+    return "";
+  }
+  std::string targets;
+  for (int i = 0; i < kMappedButtons; ++i) {
+    int target = i;
+    if (flipAB && i < 2) {
+      target = 1 - i;
+    } else if (flipXY && (i == 2 || i == 3)) {
+      target = 5 - i;
+    }
+    targets += (i == 0 ? "" : ",") + std::to_string(target);
+  }
+  return targets + ";;*";
+}
+
+// Clear what was recorded and the state of gamepad.cpp, as at the start of a new stream with the given settings. The
+// face button swaps are those of the earlier switches as the button mapping for every controller, and the controller
+// type is that of the setting "Controller type sent to the PC", LI_CTYPE_UNKNOWN for Auto.
+inline void Reset(bool rumbleFeedback = false, bool mouseEmulation = false, bool flipAB = false, bool flipXY = false,
+                  uint8_t controllerType = LI_CTYPE_UNKNOWN) {
+  ResetWithMapping(rumbleFeedback, mouseEmulation, FaceButtonSwapMapping(flipAB, flipXY), controllerType);
 }
 
 // Plug in a controller at a slot. The id is cut to 63 bytes plus NUL like the Emscripten event struct does.

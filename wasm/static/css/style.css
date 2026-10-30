@@ -9,8 +9,8 @@
   font-style: normal;
   font-weight: 500 800;
   src: url(../fonts/Manrope-latin-wght.woff2) format('woff2');
-  unicode-range: U+0000-007E, U+00A0, U+00A9, U+00AD-00AE, U+00B0, U+00B7, U+00C0-00D6, U+00D8-00F6, U+00F8-00FF,
-    U+0152-0153, U+2013-2014, U+2018-201A, U+201C-201E, U+2022, U+2026, U+20AC, U+2122;
+  unicode-range: U+0000-007E, U+00A0-00A1, U+00A9, U+00AB, U+00AD-00AE, U+00B0, U+00B7, U+00BB, U+00BF-00D6, U+00D8-00F6,
+    U+00F8-00FF, U+0152-0153, U+2013-2014, U+2018-201A, U+201C-201E, U+2022, U+2026, U+20AC, U+2122;
 }
 
 :root {
@@ -435,6 +435,7 @@ button, .mdl-button, .mdl-menu__item, .mdl-textfield__input, .mdl-switch__label,
 /* Running is mint on every screen, like the ring of the running app */
 .status-chip.chip-running { color: #04261A; background: var(--grad-mint); box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3); }
 .status-chip.chip-hidden { color: var(--text-2); text-transform: uppercase; }
+.status-chip.chip-favorite { color: var(--amber); background: rgba(255, 197, 71, 0.12); box-shadow: inset 0 0 0 1px rgba(255, 197, 71, 0.3); text-transform: uppercase; }
 /* Dark fills keep the chips readable over the ambient light of bright box art */
 .header-status {
   height: 48px;
@@ -1130,6 +1131,22 @@ body:not([data-view="hosts"]):not([data-view="apps"]) .launcher-hero {
 #game-grid .app-badge-hidden::before {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23C3C9E2' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M9.8 5.8a9.6 9.6 0 0 1 2.2-.3c6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-2.7 3.5M6.5 7C3.9 8.8 2.5 12 2.5 12s3.5 6.5 9.5 6.5a9.2 9.2 0 0 0 4.5-1.2M9.9 9.9a3 3 0 0 0 4.2 4.2M3.5 3.5l17 17'/%3E%3C/svg%3E");
 }
+/* A favorite: an amber star in the top right corner */
+#game-grid .app-badge-favorite {
+  right: 16px;
+  left: auto;
+  justify-content: center;
+  width: 38px;
+  padding: 0;
+}
+#game-grid .app-badge-favorite::before {
+  margin-right: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 3.4l2.6 5.4 5.9.8-4.3 4.1 1 5.9L12 16.8l-5.2 2.8 1-5.9-4.3-4.1 5.9-.8z' fill='%23FFC547' stroke='%23FFC547' stroke-width='1.6' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+/* The badges on the left of a favorite end before its star */
+#game-grid .app-favorite .app-badge-running, #game-grid .app-favorite .app-badge-hidden {
+  max-width: calc(100% - 86px);
+}
 /* Running and hidden: the Hidden badge below */
 #game-grid .current-game-active.app-hidden .app-badge-hidden {
   top: 64px;
@@ -1482,11 +1499,15 @@ body:not([data-view="hosts"]):not([data-view="apps"]) .launcher-hero {
 .setting-option .mdl-switch.hovered .mdl-switch__label, .setting-option .mdl-switch.is-focused .mdl-switch__label {
   color: var(--text);
 }
-/* System information: a readout across the row, outlined on focus */
+/* System information: a readout across the row, outlined on focus. With the report of the last session and several
+   controllers it can be taller than the pane below the header (128 + 8 px) with its top padding (32 px): it scrolls
+   itself then, with UP and DOWN while it is focused (scrollSystemInfo() in navigation.js) */
 #systemInfoBtn {
   display: block;
   width: 100%;
   height: auto;
+  max-height: calc(100vh - 200px);
+  overflow-y: auto;
   margin: 0;
   padding: 24px 30px;
   box-sizing: border-box;
@@ -1839,10 +1860,10 @@ dialog::backdrop {
   color: var(--text-2-on-focus);
   background: #C9CEE0 !important;
 }
-#closeNavGuide {
+#closeNavGuide, #closeDiagnosticLog {
   flex: 0 0 420px;
 }
-#navGuideDialog .mdl-dialog__actions {
+#navGuideDialog .mdl-dialog__actions, #diagnosticLogDialog .mdl-dialog__actions {
   justify-content: center;
 }
 /* Add Host: text field and the numeric fields */
@@ -2040,6 +2061,32 @@ dialog::backdrop {
 .stream-menu {
   margin-right: var(--safe-x);
 }
+/* The Stream Menu has the most entries: a little tighter, so that all of them and the hint fit the safe area of the
+   screen also with the mouse emulation entry */
+.stream-menu .overlay-menu-header {
+  padding-bottom: 12px;
+}
+.stream-menu .overlay-menu-item {
+  min-height: 56px;
+  margin-bottom: 2px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.stream-menu .overlay-menu-group {
+  margin-top: 8px;
+  padding: 14px 0 8px;
+}
+.stream-menu .overlay-menu-separator {
+  margin: 8px 18px 10px;
+}
+/* The text panel of 'Type text…' sits at the top, above the keyboard of the TV */
+#streamTextPanel {
+  align-self: flex-start;
+  margin-top: 54px;
+}
+#streamTextPanel .overlay-menu-subtitle {
+  white-space: normal;
+}
 .overlay-menu-header {
   padding: 0 20px 18px;
 }
@@ -2163,6 +2210,90 @@ dialog::backdrop {
 .overlay-menu-item[disabled] {
   opacity: 0.45;
 }
+/* The bitrate entry of the Stream Menu: its value between the arrows of LEFT and RIGHT, dimmed at a limit, and a note
+   under the label while a new value waits for OK */
+.overlay-menu-stepper {
+  display: flex;
+  flex: none;
+  align-items: center;
+  margin-left: 16px;
+}
+.overlay-menu-stepper .icon {
+  width: 24px;
+  height: 24px;
+  color: var(--text-3);
+}
+.overlay-menu-stepper .stepper-next {
+  transform: scaleX(-1);
+}
+.overlay-menu-stepper .icon.is-limit {
+  opacity: 0.25;
+}
+.overlay-menu-stepper .overlay-menu-value {
+  margin: 0 6px;
+  font-size: 17px;
+  letter-spacing: 0.3px;
+  text-transform: none;
+}
+.overlay-menu-item.hovered .overlay-menu-stepper .icon, .overlay-menu-item:focus .overlay-menu-stepper .icon {
+  color: var(--text-on-focus);
+}
+.overlay-menu-value.is-pending, .overlay-menu-item.hovered .overlay-menu-value.is-pending,
+.overlay-menu-item:focus .overlay-menu-value.is-pending {
+  color: #2B1800;
+  background: var(--grad-amber);
+  box-shadow: none;
+}
+.overlay-menu-note {
+  display: block;
+  margin-top: 4px;
+  color: var(--amber);
+  font-size: 17px;
+  font-weight: 700;
+}
+.overlay-menu-note:empty {
+  display: none;
+}
+.overlay-menu-item.hovered .overlay-menu-note, .overlay-menu-item:focus .overlay-menu-note {
+  color: #7A4B00;
+}
+/* 'Type text…' of the Stream Menu: the text field for the keyboard of the TV, white while it takes the text, and the
+   reason a text wasn't sent */
+.stream-text-input {
+  display: block;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 16px 20px;
+  box-sizing: border-box;
+  border: none;
+  border-radius: var(--r-m);
+  outline: none;
+  color: var(--text);
+  background: var(--glass-2);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  font-family: var(--font);
+  font-size: 24px;
+  font-weight: 700;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.stream-text-input.hovered, .stream-text-input:focus {
+  box-shadow: 0 0 0 3px var(--bg), 0 0 0 6px #fff;
+}
+.stream-text-input:not([readonly]) {
+  color: var(--text-on-focus);
+  background: #fff;
+}
+.stream-text-status {
+  margin: 0 18px 12px;
+  color: #FF8DA1;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.stream-text-status:empty {
+  display: none;
+}
 /* Destructive entries in red */
 .is-danger {
   color: #FF8DA1;
@@ -2253,6 +2384,216 @@ dialog::backdrop {
   line-height: 1.2;
   white-space: nowrap;
   background: rgba(10, 13, 26, 0.8);
+}
+/* The graph of the full statistics above their text (drawStatsGraph() in messages.js) */
+#performance-stats .stats-graph {
+  display: block;
+  width: 480px;
+  height: 72px;
+  margin: 4px 0 14px;
+}
+/* The corner of the statistics (setting 'Statistics position'), inside the safe area like the default top left. At the
+   top right they take the place of the connection warnings, which move to the top left. */
+#performance-stats.stats-top-right, #performance-stats.stats-bottom-right {
+  right: 64px;
+  left: auto;
+}
+#performance-stats.stats-bottom-left, #performance-stats.stats-bottom-right {
+  top: auto;
+  bottom: 48px;
+}
+#connection-warnings.is-left {
+  right: auto;
+  left: 64px;
+}
+
+/* ===== Diagnostics and input: the diagnostic log, the input test and the button mapping ===== */
+.dialog-note {
+  margin: -6px 0 18px;
+  color: var(--text-3);
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+/* The diagnostic log: the lines of each session under its title, as text that wraps */
+.log-text {
+  color: var(--text-2);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+}
+.log-session-title {
+  margin: 22px 0 8px;
+  color: #fff;
+  font-size: 20px;
+  font-weight: 800;
+}
+.log-session-title:first-child {
+  margin-top: 0;
+}
+.log-session-lines {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+/* The input test: the keys on the left, the controllers on the right */
+.input-test {
+  display: flex;
+  align-items: flex-start;
+}
+.input-test-keys {
+  flex: 0 0 500px;
+  margin-right: 40px;
+  min-width: 0;
+}
+.input-test-pads {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.input-test-heading {
+  margin-bottom: 12px;
+  color: var(--text-3);
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+}
+.input-test-tv-keys {
+  white-space: pre-line;
+  color: var(--text-2);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.input-test-history + .input-test-heading {
+  margin-top: 26px;
+}
+.input-test-key {
+  min-height: 58px;
+  color: #fff;
+  font-size: 46px;
+  font-weight: 800;
+  line-height: 1.2;
+  word-wrap: break-word;
+}
+.input-test-key-info {
+  min-height: 30px;
+  margin-top: 6px;
+  color: var(--cyan);
+  font-size: 22px;
+  font-weight: 700;
+}
+.input-test-history {
+  min-height: 228px;
+  margin-top: 14px;
+  color: var(--text-2);
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: pre-line;
+  font-variant-numeric: tabular-nums;
+}
+#inputTestHint.is-leaving {
+  color: var(--amber);
+}
+#inputTestPads {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 0 -10px;
+}
+.pad-card {
+  flex: 0 0 calc(50% - 22px);
+  min-width: 0;
+  margin: 0 10px 20px;
+  padding: 18px 22px;
+  box-sizing: border-box;
+  border-radius: var(--r-m);
+  background: var(--glass);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+.pad-title {
+  overflow: hidden;
+  color: #fff;
+  font-size: 21px;
+  font-weight: 800;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.pad-meta, .pad-readout {
+  margin-top: 4px;
+  color: var(--text-3);
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.pad-readout {
+  color: var(--text-2);
+}
+/* The controller in the stroke style of the icons: a pressed button fills in the colour of the theme */
+.pad-svg {
+  display: block;
+  width: 100%;
+  max-width: 340px;
+  margin: 10px auto;
+  color: var(--text-2);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+.pad-svg .on {
+  fill: var(--cyan);
+  stroke: var(--cyan);
+}
+.pad-svg .pad-fill {
+  fill: var(--cyan);
+  stroke: none;
+}
+.pad-svg .pad-dot {
+  fill: currentColor;
+}
+.pad-svg .pad-label {
+  fill: currentColor;
+  stroke: none;
+  font-weight: 800;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+.pad-svg .on + .pad-label {
+  fill: var(--bg);
+}
+/* The button mapping: a wider menu whose rows scroll, each button with the one it presses between the arrows */
+.mapping-menu {
+  width: 760px;
+}
+.mapping-row {
+  min-height: 54px;
+  margin-bottom: 2px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+#buttonCalibrationPanel {
+  display: none;
+}
+.calibration-title, .calibration-text {
+  white-space: normal;
+}
+.calibration-text {
+  color: var(--text-2);
+  font-size: 21px;
+  line-height: 1.4;
+}
+.calibration-values {
+  margin: 0 20px 18px;
+  padding: 16px 20px;
+  border-radius: var(--r-m);
+  color: var(--cyan);
+  background: var(--glass);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.5;
+  white-space: pre-line;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ===== Reduced motion (newer TVs and browsers that report it) ===== */

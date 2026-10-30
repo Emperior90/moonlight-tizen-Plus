@@ -4,8 +4,9 @@
 // wheel that the main and the input thread share go through atomic exchanges (native/mouse_input_test.cpp), a stop
 // during the start of a stream interrupts the connection setup, also when it came before LiStartConnection cleared its
 // interrupt flag (native/connection_interrupt_test.cpp), and the RTSP parser of moonlight-common-c stays within its
-// buffer for an answer cut off inside a header (native/rtsp_parser_test.c), a local fix until the parser of upstream
-// moonlight-common-c aeba988 replaces it.
+// buffer for an answer cut off inside a header (native/rtsp_parser_test.c). That was a local fix of the parser with
+// strtok_r() until the parser of upstream moonlight-common-c aeba988 replaced it, which reads line by line and
+// checks every read against the end of the buffer.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -60,10 +61,20 @@ test('a stop during the start of a stream interrupts the connection setup', () =
 });
 
 test('the RTSP parser checks the end of a header against its buffer before it reads there', () => {
-  const parser = functionBody(read('moonlight-common-c/src/RtspParser.c'), 'int parseRtspMessage(');
-  const end = parser.indexOf('endCheck = &token[0] + strlen(token) + 1;');
-  const bound = parser.indexOf('if (endCheck > messageBuffer + length) {\n                    exitCode = RTSP_ERROR_MALFORMED;\n                    goto ExitFailure;');
-  const firstRead = parser.indexOf('if (startsWith(endCheck, "\\n")');
-  assert.ok(end > 0 && bound > end && firstRead > bound, 'the check comes between endCheck and its first read');
+  const source = read('moonlight-common-c/src/RtspParser.c');
+  const parser = functionBody(source, 'int parseRtspMessage(');
+  // The parser of aeba988, without strtok_r(), whose tokens ran up to the null terminator of a cut-off message
+  assert.doesNotMatch(parser, /strtok_r\(/);
+  assert.match(parser, /if \(length <= 0\) \{\s+return RTSP_ERROR_MALFORMED;\s+\}/);
+  assert.match(parser, /char\* bufferEnd = messageBuffer \+ length;/);
+  assert.match(parser, /while \(ptr <= bufferEnd\) \{\s+if \(checkMessageEnded\(ptr, messageBuffer, length, &payload\)\) \{/);
+  // The end of the message is looked for only within the buffer, and each read there needs the bytes to remain
+  const ended = functionBody(source, 'static bool checkMessageEnded(');
+  assert.match(ended, /if \(endCheck <= messageBuffer \+ length\) \{\s+int remaining = \(int\)\(\(messageBuffer \+ length\) - endCheck\);/);
+  assert.match(ended, /remaining == 1 && endCheck\[0\] == '\\r'/);
+  assert.match(ended, /remaining >= 2 && memcmp\(endCheck, "\\r\\n", 2\) == 0/);
+  assert.match(ended, /remaining >= 1 && endCheck\[0\] == '\\n'/);
+  // The LF after a CR is only read when it is inside the buffer
+  assert.match(functionBody(source, 'static char* getNextLine('), /if \(origEnd == '\\r' && nextLine < bufferEnd && \*nextLine == '\\n'\) \{/);
   assert.match(read('tests/native/rtsp_parser_test.c'), /test_truncated_message_is_malformed/);
 });

@@ -2,6 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
+- [2.1.0](#210): pre-release, in testing
 - [2.0.0](#200): pre-release, in testing
 - [1.19.101](#119101): 2026-10-29, a new look and two new menus
 - [1.19.100](#119100): 2026-10-26, the first release as Moonlight Plus
@@ -11,6 +12,35 @@ What changed in each version of Moonlight Plus, in short, newest first.
 **Which file?** `Moonlight-ForceGM.wgt` on Tizen 9 and newer, `Moonlight.wgt` on Tizen 5.5 to 8.
 
 **TV refuses an update?** If the author certificate doesn't match, uninstall the old app first; this loses its settings and pairing.
+
+## 2.1.0
+
+*Pre-release, in testing.* Five languages, the bitrate changed during a game, text typed on the PC, favorites, and tools to test controllers and find problems.
+
+> **Install:** by hand over 2.0.0, 1.19.101 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
+>
+> **Tested:** with simulated TVs, hosts and controllers only; the keyboard of the TV, real controllers and Apollo are untested.
+
+### New
+
+- German, Spanish and French, chosen by the language of the TV; the menu names each one in its own language
+- Stream Menu: change the bitrate in a game (the stream reconnects) and type text on the PC with the TV keyboard
+- Statistics: a graph of the last minute, in the corner of the screen you choose
+- App list: favorites first with a star, and the order of the recently played or of the host
+- A report of the last stream with hints in System information, and a diagnostic log that stays on the TV
+- Input test for the remote and controllers, and a button mapping per controller with stick calibration
+
+### Improved
+
+- Box art never holds up the start, resume or quit of a game, also with large libraries
+- Apollo and Vibepollo: clear hints for missing permissions and for their control tiles
+- Eight updates of the Moonlight streaming library, e.g. a stricter reading of the connection setup
+
+### Fixed
+
+- Very fast scrolling with a mouse wheel is no longer cut off
+- Some texts stayed English in a translated app, e.g. in the pairing dialog and the navigation guide
+- Brazilian Portuguese names the keys as the remote and the controller print them (RETURN, Play/Pause, SELECT)
 
 ## 2.0.0
 

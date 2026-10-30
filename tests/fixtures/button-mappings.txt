@@ -1,0 +1,9 @@
+# The text of the button mapping that serializeButtonMappings() in wasm/platform/button_mapping.js writes for the stored
+# mapping of tests/unit/button-mapping.test.js, and that ParseControllerMappings() in wasm/controller_mapping.hpp reads
+# (tests/native/controller_mapping_test.cpp), so both sides keep the same format: A and B swapped for every controller;
+# an Xbox controller (its id as the stream sees it, 63 bytes) with D-pad left and right swapped and a calibrated left
+# stick; and an 8BitDo controller with the buttons of every controller and a calibrated right stick. Lines starting with
+# # are comments.
+1,0,2,3,4,5,6,7,8,9,10,11,12,13,14,15;;*
+0,1,2,3,4,5,6,7,8,9,10,11,12,13,15,14;0.05,-0.02,-0.9,0.88,-0.92,0.95,0,0,-1,1,-1,1;Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product
+1,0,2,3,4,5,6,7,8,9,10,11,12,13,14,15;0,0,-1,1,-1,1,0,0.1,-0.7,0.7,-0.6,0.8;8BitDo SN30 Pro (Vendor: 2dc8 Product: 6101)

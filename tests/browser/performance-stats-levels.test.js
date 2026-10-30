@@ -7,11 +7,14 @@
 // steps the setting, which the stream then starts with; the overlay shows only the figures of its level
 // ('StatCompactMsg: ' as the compact line, 'StatMsg: ' as the full text) and drops the ones still on their way from
 // another level or after the end of the stream; and the compact line sits top-left in one line on the dark surface of the theme, also in
-// pt-BR. The module stub steps the level like the module (tests/browser/mocks/moonlight-wasm.js); the native side is
+// every other language of the app. The module stub steps the level like the module (tests/browser/mocks/moonlight-wasm.js); the native side is
 // checked by tests/native/compact_stats_test.cpp and tests/native/stats_overlay_test.cpp.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
+const { REPO_ROOT } = require('../lib/dev-modules');
 const { openApp, readStorage, reloadApp, startHarness, waitForStorage } = require('./harness');
 
 let harness;
@@ -139,7 +142,7 @@ test('the stream starts with the level of the setting', async () => {
     const app = await openApp(harness, { tv: TV, stored: { performanceStats: level } });
     try {
       await startStream(app);
-      assert.equal(await app.page.evaluate(() => window.__startStreamArgs[29]), level);
+      assert.equal(await app.page.evaluate(() => window.__startStreamArgs[28]), level);
       // The overlay waits for the first figures of the stream
       assert.equal((await statsState(app.page)).shown, false);
     } finally {
@@ -234,7 +237,7 @@ test('YELLOW during \'Starting...\' steps the level that the stream then starts 
     await waitForStorage(app.page, (values) => values.performanceStats === 2);
     await finishStream(app);
     // The module starts on the level that the setting shows, and the overlay shows the figures of that level
-    assert.equal(await app.page.evaluate(() => window.__startStreamArgs[29]), 2);
+    assert.equal(await app.page.evaluate(() => window.__startStreamArgs[28]), 2);
     await app.page.evaluate((messages) => messages.forEach((message) => handleMessage(message)), [COMPACT_MESSAGE, FULL_MESSAGE]);
     state = await statsState(app.page);
     assert.deepEqual([state.shown, state.compact], [true, false]);
@@ -254,7 +257,7 @@ test('YELLOW during \'Starting...\' steps the level that the stream then starts 
     await remoteKey(app.page, ...YELLOW);
     assert.equal((await statsState(app.page)).level, '2');
     await finishStream(app);
-    assert.equal(await app.page.evaluate(() => window.__startStreamArgs[29]), 2);
+    assert.equal(await app.page.evaluate(() => window.__startStreamArgs[28]), 2);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
@@ -267,7 +270,7 @@ test('YELLOW during \'Starting...\' steps the level that the stream then starts 
     await remoteKey(fresh.page, ...YELLOW);
     assert.equal((await statsState(fresh.page)).level, '1');
     await finishStream(fresh);
-    assert.equal(await fresh.page.evaluate(() => window.__startStreamArgs[29]), 1);
+    assert.equal(await fresh.page.evaluate(() => window.__startStreamArgs[28]), 1);
     await fresh.page.evaluate((message) => handleMessage(message), COMPACT_MESSAGE);
     const state = await statsState(fresh.page);
     assert.deepEqual([state.shown, state.compact, state.text], [true, true, COMPACT_LINE]);
@@ -309,13 +312,17 @@ test('the Stream Menu shows the level, steps it, and follows a level the gamepad
   }
 });
 
-test('the compact line sits top-left in one line on the dark surface of the theme, also in pt-BR', async () => {
-  for (const lang of ['en-US', 'pt-BR']) {
+test('the compact line sits top-left in one line on the dark surface of the theme, also in every other language', async () => {
+  const localesDir = path.join(REPO_ROOT, 'wasm/static/locales');
+  const languages = fs.readdirSync(localesDir).filter((name) => name.endsWith('.json')).map((name) => name.replace(/\.json$/, ''));
+  assert.ok(languages.indexOf('pt-BR') >= 0 && languages.indexOf('de-DE') >= 0, languages.join(' '));
+  for (const lang of languages) {
+    const messages = JSON.parse(fs.readFileSync(path.join(localesDir, lang + '.json'), 'utf8'));
     const app = await openApp(harness, { tv: TV, stored: { performanceStats: 1, languagePreference: lang } });
     try {
       await app.page.waitForFunction((code) => document.documentElement.getAttribute('lang') === code, lang, { timeout: 5000 });
       // The setting names the stored level in the language of the app
-      assert.equal(await app.page.evaluate(() => $('#selectPerformanceStats').text().trim()), lang === 'pt-BR' ? 'Compacto' : 'Compact');
+      assert.equal(await app.page.evaluate(() => $('#selectPerformanceStats').text().trim()), messages['Compact']);
       await startStream(app);
       // The longest line: every figure with two-digit and three-digit numbers
       await app.page.evaluate(() => handleMessage('StatCompactMsg: {"w":1920,"h":1080,"fps":120,"codec":"HEVC","bits":10,"hdr":1,' +
@@ -333,7 +340,10 @@ test('the compact line sits top-left in one line on the dark surface of the them
           warningsLeft: document.getElementById('connection-warnings').getBoundingClientRect().left,
         };
       });
-      const label = lang === 'pt-BR' ? 'Perdas na rede' : 'Net drops';
+      const label = messages['Net drops'];
+      if (lang !== 'en-US') {
+        assert.notEqual(label, 'Net drops', lang + ' translates the label');
+      }
       assert.ok(layout.text.indexOf('1080p120 HEVC HDR · 119.9 fps · 149 Mb/s · RTT 120 ms · ' + label + ' 12.5%') === 0, layout.text);
       // Where the overlay was before, inside the screen, and in one line
       assert.deepEqual([layout.left, layout.top], [64, 48]);

@@ -1,5 +1,6 @@
 #include "moonlight_wasm.hpp"
 #include "connection_ports.hpp"
+#include "diagnostic_log.hpp"
 
 #include <cstdarg>
 #include <cstring>
@@ -112,6 +113,10 @@ void MoonlightInstance::ClLogMessage(const char* format, ...) {
   va_start(va, format);
   vsnprintf(message, sizeof(message), format, va);
   va_end(va);
+
+  // Keep the line for the diagnostic log of the front end (diagnostic_log.hpp), without ever waiting for it: this runs on
+  // every thread of the module, among them the video decoder and audio threads
+  GetDiagnosticLog().TryAppend(DiagnosticLogNowMs(), message);
 
   // fprintf(stderr, ...) processes message in parts, so logs from different
   // threads may interleave. Send whole message at once to minimize this.

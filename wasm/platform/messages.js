@@ -6,7 +6,7 @@ const SyncFunctions = {
   // cert, privateKey, myUniqueid
   'httpInit': (...args) => Module.httpInit(...args),
   /* host, httpPort, width, height, fps, bitrate, rikey, rikeyid, appversion, gfeversion, rtspurl, serverCodecModeSupport,
-  framePacing, optimizeGames, rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons, audioBackend,
+  framePacing, optimizeGames, rumbleFeedback, mouseEmulation, controllerMappings, audioBackend,
   audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange, gameMode,
   disableWarnings, performanceStats, refFrameInvalidation, hdrMetadata, controllerType */
   'startRequest': (...args) => Module.startStream(...args),
@@ -79,13 +79,22 @@ function replaceKnownStageLabels(text) {
     t('input stream establishment'),
   ];
 
-  let translated = text.replace(/\bStarting\b/g, t('Starting'));
-  stageLabels.forEach((label, i) => {
-    const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    translated = translated.replace(new RegExp(escapedLabel, 'gi'), translatedStageLabels[i]);
-  });
-
-  return translated;
+  const translateStages = (part) => {
+    let result = part;
+    stageLabels.forEach((label, i) => {
+      const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      result = result.replace(new RegExp(escapedLabel, 'gi'), translatedStageLabels[i]);
+    });
+    return result;
+  };
+  // The progress line of a stage (ClStageStarting() in wasm/connectionlistener.cpp, 'Starting RTSP handshake...') is
+  // translated as a whole, so that each language puts the stage into a sentence of its own (e.g. 'Démarrage : …')
+  // instead of a word for 'Starting' in front of it
+  const progress = /^Starting (.+?)\.\.\.$/.exec(text);
+  if (progress) {
+    return t('Starting the %1$s...', translateStages(progress[1]));
+  }
+  return translateStages(text);
 }
 
 // Translate the audio lines of the performance stats (FormatAudioStreamStats() in wasm/audio_stream_stats.hpp), e.g.
@@ -233,6 +242,145 @@ function formatCompactStatsLine(data) {
   return parts.join(' \u00b7 ');
 }
 
+// The graph of the full statistics: one bar per second for the round-trip time and a red mark above it for a second with
+// frames lost on the network, over the last 60 seconds, drawn on a small canvas above the text each time the text comes
+// (about once per second). The points come with the text ('StatMsg: ', FormatFullStatsMessage() in
+// wasm/compact_stats.hpp) instead of a message of their own each second, as in the graph of the fork of fidoboy
+// (moonlight-tizen-ac3, GPL-3.0, 262477c and 5bc0c57), whose colour steps of the RTT for a local network (below 5 ms, 5 to
+// 9 ms, 10 to 19 ms, 20 ms or more) come from its 441d5c0.
+const STATS_GRAPH_SECONDS = 60;
+const STATS_GRAPH_RTT_STEPS_MS = [5, 10, 20];
+// Mint, amber, orange and red of the theme for the steps, grey for an RTT that isn't known
+const STATS_GRAPH_RTT_COLORS = ['#2EE6A0', '#FFC547', '#FF8A4C', '#FF5C7A'];
+const STATS_GRAPH_UNKNOWN_COLOR = '#8D96B8';
+const STATS_GRAPH_DROP_COLOR = '#FF5C7A';
+// The size of the canvas in CSS pixels (style.css): a label row, the lane of the drop marks and the bars
+const STATS_GRAPH_WIDTH = 480;
+const STATS_GRAPH_HEIGHT = 72;
+const STATS_GRAPH_DROP_TOP = 24;
+const STATS_GRAPH_BARS_TOP = 36;
+// The points of the graph, oldest first: { rtt, lost } (rtt null while unknown), or null for a second without figures,
+// e.g. while the video track was closed. The start of a stream and a change of the level empty it.
+var statsGraphPoints = [];
+// When the last point came, in ms, to find the seconds without figures before the next one
+var statsGraphLastPointMs = 0;
+
+// Split the text of a 'StatMsg: ' message into the point of the graph on its first line and the text of the full
+// statistics after it: { point: { rtt, lost } or null, text }. A text without a point is shown as it is.
+function parseFullStatsMessage(body) {
+  const text = String(body);
+  const lineEnd = text.indexOf('\n');
+  if (text.charAt(0) !== '{' || lineEnd < 0) {
+    return { point: null, text: text };
+  }
+  try {
+    const data = JSON.parse(text.slice(0, lineEnd));
+    const rtt = data && typeof data.rtt === 'number' && isFinite(data.rtt) && data.rtt > 0 ? data.rtt : null;
+    const lost = data && typeof data.lost === 'number' && isFinite(data.lost) && data.lost > 0 ? data.lost : 0;
+    return { point: data && typeof data === 'object' ? { rtt: rtt, lost: lost } : null, text: text.slice(lineEnd + 1) };
+  } catch (e) {
+    return { point: null, text: text };
+  }
+}
+
+// The colour step of a round-trip time: 0 below 5 ms, 1 from 5 ms, 2 from 10 ms, 3 from 20 ms, or -1 while unknown
+function getStatsGraphRttStep(rtt) {
+  if (typeof rtt !== 'number' || !(rtt > 0)) {
+    return -1;
+  }
+  let step = 0;
+  STATS_GRAPH_RTT_STEPS_MS.forEach((limit) => {
+    if (rtt >= limit) {
+      step++;
+    }
+  });
+  return step;
+}
+
+// Add a point to the graph at the time nowMs. A second or more without figures before it (the decoder thread sends
+// them only while frames arrive) shows as gaps, and only the last 60 seconds stay.
+function addStatsGraphPoint(point, nowMs) {
+  if (statsGraphPoints.length > 0 && statsGraphLastPointMs > 0) {
+    const missed = Math.min(STATS_GRAPH_SECONDS, Math.round((nowMs - statsGraphLastPointMs) / 1000) - 1);
+    for (let i = 0; i < missed; i++) {
+      statsGraphPoints.push(null);
+    }
+  }
+  statsGraphPoints.push(point);
+  statsGraphLastPointMs = nowMs;
+  if (statsGraphPoints.length > STATS_GRAPH_SECONDS) {
+    statsGraphPoints.splice(0, statsGraphPoints.length - STATS_GRAPH_SECONDS);
+  }
+}
+
+// Forget the points of the graph
+function resetStatsGraph() {
+  statsGraphPoints = [];
+  statsGraphLastPointMs = 0;
+}
+
+// The round-trip time at the top of the bars, in ms: 25 ms, or the next multiple of 25 ms above the highest RTT shown
+function getStatsGraphScaleMs(points) {
+  let highest = 0;
+  points.forEach((point) => {
+    if (point && point.rtt > highest) {
+      highest = point.rtt;
+    }
+  });
+  return Math.max(25, Math.ceil(highest / 25) * 25);
+}
+
+// Draw the points on the canvas of the graph: the label 'RTT' with the scale of the bars on the left and the legend of
+// the drop marks on the right, then one slot per second with the newest on the right
+function drawStatsGraph(canvas, points) {
+  const context = canvas.getContext ? canvas.getContext('2d') : null;
+  if (!context) {
+    return;
+  }
+  // As many pixels as the screen has, so that the bars and labels stay sharp on a 4K TV
+  const ratio = window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
+  if (canvas.width !== Math.round(STATS_GRAPH_WIDTH * ratio)) {
+    canvas.width = Math.round(STATS_GRAPH_WIDTH * ratio);
+    canvas.height = Math.round(STATS_GRAPH_HEIGHT * ratio);
+  }
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  context.clearRect(0, 0, STATS_GRAPH_WIDTH, STATS_GRAPH_HEIGHT);
+  const scaleMs = getStatsGraphScaleMs(points);
+  const barsHeight = STATS_GRAPH_HEIGHT - STATS_GRAPH_BARS_TOP;
+  context.textBaseline = 'top';
+  context.font = '700 15px Manrope, Roboto, sans-serif';
+  context.fillStyle = '#FFFFFF';
+  context.textAlign = 'left';
+  context.fillText('RTT', 0, 0);
+  context.fillStyle = STATS_GRAPH_UNKNOWN_COLOR;
+  context.fillText('0–' + scaleMs + ' ms', context.measureText('RTT').width + 10, 0);
+  context.textAlign = 'right';
+  context.fillText(t('Net drops'), STATS_GRAPH_WIDTH, 0);
+  context.fillStyle = STATS_GRAPH_DROP_COLOR;
+  context.fillRect(STATS_GRAPH_WIDTH - context.measureText(t('Net drops')).width - 18, 3, 10, 10);
+  // The top of the scale and the base line
+  context.fillStyle = 'rgba(255, 255, 255, 0.16)';
+  context.fillRect(0, STATS_GRAPH_BARS_TOP, STATS_GRAPH_WIDTH, 1);
+  context.fillRect(0, STATS_GRAPH_HEIGHT - 1, STATS_GRAPH_WIDTH, 1);
+  const slotWidth = STATS_GRAPH_WIDTH / STATS_GRAPH_SECONDS;
+  const firstSlot = STATS_GRAPH_SECONDS - points.length;
+  points.forEach((point, index) => {
+    if (!point) {
+      return;
+    }
+    const x = Math.round((firstSlot + index) * slotWidth) + 1;
+    const width = Math.max(1, Math.round(slotWidth) - 2);
+    const step = getStatsGraphRttStep(point.rtt);
+    const height = step < 0 ? 2 : Math.max(2, Math.round(Math.min(1, point.rtt / scaleMs) * barsHeight));
+    context.fillStyle = step < 0 ? STATS_GRAPH_UNKNOWN_COLOR : STATS_GRAPH_RTT_COLORS[step];
+    context.fillRect(x, STATS_GRAPH_HEIGHT - height, width, height);
+    if (point.lost > 0) {
+      context.fillStyle = STATS_GRAPH_DROP_COLOR;
+      context.fillRect(x, STATS_GRAPH_DROP_TOP, width, 6);
+    }
+  });
+}
+
 // Whether the figures of the performance statistics belong on the screen: only while a stream runs. The video decoder
 // thread of the module can send one more 'StatMsg: ' or 'StatCompactMsg: ' after the end of the stream (until the stop
 // thread ends it), which would show the overlay over the app list, and the one of a stream that ended without video
@@ -241,10 +389,42 @@ function isShowingStreamStats() {
   return isInGame === true && wasmSessionStarted === true;
 }
 
-// Show the performance statistics overlay with a text, as the compact line or as the full statistics, or hide it while
-// the text is empty
-function showPerformanceStats(text, isCompact) {
-  $('#performance-stats').toggleClass('is-compact', isCompact).text(text).css({ display: text ? 'inline-block' : 'none', background: '' });
+// Show the performance statistics overlay with a text, as the compact line or as the full statistics with the graph of
+// the given points above it (none for an empty list), or hide it while the text is empty. The text has an element of its
+// own next to the canvas of the graph; a script that empties the overlay (e.g. at the start of a stream) removes both.
+function showPerformanceStats(text, isCompact, graphPoints) {
+  const overlay = document.getElementById('performance-stats');
+  if (!overlay) {
+    return;
+  }
+  overlay.classList.toggle('is-compact', !!isCompact);
+  overlay.style.background = '';
+  if (!text) {
+    overlay.textContent = '';
+    overlay.style.display = 'none';
+    return;
+  }
+  let textElement = overlay.querySelector('.stats-text');
+  let canvas = overlay.querySelector('.stats-graph');
+  if (!textElement) {
+    overlay.textContent = '';
+    textElement = document.createElement('div');
+    textElement.className = 'stats-text';
+    overlay.appendChild(textElement);
+    canvas = null;
+  }
+  textElement.textContent = text;
+  if (graphPoints && graphPoints.length > 0) {
+    if (!canvas) {
+      canvas = document.createElement('canvas');
+      canvas.className = 'stats-graph';
+      overlay.insertBefore(canvas, textElement);
+    }
+    drawStatsGraph(canvas, graphPoints);
+  } else if (canvas) {
+    overlay.removeChild(canvas);
+  }
+  overlay.style.display = 'inline-block';
 }
 
 // Join each protocol to its port with a no-break space, so that a line never ends between 'TCP' and '48010'
@@ -281,6 +461,85 @@ function formatDialogText(text) {
   return escapeHTML(text).replace(/\n/g, '<br>');
 }
 
+// The requests of the one HTTP thread of the WebAssembly module (openUrl and pair), which run one at a time, each one
+// once the one before it answered or timed out. A box art download waits behind every other request that comes in
+// while it waits: opening a host with a cold box art cache queues the box art of every app (at most two at once,
+// NvHTTP.getBoxArt() in utils.js), and the requests that start, resume or quit an app must not wait for them. Each
+// entry is { boxArt, start(finish), drop(reason), cancel(reason) }: start() sends the request and calls finish() once
+// it is settled, drop() settles a box art download that leaves the queue unsent, and cancel() cancels the one that
+// runs. The idea comes from the fork of mmadej20 (moonlight-tizen-modern, GPL-3.0, f4eff8e); the queue is new.
+var _httpQueue = [];
+// The entry of the request that runs, or null
+var _httpCurrent = null;
+// The pairing request waiting in the JS queue, if any, so that canceling can keep it from starting
+var _queuedPairing = null;
+
+// Whether a request downloads box art (NvHTTP.getBoxArt() in utils.js), the only one for /appasset
+function isBoxArtRequest(params) {
+  return /\/appasset\?/.test(String(params[0]));
+}
+
+// Start the request at the front of the queue, unless one runs
+function runNextHttpRequest() {
+  if (_httpCurrent || _httpQueue.length === 0) {
+    return;
+  }
+  var entry = _httpQueue.shift();
+  var finished = false;
+  var finish = function() {
+    if (finished) {
+      return;
+    }
+    finished = true;
+    _httpCurrent = null;
+    // After the handlers of the answer, so that a request that one of them sends (e.g. the refresh after /cancel in
+    // NvHTTP.quitApp()) goes before the box art downloads that wait
+    Promise.resolve().then(runNextHttpRequest);
+  };
+  _httpCurrent = entry;
+  try {
+    entry.start(finish);
+  } catch (error) {
+    // E.g. a module without the function: the request fails, and the ones behind it still run
+    console.error('%c[messages.js, runNextHttpRequest]', 'color: gray;', 'Error: Failed to send an HTTP request:', error);
+    if (entry.drop) {
+      entry.drop(error);
+    }
+    finish();
+  }
+}
+
+// Queue a request: a box art download at the end, any other request before the box art downloads that wait. The queue
+// starts it after the code that sent it, so that a request sent right after a box art download still goes first.
+function queueHttpRequest(entry) {
+  var index = _httpQueue.length;
+  if (!entry.boxArt) {
+    while (index > 0 && _httpQueue[index - 1].boxArt) {
+      index--;
+    }
+  }
+  _httpQueue.splice(index, 0, entry);
+  Promise.resolve().then(runNextHttpRequest);
+}
+
+// Drop the box art downloads that wait and cancel the one that runs, so that they reject with `reason`: when a stream
+// starts (cancelBoxArtDownloads() in utils.js), they would only hold up the requests that start it
+function dropBoxArtRequests(reason) {
+  var dropped = _httpQueue.filter(function(entry) {
+    return entry.boxArt;
+  });
+  _httpQueue = _httpQueue.filter(function(entry) {
+    return !entry.boxArt;
+  });
+  dropped.forEach(function(entry) {
+    entry.drop(reason);
+  });
+  if (_httpCurrent && _httpCurrent.boxArt) {
+    _httpCurrent.cancel(reason);
+  }
+  return dropped.length;
+}
+
 /**
  * var sendMessage - Sends a message with arguments to the Wasm module
  *
@@ -288,10 +547,6 @@ function formatDialogText(text) {
  * @param  {(String|Array)} params An array of options or a single string
  * @return {void}        The Wasm module calls back through the handleMessage method
  */
-var _httpLock = Promise.resolve();
-// The pairing request waiting in the JS queue, if any, so that canceling can keep it from starting
-var _queuedPairing = null;
-
 var sendMessage = function(method, params) {
   if (SyncFunctions[method]) {
     // Starting a request resets the cancel flag in C++, so a canceled pairing request
@@ -314,20 +569,33 @@ var sendMessage = function(method, params) {
     var timeout_ms = params[3] || 0;
 
     return new Promise(function(resolve, reject) {
-      _httpLock = _httpLock.catch(function() {}).then(function() {
-        return new Promise(function(innerResolve, innerReject) {
-          var isFinished = false;
-          var timeoutId = null;
-          var url = params[0];
+      var url = params[0];
+      var isFinished = false;
+      var timeoutId = null;
+      var finishRequest = null;
+      // Settle the request once, and unlock the JS queue if it runs
+      var settle = function(settleWith, value) {
+        if (isFinished) {
+          return;
+        }
+        isFinished = true;
+        if (timeoutId) clearTimeout(timeoutId);
+        settleWith(value);
+        if (finishRequest) {
+          finishRequest();
+        }
+      };
 
+      queueHttpRequest({
+        boxArt: isBoxArtRequest(params),
+        start: function(finish) {
+          finishRequest = finish;
           if (timeout_ms > 0) {
             timeoutId = setTimeout(function() {
               if (!isFinished) {
-                isFinished = true;
                 console.warn('%c[messages.js, sendMessage]', 'color: gray;', 'Warning: HTTPS request timed out, canceling C++ HTTP request for URL:', url);
                 SyncFunctions['cancelRequest']();
-                reject(-1); // GS_FAILED
-                innerResolve(); // Unlock the JS queue!
+                settle(reject, -1); // GS_FAILED
               }
             }, timeout_ms);
           }
@@ -335,25 +603,23 @@ var sendMessage = function(method, params) {
           const id = callbacks_ids++;
           callbacks[id] = {
             'resolve': function(msg) {
-              if (!isFinished) {
-                isFinished = true;
-                if (timeoutId) clearTimeout(timeoutId);
-                resolve(msg);
-                innerResolve(); // Unlock the JS queue
-              }
+              settle(resolve, msg);
             },
             'reject': function(err) {
-              if (!isFinished) {
-                isFinished = true;
-                if (timeoutId) clearTimeout(timeoutId);
-                reject(err);
-                innerResolve(); // Unlock the JS queue
-              }
+              settle(reject, err);
             }
           };
 
           AsyncFunctions['openUrl'](id, ...params);
-        });
+        },
+        drop: function(reason) {
+          settle(reject, reason);
+        },
+        cancel: function(reason) {
+          console.log('%c[messages.js, sendMessage]', 'color: gray;', 'Canceling the box art download that runs.');
+          SyncFunctions['cancelRequest']();
+          settle(reject, reason);
+        }
       });
     });
   } else if (method === 'pair') {
@@ -364,31 +630,33 @@ var sendMessage = function(method, params) {
     _queuedPairing = pairing;
 
     return new Promise(function(resolve, reject) {
-      _httpLock = _httpLock.catch(function() {}).then(function() {
-        if (_queuedPairing === pairing) {
-          _queuedPairing = null;
-        }
-        // Don't start a pairing request that was canceled while it was waiting in the queue
-        if (pairing.canceled) {
-          reject(-1); // GS_FAILED
-          return;
-        }
+      queueHttpRequest({
+        boxArt: false,
+        start: function(finish) {
+          if (_queuedPairing === pairing) {
+            _queuedPairing = null;
+          }
+          // Don't start a pairing request that was canceled while it was waiting in the queue
+          if (pairing.canceled) {
+            reject(-1); // GS_FAILED
+            finish();
+            return;
+          }
 
-        return new Promise(function(innerResolve, innerReject) {
           const id = callbacks_ids++;
           callbacks[id] = {
             'resolve': function(msg) {
               resolve(msg);
-              innerResolve(); // Unlock the JS queue
+              finish(); // Unlock the JS queue
             },
             'reject': function(err) {
               reject(err);
-              innerResolve(); // Unlock the JS queue
+              finish(); // Unlock the JS queue
             }
           };
 
           AsyncFunctions['pair'](id, ...params);
-        });
+        }
       });
     });
   } else {
@@ -443,6 +711,10 @@ var handlePromiseMessage = function(callbackId, type, msg) {
  */
 function leaveStreamView(host, quitApp) {
   // Each of these steps on its own, so that the video is removed and the app list shows also when one of them fails
+  // The stream ended in a way the app saw, which its heartbeat notes (diagnostics.js)
+  if (typeof StreamHeartbeat !== 'undefined') {
+    runGuarded('StreamHeartbeat.stop', function() { StreamHeartbeat.stop('the stream ended'); });
+  }
   // Stop the rumble that the host left on, which would otherwise keep being played
   runGuarded('Rumble.stopAll', function() { Rumble.stopAll(); });
   // Let the screensaver of the TV work again, since the menus are static
@@ -627,6 +899,15 @@ function dispatchMessage(msg) {
     // Each step on its own (runGuarded()), so that an error in one of them can't leave the app in the stream view.
     // The Stream Menu belongs to the stream, and 'Disconnect and quit the app on the PC' to this end of it (menus.js)
     runGuarded('closeStreamMenu', function() { closeStreamMenu(false); });
+    // The bitrate entry of the Stream Menu ended the stream to resume it with a new bitrate: the launch screen shows
+    // until it reconnects (resumeStreamAfterBitrateChange() in index.js)
+    if (!quitApp && typeof resumeStreamAfterBitrateChange === 'function' && runGuarded('resumeStreamAfterBitrateChange', function() {
+      return resumeStreamAfterBitrateChange(errorCode);
+    }) === true) {
+      // As for the retry below: the rumble of this session is ignored from now on, so stop what the host left on
+      runGuarded('Rumble.stopAll', function() { Rumble.stopAll(); });
+      return;
+    }
     // No video arrived from the host at the start of the stream, e.g. since its display or encoder was still warming
     // up: start it once more without a word, and show the message below only if that fails as well
     // (retryStreamAfterNoVideo() in index.js)
@@ -712,6 +993,9 @@ function dispatchMessage(msg) {
     // next level: keep it as the setting, and hide the overlay until the figures of the new level arrive
     savePerformanceStatsLevel(parseInt(msg.replace('StatLevelMsg: ', ''), 10));
     showPerformanceStats('', false);
+    // The graph starts again with the next figures of the full statistics, so that it never joins seconds that lie
+    // apart
+    resetStatsGraph();
     if (isStreamMenuOpen) {
       updateStreamMenu();
     }
@@ -732,10 +1016,14 @@ function dispatchMessage(msg) {
       return;
     }
     // Show the performance statistics overlay, followed by the network connection of the TV if it's known
-    // and the audio statistics of the Web Audio backend
+    // and the audio statistics of the Web Audio backend, under the graph with the point of this message
+    var fullStats = parseFullStatsMessage(msg.replace('StatMsg: ', ''));
+    if (fullStats.point) {
+      addStatsGraphPoint(fullStats.point, Date.now());
+    }
     var audioStatsLines = typeof getAudioStatsLines === 'function' ? getAudioStatsLines() : '';
     var backgroundStatsLine = typeof getBackgroundStatsLine === 'function' ? getBackgroundStatsLine() : '';
-    showPerformanceStats(translateBackendMessage(msg.replace('StatMsg: ', '')) + (streamNetworkInfo ? '\n' + streamNetworkInfo : '') + (audioStatsLines ? '\n' + audioStatsLines : '') + (backgroundStatsLine ? '\n' + backgroundStatsLine : ''), false);
+    showPerformanceStats(translateBackendMessage(fullStats.text) + (streamNetworkInfo ? '\n' + streamNetworkInfo : '') + (audioStatsLines ? '\n' + audioStatsLines : '') + (backgroundStatsLine ? '\n' + backgroundStatsLine : ''), false, statsGraphPoints);
     // Keep the Wi-Fi signal strength of the network connection current while the overlay is shown
     refreshStreamNetworkInfo();
   } else if (msg.indexOf('controllerRumble: ') === 0) {
@@ -767,6 +1055,9 @@ function dispatchMessage(msg) {
       updateStreamMenu();
     }
     snackbarLogLong('Mouse emulation is deactivated');
+  } else if (msg.indexOf('SessionReportMsg: ') === 0) {
+    // The totals of the stream that ended, for the report of the last session in System information (index.js)
+    keepSessionReport(msg.replace('SessionReportMsg: ', ''));
   } else if (msg === 'streamMenuRequested') {
     // A gamepad held Select + Start for the Stream Menu (wasm/gamepad.cpp)
     openStreamMenu();

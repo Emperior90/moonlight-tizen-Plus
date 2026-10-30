@@ -155,7 +155,7 @@ test('System information shows the app, the model strings and what the app detec
     {
       tv: { tv: 's90c', conn: 'ethernet' },
       lines: [
-        'App Version: Moonlight Plus v2.0.0',
+        'App Version: Moonlight Plus v2.1.0',
         'Platform Version: Tizen 9.0',
         'TV Model Series: 23_PONTUSM_OLED',
         'TV Model Name: QE55S90CAT',
@@ -170,12 +170,14 @@ test('System information shows the app, the model strings and what the app detec
         'Video decoders (MediaSource check): H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
         'Video decoders at level 5.2 (4K above 60 FPS): HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
         'Gamepads: None',
+        '',
+        'Last session: None yet',
       ],
     },
     {
       tv: { tv: 'fhd', conn: 'wifi' },
       lines: [
-        'App Version: Moonlight Plus v2.0.0',
+        'App Version: Moonlight Plus v2.1.0',
         'Platform Version: Tizen 5.5',
         'TV Model Series: 20_KANTM2_FHD',
         'TV Model Name: UE43T5300AU',
@@ -190,12 +192,14 @@ test('System information shows the app, the model strings and what the app detec
         'Video decoders (MediaSource check): H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
         'Video decoders at level 5.2 (4K above 60 FPS): HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
         'Gamepads: None',
+        '',
+        'Last session: None yet',
       ],
     },
     {
       tv: { tv: '8k', conn: 'unknown', modelCode: 'NOYEAR' },
       lines: [
-        'App Version: Moonlight Plus v2.0.0',
+        'App Version: Moonlight Plus v2.1.0',
         'Platform Version: Tizen 6.5',
         'TV Model Series: 22_PONTUSM_8K',
         'TV Model Name: QE65QN900BT',
@@ -210,6 +214,8 @@ test('System information shows the app, the model strings and what the app detec
         'Video decoders (MediaSource check): H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
         'Video decoders at level 5.2 (4K above 60 FPS): HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
         'Gamepads: None',
+        '',
+        'Last session: None yet',
       ],
     },
   ];

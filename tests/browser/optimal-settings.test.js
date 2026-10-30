@@ -237,7 +237,7 @@ test('a TV whose product APIs fail still starts, with the defaults of a Full HD 
     assert.deepEqual([shown.resolution, shown.hdr, shown.bitrate, shown.unlockAllFps, shown.codec], ['1920:1080', false, '25', false, 'HEVC']);
     const systemInfo = await app.page.evaluate(() => document.getElementById('systemInfoBtn').innerHTML.replace(/<br\s*\/?>/g, '\n'));
     assert.equal(systemInfo, [
-      'App Version: Moonlight Plus v2.0.0',
+      'App Version: Moonlight Plus v2.1.0',
       'Platform Version: Tizen Unknown',
       'TV Model Series: Unknown',
       'TV Model Name: Unknown',
@@ -252,6 +252,9 @@ test('a TV whose product APIs fail still starts, with the defaults of a Full HD 
       'Video decoders (MediaSource check): H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
       'Video decoders at level 5.2 (4K above 60 FPS): HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
       'Gamepads: None',
+      // The report of the last stream, after an empty line (diagnostics.js)
+      '',
+      'Last session: None yet',
     ].join('\n'));
     // The dialog names no model and no tested profile, and lists what the app falls back to
     await applyButtonDialog(app.page);

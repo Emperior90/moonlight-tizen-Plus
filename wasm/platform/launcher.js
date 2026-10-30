@@ -295,12 +295,14 @@ const Launcher = (function() {
       return;
     }
     const running = card.classList.contains('current-game-active');
-    // A hidden app that shows after 'Show hidden apps' (menus.js)
+    // A hidden app that shows after 'Show hidden apps', and a favorite (menus.js)
     const hidden = card.classList.contains('app-hidden');
+    const favorite = card.classList.contains('app-favorite');
     setHero('app', running ? 'running' : 'idle', {
       overline: overline,
       title: card.getAttribute('aria-label') || '',
-      chips: (running ? chip('running', t('RUNNING'), 'play') : '') + (hidden ? chip('hidden', t('Hidden'), 'eye-off') : ''),
+      chips: (running ? chip('running', t('RUNNING'), 'play') : '') + (favorite ? chip('favorite', t('Favorite'), 'star') : '') +
+        (hidden ? chip('hidden', t('Hidden'), 'eye-off') : ''),
       hints: keyHint(t('OK'), null, running ? t('Resume') : t('Play')),
       art: artOf(card),
     });

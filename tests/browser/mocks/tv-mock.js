@@ -22,6 +22,8 @@
 //   tizentvwasm as in a desktop browser), 'ull', 'noUll', 'apiLevels', 'legacy', 'disagree' or 'throws'
 // - codecs: what MediaSource.isTypeSupported() answers (see createMediaSource() below): 'all' (default), 'noAv1',
 //   'noAv1Main10', 'noLevel52', 'acceptsBogus', 'noH264', 'throws' or 'none' (no MediaSource)
+// - locale: the language of the TV that tizen.systeminfo.getPropertyValue('LOCALE') reports, in the (LANGUAGE)_(REGION)
+//   form of the Tizen API, e.g. 'de_AT' (default '': the property fails, and the app reads the language of the browser)
 //
 // The model strings of the presets are illustrative, not read from real devices. Only the S90C model name matches the
 // TV that the app was tuned for, and the S90C preset is the golden case of the generalization plan.
@@ -45,17 +47,18 @@
     wifiSignal: 0.78,
     forceGM: false,
     // The version of res/config.xml, which unit/app-identity.test.js keeps in step
-    appVersion: '2.0.0',
+    appVersion: '2.1.0',
     ip: '192.168.0.50',
     subnetMask: '255.255.255.0',
     failApis: '',
     wasmStartMs: 50,
     wasmPlayer: 'none',
-    codecs: 'all'
+    codecs: 'all',
+    locale: ''
   };
 
   var BOOLEAN_KEYS = ['hdr', 'forceGM'];
-  var CONFIG_KEYS = ['tv', 'model', 'series', 'modelCode', 'panel', 'hdr', 'tizen', 'conn', 'wifiSignal', 'forceGM', 'appVersion', 'ip', 'subnetMask', 'failApis', 'wasmStartMs', 'wasmPlayer', 'codecs'];
+  var CONFIG_KEYS = ['tv', 'model', 'series', 'modelCode', 'panel', 'hdr', 'tizen', 'conn', 'wifiSignal', 'forceGM', 'appVersion', 'ip', 'subnetMask', 'failApis', 'wasmStartMs', 'wasmPlayer', 'codecs', 'locale'];
 
   // Convert a query string value to a boolean, accepting 1/0, true/false, yes/no and on/off
   function toBoolean(value) {
@@ -375,6 +378,9 @@
               onSuccess({ status: config.conn === 'wifi' ? 'ON' : 'OFF', signalStrength: config.wifiSignal, ssid: 'Test network' });
             } else if (property === 'NETWORK') {
               onSuccess({ networkType: config.conn === 'wifi' ? 'WIFI' : (config.conn === 'ethernet' ? 'ETHERNET' : 'NONE') });
+            } else if (property === 'LOCALE' && config.locale) {
+              // Both fields in the (LANGUAGE)_(REGION) form, as the Tizen API documents them
+              onSuccess({ language: String(config.locale), country: String(config.locale) });
             } else if (onError) {
               onError({ name: 'NotSupportedError', message: 'Property not simulated: ' + property });
             }

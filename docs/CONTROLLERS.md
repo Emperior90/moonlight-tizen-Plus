@@ -2,7 +2,7 @@
 
 This page describes how Moonlight Plus handles game controllers: in the menus, during a stream, and what the PC gets. For setting up the app, see the [guide](GUIDE.md).
 
-**Testing status:** the controller changes of Moonlight Plus (menus, controller type, rumble, mouse emulation, the Stream Menu combo) were tested with simulated controllers and native tests of the controller code. None of them was checked with real controllers on a TV yet. Reports from real controllers are welcome on the [issue tracker of this fork](https://github.com/Emperior90/moonlight-tizen-Plus/issues).
+**Testing status:** the controller changes of Moonlight Plus (menus, controller type, rumble, mouse emulation, the Stream Menu combo, the button mapping and the stick calibration, the input test) were tested with simulated controllers and native tests of the controller code. None of them was checked with real controllers on a TV yet. Reports from real controllers are welcome on the [issue tracker of this fork](https://github.com/Emperior90/moonlight-tizen-Plus/issues).
 
 ## Contents
 
@@ -13,7 +13,9 @@ This page describes how Moonlight Plus handles game controllers: in the menus, d
 5. [Controller type sent to the PC](#5-controller-type-sent-to-the-pc)
 6. [Rumble](#6-rumble)
 7. [Mouse emulation](#7-mouse-emulation)
-8. [Known limits](#8-known-limits)
+8. [Button mapping and stick calibration](#8-button-mapping-and-stick-calibration)
+9. [Input test](#9-input-test)
+10. [Known limits](#10-known-limits)
 
 ## 1. Supported controllers
 
@@ -30,7 +32,7 @@ The app expects the standard layout of the Gamepad API, with the button position
 - **Use the X-input or Xbox mode** of controllers that have several modes (e.g. 8BitDo controllers with X-input, D-input, Switch and macOS modes).
 - When a controller reports a non-standard layout, the app shows a notice once per controller after it starts: "Gamepad N (name) has a non-standard button layout, so some buttons may be wrong. Try its XInput or Xbox mode, or another connection." This happens e.g. with an 8BitDo controller in D-input mode, or with a newer controller on a TV whose browser predates the mapping of that controller.
 - System information shows *standard layout* or *non-standard layout* for each controller.
-- The app can't remap the buttons of a controller with a non-standard layout.
+- The app can't fix a non-standard layout: the [button mapping](#8-button-mapping-and-stick-calibration) assumes the standard positions. The [input test](#9-input-test) shows which index each button of such a controller reports.
 
 ## 3. Buttons in the menus
 
@@ -45,7 +47,7 @@ The menus use the button positions (Xbox names first, PlayStation names in brack
 | Start / Menu (Options) | Like CH- on the remote: set the focus on the current item |
 
 - The in-app *Navigation guide* (Settings → About) lists the same buttons, with the remote and keyboard keys next to them.
-- *Flip A/B face buttons* and *Flip X/Y face buttons* only apply during a stream. In the menus, the bottom button always selects, also on Nintendo controllers, whose labels differ.
+- The [button mapping](#8-button-mapping-and-stick-calibration) only applies during a stream. In the menus, the bottom button always selects, also on Nintendo controllers, whose labels differ.
 - Buttons that are still held when a stream ends (e.g. the stop combo) don't trigger anything in the menus.
 
 ## 4. Buttons during a stream
@@ -60,8 +62,8 @@ During a stream, the PC gets the buttons, sticks and analog triggers of every co
 
 Settings → Input Settings:
 
-- *Flip A/B face buttons* and *Flip X/Y face buttons* swap these buttons for the PC. Both are off by default.
-- The button combos below always use the physical buttons, whatever the flip settings.
+- *Button mapping* lets each button press another one in games, for every controller or for one (see [section 8](#8-button-mapping-and-stick-calibration)). By default every button presses itself.
+- The button combos below always use the physical buttons, whatever the button mapping.
 
 **Button combos.** Hold exactly these buttons, and no others:
 
@@ -71,7 +73,7 @@ Settings → Input Settings:
 | Select + Start + LB + RB | End the stream (like the RED key of the remote) |
 | Select + LB + RB + X | Step the performance statistics through Off, Compact and Full (like the YELLOW key) |
 
-X means the left face button (Square on PlayStation controllers), also with *Flip X/Y face buttons* on.
+X means the left face button (Square on PlayStation controllers), whatever the button mapping.
 
 **Select + Start for the Stream Menu.** Two buttons that every controller has, held together and alone, which none of the other combos uses on its own. So that the game doesn't react to the combo:
 
@@ -133,13 +135,42 @@ In mouse mode:
 
 - Mouse mode applies to all controllers at once, and they share one mouse.
 - While it is on, the game sees the controllers with nothing pressed and the sticks centred.
-- The face buttons follow the flip settings.
+- The buttons follow the button mapping.
 - Every stream starts without mouse mode.
 
-## 8. Known limits
+## 8. Button mapping and stick calibration
+
+Settings → Input Settings → *Button mapping*. Each of the 16 buttons of the standard layout up to the D-pad (A, B, X, Y, LB, RB, LT, RT, Select, Start, the two stick buttons and the D-pad) can press another one of them in games, or none.
+
+- The first row chooses the controller with LEFT and RIGHT: *All controllers*, then each connected controller, then the controllers that have a mapping of their own. Each other row is a button of the controller, with the button it presses between the arrows; LEFT and RIGHT (or OK) change it, and a changed button shows in amber. A gamepad works the same way: D-pad to move and change, A to step, B to close.
+- A controller without a mapping of its own uses the one of *All controllers*. Changing one of its buttons gives it its own mapping, which is stored under its id, so two controllers of the same model share it. *Reset this controller* forgets it again (for *All controllers*: every button presses itself again).
+- The mapping applies from the next stream. The menus of the app always use the buttons as printed.
+- The [button combos](#4-buttons-during-a-stream) (Stream Menu, stop, statistics) and the hold of Start for the mouse emulation run on the physical buttons before the mapping, so they work whatever the mapping. A button mapped to Start doesn't make a Stream Menu combo with Select.
+- A trigger mapped to a button presses it as far as the TV counts the trigger pressed, and a button mapped to a trigger pulls it all the way. The Guide button and button 17 keep their meaning.
+- Restore Defaults resets the mapping and every calibration.
+- The earlier switches *Flip A/B face buttons* and *Flip X/Y face buttons* became the mapping of *All controllers*: an install that had them on keeps A/B or X/Y swapped.
+
+**Stick calibration.** For worn or cheap sticks that rest off-centre or don't reach the edge, choose the connected controller and *Calibrate the sticks*:
+
+1. Leave both sticks at rest and press OK: the centre is the average of the last half second.
+2. Move both sticks slowly around their edge two or three times and press OK: the ends are the lowest and highest values each axis reached.
+
+During the stream the centre then counts as 0 and the ends as full deflection. A stick whose centre lies more than half way off, or that moved less than a quarter of the way to a side, isn't calibrated. There is no dead zone: games apply their own, and a second one would widen it. RETURN cancels the calibration.
+
+## 9. Input test
+
+Settings → Input Settings → *Input test* shows what reaches the app:
+
+- every key of the remote or a keyboard with its name, key code and how long it was held, also how often it repeated, and the last 8 keys;
+- each connected controller, drawn live: pressed buttons, how far each trigger is pulled, where each stick is, and the values of its buttons and axes (a controller with a non-standard layout names its buttons by their index);
+- the media and colour keys of the TV, those that Moonlight registered and those that it leaves to the TV (from `tizen.tvinputdevice.getSupportedKeys()`).
+
+The test takes every key itself, so OK, the arrows and the colour keys do nothing else. RETURN (or ESC) shows and then leaves it; on a controller, hold B for 2 seconds. The controllers are only read while it is open, and it registers no keys of its own: a key that doesn't show is one that the TV doesn't pass to the app.
+
+## 10. Known limits
 
 - **Not available:** the touchpad surface, motion sensors, the battery level and the lights of a controller. The Gamepad API of the browser of the TV doesn't provide them, so the app doesn't announce them to the PC. The upstream FAQ also lists motion controls as unsupported because of a Tizen platform limitation. Only the touchpad click works (as button 17).
 - **Non-standard layouts** can't be fixed in the app. Try another mode or connection of the controller.
-- **Nintendo controllers:** the menus and the stream use the button positions, so the labels A/B and X/Y are swapped compared to the controller. Use the flip settings for the stream.
+- **Nintendo controllers:** the menus and the stream use the button positions, so the labels A/B and X/Y are swapped compared to the controller. Use the [button mapping](#8-button-mapping-and-stick-calibration) for the stream.
 - **Guide button:** whether the TV passes it to the app is untested.
-- **Untested on real hardware:** the touchpad click of PlayStation controllers, rumble longer than 5 seconds, mouse emulation with two controllers, the controller type setting with Sunshine, and controllers in other modes (e.g. the D-input mode of 8BitDo controllers).
+- **Untested on real hardware:** the touchpad click of PlayStation controllers, rumble longer than 5 seconds, mouse emulation with two controllers, the controller type setting with Sunshine, the button mapping and the stick calibration with real controllers, and controllers in other modes (e.g. the D-input mode of 8BitDo controllers).

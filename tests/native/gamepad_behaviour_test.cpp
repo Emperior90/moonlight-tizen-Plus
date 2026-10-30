@@ -65,7 +65,7 @@ static void TestArrival() {
   harness::Reset();
   Connect(0);
   Poll();
-  harness::Instance()->HandleGamepadInputState(false, false, true, false, LI_CTYPE_UNKNOWN);
+  harness::Instance()->HandleGamepadInputState(false, false, harness::FaceButtonSwapMapping(true, false), LI_CTYPE_UNKNOWN);
   Poll();
   CHECK_EQ(harness::arrivals.size(), 2u);
 
@@ -152,7 +152,7 @@ static void TestControllerTypeSetting() {
   CHECK_EQ(harness::arrivals[0].type, LI_CTYPE_NINTENDO);
 
   // The next stream with Auto announces the detected type again
-  harness::Instance()->HandleGamepadInputState(false, false, false, false, LI_CTYPE_UNKNOWN);
+  harness::Instance()->HandleGamepadInputState(false, false, harness::FaceButtonSwapMapping(false, false), LI_CTYPE_UNKNOWN);
   Poll();
   CHECK_EQ(harness::arrivals.size(), 2u);
   CHECK_EQ(harness::arrivals[1].type, LI_CTYPE_XBOX);
@@ -359,7 +359,7 @@ static void TestMouseEmulationToggle() {
   CHECK_EQ(harness::mouseMoves.size(), 2u);
 
   // New settings (the start of a stream) end the mouse emulation; the Stream Menu can turn it on without the setting
-  harness::Instance()->HandleGamepadInputState(false, false, false, false, LI_CTYPE_UNKNOWN);
+  harness::Instance()->HandleGamepadInputState(false, false, harness::FaceButtonSwapMapping(false, false), LI_CTYPE_UNKNOWN);
   Poll();
   CHECK(!mouseEmulationActive);
 }
@@ -500,7 +500,7 @@ static void TestMouseEmulationResetForNewStream() {
   CHECK_EQ(harness::mouseButtons.size(), 1u);
 
   // The next stream starts without the mouse emulation
-  harness::Instance()->HandleGamepadInputState(false, true, false, false, LI_CTYPE_UNKNOWN);
+  harness::Instance()->HandleGamepadInputState(false, true, harness::FaceButtonSwapMapping(false, false), LI_CTYPE_UNKNOWN);
   CHECK(!mouseEmulationActive);
   padPackets.clear();
   harness::mouseButtons.clear();

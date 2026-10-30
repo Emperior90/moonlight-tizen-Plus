@@ -1,7 +1,7 @@
 'use strict';
 
 // Checks that the checkers in tests/tools catch what they are meant to catch, so a broken checker can't let newer
-// JavaScript, a split EM_ASM block or a broken link of the documents through unnoticed.
+// JavaScript, a split EM_ASM block, a broken link of the documents or a broken translation through unnoticed.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -11,6 +11,7 @@ const path = require('path');
 const es2018 = require('../tools/check-es2018');
 const emAsm = require('../tools/check-em-asm');
 const markdownLinks = require('../tools/check-markdown-links');
+const i18nCheck = require('../tools/i18n-check');
 
 // Write the source into a temporary file, run the check on it and remove the file again
 function checkSource(name, source, check) {
@@ -176,4 +177,87 @@ test('the documents of the repository have no broken local links', () => {
   files.forEach((file) => {
     assert.deepEqual(markdownLinks.checkFile(file), [], file);
   });
+});
+
+// A small source locale and a German translation of it for the checks of tests/tools/i18n-check.js
+const ENGLISH = {
+  'Settings': 'Settings',
+  'HEVC': 'HEVC',
+  'Connecting to %1$s...': 'Connecting to %1$s...',
+  'Line one<br><br>Line two': 'Line one<br><br>Line two',
+  'Slow connection.\nReduce your bitrate!': 'Slow connection.\nReduce your bitrate!',
+  '- Help text of a setting.': '- Help text of a setting.',
+  '— Stop the stream.': '— Stop the stream.',
+  ' (Running)': ' (Running)',
+};
+const GERMAN = {
+  'Settings': 'Einstellungen',
+  'HEVC': 'HEVC',
+  'Connecting to %1$s...': 'Verbinde mit %1$s …',
+  'Line one<br><br>Line two': 'Zeile eins<br><br>Zeile zwei',
+  'Slow connection.\nReduce your bitrate!': 'Langsame Verbindung.\nVerringere die Bitrate!',
+  '- Help text of a setting.': '- Hilfetext einer Einstellung.',
+  '— Stop the stream.': '— Den Stream beenden.',
+  ' (Running)': ' (Läuft)',
+};
+
+test('the i18n check accepts a complete translation and texts that its list keeps in English', () => {
+  assert.deepEqual(i18nCheck.checkTranslation('de-DE', ENGLISH, GERMAN, ['HEVC']), { problems: [], notes: [] });
+});
+
+test('the i18n check reports missing, extra, empty and untranslated texts', () => {
+  const german = Object.assign({}, GERMAN, { 'Unknown key': 'Unbekannt', 'Settings': 'Settings', ' (Running)': ' ' });
+  delete german['— Stop the stream.'];
+  const result = i18nCheck.checkTranslation('de-DE', ENGLISH, german, []);
+  assert.equal(result.problems.length, 5, result.problems.join('\n'));
+  ['misses the key "— Stop the stream."', 'a key that en-US.json does not have: "Unknown key"', 'no translation for "Settings"',
+    'no translation for "HEVC"', 'an empty text for " (Running)"'].forEach((part) => {
+    assert.ok(result.problems.some((problem) => problem.indexOf(part) >= 0), part + '\n' + result.problems.join('\n'));
+  });
+  // A listed key that no longer exists or is translated now is a note, not a problem
+  const notes = i18nCheck.checkTranslation('de-DE', ENGLISH, GERMAN, ['HEVC', 'Settings', 'Removed key']).notes;
+  assert.equal(notes.length, 2, notes.join('\n'));
+});
+
+test('the i18n check reports a character reference, which a data-i18n element would show as it is', () => {
+  const result = i18nCheck.checkTranslation('pt-BR', ENGLISH, Object.assign({}, GERMAN, { 'Settings': 'Defina &amp; segure' }), ['HEVC']);
+  assert.equal(result.problems.length, 1, result.problems.join('\n'));
+  assert.match(result.problems[0], /character reference in "Settings"/);
+});
+
+test('the i18n check reports a translation that loses a placeholder, an HTML tag, a line break, a dash or a space', () => {
+  const broken = {
+    'Connecting to %1$s...': 'Verbinde mit %2$s …',
+    'Line one<br><br>Line two': 'Zeile eins<br>Zeile zwei',
+    'Slow connection.\nReduce your bitrate!': 'Langsame Verbindung. Verringere die Bitrate!',
+    '- Help text of a setting.': 'Hilfetext einer Einstellung.',
+    '— Stop the stream.': '- Den Stream beenden.',
+    ' (Running)': '(Läuft)',
+  };
+  const result = i18nCheck.checkTranslation('de-DE', ENGLISH, Object.assign({}, GERMAN, broken), ['HEVC']);
+  assert.equal(result.problems.length, Object.keys(broken).length, result.problems.join('\n'));
+  ['the placeholders', 'the HTML tags', 'line break', 'the leading "- "', 'the leading "— "', 'the spaces at the start'].forEach((part, i) => {
+    assert.ok(result.problems[i].indexOf(part) >= 0, part + ': ' + result.problems[i]);
+  });
+});
+
+test('the i18n check reads the languages of i18n.js and wants a locale file and a list for each', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', '..', 'wasm', 'platform', 'i18n.js'), 'utf8');
+  const locales = i18nCheck.readAppLocales(source);
+  assert.equal(locales[0].code, 'en-US');
+  assert.ok(locales.every((locale) => typeof locale.name === 'string' && locale.name.length > 0), JSON.stringify(locales));
+  const appLocales = [{ code: 'en-US', name: 'English' }, { code: 'de-DE', name: 'Deutsch' }];
+  assert.deepEqual(i18nCheck.checkLocaleSet(appLocales, ['de-DE', 'en-US'], ['de-DE']), []);
+  const problems = [
+    // A language without its file, a file without its language, a language without its list, a list without its language
+    i18nCheck.checkLocaleSet(appLocales.concat([{ code: 'fr-FR', name: 'Français' }]), ['de-DE', 'en-US'], ['de-DE']),
+    i18nCheck.checkLocaleSet(appLocales, ['de-DE', 'en-US', 'it-IT'], ['de-DE', 'it-IT']),
+    i18nCheck.checkLocaleSet(appLocales, ['de-DE', 'en-US'], []),
+    i18nCheck.checkLocaleSet(appLocales, ['de-DE', 'en-US'], ['de-DE', 'en-US']),
+    // English not first, a language twice, a language without a name
+    i18nCheck.checkLocaleSet(appLocales.slice().reverse(), ['de-DE', 'en-US'], ['de-DE']),
+    i18nCheck.checkLocaleSet(appLocales.concat([{ code: 'de-DE', name: 'Deutsch' }]), ['de-DE', 'en-US'], ['de-DE']),
+    i18nCheck.checkLocaleSet(appLocales.concat([{ code: 'pt-BR', name: '' }]), ['de-DE', 'en-US', 'pt-BR'], ['de-DE', 'pt-BR']),
+  ];
+  problems.forEach((list, i) => assert.equal(list.length, 1, i + ': ' + list.join('\n')));
 });

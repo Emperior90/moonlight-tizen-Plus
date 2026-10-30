@@ -434,7 +434,7 @@ static void TestMouseModeAndMenu() {
   // A new stream starts with the menu closed and nothing requested
   setStreamMenuOpen(true);
   toggleMouseEmulation();
-  harness::Instance()->HandleGamepadInputState(false, false, false, false, LI_CTYPE_UNKNOWN);
+  harness::Instance()->HandleGamepadInputState(false, false, harness::FaceButtonSwapMapping(false, false), LI_CTYPE_UNKNOWN);
   harness::postedToJs.clear();
   SetButton(0, kButtonA, true);
   harness::slots[0].axis[0] = 0.0;

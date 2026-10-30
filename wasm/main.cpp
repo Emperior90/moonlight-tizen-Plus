@@ -1,8 +1,10 @@
 #include "moonlight_wasm.hpp"
 #include "compact_stats.hpp"
 #include "controller_type.hpp"
+#include "diagnostic_log.hpp"
 #include "wake_on_lan.hpp"
 
+#include <algorithm>
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
@@ -344,7 +346,7 @@ static void HexStringToBytes(const char* str, char* output) {
 
 MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std::string width, std::string height, std::string fps, std::string bitrate,
   std::string rikey, std::string rikeyid, std::string appversion, std::string gfeversion, std::string rtspurl, int serverCodecModeSupport,
-  bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, bool flipABfaceButtons, bool flipXYfaceButtons,
+  bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, std::string buttonMappings,
   std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
   std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, int performanceStats,
   bool refFrameInvalidation, bool hdrMetadata, std::string controllerType) {
@@ -371,8 +373,8 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   PostToJs("Setting the Optimize game settings to: " + std::to_string(optimizeGames));
   PostToJs("Setting the Rumble feedback to: " + std::to_string(rumbleFeedback));
   PostToJs("Setting the Mouse emulation to: " + std::to_string(mouseEmulation));
-  PostToJs("Setting the Flip A/B face buttons to: " + std::to_string(flipABfaceButtons));
-  PostToJs("Setting the Flip X/Y face buttons to: " + std::to_string(flipXYfaceButtons));
+  PostToJs("Setting the Button mapping to: " + std::to_string(std::count(buttonMappings.begin(), buttonMappings.end(), '\n') +
+                                                                (buttonMappings.empty() ? 0 : 1)) + " controller lines");
   PostToJs("Setting the Controller type sent to the PC to: " + controllerType);
   PostToJs("Setting the Audio backend to: " + audioBackend);
   PostToJs("Setting the Audio configuration to: " + audioConfig);
@@ -523,7 +525,7 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   memcpy(m_StreamConfig.remoteInputAesIv, &rikeyiv, sizeof(rikeyiv));
 
   // Manage gamepad input states based on selected settings
-  HandleGamepadInputState(rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons, GetControllerTypeFromSetting(controllerType));
+  HandleGamepadInputState(rumbleFeedback, mouseEmulation, buttonMappings, GetControllerTypeFromSetting(controllerType));
 
   // Apply the desired latency mode ​based on the toggle switch state
   EmssLatencyMode selectedLatencyMode = gameMode ? EmssLatencyMode::kUltraLow : EmssLatencyMode::kLow;
@@ -547,8 +549,6 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   m_OptimizeGamesEnabled = optimizeGames;
   m_RumbleFeedbackEnabled = rumbleFeedback;
   m_MouseEmulationEnabled = mouseEmulation;
-  m_FlipABfaceButtonsEnabled = flipABfaceButtons;
-  m_FlipXYfaceButtonsEnabled = flipXYfaceButtons;
   m_AudioSyncEnabled = audioSync;
   m_AudioJitterMs = audioJitterMs;
   m_PlayHostAudioEnabled = playHostAudio;
@@ -742,13 +742,13 @@ int main(int argc, char** argv) {
 
 MessageResult startStream(std::string host, int httpPort, std::string width, std::string height, std::string fps, std::string bitrate,
   std::string rikey, std::string rikeyid, std::string appversion, std::string gfeversion, std::string rtspurl, int serverCodecModeSupport,
-  bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, bool flipABfaceButtons, bool flipXYfaceButtons,
+  bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, std::string buttonMappings,
   std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
   std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, int performanceStats,
   bool refFrameInvalidation, bool hdrMetadata, std::string controllerType) {
   PostToJs("Starting the streaming session...");
   return g_Instance->StartStream(host, httpPort, width, height, fps, bitrate, rikey, rikeyid, appversion, gfeversion, rtspurl, serverCodecModeSupport,
-  framePacing, optimizeGames, rumbleFeedback, mouseEmulation, flipABfaceButtons, flipXYfaceButtons, audioBackend, audioConfig, audioSync,
+  framePacing, optimizeGames, rumbleFeedback, mouseEmulation, buttonMappings, audioBackend, audioConfig, audioSync,
   audioJitterMs, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange, gameMode, disableWarnings, performanceStats,
   refFrameInvalidation, hdrMetadata, controllerType);
 }
@@ -764,6 +764,12 @@ MessageResult cancelRequest() {
 
 void toggleStats() {
   g_Instance->TogglePerformanceStats();
+}
+
+// Called by the front end on the main thread for the diagnostic log (wasm/platform/diagnostics.js): the lines that the
+// module logged since the last call, one per line as "<time in ms>\t<text>" (diagnostic_log.hpp)
+std::string takeDiagnosticLog() {
+  return GetDiagnosticLog().Take();
 }
 
 void stun(int callbackId) {
@@ -846,6 +852,7 @@ EMSCRIPTEN_BINDINGS(handle_message) {
   emscripten::function("toggleStats", &toggleStats);
   emscripten::function("setStreamMenuOpen", &setStreamMenuOpen);
   emscripten::function("toggleMouseEmulation", &toggleMouseEmulation);
+  emscripten::function("takeDiagnosticLog", &takeDiagnosticLog);
   emscripten::function("stun", &stun);
   emscripten::function("pair", &pair);
   emscripten::function("wakeOnLan", &wakeOnLan);

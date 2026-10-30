@@ -202,6 +202,26 @@ test('the hint of the app menu is one quiet line in the header with a key cap', 
   }
 });
 
+test('the hint of the app menu fits the header without an ellipsis in every language', async () => {
+  const app = await openAppList();
+  try {
+    const languages = await app.page.evaluate(() => i18n.getSupportedLocales());
+    assert.ok(languages.length >= 5, JSON.stringify(languages));
+    for (const language of languages) {
+      await app.page.evaluate((locale) => i18n.setLanguage(locale), language);
+      await app.page.waitForFunction((locale) => document.documentElement.getAttribute('lang') === locale, language);
+      const hint = await app.page.evaluate(() => {
+        const element = document.getElementById('appMenuHint');
+        return { text: element.textContent, fits: element.scrollWidth <= element.clientWidth + 1 };
+      });
+      assert.equal(hint.fits, true, language + ' ' + JSON.stringify(hint));
+    }
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
 test('the running app has one look, a mint ring and the mint Running badge, and a hidden app is dimmed with its badge', async () => {
   const app = await openAppList([{ id: '12', title: 'Steam Big Picture' }, { id: '13', title: 'Cyberpunk 2077' }]);
   try {

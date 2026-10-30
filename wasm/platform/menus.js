@@ -15,6 +15,11 @@
 // A Stream Menu on Play/Pause comes from the fork of fidoboy (moonlight-tizen-ac3, GPL-3.0), which took it from
 // Diogo8500 (brightcraft/moonlight-tizen pull request 177). The key combinations are ported from there (see
 // buildKeyComboEvents()); the menus, the gamepad combo and the handling of the input here are new.
+//
+// Its bitrate entry changes the bitrate in steps of 5 Mbps with LEFT and RIGHT, and OK reconnects the stream with it
+// (restartStreamWithBitrate() in index.js), as StreamLight does for its stream settings. 'Type text…' opens a text field
+// for the keyboard of the TV, whose text goes to the PC as Unicode (sendText() of wasm/input.cpp), like the keyboard of
+// the game menu of Artemis and of StreamLight 8.0.0.
 
 // Whether the Stream Menu is open
 var isStreamMenuOpen = false;
@@ -28,8 +33,14 @@ var streamMenuPointerWasLocked = false;
 var showHiddenAppsHost = null;
 // Number of apps of the shown host that are hidden, counted when the app grid is built
 var appGridHiddenCount = 0;
+// The apps of the host that the app grid was built for last, all of them in its order: { serverUid, apps }, or null
+var appGridApps = null;
 // Host and app that the app menu is open for, or null
 var appMenuTarget = null;
+// The bitrate in Mbps that the bitrate entry of the Stream Menu shows, which starts at the bitrate of the stream
+var streamMenuBitrateMbps = 0;
+// Whether the text panel of 'Type text…' shows in place of the entries of the Stream Menu
+var isStreamTextOpen = false;
 
 // Keys that the Stream Menu sends to the PC: Windows virtual-key codes, pressed in this order and released in reverse
 const STREAM_MENU_KEYS = {
@@ -47,8 +58,38 @@ const KEYBOARD_MODIFIER_FLAGS = { 0xA0: 0x01, 0xA1: 0x01, 0xA2: 0x02, 0xA3: 0x02
 // KEY_ACTION_DOWN and KEY_ACTION_UP of moonlight-common-c
 const KEYBOARD_ACTION_DOWN = 0x03;
 const KEYBOARD_ACTION_UP = 0x04;
-// Key of localStorage that holds the hidden apps of a host, followed by its server UID
+// Keys of localStorage that hold the hidden apps, the favorites and the recently played apps of a host, followed by its
+// server UID
 const HIDDEN_APPS_KEY_PREFIX = 'hiddenApps_';
+const FAVORITE_APPS_KEY_PREFIX = 'favoriteApps_';
+const RECENT_APPS_KEY_PREFIX = 'recentApps_';
+// How many recently played apps a host keeps, as in the library of the fork of samirmartins (moonlight-tizen, 97bfe5c)
+const RECENT_APPS_MAX = 20;
+// The orders of the setting 'Sort the list of apps' (index.js), the first one being the default: by title from A to Z
+// or Z to A, the recently played apps first, or as the host lists them (e.g. the order that Apollo can set)
+const APP_SORT_ORDERS = ['az', 'za', 'recent', 'host'];
+// The step of the bitrate entry of the Stream Menu in Mbps, which is also its lowest bitrate
+const STREAM_MENU_BITRATE_STEP = 5;
+// The answers of sendText() of the WebAssembly module (kTextInput* of wasm/text_input.hpp), which checkStreamText()
+// gives as well
+const TEXT_INPUT_OK = 0;
+const TEXT_INPUT_NO_STREAM = -1;
+const TEXT_INPUT_EMPTY = -2;
+const TEXT_INPUT_TOO_LONG = -3;
+const TEXT_INPUT_INVALID = -4;
+const TEXT_INPUT_NOT_SENT = -5;
+// The longest text in UTF-8 bytes that goes to the PC at once (kTextInputMaxBytes of wasm/text_input.hpp)
+const TEXT_INPUT_MAX_BYTES = 1024;
+// The keys that the text panel handles itself while its field takes the text: Enter (of a keyboard) and the Done key of
+// the keyboard of the TV send the text, RETURN, its Cancel key and Esc go back to the Stream Menu, DOWN and Tab move to
+// the buttons. The keyboard of the TV sends 65376 for Done and 65385 for Cancel (Samsung's guide to the IME).
+const STREAM_TEXT_SEND_KEYS = [13, 65376];
+const STREAM_TEXT_CANCEL_KEYS = [10009, 65385, 27];
+const STREAM_TEXT_LEAVE_KEYS = [40, 9];
+// The keys of the remote that keep their action in the Stream Menu while the field takes the text: the coloured keys,
+// Play/Pause, Play, Pause and CH+/CH-. Every other key goes to the field (the keys of the keyboard of the TV, a USB
+// keyboard and the number keys of the remote).
+const STREAM_TEXT_REMOTE_KEYS = [403, 404, 405, 406, 10252, 415, 19, 427, 428];
 
 // List the keyboard events that press a key combination on the PC: the keys go down in order, each with the modifiers
 // held at that point, and come up in reverse order with the modifiers that are still held, so that no key and no
@@ -135,6 +176,57 @@ function reselectStreamMenuEntry(entry) {
   focusElement(entries[index]);
 }
 
+// The lowest and the highest bitrate of the bitrate entry of the Stream Menu in Mbps: 5 Mbps up to the decoder cap of
+// the TV (getDecoderCapMbps() in tv_profile.js)
+function getStreamMenuBitrateRange() {
+  return { min: STREAM_MENU_BITRATE_STEP, max: getDecoderCapMbps(tvCapabilities) };
+}
+
+// The bitrate after a press of LEFT (direction -1) or RIGHT (1) on the bitrate entry: the next multiple of 5 Mbps within
+// the range. A bitrate above the range (chosen with the slider of the settings) only goes down, to the highest bitrate of
+// the range, and one below it only goes up.
+function stepStreamBitrate(mbps, direction, range) {
+  const current = Number(mbps);
+  if (direction > 0 ? current >= range.max : current <= range.min) {
+    return current;
+  }
+  const next = direction > 0 ? Math.floor(current / STREAM_MENU_BITRATE_STEP) * STREAM_MENU_BITRATE_STEP + STREAM_MENU_BITRATE_STEP :
+    Math.ceil(current / STREAM_MENU_BITRATE_STEP) * STREAM_MENU_BITRATE_STEP - STREAM_MENU_BITRATE_STEP;
+  return Math.min(range.max, Math.max(range.min, next));
+}
+
+// Show the bitrate of the bitrate entry: the arrows of LEFT and RIGHT, dimmed at a limit, and, while it differs from the
+// bitrate of the stream, the note that OK reconnects. A note given replaces it, e.g. the hint after OK on an unchanged
+// bitrate.
+function showStreamMenuBitrate(note) {
+  const range = getStreamMenuBitrateRange();
+  const changed = streamMenuBitrateMbps !== streamBitrateMbps;
+  $('#streamMenuBitrateValue').text(streamMenuBitrateMbps + ' Mbps').toggleClass('is-pending', changed);
+  $('#streamMenuBitrateLower').toggleClass('is-limit', stepStreamBitrate(streamMenuBitrateMbps, -1, range) === streamMenuBitrateMbps);
+  $('#streamMenuBitrateHigher').toggleClass('is-limit', stepStreamBitrate(streamMenuBitrateMbps, 1, range) === streamMenuBitrateMbps);
+  $('#streamMenuBitrateNote').text(note || (changed ? t('OK: reconnect (now %1$s Mbps)', streamBitrateMbps) : ''));
+}
+
+// Change the bitrate of the bitrate entry with LEFT (-1) or RIGHT (1); OK applies it (applyStreamMenuBitrate())
+function changeStreamMenuBitrate(direction) {
+  streamMenuBitrateMbps = stepStreamBitrate(streamMenuBitrateMbps, direction, getStreamMenuBitrateRange());
+  showStreamMenuBitrate();
+}
+
+// Reconnect the stream with the bitrate of the bitrate entry, which becomes the bitrate setting, as if it was chosen with
+// the slider of the settings. Nothing happens to an unchanged bitrate except a hint how to change it.
+function applyStreamMenuBitrate() {
+  const mbps = streamMenuBitrateMbps;
+  if (mbps === streamBitrateMbps) {
+    showStreamMenuBitrate(t('Change it with LEFT and RIGHT'));
+    return;
+  }
+  $('#bitrateSlider')[0].MaterialSlider.change(String(mbps));
+  setAutoAdjustBitrate(false);
+  saveBitrate();
+  restartStreamWithBitrate(mbps);
+}
+
 // Fill the Stream Menu with the current state of the stream: the app and host, the level of the performance statistics
 // (Off, Compact or Full), whether the mouse emulation is on, and the mouse emulation entry only while a controller is
 // connected or the mouse emulation is on. When that entry goes while the menu shows, e.g. after the mouse emulation was
@@ -148,8 +240,9 @@ function updateStreamMenu() {
   setOverlayMenuValue('streamMenuMouseValue', streamMouseEmulationActive);
   const mouseEntry = document.getElementById('streamMenuMouse');
   if (mouseEntry) {
-    // The selected entry while the menu shows; openStreamMenu() selects the first entry after this
-    const selected = $('#streamMenuOverlay').is(':visible') ? Views.StreamMenu.view.current() : null;
+    // The selected entry while the menu shows; openStreamMenu() selects the first entry after this, and the text panel
+    // of 'Type text…' keeps the focus in its field (cancelStreamText() selects the entry again)
+    const selected = $('#streamMenuOverlay').is(':visible') && !isStreamTextOpen ? Views.StreamMenu.view.current() : null;
     mouseEntry.hidden = !(streamMouseEmulationActive || Controller.getConnectedGamepads().length > 0);
     if (selected) {
       reselectStreamMenuEntry(selected);
@@ -186,6 +279,8 @@ function openStreamMenu() {
   }
   console.log('%c[menus.js, openStreamMenu]', 'color: teal;', 'Opening the Stream Menu.');
   isStreamMenuOpen = true;
+  streamMenuBitrateMbps = streamBitrateMbps;
+  showStreamMenuBitrate();
   // Stop the controller input of the PC first, and release the pointer, which would move the mouse of the PC. The end
   // of the pointer lock also releases the keys and mouse buttons that the PC still holds (MouseLockLost() in
   // wasm/input.cpp), since their releases stay in the UI from now on.
@@ -218,6 +313,11 @@ function closeStreamMenu(resume) {
   }
   console.log('%c[menus.js, closeStreamMenu]', 'color: teal;', resume ? 'Closing the Stream Menu and resuming the stream.' : 'Closing the Stream Menu.');
   isStreamMenuOpen = false;
+  // The text panel of 'Type text…' belongs to the menu, and its text is dropped
+  if (isStreamTextOpen) {
+    hideStreamText();
+    Navigation.pop();
+  }
   // The WebAssembly module reads the gamepads again
   Controller.stopWatching();
   stopRepeatAction();
@@ -272,6 +372,10 @@ function runStreamMenuAction(id) {
     if (typeof Module.toggleMouseEmulation === 'function') {
       Module.toggleMouseEmulation();
     }
+  } else if (id === 'streamMenuBitrate') {
+    applyStreamMenuBitrate();
+  } else if (id === 'streamMenuText') {
+    openStreamText();
   } else if (STREAM_MENU_KEYS[id]) {
     // Back to the stream, where the result of the keys shows
     closeStreamMenu(true);
@@ -283,31 +387,243 @@ function runStreamMenuAction(id) {
   }
 }
 
-// Read the hidden apps of a host: a list of { id, title }
-function loadHiddenApps(serverUid) {
+// Check a text for the PC as sendText() of the WebAssembly module does (CheckTextInput() of wasm/text_input.hpp), so that
+// the text panel can say what is wrong before anything is sent: TEXT_INPUT_OK, or TEXT_INPUT_EMPTY, TEXT_INPUT_TOO_LONG
+// (more than 1024 bytes of UTF-8) or TEXT_INPUT_INVALID (a lone surrogate, which the module couldn't tell from a valid
+// character since the string conversion of Emscripten 1.39 joins it with the next one, or a control character: line
+// breaks and Tab go to the PC as keys, not as text)
+function checkStreamText(text) {
+  if (typeof text !== 'string' || text.length === 0) {
+    return TEXT_INPUT_EMPTY;
+  }
   try {
-    const stored = JSON.parse(localStorage.getItem(HIDDEN_APPS_KEY_PREFIX + serverUid) || '[]');
+    encodeURIComponent(text);
+  } catch (e) {
+    return TEXT_INPUT_INVALID;
+  }
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(text)) {
+    return TEXT_INPUT_INVALID;
+  }
+  return new TextEncoder().encode(text).length > TEXT_INPUT_MAX_BYTES ? TEXT_INPUT_TOO_LONG : TEXT_INPUT_OK;
+}
+
+// The message of the text panel for an answer of checkStreamText() or sendText() that isn't TEXT_INPUT_OK
+function getStreamTextError(result) {
+  switch (result) {
+    case TEXT_INPUT_NO_STREAM:
+      return t('The text can\'t be sent, since the stream has ended.');
+    case TEXT_INPUT_EMPTY:
+      return t('Type a text first.');
+    case TEXT_INPUT_TOO_LONG:
+      return t('The text is too long to send at once. Send it in shorter parts.');
+    case TEXT_INPUT_INVALID:
+      return t('The text has a character that can\'t be sent.');
+    default:
+      return t('The text couldn\'t be sent. Try again.');
+  }
+}
+
+// Whether the field of the text panel takes the text, i.e. the keyboard of the TV is meant to show for it
+function isStreamTextEditing() {
+  const input = document.getElementById('streamTextInput');
+  return isStreamTextOpen && !!input && !input.readOnly;
+}
+
+// Select an item of the text panel (Views.StreamText in navigation.js): 0 the field, 1 Send, 2 Cancel. Leaving the field
+// ends its input.
+function selectStreamTextItem(index) {
+  const view = Views.StreamText.view;
+  if (index !== 0) {
+    stopStreamTextEditing();
+  }
+  unmark(view.current());
+  view.index = index;
+  mark(view.current());
+  focusElement(view.current());
+}
+
+// Let the field of the text panel take the text and open the keyboard of the TV for it, like the field of the Add Host
+// dialog (handleIpTextFieldState() in navigation.js): the keyboard of the TV opens for a focused field that is clicked
+function startStreamTextEditing() {
+  const input = document.getElementById('streamTextInput');
+  selectStreamTextItem(0);
+  input.readOnly = false;
+  input.focus();
+  input.click();
+}
+
+// End the input of the field of the text panel, which closes the keyboard of the TV
+function stopStreamTextEditing() {
+  const input = document.getElementById('streamTextInput');
+  input.readOnly = true;
+  input.blur();
+}
+
+// Open the text panel of 'Type text…' in place of the entries of the Stream Menu, with an empty field that takes the
+// text right away. The Stream Menu stays open meanwhile, so the controllers and the keys stay away from the PC, and the
+// keys of the keyboard go to the field (initSpecialKeys() in index.js).
+function openStreamText() {
+  if (!isStreamMenuOpen || isStreamTextOpen) {
+    return;
+  }
+  isStreamTextOpen = true;
+  $('#streamTextInput').val('');
+  $('#streamTextStatus').text('');
+  document.getElementById('streamMenu').hidden = true;
+  document.getElementById('streamTextPanel').hidden = false;
+  Views.StreamText.view.index = 0;
+  Navigation.push(Views.StreamText);
+  startStreamTextEditing();
+}
+
+// Hide the text panel and drop its text, which is never kept or logged
+function hideStreamText() {
+  isStreamTextOpen = false;
+  stopStreamTextEditing();
+  $('#streamTextInput').val('');
+  $('#streamTextStatus').text('');
+  document.getElementById('streamTextPanel').hidden = true;
+  document.getElementById('streamMenu').hidden = false;
+}
+
+// Leave the text panel without sending anything: back to the entries of the Stream Menu, on 'Type text…', also when the
+// entries before it changed meanwhile
+function cancelStreamText() {
+  if (!isStreamTextOpen) {
+    return;
+  }
+  hideStreamText();
+  Views.StreamMenu.view.index = Math.max(0, getOverlayMenuItems('streamMenu').indexOf(document.getElementById('streamMenuText')));
+  Navigation.pop();
+  Navigation.switch();
+}
+
+// Send the text of the text panel to the PC and resume the stream, where it shows. A text that can't be sent keeps the
+// panel open with the reason. Only the answer is logged, never the text or its length.
+function sendStreamText() {
+  if (!isStreamTextOpen) {
+    return;
+  }
+  const text = $('#streamTextInput').val();
+  let result = checkStreamText(text);
+  if (result === TEXT_INPUT_OK) {
+    result = typeof Module.sendText === 'function' ? Module.sendText(text) : TEXT_INPUT_NOT_SENT;
+  }
+  console.log('%c[menus.js, sendStreamText]', 'color: teal;', 'Answer to the text for the PC: ' + result);
+  if (result !== TEXT_INPUT_OK) {
+    $('#streamTextStatus').text(getStreamTextError(result));
+    if (result === TEXT_INPUT_EMPTY) {
+      startStreamTextEditing();
+    }
+    return;
+  }
+  closeStreamMenu(true);
+  snackbarLog('Text sent to the PC');
+}
+
+// Whether a key event is for the field of the text panel while it takes the text (initSpecialKeys() in index.js)
+function isStreamTextFieldEvent(e) {
+  return isStreamTextEditing() && e.target === document.getElementById('streamTextInput');
+}
+
+// Run the action of a key pressed in the field of the text panel while it takes the text (initSpecialKeys() in index.js):
+// the keys that send, cancel or leave the field, and the keys of the remote that keep their action in the Stream Menu,
+// which go on to its handler. Returns false for every other key, which the field takes.
+function handleStreamTextKey(e) {
+  if (e.repeat && STREAM_TEXT_SEND_KEYS.concat(STREAM_TEXT_CANCEL_KEYS).indexOf(e.keyCode) >= 0) {
+    // A held key sends or cancels once, and the auto-repeat of OK that opened the panel sends nothing
+  } else if (STREAM_TEXT_SEND_KEYS.indexOf(e.keyCode) >= 0) {
+    sendStreamText();
+  } else if (STREAM_TEXT_CANCEL_KEYS.indexOf(e.keyCode) >= 0) {
+    cancelStreamText();
+  } else if (STREAM_TEXT_LEAVE_KEYS.indexOf(e.keyCode) >= 0) {
+    selectStreamTextItem(1);
+  } else if (STREAM_TEXT_REMOTE_KEYS.indexOf(e.keyCode) >= 0) {
+    remoteControllerHandler(e);
+  } else {
+    return false;
+  }
+  return true;
+}
+
+// Read a list of apps of a host that localStorage keeps under a key prefix: a list of { id, title }
+function loadAppEntries(prefix, serverUid) {
+  try {
+    const stored = JSON.parse(localStorage.getItem(prefix + serverUid) || '[]');
     return Array.isArray(stored) ? stored.filter((entry) => entry && (entry.id !== undefined || entry.title)) : [];
   } catch (error) {
-    console.warn('%c[menus.js, loadHiddenApps]', 'color: teal;', 'Warning: Failed to read the hidden apps of ' + serverUid + ': ' + error);
+    console.warn('%c[menus.js, loadAppEntries]', 'color: teal;', 'Warning: Failed to read ' + prefix + serverUid + ': ' + error);
     return [];
   }
 }
 
-// Store the hidden apps of a host, or forget them for an empty list
-function saveHiddenApps(serverUid, hiddenApps) {
+// Store a list of apps of a host under a key prefix, or forget it for an empty list
+function saveAppEntries(prefix, serverUid, entries) {
   try {
-    if (hiddenApps.length === 0) {
-      localStorage.removeItem(HIDDEN_APPS_KEY_PREFIX + serverUid);
+    if (entries.length === 0) {
+      localStorage.removeItem(prefix + serverUid);
     } else {
-      localStorage.setItem(HIDDEN_APPS_KEY_PREFIX + serverUid, JSON.stringify(hiddenApps));
+      localStorage.setItem(prefix + serverUid, JSON.stringify(entries));
     }
   } catch (error) {
-    console.warn('%c[menus.js, saveHiddenApps]', 'color: teal;', 'Warning: Failed to store the hidden apps of ' + serverUid + ': ' + error);
+    console.warn('%c[menus.js, saveAppEntries]', 'color: teal;', 'Warning: Failed to store ' + prefix + serverUid + ': ' + error);
   }
 }
 
-// Check if an app is hidden: an entry has its ID or its title
+// Read the hidden apps of a host: a list of { id, title }
+function loadHiddenApps(serverUid) {
+  return loadAppEntries(HIDDEN_APPS_KEY_PREFIX, serverUid);
+}
+
+// Store the hidden apps of a host, or forget them for an empty list
+function saveHiddenApps(serverUid, hiddenApps) {
+  saveAppEntries(HIDDEN_APPS_KEY_PREFIX, serverUid, hiddenApps);
+}
+
+// The apps of a host that its app grid was built with last, to tell its apps apart (findAppEntry()), or an empty list
+function getAppGridApps(serverUid) {
+  return appGridApps && appGridApps.serverUid === serverUid ? appGridApps.apps : [];
+}
+
+// Find the entry of an app among the favorites or the recently played apps of its host, as its index or -1. An entry
+// with the ID and the title of the app is it. Otherwise the title decides, since Sunshine numbered its apps by their
+// place in its list before its IDs became hashes, so after a change of the list an ID can belong to another app: an
+// entry is the app with its title, unless the entry has the ID and the title of another app of the list (appList, the
+// apps of the host when known), since two apps of a host may share a title. Only an entry without a title (the app
+// remembered as the last one opened before the list existed) is the app with its ID.
+function findAppEntry(entries, app, appList) {
+  const id = String(app.id);
+  const others = appList || [];
+  let index = entries.findIndex((entry) => String(entry.id) === id && (entry.title || '') === (app.title || ''));
+  if (index < 0) {
+    index = entries.findIndex((entry) => !!entry.title && entry.title === app.title &&
+      !others.some((other) => String(other.id) === String(entry.id) && other.title === entry.title));
+  }
+  if (index < 0) {
+    index = entries.findIndex((entry) => !entry.title && String(entry.id) === id);
+  }
+  return index;
+}
+
+// Check if the favorites or the recently played apps of a host have an app (findAppEntry())
+function isAppListed(entries, app, appList) {
+  return findAppEntry(entries, app, appList) >= 0;
+}
+
+// Return a list of entries with the entry of an app removed (findAppEntry()), and put at the front or the end of it
+// when added
+function setAppEntry(entries, app, appList, place) {
+  const index = findAppEntry(entries, app, appList);
+  const others = entries.filter((entry, i) => i !== index);
+  const entry = { id: String(app.id), title: app.title };
+  if (place === 'first') {
+    return [entry].concat(others);
+  }
+  return place === 'last' ? others.concat([entry]) : others;
+}
+
+// Check if an app is hidden: an entry has its ID or its title, since the ID of an app can change on the host (Sunshine
+// numbers its apps anew when the list changes)
 function isAppHidden(hiddenApps, app) {
   return hiddenApps.some((entry) => String(entry.id) === String(app.id) || (!!entry.title && entry.title === app.title));
 }
@@ -316,6 +632,83 @@ function isAppHidden(hiddenApps, app) {
 function setAppHidden(hiddenApps, app, hidden) {
   const others = hiddenApps.filter((entry) => !isAppHidden([entry], app));
   return hidden ? others.concat([{ id: String(app.id), title: app.title }]) : others;
+}
+
+// Read the favorites of a host, which lead its app grid and its Smart Hub tiles: a list of { id, title }
+function loadFavoriteApps(serverUid) {
+  return loadAppEntries(FAVORITE_APPS_KEY_PREFIX, serverUid);
+}
+
+// Store the favorites of a host, or forget them for an empty list
+function saveFavoriteApps(serverUid, favoriteApps) {
+  saveAppEntries(FAVORITE_APPS_KEY_PREFIX, serverUid, favoriteApps);
+}
+
+// Return the favorites with an app added at the end, or removed (only the entry of the app, findAppEntry())
+function setAppFavorite(favoriteApps, app, favorite, appList) {
+  return setAppEntry(favoriteApps, app, appList, favorite ? 'last' : '');
+}
+
+// Read the recently played apps of a host, the latest first: a list of { id, title }. An install that played before
+// the list existed starts it with the app it remembers as the last one opened (startGame() in index.js).
+function loadRecentApps(serverUid) {
+  const recentApps = loadAppEntries(RECENT_APPS_KEY_PREFIX, serverUid);
+  if (recentApps.length === 0) {
+    const lastOpenedApp = localStorage.getItem('lastOpenedApp_' + serverUid);
+    if (lastOpenedApp) {
+      return [{ id: String(lastOpenedApp), title: '' }];
+    }
+  }
+  return recentApps;
+}
+
+// Put an app at the front of the recently played apps of a host, which keeps the latest RECENT_APPS_MAX (from
+// startGame() in index.js, when the host accepted the start of a stream of the app)
+function rememberRecentApp(serverUid, app, appList) {
+  saveAppEntries(RECENT_APPS_KEY_PREFIX, serverUid, setAppEntry(loadRecentApps(serverUid), app, appList, 'first').slice(0, RECENT_APPS_MAX));
+}
+
+// The order of the setting 'Sort the list of apps' for a stored or chosen value: true is Z-A and false A-Z, as the
+// switch of earlier versions stored them, and anything unknown A-Z
+function parseAppSortOrder(value) {
+  if (value === true) {
+    return 'za';
+  }
+  return APP_SORT_ORDERS.indexOf(value) >= 0 ? value : APP_SORT_ORDERS[0];
+}
+
+// Order the apps of a host for the app grid and the Smart Hub tiles, as a new list: the favorites first, then the
+// other apps, each part in the order of the setting 'Sort the list of apps': 'az' or 'za' by title, 'recent' with the
+// recently played apps first (the latest first) and the others from A to Z, or 'host' as the list comes from the host.
+// Apps that are equal for an order keep the order of the host. (Array.prototype.sort() of the browser of Tizen 5.5,
+// Chromium 69, doesn't keep the order of equal elements, so the position in the list decides between them.) The idea
+// of the favorites and the recently played apps comes from the library of the fork of samirmartins (moonlight-tizen,
+// GPL-3.0, console-library.js of 97bfe5c).
+function orderAppList(appList, sortOrder, favoriteApps, recentApps) {
+  const order = parseAppSortOrder(sortOrder);
+  const favorites = favoriteApps || [];
+  const recent = recentApps || [];
+  const byTitle = (a, b) => String(a.title).localeCompare(String(b.title), undefined, { numeric: true, sensitivity: 'base' });
+  // The place of an app among the recently played apps, or the end for the others
+  const recentRank = (app) => {
+    const place = findAppEntry(recent, app, appList);
+    return place >= 0 ? place : recent.length;
+  };
+  const entries = appList.map((app, index) => ({
+    app: app, index: index, favorite: isAppListed(favorites, app, appList), rank: order === 'recent' ? recentRank(app) : 0,
+  }));
+  entries.sort((a, b) => {
+    let result = (a.favorite ? 0 : 1) - (b.favorite ? 0 : 1);
+    if (result === 0 && order === 'recent') {
+      result = a.rank - b.rank || byTitle(a.app, b.app);
+    } else if (result === 0 && order === 'za') {
+      result = byTitle(b.app, a.app);
+    } else if (result === 0 && order === 'az') {
+      result = byTitle(a.app, b.app);
+    }
+    return result || a.index - b.index;
+  });
+  return entries.map((entry) => entry.app);
 }
 
 // Decide which apps the app grid shows, as a list of { app, hidden } in the order of the list: the apps that aren't
@@ -329,13 +722,14 @@ function selectGridApps(appList, hiddenApps, showHidden, currentGame) {
     (!!currentGame && String(entry.app.id) === String(currentGame)));
 }
 
-// Name the entries of the app menu, in their order, for an app that is running or not, hidden or not, on a host with
-// hiddenCount hidden apps, whose hidden apps show or not
+// Name the entries of the app menu, in their order, for an app that is running or not, a favorite or not, hidden or
+// not, on a host with hiddenCount hidden apps, whose hidden apps show or not
 function getAppMenuEntries(state) {
   const entries = [state.running ? 'appMenuResume' : 'appMenuStart'];
   if (state.running) {
     entries.push('appMenuQuit');
   }
+  entries.push(state.favorite ? 'appMenuUnfavorite' : 'appMenuFavorite');
   entries.push(state.hidden ? 'appMenuUnhide' : 'appMenuHide');
   if (state.hiddenCount > 0 || state.showHidden) {
     entries.push('appMenuShowHidden');
@@ -344,21 +738,29 @@ function getAppMenuEntries(state) {
   return entries;
 }
 
-// Mark a tile of the app grid as the running app or as a hidden app, with a badge that a theme can restyle
+// The class that marks a tile of the app grid with each badge
+const APP_TILE_CLASSES = { running: 'current-game-active', hidden: 'app-hidden', favorite: 'app-favorite' };
+
+// Mark a tile of the app grid as the running app, a hidden app or a favorite, with a badge that a theme can restyle (the
+// star of a favorite has no label)
 function setAppTileBadge(appBox, kind, shown) {
   const className = 'app-badge-' + kind;
   let badge = appBox.querySelector('.' + className);
   if (shown && !badge) {
     badge = document.createElement('span');
     badge.className = 'app-badge ' + className;
-    // A translation pass translates it again (i18n.js)
-    badge.setAttribute('data-i18n', kind === 'running' ? 'Running' : 'Hidden');
-    badge.textContent = kind === 'running' ? t('Running') : t('Hidden');
+    if (kind === 'favorite') {
+      badge.setAttribute('aria-hidden', 'true');
+    } else {
+      // A translation pass translates it again (i18n.js)
+      badge.setAttribute('data-i18n', kind === 'running' ? 'Running' : 'Hidden');
+      badge.textContent = kind === 'running' ? t('Running') : t('Hidden');
+    }
     appBox.appendChild(badge);
   } else if (!shown && badge) {
     badge.parentNode.removeChild(badge);
   }
-  appBox.classList.toggle(kind === 'running' ? 'current-game-active' : 'app-hidden', shown);
+  appBox.classList.toggle(APP_TILE_CLASSES[kind], shown);
 }
 
 // Open the menu of an app tile of the app grid
@@ -370,8 +772,9 @@ function openAppMenu(appBox) {
   const app = { id: appBox.getAttribute('data-app-id'), title: appBox.getAttribute('aria-label') || '' };
   const running = host.currentGame != 0 && String(host.currentGame) === String(app.id);
   const hidden = isAppHidden(loadHiddenApps(host.serverUid), app);
+  const favorite = isAppListed(loadFavoriteApps(host.serverUid), app, getAppGridApps(host.serverUid));
   const showHidden = showHiddenAppsHost === host.serverUid;
-  const entries = getAppMenuEntries({ running: running, hidden: hidden, hiddenCount: appGridHiddenCount, showHidden: showHidden });
+  const entries = getAppMenuEntries({ running: running, favorite: favorite, hidden: hidden, hiddenCount: appGridHiddenCount, showHidden: showHidden });
   console.log('%c[menus.js, openAppMenu]', 'color: teal;', 'Opening the menu of app ' + app.id + ' (' + app.title + ') with: ' + entries.join(', '));
   appMenuTarget = { host: host, app: app, appBox: appBox };
 
@@ -455,15 +858,30 @@ function runAppMenuAction(id) {
       updatePreviewData();
     }
     refreshAppGrid(host, app.id);
+  } else if (id === 'appMenuFavorite' || id === 'appMenuUnfavorite') {
+    const favorite = id === 'appMenuFavorite';
+    saveFavoriteApps(host.serverUid, setAppFavorite(loadFavoriteApps(host.serverUid), app, favorite, getAppGridApps(host.serverUid)));
+    if (favorite) {
+      snackbarLog('%1$s is a favorite now.', app.title);
+    } else {
+      snackbarLog('%1$s is no longer a favorite.', app.title);
+    }
+    // The favorites lead the Smart Hub tiles as well
+    if (typeof updatePreviewData === 'function') {
+      updatePreviewData();
+    }
+    refreshAppGrid(host, app.id);
   } else if (id === 'appMenuShowHidden') {
     showHiddenAppsHost = showHiddenAppsHost === host.serverUid ? null : host.serverUid;
     refreshAppGrid(host, app.id);
   }
 }
 
-// Forget the hidden apps of a host that was deleted
+// Forget the hidden apps, the favorites and the recently played apps of a host that was deleted
 function forgetHiddenApps(serverUid) {
   saveHiddenApps(serverUid, []);
+  saveFavoriteApps(serverUid, []);
+  saveAppEntries(RECENT_APPS_KEY_PREFIX, serverUid, []);
   if (showHiddenAppsHost === serverUid) {
     showHiddenAppsHost = null;
   }
@@ -474,6 +892,8 @@ function attachOverlayMenuListeners() {
   $('#streamMenu .overlay-menu-item').on('click', function() {
     runStreamMenuAction(this.id);
   });
+  $('#streamTextSend').on('click', sendStreamText);
+  $('#streamTextCancel').on('click', cancelStreamText);
   $('#appMenu .overlay-menu-item').on('click', function() {
     runAppMenuAction(this.id);
   });

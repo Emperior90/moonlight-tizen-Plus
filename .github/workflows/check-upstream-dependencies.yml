@@ -1,0 +1,39 @@
+# This workflow compares the upstream projects that Moonlight Plus builds on (Moonlight Tizen, moonlight-common-c, ENet, Opus, libgamestream, the Sunshine releases and Sunshine pull request 5917) with the reviewed state in `.github/dependency-baselines.json`, and keeps one issue with compare links of what is newer.
+# It only reads the upstream projects: porting a change and recording it as taken or skipped in the baseline file stay manual. The script is `.github/scripts/check-upstream-dependencies.js`.
+name: Check upstream dependencies
+# Configure this workflow to be triggered manually from the GitHub Actions tab. To run it every week as well, add a schedule here, e.g. `schedule:` with `- cron: '17 6 * * 1'`; GitHub turns off the schedules of a repository after 60 days without activity, so the manual trigger stays.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Only show the result in the summary of the run, without opening or updating the issue'
+        type: boolean
+        default: false
+# By specifying the access of one of the scopes, all of those that are not specified are set to 'none'. The check reads the repository and the public upstream projects, and writes only the issue.
+permissions:
+  contents: read
+  issues: write
+# Lets one run finish before the next one updates the issue, so that two runs never open two issues.
+concurrency:
+  group: check-upstream-dependencies
+  cancel-in-progress: false
+# There is a single job in this workflow. It's configured to run on the latest available version of Ubuntu.
+jobs:
+  check-upstream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # This step uses the `actions/checkout` action to check out the baseline file and the script.
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      # This step uses the `actions/setup-node` action to set up Node.js 22, whose built-in fetch the script uses. The script has no npm dependencies.
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      # This step compares every project with its reviewed state, writes the result to the summary of the run, and opens, updates or closes the issue "Upstream changes to review".
+      - name: Compare the upstream projects with the reviewed state
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: node .github/scripts/check-upstream-dependencies.js

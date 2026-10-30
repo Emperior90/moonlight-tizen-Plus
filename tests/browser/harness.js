@@ -239,12 +239,13 @@ function readOtherSettings(page) {
     const switchState = (id) => document.getElementById(id).checked;
     return {
       ipAddressFieldMode: switchState('ipAddressFieldModeSwitch'),
-      sortAppsList: switchState('sortAppsListSwitch'),
+      // The order of the app list: az, za, recent or host
+      sortAppsList: $('#selectSortAppsList').attr('data-value'),
       optimizeGames: switchState('optimizeGamesSwitch'),
       rumbleFeedback: switchState('rumbleFeedbackSwitch'),
       mouseEmulation: switchState('mouseEmulationSwitch'),
-      flipABfaceButtons: switchState('flipABfaceButtonsSwitch'),
-      flipXYfaceButtons: switchState('flipXYfaceButtonsSwitch'),
+      // The button mapping and the stick calibration of the controllers (button_mapping.js)
+      controllerMappings: buttonMappings,
       controllerType: String($('#selectControllerType').data('value')),
       audioBackend: String($('#selectAudioBackend').data('value')),
       audioConfig: String($('#selectAudio').data('value')),
@@ -259,6 +260,8 @@ function readOtherSettings(page) {
       disableWarnings: switchState('disableWarningsSwitch'),
       // The level of the performance statistics: 0 Off, 1 Compact, 2 Full
       performanceStats: Number($('#selectPerformanceStats').attr('data-value')),
+      // The corner of the performance statistics
+      statsPosition: $('#selectStatsPosition').attr('data-value'),
     };
   });
 }

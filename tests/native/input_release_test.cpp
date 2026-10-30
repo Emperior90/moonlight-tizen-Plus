@@ -39,6 +39,9 @@ int LiSendMouseMoveEvent(short, short) {
 int LiSendHighResScrollEvent(short) {
   return 0;
 }
+int LiSendUtf8TextEvent(const char*, unsigned int) {  // sendText(), which text_input_test.cpp checks
+  return 0;
+}
 void MoonlightInstance::ClLogMessage(const char*, ...) {}
 MessageResult stopStream() {
   stopStreamCalls++;

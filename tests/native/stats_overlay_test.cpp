@@ -2,7 +2,9 @@
 // call of TogglePerformanceStats() (the remote, the Stream Menu, the gamepad combo and the keyboard combo) steps the
 // level Off, Compact, Full, Off and reports it to the front end; at each stats window VidDecSubmitDecodeUnit() sends
 // nothing while the level is Off, the figures of the compact line while it is Compact, and the text of the full
-// statistics with the regularity of the frame intervals of the host and the video player while it is Full. The functions
+// statistics with the regularity of the frame intervals of the host and the video player while it is Full, after the
+// point of their graph (the round-trip time and the frames lost on the network in the window that just ended); and when the
+// stream ends, VidDecCleanup() sends the totals of the session for its report (wasm/session_report.hpp). The functions
 // below stand in for moonlight-common-c and the rest of the module; LiGetMillis() follows a clock of the test.
 // VidDecSetup() waits for the media pipeline of the TV, so the test sets up the state of a stream the same way instead
 // (StartStream() below).
@@ -36,7 +38,12 @@ struct StatsLevelMember {
   using Type = std::atomic<int> MoonlightInstance::*;
   friend Type Pointer(StatsLevelMember);
 };
+struct StreamConfigMember {
+  using Type = STREAM_CONFIGURATION MoonlightInstance::*;
+  friend Type Pointer(StreamConfigMember);
+};
 template struct PrivateMember<VideoStartedMember, &MoonlightInstance::m_VideoStarted>;
+template struct PrivateMember<StreamConfigMember, &MoonlightInstance::m_StreamConfig>;
 template struct PrivateMember<StatsLevelMember, &MoonlightInstance::m_PerformanceStatsLevel>;
 
 static std::atomic<int>& StatsLevel() {
@@ -120,6 +127,10 @@ static void StartStream(int level) {
   m_LastFrameNumber = 0;
   total_bytes = 0;
   s_ReceivedFirstIdrFrame = false;
+  s_RecoveryIdrFrames = 0;
+  s_SessionTvDroppedFrames = 0;
+  s_SessionStartMs = nowMs;
+  (g_Instance->*Pointer(StreamConfigMember())).bitrate = 75000;
   s_HostRateWindowOpen = false;
   s_HostFrameRate = 0.0f;
   s_TerminatingStream = false;
@@ -210,7 +221,8 @@ static void FullLevelSendsTheTextWithTheFrameIntervals() {
   SubmitFrames(200, 0, 10);
   CHECK(!postedAsync.empty());
   const std::string& last = postedAsync.back();
-  CHECK(StartsWith(last, "StatMsg: Video stream: 3840x2160 "));
+  // The point of the graph first: the RTT and no frame lost on the network in the last window
+  CHECK(StartsWith(last, "StatMsg: {\"rtt\":3,\"lost\":0}\nVideo stream: 3840x2160 "));
   CHECK(last.find("(Codec: HEVC 10-bit HDR)") != std::string::npos);
   CHECK(last.find("\nAverage frame wait time: 2.00 ms\n") != std::string::npos);
   // The capture times of a steady 60 FPS host in whole milliseconds alternate 16 and 17 ms
@@ -256,11 +268,57 @@ static void TheIntervalWindowsFollowTheStatsWindows() {
   CHECK(postedAsync.back().find("ms, p95 17.0 ms, 0.0% off cadence\n") != std::string::npos);
 }
 
+static void TheGraphPointCountsTheFramesLostInTheLastWindow() {
+  StartStream(kPerformanceStatsFull);
+  nextFrame = 1;
+  SubmitFrames(70);
+  CHECK_EQ(postedAsync.size(), 1u);
+  CHECK(StartsWith(postedAsync.back(), "StatMsg: {\"rtt\":3,\"lost\":0}\n"));
+  // 4 frames never arrive in the next window: the point of that window counts them, while the text covers two windows
+  postedAsync.clear();
+  SubmitFrames(10);
+  nextFrame += 4;
+  SubmitFrames(48);
+  CHECK_EQ(postedAsync.size(), 1u);
+  CHECK(StartsWith(postedAsync.back(), "StatMsg: {\"rtt\":3,\"lost\":4}\nVideo stream: "));
+  // The window after it lost none, though the text still shows the loss of the previous window
+  postedAsync.clear();
+  SubmitFrames(62);
+  CHECK_EQ(postedAsync.size(), 1u);
+  CHECK(StartsWith(postedAsync.back(), "StatMsg: {\"rtt\":3,\"lost\":0}\n"));
+  CHECK(postedAsync.back().find("\nFrames dropped by your network connection: 0.00%") == std::string::npos);
+}
+
+static void TheEndOfTheStreamSendsTheSessionReport() {
+  // A stream of about 2 seconds, in which 4 frames never arrived, sends its totals once its decoder is cleaned up, with
+  // the window that was still open, without waiting for the main thread
+  StartStream(kPerformanceStatsOff);
+  nextFrame = 1;
+  SubmitFrames(70);
+  nextFrame += 4;
+  SubmitFrames(20);
+  CHECK(postedAsync.empty());
+  MoonlightInstance::VidDecCleanup();
+  CHECK_EQ(postedAsync.size(), 1u);
+  CHECK(posted.empty());
+  const uintptr_t heapTop = (uintptr_t)sbrk(0);
+  const std::string expected = "SessionReportMsg: {\"durationMs\":" + std::to_string(nowMs - 100000) +
+    ",\"codec\":\"HEVC Main10\",\"width\":3840,\"height\":2160,\"fps\":60,\"bitrateKbps\":75000,\"frames\":94,"
+    "\"networkDroppedFrames\":4,\"tvDroppedFrames\":0,\"videoResets\":0,\"recoveryKeyframes\":0,\"fecRecoveredBlocks\":0,"
+    "\"fecFailures\":0,\"heapTopMb\":" + std::to_string(heapTop >> 20) + ",\"heapTotalMb\":128,\"heapGrowthMb\":";
+  CHECK(!postedAsync.empty() && postedAsync.back().compare(0, expected.size(), expected) == 0);
+  if (!postedAsync.empty() && postedAsync.back().compare(0, expected.size(), expected) != 0) {
+    std::printf("  # got %s\n  # expected %s...\n", postedAsync.back().c_str(), expected.c_str());
+  }
+}
+
 int main() {
   test_support::RunTest("each toggle steps one level and reports it", EachToggleStepsOneLevelAndReportsIt);
   test_support::RunTest("nothing is sent while the level is Off", NothingWhileTheLevelIsOff);
   test_support::RunTest("the Compact level sends only the figures of the compact line", CompactLevelSendsTheFiguresOnly);
   test_support::RunTest("the Full level sends the text with the frame intervals", FullLevelSendsTheTextWithTheFrameIntervals);
   test_support::RunTest("the frame intervals cover the last two stats windows", TheIntervalWindowsFollowTheStatsWindows);
+  test_support::RunTest("the point of the graph counts the frames lost in the last window", TheGraphPointCountsTheFramesLostInTheLastWindow);
+  test_support::RunTest("the end of the stream sends the totals of the session", TheEndOfTheStreamSendsTheSessionReport);
   return test_support::Summary();
 }

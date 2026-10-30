@@ -151,7 +151,7 @@ test('the controller type setting is Auto by default, chosen with the remote, st
     }
     assert.equal(await focused(page), 'selectControllerType');
     assert.deepEqual(await page.evaluate(() => Views.InputSettings.view.func()),
-      ['rumbleFeedbackBtn', 'mouseEmulationBtn', 'flipABfaceButtonsBtn', 'flipXYfaceButtonsBtn', 'selectControllerType']);
+      ['rumbleFeedbackBtn', 'mouseEmulationBtn', 'buttonMappingBtn', 'inputTestBtn', 'selectControllerType']);
 
     // ENTER opens the menu with Auto, Xbox, PlayStation and Nintendo; DOWN twice and ENTER choose PlayStation
     await page.keyboard.press('Enter');
@@ -169,8 +169,8 @@ test('the controller type setting is Auto by default, chosen with the remote, st
 
     // The next stream announces every controller as a PlayStation controller
     const args = await startRequestArgs(page);
-    assert.equal(args.length, 33);
-    assert.equal(args[32], 'PlayStation');
+    assert.equal(args.length, 32);
+    assert.equal(args[31], 'PlayStation');
     assert.ok(app.logs.some((line) => line.indexOf('Controller type sent to the PC: PlayStation') >= 0));
     assert.deepEqual(app.errors, []);
   } finally {
@@ -183,7 +183,7 @@ test('a stored controller type is loaded, Auto is translated, and an unknown sto
   try {
     assert.deepEqual(await readControllerType(stored.page), { value: 'Nintendo', text: 'Nintendo' });
     // Resuming a running game sends it as well
-    assert.equal((await startRequestArgs(stored.page, true))[32], 'Nintendo');
+    assert.equal((await startRequestArgs(stored.page, true))[31], 'Nintendo');
     // Restore Defaults goes back to Auto
     await stored.page.evaluate(() => $('#restoreDefaultsBtn').trigger('click'));
     await stored.page.evaluate(() => $('#continueRestoreDefaults').trigger('click'));

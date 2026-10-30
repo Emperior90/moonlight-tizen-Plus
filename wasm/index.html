@@ -51,6 +51,7 @@
     <symbol id="i-stop" viewBox="0 0 24 24"><rect x="5.5" y="5.5" width="13" height="13" rx="2.6" fill="currentColor"/></symbol>
     <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></symbol>
     <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M9.8 5.8a9.6 9.6 0 0 1 2.2-.3c6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-2.7 3.5M6.5 7C3.9 8.8 2.5 12 2.5 12s3.5 6.5 9.5 6.5a9.2 9.2 0 0 0 4.5-1.2M9.9 9.9a3 3 0 0 0 4.2 4.2M3.5 3.5l17 17"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.4l2.6 5.4 5.9.8-4.3 4.1 1 5.9L12 16.8l-5.2 2.8 1-5.9-4.3-4.1 5.9-.8z"/></symbol>
     <symbol id="i-apps" viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6"/></symbol>
   </svg>
   <div class="mdl-layout mdl-js-layout">
@@ -318,17 +319,18 @@
           <div id="hostSettings" class="settings-options">
             <div class="setting-option">
               <label data-i18n="Sort the list of apps">Sort the list of apps</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Sorts the list of host apps from ascending order (A to Z) to descending order (Z to A) based on their titles.">
-                - Sorts the list of host apps from ascending order (A to Z) to descending order (Z to A) based on their titles.
+              <span class="mdl-list__item-text-body" data-i18n="- The order of the apps of a host: by title, the recently played first, or as the host lists them (e.g. the order set in Apollo). Favorites always come first.">
+                - The order of the apps of a host: by title, the recently played first, or as the host lists them (e.g. the order set in Apollo). Favorites always come first.
               </span>
               <div id="sortAppsListMenu">
-                <label id="sortAppsListBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="sortAppsListSwitch">
-                  <input type="checkbox" id="sortAppsListSwitch" class="mdl-switch__input">
-                  <span class="mdl-switch__label" data-i18n="Allow sorting the list of apps and games in descending order">
-                    Allow sorting the list of apps and games in descending order
-                  </span>
-                </label>
+                <button type="button" id="selectSortAppsList" class="mdl-button mdl-js-button mdl-js-ripple-effect" data-value="az" data-i18n="A to Z">A to Z</button>
               </div>
+              <ul class="sortAppsListMenu mdl-menu mdl-menu--bottom-left mdl-js-menu mdl-js-ripple-effect" for="selectSortAppsList">
+                <li class="mdl-menu__item" data-value="az" data-i18n="A to Z">A to Z</li>
+                <li class="mdl-menu__item" data-value="za" data-i18n="Z to A">Z to A</li>
+                <li class="mdl-menu__item" data-value="recent" data-i18n="Recently played">Recently played</li>
+                <li class="mdl-menu__item" data-value="host" data-i18n="As on the host">As on the host</li>
+              </ul>
             </div>
             <div class="setting-option">
               <label data-i18n="Optimize game settings">Optimize game settings</label>
@@ -383,27 +385,31 @@
               </div>
             </div>
             <div class="setting-option">
-              <label data-i18n="Flip A/B face buttons">Flip A/B face buttons</label>
-              <span class="mdl-list__item-text-body"></span>
-              <div id="flipABfaceButtonsMenu">
-                <label id="flipABfaceButtonsBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="flipABfaceButtonsSwitch">
-                  <input type="checkbox" id="flipABfaceButtonsSwitch" class="mdl-switch__input">
-                  <span class="mdl-switch__label" data-i18n="Swap A and B face buttons on the gamepad while streaming">
-                    Swap A and B face buttons on the gamepad while streaming
+              <label data-i18n="Button mapping">Button mapping</label>
+              <span class="mdl-list__item-text-body" data-i18n="- Choose the button that each button of a controller presses in games, for all controllers or for one, and calibrate worn sticks. The menus keep the usual buttons.">
+                - Choose the button that each button of a controller presses in games, for all controllers or for one, and calibrate worn sticks. The menus keep the usual buttons.
+              </span>
+              <div id="buttonMappingMenu">
+                <button type="button" id="buttonMappingBtn" class="mdl-button mdl-js-button mdl-js-ripple-effect" aria-label="Button mapping">
+                  <span data-i18n="Change the buttons of the controllers">
+                    Change the buttons of the controllers
                   </span>
-                </label>
+                  <svg class="icon" aria-hidden="true"><use xlink:href="#i-gamepad"/></svg>
+                </button>
               </div>
             </div>
             <div class="setting-option">
-              <label data-i18n="Flip X/Y face buttons">Flip X/Y face buttons</label>
-              <span class="mdl-list__item-text-body"></span>
-              <div id="flipXYfaceButtonsMenu">
-                <label id="flipXYfaceButtonsBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="flipXYfaceButtonsSwitch">
-                  <input type="checkbox" id="flipXYfaceButtonsSwitch" class="mdl-switch__input">
-                  <span class="mdl-switch__label" data-i18n="Swap X and Y face buttons on the gamepad while streaming">
-                    Swap X and Y face buttons on the gamepad while streaming
+              <label data-i18n="Input test">Input test</label>
+              <span class="mdl-list__item-text-body" data-i18n="- Shows every key of the remote and every button, trigger and stick of the controllers as the TV reports them.">
+                - Shows every key of the remote and every button, trigger and stick of the controllers as the TV reports them.
+              </span>
+              <div id="inputTestMenu">
+                <button type="button" id="inputTestBtn" class="mdl-button mdl-js-button mdl-js-ripple-effect" aria-label="Input test">
+                  <span data-i18n="Test the remote and the controllers">
+                    Test the remote and the controllers
                   </span>
-                </label>
+                  <svg class="icon" aria-hidden="true"><use xlink:href="#i-remote"/></svg>
+                </button>
               </div>
             </div>
             <div class="setting-option">
@@ -688,6 +694,21 @@
                 <li class="mdl-menu__item" data-value="2" data-i18n="Full">Full</li>
               </ul>
             </div>
+            <div class="setting-option">
+              <label data-i18n="Statistics position">Statistics position</label>
+              <span class="mdl-list__item-text-body" data-i18n="- The corner of the screen where the performance statistics show during a stream, compact or full.">
+                - The corner of the screen where the performance statistics show during a stream, compact or full.
+              </span>
+              <div id="statsPositionMenu">
+                <button type="button" id="selectStatsPosition" class="mdl-button mdl-js-button mdl-js-ripple-effect" data-value="top-left" data-i18n="Top left">Top left</button>
+              </div>
+              <ul class="statsPositionMenu mdl-menu mdl-menu--bottom-left mdl-js-menu mdl-js-ripple-effect" for="selectStatsPosition">
+                <li class="mdl-menu__item" data-value="top-left" data-i18n="Top left">Top left</li>
+                <li class="mdl-menu__item" data-value="top-right" data-i18n="Top right">Top right</li>
+                <li class="mdl-menu__item" data-value="bottom-left" data-i18n="Bottom left">Bottom left</li>
+                <li class="mdl-menu__item" data-value="bottom-right" data-i18n="Bottom right">Bottom right</li>
+              </ul>
+            </div>
           </div>
           <div id="aboutSettings" class="settings-options">
             <div class="setting-option">
@@ -695,6 +716,20 @@
               <span class="mdl-list__item-text-body"></span>
               <div id="systemInfoMenu">
                 <button type="button" id="systemInfoBtn" class="mdl-button mdl-js-button mdl-js-ripple-effect" aria-label="System Information">Loading system information...</button>
+              </div>
+            </div>
+            <div class="setting-option">
+              <label data-i18n="Diagnostic log">Diagnostic log</label>
+              <span class="mdl-list__item-text-body" data-i18n="- The log of this session and the one before, kept only in the memory of the TV, for a report of a problem.">
+                - The log of this session and the one before, kept only in the memory of the TV, for a report of a problem.
+              </span>
+              <div id="diagnosticLogMenu">
+                <button type="button" id="diagnosticLogBtn" class="mdl-button mdl-js-button mdl-js-ripple-effect" aria-label="Diagnostic log">
+                  <span data-i18n="Show the diagnostic log">
+                    Show the diagnostic log
+                  </span>
+                  <svg class="icon" aria-hidden="true"><use xlink:href="#i-info"/></svg>
+                </button>
               </div>
             </div>
             <div class="setting-option">
@@ -772,6 +807,7 @@
   <script defer src="static/js/jquery-2.2.0.min.js"></script>
   <script defer src="static/js/material.min.js"></script>
   <script type="text/javascript" src="$WEBAPIS/webapis/webapis.js"></script>
+  <script type="text/javascript" src="platform/diagnostics.js"></script>
   <script type="text/javascript" src="platform/messages.js"></script>
   <script type="text/javascript" src="platform/i18n.js"></script>
   <script type="text/javascript" src="platform/common.js"></script>
@@ -782,6 +818,8 @@
   <script type="text/javascript" src="platform/menus.js"></script>
   <script type="text/javascript" src="platform/navigation.js"></script>
   <script type="text/javascript" src="platform/launcher.js"></script>
+  <script type="text/javascript" src="platform/button_mapping.js"></script>
+  <script type="text/javascript" src="platform/input_test.js"></script>
   <script type="text/javascript" src="platform/remote_controller.js"></script>
   <script type="text/javascript" src="static/js/utils.js"></script>
   <script type="text/javascript" src="static/js/mdns-browser/dns.js"></script>
@@ -1007,6 +1045,39 @@
       </div>
     </dialog>
   </div>
+  <div id="diagnosticLogDialogOverlay" class="dialog-overlay">
+    <dialog id="diagnosticLogDialog" class="mdl-dialog large-dialog">
+      <h3 class="mdl-dialog__title" data-i18n="Diagnostic log">Diagnostic log</h3>
+      <p class="dialog-note" data-i18n="Kept only in the memory of the TV. The PIN, the input keys, the ID of the TV and the RTSP address are hidden. UP and DOWN scroll.">Kept only in the memory of the TV. The PIN, the input keys, the ID of the TV and the RTSP address are hidden. UP and DOWN scroll.</p>
+      <div class="mdl-dialog__content">
+        <div id="diagnosticLogText" class="log-text"></div>
+      </div>
+      <div class="mdl-dialog__actions">
+        <button type="button" id="closeDiagnosticLog" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect" data-i18n="Close">Close</button>
+      </div>
+    </dialog>
+  </div>
+  <div id="inputTestDialogOverlay" class="dialog-overlay">
+    <dialog id="inputTestDialog" class="mdl-dialog large-dialog">
+      <h3 class="mdl-dialog__title" data-i18n="Input test">Input test</h3>
+      <p id="inputTestHint" class="dialog-note" data-i18n="RETURN or ESC leaves the test, or a hold of B on a controller for 2 seconds.">RETURN or ESC leaves the test, or a hold of B on a controller for 2 seconds.</p>
+      <div class="mdl-dialog__content input-test">
+        <div class="input-test-keys">
+          <div class="input-test-heading" data-i18n="Remote control and keyboard">Remote control and keyboard</div>
+          <div id="inputTestKey" class="input-test-key"></div>
+          <div id="inputTestKeyInfo" class="input-test-key-info"></div>
+          <div id="inputTestHistory" class="input-test-history"></div>
+          <div class="input-test-heading" data-i18n="Media keys of the TV">Media keys of the TV</div>
+          <div id="inputTestTvKeys" class="input-test-tv-keys"></div>
+        </div>
+        <div class="input-test-pads">
+          <div class="input-test-heading" data-i18n="Controllers">Controllers</div>
+          <div id="inputTestNoPads" class="input-test-key-info" data-i18n="No controller found. Press a button on a controller to wake it.">No controller found. Press a button on a controller to wake it.</div>
+          <div id="inputTestPads"></div>
+        </div>
+      </div>
+    </dialog>
+  </div>
   <div id="warningDialogOverlay" class="dialog-overlay">
     <dialog id="warningDialog" class="mdl-dialog">
       <span class="dialog-badge badge-optimal" aria-hidden="true"><svg class="icon"><use xlink:href="#i-sparkle"/></svg></span>
@@ -1083,7 +1154,13 @@
       <button type="button" id="streamMenuMouse" class="overlay-menu-item" role="menuitem">
         <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-mouse"/></svg><span class="overlay-menu-label" data-i18n="Mouse emulation">Mouse emulation</span><span id="streamMenuMouseValue" class="overlay-menu-value"></span>
       </button>
+      <button type="button" id="streamMenuBitrate" class="overlay-menu-item" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-sliders"/></svg><span class="overlay-menu-label"><span data-i18n="Bitrate">Bitrate</span><span id="streamMenuBitrateNote" class="overlay-menu-note"></span></span><span class="overlay-menu-stepper"><svg id="streamMenuBitrateLower" class="icon" aria-hidden="true"><use xlink:href="#i-back"/></svg><span id="streamMenuBitrateValue" class="overlay-menu-value"></span><svg id="streamMenuBitrateHigher" class="icon stepper-next" aria-hidden="true"><use xlink:href="#i-back"/></svg></span>
+      </button>
       <div class="overlay-menu-group" data-i18n="Send to the PC">Send to the PC</div>
+      <button type="button" id="streamMenuText" class="overlay-menu-item" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-keyboard"/></svg><span class="overlay-menu-label" data-i18n="Type text…">Type text…</span>
+      </button>
       <button type="button" id="streamMenuKeyWin" class="overlay-menu-item" role="menuitem">
         <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-keyboard"/></svg><span class="overlay-menu-label" data-i18n="Windows key">Windows key</span>
       </button>
@@ -1108,6 +1185,22 @@
       </button>
       <div class="overlay-menu-hint" data-i18n="RETURN, Play/Pause or B: back to the game">RETURN, Play/Pause or B: back to the game</div>
     </div>
+    <!-- 'Type text…' of the Stream Menu (platform/menus.js): a text field for the keyboard of the TV, sent to the PC -->
+    <div id="streamTextPanel" class="overlay-menu stream-menu" role="dialog" aria-labelledby="streamTextTitle" hidden>
+      <div class="overlay-menu-header">
+        <h3 id="streamTextTitle" class="overlay-menu-title" data-i18n="Type text">Type text</h3>
+        <div class="overlay-menu-subtitle" data-i18n="The PC gets the text as if it was typed on its keyboard.">The PC gets the text as if it was typed on its keyboard.</div>
+      </div>
+      <input type="text" id="streamTextInput" class="stream-text-input" maxlength="1024" autocomplete="off" autocapitalize="off" spellcheck="false" readonly>
+      <div id="streamTextStatus" class="stream-text-status" role="status"></div>
+      <button type="button" id="streamTextSend" class="overlay-menu-item" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-arrow-up"/></svg><span class="overlay-menu-label" data-i18n="Send to the PC">Send to the PC</span>
+      </button>
+      <button type="button" id="streamTextCancel" class="overlay-menu-item" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-close"/></svg><span class="overlay-menu-label" data-i18n="Cancel">Cancel</span>
+      </button>
+      <div class="overlay-menu-hint" data-i18n="OK on the field opens the keyboard of the TV, whose Done key sends the text. RETURN or B: back to the Stream Menu">OK on the field opens the keyboard of the TV, whose Done key sends the text. RETURN or B: back to the Stream Menu</div>
+    </div>
   </div>
   <!-- Menu of an app tile (platform/menus.js) -->
   <div id="appMenuOverlay" class="overlay-menu-backdrop">
@@ -1125,6 +1218,12 @@
       <button type="button" id="appMenuQuit" class="overlay-menu-item is-danger" role="menuitem">
         <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-quit"/></svg><span class="overlay-menu-label" data-i18n="Quit app">Quit app</span>
       </button>
+      <button type="button" id="appMenuFavorite" class="overlay-menu-item" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-star"/></svg><span class="overlay-menu-label" data-i18n="Add to favorites">Add to favorites</span>
+      </button>
+      <button type="button" id="appMenuUnfavorite" class="overlay-menu-item" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-star"/></svg><span class="overlay-menu-label" data-i18n="Remove from favorites">Remove from favorites</span>
+      </button>
       <button type="button" id="appMenuHide" class="overlay-menu-item" role="menuitem">
         <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-eye-off"/></svg><span class="overlay-menu-label" data-i18n="Hide app">Hide app</span>
       </button>
@@ -1136,6 +1235,91 @@
       </button>
       <button type="button" id="appMenuClose" class="overlay-menu-item" role="menuitem">
         <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-close"/></svg><span class="overlay-menu-label" data-i18n="Close">Close</span>
+      </button>
+    </div>
+  </div>
+  <!-- Button mapping and stick calibration of the controllers (platform/button_mapping.js) -->
+  <div id="buttonMappingOverlay" class="overlay-menu-backdrop">
+    <div id="buttonMappingPanel" class="overlay-menu mapping-menu" role="menu" aria-labelledby="buttonMappingTitle">
+      <div class="overlay-menu-header">
+        <h3 id="buttonMappingTitle" class="overlay-menu-title" data-i18n="Button mapping">Button mapping</h3>
+        <div id="buttonMappingSubtitle" class="overlay-menu-subtitle"></div>
+      </div>
+      <button type="button" id="buttonMappingSelect" class="overlay-menu-item" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-gamepad"/></svg><span class="overlay-menu-label" data-i18n="Controller">Controller</span><span class="overlay-menu-stepper"><svg class="icon" aria-hidden="true"><use xlink:href="#i-back"/></svg><span id="buttonMappingController" class="overlay-menu-value"></span><svg class="icon stepper-next" aria-hidden="true"><use xlink:href="#i-back"/></svg></span>
+      </button>
+      <div class="overlay-menu-group" data-i18n="Button on the controller: what it presses in games">Button on the controller: what it presses in games</div>
+      <button type="button" id="buttonMappingRow0" class="overlay-menu-item mapping-row" role="menuitem">
+        <span class="overlay-menu-label"><span data-i18n="A">A</span></span><span class="overlay-menu-stepper"><svg class="icon" aria-hidden="true"><use xlink:href="#i-back"/></svg><span id="buttonMappingValue0" class="overlay-menu-value"></span><svg class="icon stepper-next" aria-hidden="true"><use xlink:href="#i-back"/></svg></span>
+      </button>
+      <button type="button" id="buttonMappingRow1" class="overlay-menu-item mapping-row" role="menuitem">
+        <span class="overlay-menu-label"><span data-i18n="B">B</span></span><span class="overlay-menu-stepper"><svg class="icon" aria-hidden="true"><use xlink:href="#i-back"/></svg><span id="buttonMappingValue1" class="overlay-menu-value"></span><svg class="icon stepper-next" aria-hidden="true"><use xlink:href="#i-back"/></svg></span>
+      </button>
+      <button type="button" id="buttonMappingRow2" class="overlay-menu-item mapping-row" role="menuitem">
+        <span class="overlay-menu-label"><span data-i18n="X">X</span></span><span class="overlay-menu-stepper"><svg class="icon" aria-hidden="true"><use xlink:href="#i-back"/></svg><span id="buttonMappingValue2" class="overlay-menu-value"></span><svg class="icon stepper-next" aria-hidden="true"><use xlink:href="#i-back"/></svg></span>
+      </button>
+      <button type="button" id="buttonMappingRow3" class="overlay-menu-item mapping-row" role="menuitem">
+        <span class="overlay-menu-label"><span data-i18n="Y">Y</span></span><span class="overlay-menu-stepper"><svg class="icon" aria-hidden="true"><use xlink:href="#i-back"/></svg><span id="buttonMappingValue3" class="overlay-menu-value"></span><svg class="icon stepper-next" aria-hidden="true"><use xlink:href="#i-back"/></svg></span>
+      </button>
+      <button type="button" id="buttonMappingRow4" class="overlay-menu-item mapping-row" role="menuitem">
+        <span class="overlay-menu-label"><span data-i18n="LB">LB</span></span><span class="overlay-menu-stepper"><svg class="icon" aria-hidden="true"><use xlink:href="#i-back"/></svg><span id="buttonMappingValue4" class="overlay-menu-value"></span><svg class="icon stepper-next" aria-hidden="true"><use xlink:href="#i-back"/></svg></span>
+      </button>
+      <button type="button" id="buttonMappingRow5" class="overlay-menu-item mapping-row" role="menuitem">
+        <span class="overlay-menu-label"><span data-i18n="RB">RB</span></span><span class="overlay-menu-stepper"><svg class="icon" aria-hidden="true"><use xlink:href="#i-back"/></svg><span id="buttonMappingValue5" class="overlay-menu-value"></span><svg class="icon stepper-next" aria-hidden="true"><use xlink:href="#i-back"/></svg></span>
+      </button>
+      <button type="button" id="buttonMappingRow6" class="overlay-menu-item mapping-row" role="menuitem">
+        <span class="overlay-menu-label"><span data-i18n="LT">LT</span></span><span class="overlay-menu-stepper"><svg class="icon" aria-hidden="true"><use xlink:href="#i-back"/></svg><span id="buttonMappingValue6" class="overlay-menu-value"></span><svg class="icon stepper-next" aria-hidden="true"><use xlink:href="#i-back"/></svg></span>
+      </button>
+      <button type="button" id="buttonMappingRow7" class="overlay-menu-item mapping-row" role="menuitem">
+        <span class="overlay-menu-label"><span data-i18n="RT">RT</span></span><span class="overlay-menu-stepper"><svg class="icon" aria-hidden="true"><use xlink:href="#i-back"/></svg><span id="buttonMappingValue7" class="overlay-menu-value"></span><svg class="icon stepper-next" aria-hidden="true"><use xlink:href="#i-back"/></svg></span>
+      </button>
+      <button type="button" id="buttonMappingRow8" class="overlay-menu-item mapping-row" role="menuitem">
+        <span class="overlay-menu-label"><span data-i18n="SELECT">SELECT</span></span><span class="overlay-menu-stepper"><svg class="icon" aria-hidden="true"><use xlink:href="#i-back"/></svg><span id="buttonMappingValue8" class="overlay-menu-value"></span><svg class="icon stepper-next" aria-hidden="true"><use xlink:href="#i-back"/></svg></span>
+      </button>
+      <button type="button" id="buttonMappingRow9" class="overlay-menu-item mapping-row" role="menuitem">
+        <span class="overlay-menu-label"><span data-i18n="START">START</span></span><span class="overlay-menu-stepper"><svg class="icon" aria-hidden="true"><use xlink:href="#i-back"/></svg><span id="buttonMappingValue9" class="overlay-menu-value"></span><svg class="icon stepper-next" aria-hidden="true"><use xlink:href="#i-back"/></svg></span>
+      </button>
+      <button type="button" id="buttonMappingRow10" class="overlay-menu-item mapping-row" role="menuitem">
+        <span class="overlay-menu-label"><span data-i18n="LS">LS</span></span><span class="overlay-menu-stepper"><svg class="icon" aria-hidden="true"><use xlink:href="#i-back"/></svg><span id="buttonMappingValue10" class="overlay-menu-value"></span><svg class="icon stepper-next" aria-hidden="true"><use xlink:href="#i-back"/></svg></span>
+      </button>
+      <button type="button" id="buttonMappingRow11" class="overlay-menu-item mapping-row" role="menuitem">
+        <span class="overlay-menu-label"><span data-i18n="RS">RS</span></span><span class="overlay-menu-stepper"><svg class="icon" aria-hidden="true"><use xlink:href="#i-back"/></svg><span id="buttonMappingValue11" class="overlay-menu-value"></span><svg class="icon stepper-next" aria-hidden="true"><use xlink:href="#i-back"/></svg></span>
+      </button>
+      <button type="button" id="buttonMappingRow12" class="overlay-menu-item mapping-row" role="menuitem">
+        <span class="overlay-menu-label"><span data-i18n="D-PAD UP">D-PAD UP</span></span><span class="overlay-menu-stepper"><svg class="icon" aria-hidden="true"><use xlink:href="#i-back"/></svg><span id="buttonMappingValue12" class="overlay-menu-value"></span><svg class="icon stepper-next" aria-hidden="true"><use xlink:href="#i-back"/></svg></span>
+      </button>
+      <button type="button" id="buttonMappingRow13" class="overlay-menu-item mapping-row" role="menuitem">
+        <span class="overlay-menu-label"><span data-i18n="D-PAD DOWN">D-PAD DOWN</span></span><span class="overlay-menu-stepper"><svg class="icon" aria-hidden="true"><use xlink:href="#i-back"/></svg><span id="buttonMappingValue13" class="overlay-menu-value"></span><svg class="icon stepper-next" aria-hidden="true"><use xlink:href="#i-back"/></svg></span>
+      </button>
+      <button type="button" id="buttonMappingRow14" class="overlay-menu-item mapping-row" role="menuitem">
+        <span class="overlay-menu-label"><span data-i18n="D-PAD LEFT">D-PAD LEFT</span></span><span class="overlay-menu-stepper"><svg class="icon" aria-hidden="true"><use xlink:href="#i-back"/></svg><span id="buttonMappingValue14" class="overlay-menu-value"></span><svg class="icon stepper-next" aria-hidden="true"><use xlink:href="#i-back"/></svg></span>
+      </button>
+      <button type="button" id="buttonMappingRow15" class="overlay-menu-item mapping-row" role="menuitem">
+        <span class="overlay-menu-label"><span data-i18n="D-PAD RIGHT">D-PAD RIGHT</span></span><span class="overlay-menu-stepper"><svg class="icon" aria-hidden="true"><use xlink:href="#i-back"/></svg><span id="buttonMappingValue15" class="overlay-menu-value"></span><svg class="icon stepper-next" aria-hidden="true"><use xlink:href="#i-back"/></svg></span>
+      </button>
+      <div class="overlay-menu-separator"></div>
+      <button type="button" id="buttonMappingCalibrate" class="overlay-menu-item" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-sliders"/></svg><span class="overlay-menu-label" data-i18n="Calibrate the sticks">Calibrate the sticks</span>
+      </button>
+      <button type="button" id="buttonMappingReset" class="overlay-menu-item" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-restore"/></svg><span class="overlay-menu-label" data-i18n="Reset this controller">Reset this controller</span>
+      </button>
+      <button type="button" id="buttonMappingClose" class="overlay-menu-item" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-close"/></svg><span class="overlay-menu-label" data-i18n="Close">Close</span>
+      </button>
+      <div class="overlay-menu-hint" data-i18n="LEFT and RIGHT change a button. The change applies from the next stream.">LEFT and RIGHT change a button. The change applies from the next stream.</div>
+    </div>
+    <div id="buttonCalibrationPanel" class="overlay-menu mapping-menu" role="menu" aria-labelledby="buttonCalibrationTitle">
+      <div class="overlay-menu-header">
+        <h3 id="buttonCalibrationTitle" class="overlay-menu-title calibration-title"></h3>
+        <div id="buttonCalibrationText" class="overlay-menu-subtitle calibration-text"></div>
+      </div>
+      <div id="buttonCalibrationValues" class="calibration-values"></div>
+      <button type="button" id="buttonCalibrationContinue" class="overlay-menu-item" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-sliders"/></svg><span id="buttonCalibrationContinueLabel" class="overlay-menu-label"></span>
+      </button>
+      <button type="button" id="buttonCalibrationCancel" class="overlay-menu-item" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-close"/></svg><span class="overlay-menu-label" data-i18n="Cancel">Cancel</span>
       </button>
     </div>
   </div>

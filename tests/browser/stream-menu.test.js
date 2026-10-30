@@ -6,7 +6,8 @@
 // through it while no key reaches the stream (a listener on the video element stands in for the keyboard handler of the
 // module), RETURN and B close it and resume the stream, and its entries run: the performance statistics, the mouse
 // emulation, the keys for the PC (every key released again), Disconnect and 'Disconnect and quit the app on the PC'. It
-// stays inside the safe area of the screen, and the video keeps showing. The controller side (the combo and the
+// stays inside the safe area of the screen with every entry showing without scrolling, and the video keeps showing. The
+// bitrate entry and 'Type text…' are checked by stream-menu-entries.test.js. The controller side (the combo and the
 // controller input while the menu is open) is pinned by tests/native/stream_menu_combo_test.cpp.
 
 const { after, before, test } = require('node:test');
@@ -163,8 +164,8 @@ test('Play/Pause opens the Stream Menu over the stream, the remote moves in it, 
     let state = await menuState(app.page);
     assert.deepEqual(state, {
       open: true, shown: 'flex', focused: 'streamMenuResume', subtitle: 'Game 8 · GAMING-PC',
-      entries: ['streamMenuResume', 'streamMenuStats', 'streamMenuKeyWin', 'streamMenuKeyAltTab', 'streamMenuKeyAltF4',
-        'streamMenuKeyEsc', 'streamMenuKeyAltEnter', 'streamMenuDisconnect', 'streamMenuQuit'],
+      entries: ['streamMenuResume', 'streamMenuStats', 'streamMenuBitrate', 'streamMenuText', 'streamMenuKeyWin', 'streamMenuKeyAltTab',
+        'streamMenuKeyAltF4', 'streamMenuKeyEsc', 'streamMenuKeyAltEnter', 'streamMenuDisconnect', 'streamMenuQuit'],
     });
     assert.deepEqual(await moduleCalls(app.page), ['setStreamMenuOpen true'], 'the module stops the controller input of the PC');
     // The video keeps playing behind the menu
@@ -173,6 +174,8 @@ test('Play/Pause opens the Stream Menu over the stream, the remote moves in it, 
     // The arrow keys and OK stay in the menu
     await remoteKey(app.page, ...DOWN);
     assert.equal((await menuState(app.page)).focused, 'streamMenuStats');
+    await remoteKey(app.page, ...DOWN);
+    await remoteKey(app.page, ...DOWN);
     await remoteKey(app.page, ...DOWN);
     await remoteKey(app.page, ...DOWN);
     assert.equal((await menuState(app.page)).focused, 'streamMenuKeyAltTab');
@@ -276,8 +279,56 @@ test('the Stream Menu stays inside the safe area of the screen', async () => {
     });
     // 5 % on each side of the 1920 x 1080 screen of the app
     assert.ok(box.left >= box.width * 0.05 && box.right <= box.width * 0.95, JSON.stringify(box));
+    // Every entry and the hint show without scrolling, also with the mouse emulation entry of a controller and the note
+    // of a changed bitrate
+    const fit = await app.page.evaluate(() => {
+      changeStreamMenuBitrate(-1);
+      const menu = document.getElementById('streamMenu');
+      return { entries: getOverlayMenuItems('streamMenu').length, note: $('#streamMenuBitrateNote').text() !== '',
+        scrollHeight: menu.scrollHeight, clientHeight: menu.clientHeight };
+    });
+    assert.equal(fit.entries, 12);
+    assert.equal(fit.note, true);
+    assert.ok(fit.scrollHeight <= fit.clientHeight, JSON.stringify(fit));
     assert.ok(box.top >= box.height * 0.05 && box.bottom <= box.height * 0.95, JSON.stringify(box));
     assert.ok(box.right >= box.width * 0.9, 'on the right side of the picture: ' + JSON.stringify(box));
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('in every language the Stream Menu shows every entry without scrolling, and each label and bitrate note takes one line', async () => {
+  const app = await openStreaming({ gamepad: true });
+  try {
+    await remoteKey(app.page, ...PLAY_PAUSE);
+    const languages = await app.page.evaluate(() => i18n.getSupportedLocales());
+    assert.ok(languages.length >= 5, JSON.stringify(languages));
+    for (const language of languages) {
+      await app.page.evaluate((locale) => i18n.setLanguage(locale), language);
+      await app.page.waitForFunction((locale) => document.documentElement.getAttribute('lang') === locale, language);
+      // Both notes of the bitrate entry: the one of a changed bitrate and the one of OK on an unchanged bitrate
+      for (const note of ['changed', 'unchanged']) {
+        const fit = await app.page.evaluate((which) => {
+          if (which === 'changed') {
+            changeStreamMenuBitrate(-1);
+          } else {
+            changeStreamMenuBitrate(1);
+            applyStreamMenuBitrate();
+          }
+          const menu = document.getElementById('streamMenu');
+          const oneLine = (element) => element.getBoundingClientRect().height < 2 * parseFloat(getComputedStyle(element).lineHeight);
+          const labels = Array.prototype.filter.call(menu.querySelectorAll('.overlay-menu-label'), (label) => label.offsetParent !== null);
+          return {
+            note: $('#streamMenuBitrateNote').text(),
+            noteOneLine: oneLine(document.getElementById('streamMenuBitrateNote')),
+            longLabels: labels.filter((label) => !oneLine(label)).map((label) => label.textContent),
+            scrolls: menu.scrollHeight > menu.clientHeight,
+          };
+        }, note);
+        assert.ok(fit.note !== '' && fit.noteOneLine && fit.longLabels.length === 0 && !fit.scrolls, language + ' ' + JSON.stringify(fit));
+      }
+    }
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
@@ -429,7 +480,10 @@ test('when the mouse emulation entry goes under the selection, the entry before 
     await remoteKey(app.page, ...ENTER);
     assert.deepEqual(await moduleCalls(app.page), ['toggleStats']);
     assert.equal((await menuState(app.page)).open, true);
-    // DOWN goes on to the Windows key, the entry after the statistics now
+    // DOWN goes on to the bitrate entry, the entry after the statistics now, and on to the Windows key
+    await remoteKey(app.page, ...DOWN);
+    assert.deepEqual(await selection(), { focused: 'streamMenuBitrate', current: 'streamMenuBitrate', marked: ['streamMenuBitrate'] });
+    await remoteKey(app.page, ...DOWN);
     await remoteKey(app.page, ...DOWN);
     assert.deepEqual(await selection(), { focused: 'streamMenuKeyWin', current: 'streamMenuKeyWin', marked: ['streamMenuKeyWin'] });
 

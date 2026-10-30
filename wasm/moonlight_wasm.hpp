@@ -103,7 +103,7 @@ class MoonlightInstance {
 
   MessageResult StartStream(std::string host, int httpPort, std::string width, std::string height, std::string fps, std::string bitrate,
     std::string rikey, std::string rikeyid, std::string appversion, std::string gfeversion, std::string rtspurl, int serverCodecModeSupport,
-    bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, bool flipABfaceButtons, bool flipXYfaceButtons,
+    bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, std::string buttonMappings,
     std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
     std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, int performanceStats,
     bool refFrameInvalidation, bool hdrMetadata, std::string controllerType);
@@ -128,7 +128,7 @@ class MoonlightInstance {
 
   void ReportMouseMovement();
 
-  void HandleGamepadInputState(bool rumbleFeedback, bool mouseEmulation, bool flipABfaceButtons, bool flipXYfaceButtons,
+  void HandleGamepadInputState(bool rumbleFeedback, bool mouseEmulation, const std::string& buttonMappings,
                                uint8_t controllerType);
   void PollGamepads();
 
@@ -252,8 +252,6 @@ class MoonlightInstance {
   bool m_OptimizeGamesEnabled;
   bool m_RumbleFeedbackEnabled;
   bool m_MouseEmulationEnabled;
-  bool m_FlipABfaceButtonsEnabled;
-  bool m_FlipXYfaceButtonsEnabled;
   AudioBackend m_AudioBackend;
   int m_AudioConfig;
   bool m_AudioSyncEnabled;
@@ -337,7 +335,7 @@ void openUrl(int callbackId, std::string url, emscripten::val ppk, bool binaryRe
 
 MessageResult startStream(std::string host, int httpPort, std::string width, std::string height, std::string fps, std::string bitrate,
   std::string rikey, std::string rikeyid, std::string appversion, std::string gfeversion, std::string rtspurl, int serverCodecModeSupport,
-  bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, bool flipABfaceButtons, bool flipXYfaceButtons,
+  bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, std::string buttonMappings,
   std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
   std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, int performanceStats,
   bool refFrameInvalidation, bool hdrMetadata, std::string controllerType);
@@ -348,6 +346,7 @@ MessageResult cancelRequest();
 void toggleStats();
 void setStreamMenuOpen(bool open);
 void toggleMouseEmulation();
+std::string takeDiagnosticLog();
 void stun(int callbackId);
 void pair(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber, std::string uniqueId);
 void wakeOnLan(int callbackId, std::string macAddress, std::string subnetBroadcast);

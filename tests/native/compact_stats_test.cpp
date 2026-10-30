@@ -2,7 +2,8 @@
 // every press of the stats key (the remote, the Stream Menu, the gamepad combo and the keyboard combo all end up in
 // TogglePerformanceStats() of wasm/wasmplayer.cpp) steps Off, Compact, Full, Off, also when two threads press at once,
 // the level of the front end is clamped, and the figures become the message of tests/fixtures/compact-stats.tsv, which
-// tests/unit/compact-stats.test.js reads on the side of the front end.
+// tests/unit/compact-stats.test.js reads on the side of the front end. The message of the full statistics starts with the
+// point of their graph (tests/fixtures/stats-graph-points.tsv, read by tests/unit/stats-graph.test.js), then the text.
 
 #include "compact_stats.hpp"
 #include "test_support.h"
@@ -179,11 +180,55 @@ static void UnknownFiguresAndShortOutput() {
   CHECK_EQ(std::string(output.data()), std::string(""));
 }
 
+// The points of tests/fixtures/stats-graph-points.tsv as { rtt, lost, first line of the message }
+struct GraphCase {
+  StatsGraphPoint point;
+  std::string line;
+};
+
+static std::vector<GraphCase> ReadGraphCases() {
+  std::string path = __FILE__;
+  path = path.substr(0, path.find_last_of('/') + 1) + "../fixtures/stats-graph-points.tsv";
+  std::ifstream file(path);
+  std::vector<GraphCase> cases;
+  std::string line;
+  while (std::getline(file, line)) {
+    if (line.empty() || line[0] == '#') {
+      continue;
+    }
+    const std::vector<std::string> fields = SplitTabs(line);
+    if (fields.size() != 5) {
+      test_support::Check(false, "fixture line \"" + line + "\"", "expected 5 fields", __FILE__, __LINE__);
+      continue;
+    }
+    GraphCase entry = {};
+    entry.point.rttMs = (uint32_t)std::strtoul(fields[0].c_str(), nullptr, 10);
+    entry.point.networkDroppedFrames = (uint32_t)std::strtoul(fields[1].c_str(), nullptr, 10);
+    entry.line = fields[2];
+    cases.push_back(entry);
+  }
+  return cases;
+}
+
+static void TheFullStatisticsStartWithThePointOfTheirGraph() {
+  const std::vector<GraphCase> cases = ReadGraphCases();
+  CHECK_EQ(cases.size(), 5u);
+  for (const GraphCase& entry : cases) {
+    // The point on the first line, the text unchanged after it
+    CHECK_EQ(FormatFullStatsMessage(entry.point, "Video stream: 3840x2160\nPending frames: 0 (max 1)\n"),
+             entry.line + "\nVideo stream: 3840x2160\nPending frames: 0 (max 1)\n");
+  }
+  // No text yet
+  const StatsGraphPoint point = {7, 1};
+  CHECK_EQ(FormatFullStatsMessage(point, nullptr), std::string("StatMsg: {\"rtt\":7,\"lost\":1}\n"));
+}
+
 int main() {
   test_support::RunTest("the levels step Off, Compact, Full, Off", LevelsStepOffCompactFullOff);
   test_support::RunTest("the level of the front end is clamped", TheLevelOfTheFrontEndIsClamped);
   test_support::RunTest("every press moves one level when two threads press at once", EveryPressMovesOneLevelWhenTwoThreadsPress);
   test_support::RunTest("the message of the figures of the fixture", FixtureMessages);
   test_support::RunTest("unknown figures and an output that is too short", UnknownFiguresAndShortOutput);
+  test_support::RunTest("the full statistics start with the point of their graph", TheFullStatisticsStartWithThePointOfTheirGraph);
   return test_support::Summary();
 }

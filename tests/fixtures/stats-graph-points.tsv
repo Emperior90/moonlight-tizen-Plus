@@ -1,0 +1,12 @@
+# Points of the graph of the full performance statistics, with the first line of the message that wasm/wasmplayer.cpp
+# then sends to the front end. Both sides read this file: FormatFullStatsMessage() in wasm/compact_stats.hpp
+# (tests/native/compact_stats_test.cpp) writes the line, and parseFullStatsMessage() in wasm/platform/messages.js
+# (tests/unit/stats-graph.test.js) reads the point back from it, so the two stay the same.
+# Format, separated by tabs: RTT in ms (0 while unknown), frames lost on the network in the window, the first line of the
+# message, the RTT that the front end reads (empty for unknown), the frames lost that it reads.
+
+3	0	StatMsg: {"rtt":3,"lost":0}	3	0
+12	4	StatMsg: {"rtt":12,"lost":4}	12	4
+0	0	StatMsg: {"rtt":null,"lost":0}		0
+85	120	StatMsg: {"rtt":85,"lost":120}	85	120
+4294967295	4294967295	StatMsg: {"rtt":4294967295,"lost":4294967295}	4294967295	4294967295

@@ -112,7 +112,7 @@ test('the running app has a Running badge, the header names the keys of the app 
     await remote(app.page, 'KEY_CHANNEL_UP');
     assert.deepEqual(await appMenu(app.page), {
       open: true, title: 'Cyberpunk 2077', subtitle: 'Running on GAMING-PC', focused: 'appMenuResume',
-      entries: ['appMenuResume', 'appMenuQuit', 'appMenuHide', 'appMenuClose'],
+      entries: ['appMenuResume', 'appMenuQuit', 'appMenuFavorite', 'appMenuHide', 'appMenuClose'],
     });
     // DOWN moves, RETURN closes and the tile stays selected
     await remote(app.page, 'KEY_DOWN');
@@ -125,7 +125,8 @@ test('the running app has a Running badge, the header names the keys of the app 
     await remote(app.page, 'KEY_RIGHT');
     await remote(app.page, 'KEY_PLAY_PAUSE');
     assert.deepEqual(await appMenu(app.page), {
-      open: true, title: 'Desktop', subtitle: 'GAMING-PC', focused: 'appMenuStart', entries: ['appMenuStart', 'appMenuHide', 'appMenuClose'],
+      open: true, title: 'Desktop', subtitle: 'GAMING-PC', focused: 'appMenuStart',
+      entries: ['appMenuStart', 'appMenuFavorite', 'appMenuHide', 'appMenuClose'],
     });
     // Play/Pause again closes it
     await remote(app.page, 'KEY_PLAY_PAUSE');
@@ -170,9 +171,10 @@ test('Start and Resume run like OK on the tile, and Quit app asks to quit the ru
 test('Hide app leaves the app out for this host, Show hidden apps shows it dimmed, and Show app again brings it back', async () => {
   const app = await openAppList();
   try {
-    // Desktop: Select, DOWN to Hide app, A
+    // Desktop: Select, DOWN past Add to favorites to Hide app, A
     await remote(app.page, 'KEY_RIGHT');
     await gamepadButton(app.page, 8);
+    await gamepadButton(app.page, 13);
     await gamepadButton(app.page, 13);
     assert.equal((await appMenu(app.page)).focused, 'appMenuHide');
     await gamepadButton(app.page, 0);
@@ -187,7 +189,7 @@ test('Hide app leaves the app out for this host, Show hidden apps shows it dimme
     // The menu of another app offers to show the hidden one
     await remote(app.page, 'KEY_CHANNEL_UP');
     let menu = await appMenu(app.page);
-    assert.deepEqual(menu.entries, ['appMenuStart', 'appMenuHide', 'appMenuShowHidden', 'appMenuClose']);
+    assert.deepEqual(menu.entries, ['appMenuStart', 'appMenuFavorite', 'appMenuHide', 'appMenuShowHidden', 'appMenuClose']);
     assert.equal(await app.page.evaluate(() => $('#appMenuShowHiddenLabel').text()), 'Show hidden apps (1)');
     await app.page.evaluate(() => $('#appMenuShowHidden').click());
     await app.page.waitForTimeout(100);
@@ -200,7 +202,7 @@ test('Hide app leaves the app out for this host, Show hidden apps shows it dimme
     await remote(app.page, 'KEY_CHANNEL_UP');
     menu = await appMenu(app.page);
     assert.deepEqual([menu.title, menu.subtitle], ['Desktop', 'Hidden']);
-    assert.deepEqual(menu.entries, ['appMenuStart', 'appMenuUnhide', 'appMenuShowHidden', 'appMenuClose']);
+    assert.deepEqual(menu.entries, ['appMenuStart', 'appMenuFavorite', 'appMenuUnhide', 'appMenuShowHidden', 'appMenuClose']);
     assert.equal(await app.page.evaluate(() => $('#appMenuShowHiddenLabel').text()), 'Hide hidden apps');
     await app.page.evaluate(() => $('#appMenuUnhide').click());
     await app.page.waitForTimeout(100);

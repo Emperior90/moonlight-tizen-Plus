@@ -1,0 +1,247 @@
+{
+  "schema_version": 1,
+  "about": "The upstream projects that Moonlight Plus builds on, and how far their changes are reviewed. For each project: what this fork contains (vendored), the upstream state up to which every change has a decision (reviewed_through), and the decisions: taken (with the version of Moonlight Plus that has it) or skipped (with the reason). The workflow check-upstream-dependencies.yml lists everything newer than reviewed_through in one issue. After a review, add the decisions here and move reviewed_through forward.",
+  "dependencies": [
+    {
+      "id": "moonlight-tizen",
+      "name": "Moonlight Tizen",
+      "repo": "brightcraft/moonlight-tizen",
+      "track": "branch",
+      "branch": "master",
+      "vendored": "v1.19.0 (4bb3134), the base version of Moonlight Plus",
+      "reviewed_through": "584f1cc7e724ecc6a50cea64ccaf9108ea5be435",
+      "reviewed_on": "2026-10-30",
+      "note": "The app this fork is based on. Its maintainer announced that 2026 is most likely the last year of maintenance, and it still vendors moonlight-common-c 8599b60.",
+      "decisions": [
+        {
+          "commits": ["1abfbf1", "d8d4ae4", "0ffd692"],
+          "decision": "taken",
+          "in": "1.19.101",
+          "why": "The Embind read of a std::string no longer writes past its buffer (pull request #185). Moonlight Plus patches the generated JavaScript itself (tools/patch-embind-string.js) and reads the patched file back."
+        },
+        {
+          "commits": ["6191a93", "6c72d48"],
+          "decision": "taken",
+          "in": "2.1.0",
+          "why": "About 340 texts of its Spanish es-ES.json are the base of the Spanish translation, adapted to the terms of this app and named Español in the language menu. The Albanian locale of the same commit is skipped: about 200 texts of this app would be missing, and nobody can review them."
+        },
+        {
+          "commits": ["0a35dfd"],
+          "decision": "taken",
+          "in": "2.0.0",
+          "why": "The Wake PC dialog closes before it stops its tasks. The dialog that stayed open (upstream issue #147) had another cause, the emptied queue of poll callbacks, which Moonlight Plus fixed too."
+        },
+        {
+          "commits": ["6c46a40"],
+          "decision": "skipped",
+          "why": "Locks the HDR switch on TVs that don't report HDR. Moonlight Plus keeps the switch usable and warns instead, and the check of upstream runs without try/catch at the top level of the script."
+        },
+        {
+          "commits": ["584f1cc"],
+          "decision": "skipped",
+          "why": "Asks for Rec. 2020 with HDR, which can give wrong colors. Moonlight Plus always asks for Rec. 709, like moonlight-qt and moonlight-android."
+        },
+        {
+          "commits": ["a185247", "b6b6af2"],
+          "decision": "skipped",
+          "why": "The README and the issue template of Moonlight Tizen; Moonlight Plus has its own."
+        }
+      ]
+    },
+    {
+      "id": "moonlight-common-c",
+      "name": "moonlight-common-c",
+      "repo": "moonlight-stream/moonlight-common-c",
+      "track": "branch",
+      "branch": "master",
+      "vendored": "8599b60 (2024-06-10, the version of Moonlight Tizen 1.19.0) with the commits taken below and the patches of this fork (moonlight-common-c/)",
+      "reviewed_through": "5d3c0ecca00c1bb3f587acb8060476edcf8e24aa",
+      "reviewed_on": "2026-10-30",
+      "note": "The streaming library, with patches of this fork (stats, reference frame invalidation, a faster rs.c). Port commits one at a time and keep the local patches; never replace the folder.",
+      "decisions": [
+        {
+          "commits": ["0fa805d", "dff1690", "20c05ed", "342b106", "aeba988", "4a95eb3", "0405384", "448b2c6"],
+          "decision": "taken",
+          "in": "2.1.0",
+          "why": "A DESCRIBE answer without content, the Opus channel count checked, the RTT read without the ENet mutex, control messages encrypted in place, the new RTSP parser, mouse movements latched before they are sent, and text sent on the keyboard channel, packed densely for Sunshine (for Type text in the Stream Menu)."
+        },
+        {
+          "commits": ["e2722dc", "41cedb8", "d85371c", "7b026e7", "5ec8397"],
+          "decision": "taken",
+          "in": "1.19.101",
+          "why": "Uninitialized bytes in the ping, ENet disconnects from other addresses, reference frame invalidation after a lost FEC block, a malformed Session header and the 1 MB limit of RTSP answers, and a leak of a repeated RTSP option."
+        },
+        {
+          "commits": ["62e0663", "be43885"],
+          "decision": "taken",
+          "in": "1.19.0-s90c.1",
+          "why": "A freeze of up to 120 frames after a predicted loss without reference frame invalidation, and a partially received IDR frame."
+        },
+        {
+          "commits": ["e59a5f5", "b126e48", "970b072", "f1cca2d", "421bd74"],
+          "decision": "skipped",
+          "why": "The rewrite of the input batching and its follow-up fixes go together or not at all: e59a5f5 alone has a use-after-free of queued controller packets, which 970b072 fixes. Small gain, since Moonlight Plus sends controller state only when it changes. 448b2c6 of this series applies to the old batching and was taken."
+        },
+        {
+          "commits": ["82ee2d6", "a3ebaaf", "e356b2c"],
+          "decision": "skipped",
+          "why": "Microsecond timestamps and RTP audio and video statistics: little gain over the FEC and audio loss lines of Moonlight Plus, and presentationTimeUs changes the API for the app (sum in microseconds, divide only for display)."
+        },
+        {
+          "commits": ["04a2f11", "12e603e", "d3d3e6c"],
+          "decision": "skipped",
+          "why": "The wakeup and ping interval logic of ENet and of the control receive loop: fewer late pings, little benefit, since the app reads the RTT once per second. d3d3e6c applies cleanly; take it together with the ENet update."
+        },
+        {
+          "commits": ["84f3763", "58902e3"],
+          "decision": "skipped",
+          "why": "ByteBuffer reads of several bytes and outputs zeroed on read errors: doesn't apply cleanly and brings little."
+        },
+        {
+          "commits": ["f900dd4", "874ac95", "2600bea"],
+          "decision": "skipped",
+          "why": "The extended key flag, the Steam controller type and controllers with two touchpads: low value (keyboard users, Steam controllers), and the app would have to report them first."
+        },
+        {
+          "commits": ["c86e053"],
+          "decision": "skipped",
+          "why": "Only affects hosts that encode with Intel Quick Sync on a small MTU."
+        },
+        {
+          "commits": ["305993b", "07c32c8"],
+          "decision": "skipped",
+          "why": "Probes the local address with a UDP connect(), untested with the sockets of Tizen and Emscripten."
+        },
+        {
+          "commits": ["e95feaf", "5d3c0ec"],
+          "decision": "skipped",
+          "why": "DualSense adaptive triggers: Tizen has no API for them. 5d3c0ec only adds a missing entry for e95feaf."
+        },
+        {
+          "commits": ["2a5a1f3"],
+          "decision": "skipped",
+          "why": "LTR acknowledgements, which no host evaluates (Sunshine has no handler for them)."
+        },
+        {
+          "commits": ["518b244"],
+          "decision": "skipped",
+          "why": "The MbedTLS code paths; Moonlight Plus builds with the OpenSSL of Emscripten."
+        },
+        {
+          "commits": ["de364b6", "5551d29", "a063522", "3872285", "b187204", "1fddbcb", "1f76427", "2ea4775", "e41355e", "6d0f73e", "47b4d33"],
+          "decision": "skipped",
+          "why": "nanors in place of rs.c: on the scalar path that WebAssembly takes in Chromium 69 it measured within 0 to 30 % of the patched rs.c of Moonlight Plus, which already lost its needless matrix multiply."
+        },
+        {
+          "commits": ["0586f3d", "3a377e7", "435bc6a"],
+          "decision": "skipped",
+          "why": "Thread code that the older Platform.c of Moonlight Plus doesn't have, so the leaks they fix don't exist there."
+        },
+        {
+          "commits": ["34074c9", "29f298e", "1c86405", "40d8731", "82e2514", "fdd0265", "3fa9191", "7022b33", "99c45d3", "0975a86", "5f22801"],
+          "decision": "skipped",
+          "why": "Other platforms and compilers: PS Vita, FreeBSD, Xbox (NXDK), 3DS, macOS, Windows, GCC without __has_builtin, and the IPv6 workaround of iOS with its CGN mask. None of them is built for Tizen with Emscripten."
+        },
+        {
+          "commits": ["1176ca6", "2d984f4", "6250fa2", "6268780", "703a069"],
+          "decision": "skipped",
+          "why": "They only move the ENet submodule, which Moonlight Plus vendors as it is. The ENet changes themselves are reviewed in the entry enet."
+        },
+        {
+          "commits": ["f2f85ef", "22a190b", "2625379", "b6b95b6", "1d0e91d", "ab6e21f"],
+          "decision": "skipped",
+          "why": "CI, CodeQL, Dependabot and the CMake file of upstream: Moonlight Plus builds the sources with its own CMakeLists.txt and tests them in its own workflow."
+        },
+        {
+          "commits": ["5a26329"],
+          "decision": "skipped",
+          "why": "Adds a section 7 permission for app store distribution to the license. This fork isn't distributed through an app store; moonlight-common-c/LICENSE.txt keeps the plain GPL-3.0."
+        }
+      ]
+    },
+    {
+      "id": "enet",
+      "name": "ENet",
+      "repo": "moonlight-stream/enet",
+      "track": "submodule",
+      "pinned_in": { "repo": "moonlight-stream/moonlight-common-c", "path": "enet" },
+      "vendored": "bbf7185 (moonlight-common-c/enet)",
+      "reviewed_through": "44c85e16279553d9c052e572bcbfcd745fb74abf",
+      "reviewed_on": "2026-10-30",
+      "note": "Watched through the version that upstream moonlight-common-c pins. The updates after 44c85e1 (moonlight-common-c 1176ca6 to 703a069: FreeBSD, PS Vita, Wii U, 3DS, Xbox, and a source address only for sockets bound to any address) are not reviewed yet.",
+      "decisions": [
+        {
+          "range": "bbf71856bb144729af4ed08af6bc2f5826a96db5..44c85e16279553d9c052e572bcbfcd745fb74abf",
+          "decision": "skipped",
+          "why": "The wakeup and ping interval logic of enet_host_service() (moonlight-common-c 04a2f11 and 12e603e): fewer late pings, little benefit. Take it together with moonlight-common-c d3d3e6c."
+        }
+      ]
+    },
+    {
+      "id": "opus",
+      "name": "Opus",
+      "repo": "xiph/opus",
+      "track": "tags",
+      "tag_pattern": "^v\\d+\\.\\d+(\\.\\d+)?$",
+      "vendored": "v1.5.2 (ddbe483)",
+      "reviewed_through": "v1.6.1",
+      "reviewed_on": "2026-10-30",
+      "note": "Watched by its release tags. Keep the source list of CMakeLists.txt, which leaves out the deep-learning (DNN) code.",
+      "decisions": [
+        {
+          "range": "v1.5.2..v1.6.1",
+          "decision": "skipped",
+          "why": "No audible gain: the app builds Opus without its deep-learning (DNN) features."
+        }
+      ]
+    },
+    {
+      "id": "libgamestream",
+      "name": "libgamestream",
+      "repo": "moonlight-stream/moonlight-embedded",
+      "track": "branch",
+      "path": "libgamestream",
+      "vendored": "http.c, mkcert.c and pairing.c (from client.c) of Moonlight Tizen 1.19.0, with the changes of this fork; no exact upstream base",
+      "reviewed_through": null,
+      "note": "Watched by the commits that touch libgamestream/. Not reviewed yet: look through its history once, then record the newest commit here.",
+      "decisions": []
+    },
+    {
+      "id": "sunshine",
+      "name": "Sunshine releases",
+      "repo": "LizardByte/Sunshine",
+      "track": "releases",
+      "vendored": "nothing (the host); the app uses its features",
+      "reviewed_through": "v2026.1028.122642",
+      "reviewed_on": "2026-10-30",
+      "note": "New host features that the app could ask for or explain.",
+      "decisions": [
+        {
+          "tags": ["v2026.516.143833"],
+          "decision": "taken",
+          "in": "2.0.0",
+          "why": "Continuous audio during silence (fbcf2116, first in this release): the setting Continuous audio from the host asks for it."
+        }
+      ]
+    },
+    {
+      "id": "sunshine-pr-5917",
+      "name": "Sunshine pull request #5917 (Dolby AC-3 and E-AC-3 audio)",
+      "repo": "LizardByte/Sunshine",
+      "track": "pull",
+      "pull": 5917,
+      "vendored": "nothing",
+      "reviewed_through": "bf9ce40affd94b274f4150d2630954c12aea79fd",
+      "reviewed_state": "open",
+      "reviewed_on": "2026-10-30",
+      "note": "The host side of Dolby passthrough to a soundbar.",
+      "decisions": [
+        {
+          "commits": ["bf9ce40"],
+          "decision": "skipped",
+          "why": "Dolby passthrough waits for the surround check on a TV (guide, section 11) and for this pull request to be merged, or for Vibeshine to ship it in a stable release, since the protocol can still change."
+        }
+      ]
+    }
+  ]
+}

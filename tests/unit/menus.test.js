@@ -135,11 +135,15 @@ test('the app grid leaves out hidden apps, except the running one, after "Show h
 test('the app menu offers Resume and Quit for the running app, Start otherwise, and Show hidden apps when there are any', () => {
   const menus = loadMenus();
   const entries = (state) => plain(menus.get('getAppMenuEntries')(state));
-  assert.deepEqual(entries({ running: false, hidden: false, hiddenCount: 0, showHidden: false }), ['appMenuStart', 'appMenuHide', 'appMenuClose']);
+  assert.deepEqual(entries({ running: false, hidden: false, hiddenCount: 0, showHidden: false }),
+    ['appMenuStart', 'appMenuFavorite', 'appMenuHide', 'appMenuClose']);
   assert.deepEqual(entries({ running: true, hidden: false, hiddenCount: 0, showHidden: false }),
-    ['appMenuResume', 'appMenuQuit', 'appMenuHide', 'appMenuClose']);
+    ['appMenuResume', 'appMenuQuit', 'appMenuFavorite', 'appMenuHide', 'appMenuClose']);
   assert.deepEqual(entries({ running: false, hidden: false, hiddenCount: 2, showHidden: false }),
-    ['appMenuStart', 'appMenuHide', 'appMenuShowHidden', 'appMenuClose']);
+    ['appMenuStart', 'appMenuFavorite', 'appMenuHide', 'appMenuShowHidden', 'appMenuClose']);
   assert.deepEqual(entries({ running: true, hidden: true, hiddenCount: 1, showHidden: true }),
-    ['appMenuResume', 'appMenuQuit', 'appMenuUnhide', 'appMenuShowHidden', 'appMenuClose']);
+    ['appMenuResume', 'appMenuQuit', 'appMenuFavorite', 'appMenuUnhide', 'appMenuShowHidden', 'appMenuClose']);
+  // A favorite offers to remove it
+  assert.deepEqual(entries({ running: false, favorite: true, hidden: false, hiddenCount: 0, showHidden: false }),
+    ['appMenuStart', 'appMenuUnfavorite', 'appMenuHide', 'appMenuClose']);
 });
