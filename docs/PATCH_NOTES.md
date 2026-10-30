@@ -3,7 +3,7 @@
 What changed in each version of Moonlight Plus, in short, newest first.
 
 - [2.1.0](#210): pre-release, in testing
-- [2.0.0](#200): pre-release, in testing
+- [2.0.0](#200): pre-release only, its changes come with 2.1.0
 - [1.19.101](#119101): 2026-10-29, a new look and two new menus
 - [1.19.100](#119100): 2026-10-26, the first release as Moonlight Plus
 - [1.19.0-s90c.1](#1190-s90c1): 2026-10-23, released as Moonlight S90C
@@ -44,7 +44,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ## 2.0.0
 
-*Pre-release, in testing.* A one-line statistics view, safer pairing, a Wake PC dialog that no longer hangs, and fixes for stability.
+*Pre-release only; its changes come with 2.1.0.* A one-line statistics view, safer pairing, a Wake PC dialog that no longer hangs, and fixes for stability.
 
 > **Install:** by hand over 1.19.101 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >
