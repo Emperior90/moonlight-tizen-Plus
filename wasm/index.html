@@ -6,7 +6,6 @@
   <meta http-equiv="Expires" content="-1">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title data-i18n="Moonlight Game Streaming">Moonlight Game Streaming</title>
-  <link rel="icon" href="static/favicon/favicon.png">
   <link rel="stylesheet" href="static/css/roboto.css">
   <link rel="stylesheet" href="static/css/material.min.css">
   <link rel="stylesheet" href="static/css/style.css">
@@ -67,7 +66,7 @@
         <!-- The open settings section (handleSettingsView()) -->
         <span id="header-section" class="header-section"></span>
         <!-- Hint for the menu of an app tile, shown in the app grid -->
-        <span id="appMenuHint" class="header-hint" data-i18n="App options: CH+ or Play/Pause on the remote, Select on a gamepad">App options: CH+ or Play/Pause on the remote, Select on a gamepad</span>
+        <span id="appMenuHint" class="header-hint" data-i18n="App options: CH+ or Play/Pause on the remote, Select on a controller">App options: CH+ or Play/Pause on the remote, Select on a controller</span>
         <!-- Add spacer to align navigation to the right -->
         <div class="mdl-layout-spacer"></div>
         <!-- Stream profile and network of the TV (launcher.js) -->
@@ -91,10 +90,10 @@
             <svg class="navigation-button-icons icon" aria-hidden="true"><use xlink:href="#i-restore"/></svg>
           </button>
           <div id="restoreDefaultsTooltip" class="mdl-tooltip" for="restoreDefaultsBtn" data-i18n="Restore Defaults">Restore Defaults</div>
-          <button type="button" id="quitRunningAppBtn" class="mdl-button mdl-js-button mdl-button--icon" aria-label="Quit Running App">
+          <button type="button" id="quitRunningAppBtn" class="mdl-button mdl-js-button mdl-button--icon" aria-label="Quit app on the PC">
             <svg class="navigation-button-icons icon" aria-hidden="true"><use xlink:href="#i-quit"/></svg>
           </button>
-          <div id="quitRunningAppTooltip" class="mdl-tooltip" for="quitRunningAppBtn" data-i18n="Quit Running App">Quit Running App</div>
+          <div id="quitRunningAppTooltip" class="mdl-tooltip" for="quitRunningAppBtn" data-i18n="Quit app on the PC">Quit app on the PC</div>
         </nav>
       </div>
     </header>
@@ -158,16 +157,16 @@
         </div>
       </section>
       <div id="host-grid">
-        <div id="addHostContainer" class="host-add-container mdl-card mdl-shadow--4dp" role="link" tabindex="0" aria-label="Add Host">
+        <div id="addHostContainer" class="host-add-container mdl-card mdl-shadow--4dp" role="link" tabindex="0" aria-label="Add PC">
           <div id="host-add" class="mdl-card__title mdl-card--expand">
             <div class="host-title mdl-card__title-text">
-              <span class="host-text" data-i18n="Add Host">Add Host</span>
+              <span class="host-text" data-i18n="Add PC">Add PC</span>
             </div>
           </div>
         </div>
       </div>
       <div id="settings-list" class="hide-container">
-        <!-- Left Pane: Settings Categories -->
+        <!-- Left Pane: Settings Categories. The ids stay those of earlier versions: interfaceSettings holds General. -->
         <div id="settings-left-pane">
           <div class="settings-categories">
             <div class="settings-category" data-category="basicSettings" onclick="handleSettingsView('basicSettings')">
@@ -175,35 +174,30 @@
               <label data-i18n="Basic Settings">Basic Settings</label>
               <span class="settings-category-sub" data-i18n="Resolution, frame rate and bitrate">Resolution, frame rate and bitrate</span>
             </div>
-            <div class="settings-category" data-category="interfaceSettings" onclick="handleSettingsView('interfaceSettings')">
-              <span class="settings-category-icons cat-tile cat-ui" aria-hidden="true"><svg class="icon"><use xlink:href="#i-layout"/></svg></span>
-              <label data-i18n="UI Settings">UI Settings</label>
-              <span class="settings-category-sub" data-i18n="Language and host address input">Language and host address input</span>
-            </div>
-            <div class="settings-category" data-category="hostSettings" onclick="handleSettingsView('hostSettings')">
-              <span class="settings-category-icons cat-tile cat-pc" aria-hidden="true"><svg class="icon"><use xlink:href="#i-pc"/></svg></span>
-              <label data-i18n="Host Settings">Host Settings</label>
-              <span class="settings-category-sub" data-i18n="App list and saved host PCs">App list and saved host PCs</span>
-            </div>
-            <div class="settings-category" data-category="inputSettings" onclick="handleSettingsView('inputSettings')">
-              <span class="settings-category-icons cat-tile cat-gamepad" aria-hidden="true"><svg class="icon"><use xlink:href="#i-gamepad"/></svg></span>
-              <label data-i18n="Input Settings">Input Settings</label>
-              <span class="settings-category-sub" data-i18n="Gamepads, rumble and mouse mode">Gamepads, rumble and mouse mode</span>
+            <div class="settings-category" data-category="videoSettings" onclick="handleSettingsView('videoSettings')">
+              <span class="settings-category-icons cat-tile cat-video" aria-hidden="true"><svg class="icon"><use xlink:href="#i-video"/></svg></span>
+              <label data-i18n="Video Settings">Video Settings</label>
+              <span class="settings-category-sub" data-i18n="Codec, HDR and frame pacing">Codec, HDR and frame pacing</span>
             </div>
             <div class="settings-category" data-category="audioSettings" onclick="handleSettingsView('audioSettings')">
               <span class="settings-category-icons cat-tile cat-audio" aria-hidden="true"><svg class="icon"><use xlink:href="#i-speaker"/></svg></span>
               <label data-i18n="Audio Settings">Audio Settings</label>
               <span class="settings-category-sub" data-i18n="Sound output and synchronization">Sound output and synchronization</span>
             </div>
-            <div class="settings-category" data-category="videoSettings" onclick="handleSettingsView('videoSettings')">
-              <span class="settings-category-icons cat-tile cat-video" aria-hidden="true"><svg class="icon"><use xlink:href="#i-video"/></svg></span>
-              <label data-i18n="Video Settings">Video Settings</label>
-              <span class="settings-category-sub" data-i18n="Codec, HDR and game mode">Codec, HDR and game mode</span>
+            <div class="settings-category" data-category="inputSettings" onclick="handleSettingsView('inputSettings')">
+              <span class="settings-category-icons cat-tile cat-gamepad" aria-hidden="true"><svg class="icon"><use xlink:href="#i-gamepad"/></svg></span>
+              <label data-i18n="Input Settings">Input Settings</label>
+              <span class="settings-category-sub" data-i18n="Controllers and mouse emulation">Controllers and mouse emulation</span>
+            </div>
+            <div class="settings-category" data-category="interfaceSettings" onclick="handleSettingsView('interfaceSettings')">
+              <span class="settings-category-icons cat-tile cat-ui" aria-hidden="true"><svg class="icon"><use xlink:href="#i-layout"/></svg></span>
+              <label data-i18n="General">General</label>
+              <span class="settings-category-sub" data-i18n="Language, app list and PCs">Language, app list and PCs</span>
             </div>
             <div class="settings-category" data-category="advancedSettings" onclick="handleSettingsView('advancedSettings')">
               <span class="settings-category-icons cat-tile cat-advanced" aria-hidden="true"><svg class="icon"><use xlink:href="#i-chip"/></svg></span>
               <label data-i18n="Advanced Settings">Advanced Settings</label>
-              <span class="settings-category-sub" data-i18n="Frame rates, warnings and statistics">Frame rates, warnings and statistics</span>
+              <span class="settings-category-sub" data-i18n="Statistics, warnings and experiments">Statistics, warnings and experiments</span>
             </div>
             <div class="settings-category" data-category="aboutSettings" onclick="handleSettingsView('aboutSettings')">
               <span class="settings-category-icons cat-tile cat-info" aria-hidden="true"><svg class="icon"><use xlink:href="#i-info"/></svg></span>
@@ -212,13 +206,12 @@
             </div>
           </div>
         </div>
-        <!-- Right Pane: Settings Options -->
+        <!-- Right Pane: Settings Options. A switch has a label of its own only in a row without a help text, which the
+             label replaces (style.css). -->
         <div id="settings-right-pane">
           <div id="basicSettings" class="settings-options">
             <div class="setting-option">
-              <label><span data-i18n="Optimal settings for this TV">Optimal settings for this TV</span>
-                <span class="badge badge-new" data-i18n="New">New</span>
-              </label>
+              <label><span data-i18n="Optimal settings for this TV">Optimal settings for this TV</span></label>
               <span class="mdl-list__item-text-body" data-i18n="- Applies the best image quality this TV supports (its highest resolution up to 4K, HEVC, and HDR if the TV supports it) with a bitrate that matches its network connection.">
                 - Applies the best image quality this TV supports (its highest resolution up to 4K, HEVC, and HDR if the TV supports it) with a bitrate that matches its network connection.
               </span>
@@ -262,6 +255,19 @@
               </ul>
             </div>
             <div class="setting-option">
+              <label><span data-i18n="Unlock all frame rates">Unlock all frame rates</span>
+                <span class="badge badge-experimental" data-i18n="Experimental">Experimental</span>
+              </label>
+              <span class="mdl-list__item-text-body" data-i18n="- Adds 90, 120 and 144 FPS to the frame rates, which only a TV with a 120 Hz panel shows smoothly.">
+                - Adds 90, 120 and 144 FPS to the frame rates, which only a TV with a 120 Hz panel shows smoothly.
+              </span>
+              <div id="unlockAllFpsMenu">
+                <label id="unlockAllFpsBtn" class="mdl-switch mdl-js-switch" for="unlockAllFpsSwitch">
+                  <input type="checkbox" id="unlockAllFpsSwitch" class="mdl-switch__input" onchange="handleUnlockAllFps()">
+                </label>
+              </div>
+            </div>
+            <div class="setting-option">
               <label data-i18n="Video bitrate">Video bitrate</label>
               <span class="mdl-list__item-text-body" data-i18n="- Increase for better image quality or decrease to improve performance on slower connections.">
                 - Increase for better image quality or decrease to improve performance on slower connections.
@@ -275,6 +281,33 @@
                 <span id="bitrateHighestValue">150</span>
               </div>
             </div>
+          </div>
+          <div id="videoSettings" class="settings-options">
+            <div class="setting-option">
+              <label data-i18n="Video codec">Video codec</label>
+              <span class="mdl-list__item-text-body" data-i18n="- HEVC suits Samsung TVs. H.264 only up to 1080p. AV1 needs an AV1 GPU and an AV1 TV.">
+                - HEVC suits Samsung TVs. H.264 only up to 1080p. AV1 needs an AV1 GPU and an AV1 TV.
+              </span>
+              <div id="videoCodecMenu">
+                <button type="button" id="selectCodec" class="mdl-button mdl-js-button" data-value="H264" data-i18n="H.264">H.264</button>
+              </div>
+              <ul class="videoCodecMenu mdl-menu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectCodec">
+                <li id="h264" class="mdl-menu__item" data-value="H264" data-i18n="H.264">H.264</li>
+                <li id="hevc" class="mdl-menu__item" data-value="HEVC" data-i18n="HEVC">HEVC</li>
+                <li id="av1" class="mdl-menu__item" data-value="AV1" data-i18n="AV1">AV1</li>
+              </ul>
+            </div>
+            <div class="setting-option">
+              <label data-i18n="Video HDR">Video HDR</label>
+              <span class="mdl-list__item-text-body" data-i18n="- Needs an HDR10 TV and a GPU that encodes 10-bit HEVC or AV1, and HDR must be on for the display of the PC as well, otherwise the stream is 10-bit SDR.">
+                - Needs an HDR10 TV and a GPU that encodes 10-bit HEVC or AV1, and HDR must be on for the display of the PC as well, otherwise the stream is 10-bit SDR.
+              </span>
+              <div id="videoHdrMenu">
+                <label id="hdrModeBtn" class="mdl-switch mdl-js-switch" for="hdrModeSwitch">
+                  <input type="checkbox" id="hdrModeSwitch" class="mdl-switch__input">
+                </label>
+              </div>
+            </div>
             <div class="setting-option">
               <label data-i18n="Video frame pacing">Video frame pacing</label>
               <span class="mdl-list__item-text-body" data-i18n="- This can help reduce micro-stutter by delaying frames that arrive too early while streaming.">
@@ -283,79 +316,100 @@
               <div id="videoFramePacingMenu">
                 <label id="framePacingBtn" class="mdl-switch mdl-js-switch" for="framePacingSwitch">
                   <input type="checkbox" id="framePacingSwitch" class="mdl-switch__input">
-                  <span class="mdl-switch__label" data-i18n="Allow frame pacing to balance video latency and smoothness">
-                    Allow frame pacing to balance video latency and smoothness
-                  </span>
+                </label>
+              </div>
+            </div>
+            <div class="setting-option">
+              <label data-i18n="Ultra low latency mode">Ultra low latency mode</label>
+              <span class="mdl-list__item-text-body" data-i18n="- The lowest latency of the video player of the TV, without its picture enhancements. On Tizen 9 and newer it can freeze the picture.">
+                - The lowest latency of the video player of the TV, without its picture enhancements. On Tizen 9 and newer it can freeze the picture.
+              </span>
+              <div id="gameModeMenu">
+                <label id="gameModeBtn" class="mdl-switch mdl-js-switch" for="gameModeSwitch">
+                  <input type="checkbox" id="gameModeSwitch" class="mdl-switch__input">
                 </label>
               </div>
             </div>
           </div>
-          <div id="interfaceSettings" class="settings-options">
+          <div id="audioSettings" class="settings-options">
             <div class="setting-option">
-              <label data-i18n="Language">Language</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Choose Auto to match your TV locale, or manually select your desired language from the list.">
-                - Choose Auto to match your TV locale, or manually select your desired language from the list.
+              <label data-i18n="Audio backend">Audio backend</label>
+              <span class="mdl-list__item-text-body" data-i18n="- The media player of the TV can pass 5.1 on to a soundbar. Choose Web Audio if you hear crackling or stuttering.">
+                - The media player of the TV can pass 5.1 on to a soundbar. Choose Web Audio if you hear crackling or stuttering.
               </span>
-              <div id="languageMenu">
-                <button type="button" id="selectLanguage" class="mdl-button mdl-js-button" data-value="auto">Auto</button>
+              <div id="audioBackendMenu">
+                <button type="button" id="selectAudioBackend" class="mdl-button mdl-js-button" data-value="EMSS" data-i18n="TV media player (EMSS)">TV media player (EMSS)</button>
               </div>
-              <ul class="languageMenu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectLanguage"></ul>
-            </div>
-            <div class="setting-option">
-              <label data-i18n="Host address field mode">Host address field mode</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Recommended for devices that have issues with the TV keyboard when entering the host address.">
-                - Recommended for devices that have issues with the TV keyboard when entering the host address.
-              </span>
-              <div id="ipAddressFieldModeMenu">
-                <label id="ipAddressFieldModeBtn" class="mdl-switch mdl-js-switch" for="ipAddressFieldModeSwitch">
-                  <input type="checkbox" id="ipAddressFieldModeSwitch" class="mdl-switch__input" onchange="handleIpAddressFieldMode()">
-                  <span class="mdl-switch__label" data-i18n="Change the host address input to numeric (IPv4) mode">
-                    Change the host address input to numeric (IPv4) mode
-                  </span>
-                </label>
-              </div>
-            </div>
-          </div>
-          <div id="hostSettings" class="settings-options">
-            <div class="setting-option">
-              <label data-i18n="Sort the list of apps">Sort the list of apps</label>
-              <span class="mdl-list__item-text-body" data-i18n="- The order of the apps of a host: by title, the recently played first, or as the host lists them (e.g. the order set in Apollo). Favorites always come first.">
-                - The order of the apps of a host: by title, the recently played first, or as the host lists them (e.g. the order set in Apollo). Favorites always come first.
-              </span>
-              <div id="sortAppsListMenu">
-                <button type="button" id="selectSortAppsList" class="mdl-button mdl-js-button" data-value="az" data-i18n="A to Z">A to Z</button>
-              </div>
-              <ul class="sortAppsListMenu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectSortAppsList">
-                <li class="mdl-menu__item" data-value="az" data-i18n="A to Z">A to Z</li>
-                <li class="mdl-menu__item" data-value="za" data-i18n="Z to A">Z to A</li>
-                <li class="mdl-menu__item" data-value="recent" data-i18n="Recently played">Recently played</li>
-                <li class="mdl-menu__item" data-value="host" data-i18n="As on the host">As on the host</li>
+              <ul class="audioBackendMenu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectAudioBackend">
+                <li class="mdl-menu__item" data-value="EMSS" data-i18n="TV media player (EMSS)">TV media player (EMSS)</li>
+                <li class="mdl-menu__item" data-value="WebAudio" data-i18n="Browser (Web Audio)">Browser (Web Audio)</li>
+                <li class="mdl-menu__item" data-value="Disabled" data-i18n="Disabled">Disabled</li>
               </ul>
             </div>
-            <div class="setting-option">
-              <label data-i18n="Optimize game settings">Optimize game settings</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Lets Sunshine switch the host display to the client resolution when its display device configuration is enabled. With the default 'automatic' refresh rate option of Sunshine the host refresh rate follows the selected frame rate even when this is off, and only modes the host display offers can be applied (e.g. a 4K 120 FPS stream needs a display with 3840 x 2160 at 120 Hz).">
-                - Lets Sunshine switch the host display to the client resolution when its display device configuration is enabled. With the default 'automatic' refresh rate option of Sunshine the host refresh rate follows the selected frame rate even when this is off, and only modes the host display offers can be applied (e.g. a 4K 120 FPS stream needs a display with 3840 x 2160 at 120 Hz).
+            <div id="audioConfigOption" class="setting-option">
+              <label><span data-i18n="Audio configuration">Audio configuration</span>
+                <span class="badge badge-experimental" data-i18n="Experimental">Experimental</span>
+              </label>
+              <span class="mdl-list__item-text-body" data-i18n="- Choose 5.1 or 7.1 surround sound for home-theater systems or use Stereo for general audio compatibility.">
+                - Choose 5.1 or 7.1 surround sound for home-theater systems or use Stereo for general audio compatibility.
               </span>
-              <div id="optimizeGamesMenu">
-                <label id="optimizeGamesBtn" class="mdl-switch mdl-js-switch" for="optimizeGamesSwitch">
-                  <input type="checkbox" id="optimizeGamesSwitch" class="mdl-switch__input">
-                  <span class="mdl-switch__label" data-i18n="Allow the host to modify game settings for optimal streaming">
-                    Allow the host to modify game settings for optimal streaming
-                  </span>
+              <div id="audioConfigMenu">
+                <button type="button" id="selectAudio" class="mdl-button mdl-js-button" data-value="Stereo" data-i18n="Stereo">Stereo</button>
+              </div>
+              <ul class="audioConfigMenu mdl-menu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectAudio">
+                <li class="mdl-menu__item" data-value="Stereo" data-i18n="Stereo">Stereo</li>
+                <li class="mdl-menu__item" data-value="51Surround" data-i18n="5.1 Surround Sound">5.1 Surround Sound</li>
+                <li class="mdl-menu__item" data-value="71Surround" data-i18n="7.1 Surround Sound">7.1 Surround Sound</li>
+              </ul>
+            </div>
+            <div id="audioSyncOption" class="setting-option">
+              <label data-i18n="Limit audio delay">Limit audio delay</label>
+              <span class="mdl-list__item-text-body" data-i18n="- Skips sound when more than 100 ms of it waits to be played, so that no delay builds up.">
+                - Skips sound when more than 100 ms of it waits to be played, so that no delay builds up.
+              </span>
+              <div id="audioSyncMenu">
+                <label id="audioSyncBtn" class="mdl-switch mdl-js-switch" for="audioSyncSwitch">
+                  <input type="checkbox" id="audioSyncSwitch" class="mdl-switch__input">
+                </label>
+              </div>
+            </div>
+            <div id="audioJitterOption" class="setting-option">
+              <label data-i18n="Audio jitter buffer">Audio jitter buffer</label>
+              <span class="mdl-list__item-text-body" data-i18n="- Increase to keep the sound smooth over an unstable network or decrease to lower the audio delay. With Audio clock sync on, the performance statistics suggest a size after 10 minutes.">
+                - Increase to keep the sound smooth over an unstable network or decrease to lower the audio delay. With Audio clock sync on, the performance statistics suggest a size after 10 minutes.
+              </span>
+              <div id="audioJitterMenu">
+                <button type="button" id="selectAudioJitter" class="mdl-button mdl-js-button">100 ms</button>
+              </div>
+              <div class="audioJitterMenu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectAudioJitter">
+                <span id="jitterLowestValue">25</span>
+                <input type="range" id="jitterSlider" class="mdl-slider mdl-js-slider" min="25" max="500" step="25" value="100">
+                <span id="jitterHighestValue">500</span>
+              </div>
+            </div>
+            <div id="audioClockSyncOption" class="setting-option">
+              <label><span data-i18n="Audio clock sync">Audio clock sync</span>
+                <span class="badge badge-experimental" data-i18n="Experimental">Experimental</span>
+              </label>
+              <span class="mdl-list__item-text-body" data-i18n="- Plays the sound up to 0.05 % faster or slower, which is inaudible, so that the audio delay stays at the jitter buffer instead of growing until sound is skipped.">
+                - Plays the sound up to 0.05 % faster or slower, which is inaudible, so that the audio delay stays at the jitter buffer instead of growing until sound is skipped.
+              </span>
+              <div id="audioClockSyncMenu">
+                <label id="audioClockSyncBtn" class="mdl-switch mdl-js-switch" for="audioClockSyncSwitch">
+                  <input type="checkbox" id="audioClockSyncSwitch" class="mdl-switch__input">
                 </label>
               </div>
             </div>
             <div class="setting-option">
-              <label data-i18n="Remove all hosts">Remove all hosts</label>
+              <label data-i18n="Play audio on the PC">Play audio on the PC</label>
               <span class="mdl-list__item-text-body"></span>
-              <div id="removeAllHostsMenu">
-                <button type="button" id="removeAllHostsBtn" class="mdl-button mdl-js-button" aria-label="Remove All Hosts">
-                  <span data-i18n="Remove all currently saved hosts from the list">
-                    Remove all currently saved hosts from the list
+              <div id="playHostAudioMenu">
+                <label id="playHostAudioBtn" class="mdl-switch mdl-js-switch" for="playHostAudioSwitch">
+                  <input type="checkbox" id="playHostAudioSwitch" class="mdl-switch__input">
+                  <span class="mdl-switch__label" data-i18n="Allow playing audio on the PC and on this TV">
+                    Allow playing audio on the PC and on this TV
                   </span>
-                  <svg id="removeAllHostsIcon" class="icon" aria-hidden="true"><use xlink:href="#i-trash"/></svg>
-                </button>
+                </label>
               </div>
             </div>
           </div>
@@ -366,8 +420,8 @@
               <div id="rumbleFeedbackMenu">
                 <label id="rumbleFeedbackBtn" class="mdl-switch mdl-js-switch" for="rumbleFeedbackSwitch">
                   <input type="checkbox" id="rumbleFeedbackSwitch" class="mdl-switch__input">
-                  <span class="mdl-switch__label" data-i18n="Allow gamepad rumble feedback support while streaming">
-                    Allow gamepad rumble feedback support while streaming
+                  <span class="mdl-switch__label" data-i18n="Allow controller rumble while streaming">
+                    Allow controller rumble while streaming
                   </span>
                 </label>
               </div>
@@ -378,8 +432,8 @@
               <div id="mouseEmulationMenu">
                 <label id="mouseEmulationBtn" class="mdl-switch mdl-js-switch" for="mouseEmulationSwitch">
                   <input type="checkbox" id="mouseEmulationSwitch" class="mdl-switch__input">
-                  <span class="mdl-switch__label" data-i18n="Allow gamepad to switch to mouse mode when holding the Start button">
-                    Allow gamepad to switch to mouse mode when holding the Start button
+                  <span class="mdl-switch__label" data-i18n="Allow a controller to switch to mouse emulation by holding Start">
+                    Allow a controller to switch to mouse emulation by holding Start
                   </span>
                 </label>
               </div>
@@ -414,8 +468,8 @@
             </div>
             <div class="setting-option">
               <label data-i18n="Controller type sent to the PC">Controller type sent to the PC</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Auto picks the type from the name of each gamepad. Choose PlayStation to get PlayStation button prompts and the touchpad button in games, if the host supports it.">
-                - Auto picks the type from the name of each gamepad. Choose PlayStation to get PlayStation button prompts and the touchpad button in games, if the host supports it.
+              <span class="mdl-list__item-text-body" data-i18n="- Auto picks the type from the name of each controller. Choose PlayStation to get PlayStation button prompts and the touchpad button in games, if the PC supports it.">
+                - Auto picks the type from the name of each controller. Choose PlayStation to get PlayStation button prompts and the touchpad button in games, if the PC supports it.
               </span>
               <div id="controllerTypeMenu">
                 <button type="button" id="selectControllerType" class="mdl-button mdl-js-button" data-value="Auto" data-i18n="Auto">Auto</button>
@@ -428,241 +482,87 @@
               </ul>
             </div>
           </div>
-          <div id="audioSettings" class="settings-options">
+          <div id="interfaceSettings" class="settings-options">
             <div class="setting-option">
-              <label data-i18n="Audio backend">Audio backend</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Choose EMSS for the original implementation or Web Audio if you hear crackling or stuttering while streaming.">
-                - Choose EMSS for the original implementation or Web Audio if you hear crackling or stuttering while streaming.
+              <label data-i18n="Language">Language</label>
+              <span class="mdl-list__item-text-body" data-i18n="- Choose Auto to match your TV locale, or manually select your desired language from the list.">
+                - Choose Auto to match your TV locale, or manually select your desired language from the list.
               </span>
-              <div id="audioBackendMenu">
-                <button type="button" id="selectAudioBackend" class="mdl-button mdl-js-button" data-value="EMSS" data-i18n="EMSS">EMSS</button>
+              <div id="languageMenu">
+                <button type="button" id="selectLanguage" class="mdl-button mdl-js-button" data-value="auto">Auto</button>
               </div>
-              <ul class="audioBackendMenu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectAudioBackend">
-                <li class="mdl-menu__item" data-value="EMSS" data-i18n="EMSS">EMSS</li>
-                <li class="mdl-menu__item" data-value="WebAudio" data-i18n="Web Audio">Web Audio</li>
-                <li class="mdl-menu__item" data-value="Disabled" data-i18n="Disabled">Disabled</li>
+              <ul class="languageMenu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectLanguage"></ul>
+            </div>
+            <div class="setting-option">
+              <label data-i18n="Sort the list of apps">Sort the list of apps</label>
+              <span class="mdl-list__item-text-body" data-i18n="- The order of the apps of a PC: by title, the recently played first, or as the PC lists them (e.g. the order set in Apollo). Favorites always come first.">
+                - The order of the apps of a PC: by title, the recently played first, or as the PC lists them (e.g. the order set in Apollo). Favorites always come first.
+              </span>
+              <div id="sortAppsListMenu">
+                <button type="button" id="selectSortAppsList" class="mdl-button mdl-js-button" data-value="az" data-i18n="A to Z">A to Z</button>
+              </div>
+              <ul class="sortAppsListMenu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectSortAppsList">
+                <li class="mdl-menu__item" data-value="az" data-i18n="A to Z">A to Z</li>
+                <li class="mdl-menu__item" data-value="za" data-i18n="Z to A">Z to A</li>
+                <li class="mdl-menu__item" data-value="recent" data-i18n="Recently played">Recently played</li>
+                <li class="mdl-menu__item" data-value="host" data-i18n="As on the PC">As on the PC</li>
               </ul>
             </div>
-            <div id="audioConfigOption" class="setting-option">
-              <label><span data-i18n="Audio configuration">Audio configuration</span>
-                <span class="badge badge-experimental" data-i18n="Experimental">Experimental</span>
-              </label>
-              <span class="mdl-list__item-text-body" data-i18n="- Choose 5.1 or 7.1 surround sound for home-theater systems or use Stereo for general audio compatibility.">
-                - Choose 5.1 or 7.1 surround sound for home-theater systems or use Stereo for general audio compatibility.
+            <div class="setting-option">
+              <label data-i18n="Numeric PC address input">Numeric PC address input</label>
+              <span class="mdl-list__item-text-body" data-i18n="- Four number fields for an IPv4 address. Turn it off to type a name, an IPv6 address or a port.">
+                - Four number fields for an IPv4 address. Turn it off to type a name, an IPv6 address or a port.
               </span>
-              <div id="audioConfigMenu">
-                <button type="button" id="selectAudio" class="mdl-button mdl-js-button" data-value="Stereo" data-i18n="Stereo">Stereo</button>
-              </div>
-              <ul class="audioConfigMenu mdl-menu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectAudio">
-                <li class="mdl-menu__item" data-value="Stereo" data-i18n="Stereo">Stereo</li>
-                <li class="mdl-menu__item" data-value="51Surround" data-i18n="5.1 Surround Sound">5.1 Surround Sound</li>
-                <li class="mdl-menu__item" data-value="71Surround" data-i18n="7.1 Surround Sound">7.1 Surround Sound</li>
-              </ul>
-            </div>
-            <div id="audioSyncOption" class="setting-option">
-              <label data-i18n="Audio synchronization">Audio synchronization</label>
-              <span class="mdl-list__item-text-body" data-i18n="- This can help reduce delays by keeping audio in sync for a consistent sound while streaming.">
-                - This can help reduce delays by keeping audio in sync for a consistent sound while streaming.
-              </span>
-              <div id="audioSyncMenu">
-                <label id="audioSyncBtn" class="mdl-switch mdl-js-switch" for="audioSyncSwitch">
-                  <input type="checkbox" id="audioSyncSwitch" class="mdl-switch__input">
-                  <span class="mdl-switch__label" data-i18n="Allow audio synchronization support for optimal sound output">
-                    Allow audio synchronization support for optimal sound output
-                  </span>
-                </label>
-              </div>
-            </div>
-            <div id="audioJitterOption" class="setting-option">
-              <label data-i18n="Audio jitter buffer">Audio jitter buffer</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Increase to keep the sound smooth over an unstable network or decrease to lower the audio delay. With Audio clock sync on, the performance statistics suggest a size after 10 minutes.">
-                - Increase to keep the sound smooth over an unstable network or decrease to lower the audio delay. With Audio clock sync on, the performance statistics suggest a size after 10 minutes.
-              </span>
-              <div id="audioJitterMenu">
-                <button type="button" id="selectAudioJitter" class="mdl-button mdl-js-button">100 ms</button>
-              </div>
-              <div class="audioJitterMenu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectAudioJitter">
-                <span id="jitterLowestValue">25</span>
-                <input type="range" id="jitterSlider" class="mdl-slider mdl-js-slider" min="25" max="500" step="25" value="100">
-                <span id="jitterHighestValue">500</span>
-              </div>
-            </div>
-            <div id="audioClockSyncOption" class="setting-option">
-              <label><span data-i18n="Audio clock sync">Audio clock sync</span>
-                <span class="badge badge-experimental" data-i18n="Experimental">Experimental</span>
-              </label>
-              <span class="mdl-list__item-text-body" data-i18n="- Keeps the audio delay at the jitter buffer by playing the sound up to 0.05 % faster or slower, which is inaudible. Without it, the drift between the clocks of the host and the TV lets the delay grow to 1.5x the buffer and then skips 5 ms of sound every few minutes, or leaves a gap as long as the buffer once it runs empty. The suggested buffer in the performance statistics needs it.">
-                - Keeps the audio delay at the jitter buffer by playing the sound up to 0.05 % faster or slower, which is inaudible. Without it, the drift between the clocks of the host and the TV lets the delay grow to 1.5x the buffer and then skips 5 ms of sound every few minutes, or leaves a gap as long as the buffer once it runs empty. The suggested buffer in the performance statistics needs it.
-              </span>
-              <div id="audioClockSyncMenu">
-                <label id="audioClockSyncBtn" class="mdl-switch mdl-js-switch" for="audioClockSyncSwitch">
-                  <input type="checkbox" id="audioClockSyncSwitch" class="mdl-switch__input">
-                  <span class="mdl-switch__label" data-i18n="Keep the audio in step with the clock of the TV">
-                    Keep the audio in step with the clock of the TV
-                  </span>
+              <div id="ipAddressFieldModeMenu">
+                <label id="ipAddressFieldModeBtn" class="mdl-switch mdl-js-switch" for="ipAddressFieldModeSwitch">
+                  <input type="checkbox" id="ipAddressFieldModeSwitch" class="mdl-switch__input" onchange="handleIpAddressFieldMode()">
                 </label>
               </div>
             </div>
             <div class="setting-option">
-              <label data-i18n="Play audio on host">Play audio on host</label>
+              <label data-i18n="Remove all PCs">Remove all PCs</label>
               <span class="mdl-list__item-text-body"></span>
-              <div id="playHostAudioMenu">
-                <label id="playHostAudioBtn" class="mdl-switch mdl-js-switch" for="playHostAudioSwitch">
-                  <input type="checkbox" id="playHostAudioSwitch" class="mdl-switch__input">
-                  <span class="mdl-switch__label" data-i18n="Allow playing audio from the computer and this device">
-                    Allow playing audio from the computer and this device
+              <div id="removeAllHostsMenu">
+                <button type="button" id="removeAllHostsBtn" class="mdl-button mdl-js-button" aria-label="Remove all PCs">
+                  <span data-i18n="Remove all saved PCs from the list">
+                    Remove all saved PCs from the list
                   </span>
-                </label>
-              </div>
-            </div>
-            <div id="decryptHostAudioOption" class="setting-option">
-              <label>
-                <span data-i18n="Decrypt host audio">Decrypt host audio</span>
-                <span class="badge badge-experimental" data-i18n="Experimental">Experimental</span>
-              </label>
-              <span class="mdl-list__item-text-body" data-i18n="- This is only necessary for Wolf and Punktfunk-style hosts that encrypt GameStream audio without advertising it.">
-                - This is only necessary for Wolf and Punktfunk-style hosts that encrypt GameStream audio without advertising it.
-              </span>
-              <div id="decryptHostAudioMenu">
-                <label id="decryptHostAudioBtn" class="mdl-switch mdl-js-switch" for="decryptHostAudioSwitch">
-                  <input type="checkbox" id="decryptHostAudioSwitch" class="mdl-switch__input">
-                  <span class="mdl-switch__label" data-i18n="Allow decrypting AES-CBC audio from Wolf and Punktfunk-style hosts">
-                    Allow decrypting AES-CBC audio from Wolf and Punktfunk-style hosts
-                  </span>
-                </label>
-              </div>
-            </div>
-          </div>
-          <div id="videoSettings" class="settings-options">
-            <div class="setting-option">
-              <label data-i18n="Video codec">Video codec</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Increase for better video compression and quality or decrease to improve performance on lower-end devices.">
-                - Increase for better video compression and quality or decrease to improve performance on lower-end devices.
-              </span>
-              <div id="videoCodecMenu">
-                <button type="button" id="selectCodec" class="mdl-button mdl-js-button" data-value="H264" data-i18n="H.264">H.264</button>
-              </div>
-              <ul class="videoCodecMenu mdl-menu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectCodec">
-                <li id="h264" class="mdl-menu__item" data-value="H264" data-i18n="H.264">H.264</li>
-                <li id="hevc" class="mdl-menu__item" data-value="HEVC" data-i18n="HEVC">HEVC</li>
-                <li id="av1" class="mdl-menu__item" data-value="AV1" data-i18n="AV1">AV1</li>
-              </ul>
-            </div>
-            <div class="setting-option">
-              <label data-i18n="Video HDR">Video HDR</label>
-              <span class="mdl-list__item-text-body" data-i18n="- HDR requires an HDR10-capable device, a GPU that can encode HEVC Main 10, and HDR10-enabled game. HDR must also be on for the host display (e.g. a virtual display), in Windows or through Sunshine's display device settings. Otherwise the stream is 10-bit SDR, shown as 10-bit SDR in the performance statistics.">
-                - HDR requires an HDR10-capable device, a GPU that can encode HEVC Main 10, and HDR10-enabled game. HDR must also be on for the host display (e.g. a virtual display), in Windows or through Sunshine's display device settings. Otherwise the stream is 10-bit SDR, shown as 10-bit SDR in the performance statistics.
-              </span>
-              <div id="videoHdrMenu">
-                <label id="hdrModeBtn" class="mdl-switch mdl-js-switch" for="hdrModeSwitch">
-                  <input type="checkbox" id="hdrModeSwitch" class="mdl-switch__input">
-                  <span class="mdl-switch__label" data-i18n="Allow high dynamic range for vibrant colors and enhanced contrast">
-                    Allow high dynamic range for vibrant colors and enhanced contrast
-                  </span>
-                </label>
-              </div>
-            </div>
-            <div class="setting-option">
-              <label data-i18n="Color range">Color range</label>
-              <span class="mdl-list__item-text-body" data-i18n="- This will cause loss of detail in light and dark areas if your device doesn't properly display full range video content.">
-                - This will cause loss of detail in light and dark areas if your device doesn't properly display full range video content.
-              </span>
-              <div id="colorRangeMenu">
-                <label id="fullRangeBtn" class="mdl-switch mdl-js-switch" for="fullRangeSwitch">
-                  <input type="checkbox" id="fullRangeSwitch" class="mdl-switch__input">
-                  <span class="mdl-switch__label" data-i18n="Allow full color range for more detail in dark and bright areas of content">
-                    Allow full color range for more detail in dark and bright areas of content
-                  </span>
-                </label>
-              </div>
-            </div>
-            <div class="setting-option">
-              <label data-i18n="Game mode">Game mode</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Enable for ultra low latency with game mode or disable for low latency with post-processing video enhancements. On Tizen 9 and newer keep it off with either app variant, as it can freeze the picture there. This switch only selects the decoder latency mode (Ultra Low or Low); the ForceGM variant asks the TV for its Game Mode instead.">
-                - Enable for ultra low latency with game mode or disable for low latency with post-processing video enhancements. On Tizen 9 and newer keep it off with either app variant, as it can freeze the picture there. This switch only selects the decoder latency mode (Ultra Low or Low); the ForceGM variant asks the TV for its Game Mode instead.
-              </span>
-              <div id="gameModeMenu">
-                <label id="gameModeBtn" class="mdl-switch mdl-js-switch" for="gameModeSwitch">
-                  <input type="checkbox" id="gameModeSwitch" class="mdl-switch__input">
-                  <span class="mdl-switch__label" data-i18n="Allow game mode for optimal latency and performance while streaming">
-                    Allow game mode for optimal latency and performance while streaming
-                  </span>
-                </label>
-              </div>
-            </div>
-            <div class="setting-option">
-              <label><span data-i18n="Reference frame invalidation">Reference frame invalidation</span>
-                <span class="badge badge-experimental" data-i18n="Experimental">Experimental</span>
-              </label>
-              <span class="mdl-list__item-text-body" data-i18n="- Recovers from packet loss without a full keyframe, which avoids traffic spikes and blurry frames. Disable it if artifacts remain after a frame drop.">
-                - Recovers from packet loss without a full keyframe, which avoids traffic spikes and blurry frames. Disable it if artifacts remain after a frame drop.
-              </span>
-              <div id="refFrameInvalidationMenu">
-                <label id="refFrameInvalidationBtn" class="mdl-switch mdl-js-switch" for="refFrameInvalidationSwitch">
-                  <input type="checkbox" id="refFrameInvalidationSwitch" class="mdl-switch__input">
-                  <span class="mdl-switch__label" data-i18n="Allow the host to recover lost frames with reference frame invalidation (HEVC and AV1)">
-                    Allow the host to recover lost frames with reference frame invalidation (HEVC and AV1)
-                  </span>
-                </label>
-              </div>
-            </div>
-            <div class="setting-option">
-              <label><span data-i18n="HDR static metadata">HDR static metadata</span>
-                <span class="badge badge-experimental" data-i18n="Experimental">Experimental</span>
-              </label>
-              <span class="mdl-list__item-text-body" data-i18n="- Passes the HDR metadata of the host display (peak brightness, color primaries) to the TV with every HEVC keyframe, so its HDR tone mapping matches the host. Disable it if HDR streams fail to start or look wrong.">
-                - Passes the HDR metadata of the host display (peak brightness, color primaries) to the TV with every HEVC keyframe, so its HDR tone mapping matches the host. Disable it if HDR streams fail to start or look wrong.
-              </span>
-              <div id="hdrMetadataMenu">
-                <label id="hdrMetadataBtn" class="mdl-switch mdl-js-switch" for="hdrMetadataSwitch">
-                  <input type="checkbox" id="hdrMetadataSwitch" class="mdl-switch__input">
-                  <span class="mdl-switch__label" data-i18n="Send the HDR metadata of the host to the TV (HEVC)">
-                    Send the HDR metadata of the host to the TV (HEVC)
-                  </span>
-                </label>
+                  <svg id="removeAllHostsIcon" class="icon" aria-hidden="true"><use xlink:href="#i-trash"/></svg>
+                </button>
               </div>
             </div>
           </div>
           <div id="advancedSettings" class="settings-options">
             <div class="setting-option">
-              <label><span data-i18n="Unlock all frame rates">Unlock all frame rates</span>
-                <span class="badge badge-experimental" data-i18n="Experimental">Experimental</span>
-              </label>
-              <span class="mdl-list__item-text-body" data-i18n="- Higher FPS can reduce latency on high-end devices, but may cause lag or instability on unsupported devices.">
-                - Higher FPS can reduce latency on high-end devices, but may cause lag or instability on unsupported devices.
+              <label data-i18n="Optimize game settings">Optimize game settings</label>
+              <span class="mdl-list__item-text-body" data-i18n="- Lets Sunshine switch the display of the PC to the resolution of the stream, if its display device settings allow it.">
+                - Lets Sunshine switch the display of the PC to the resolution of the stream, if its display device settings allow it.
               </span>
-              <div id="unlockAllFpsMenu">
-                <label id="unlockAllFpsBtn" class="mdl-switch mdl-js-switch" for="unlockAllFpsSwitch">
-                  <input type="checkbox" id="unlockAllFpsSwitch" class="mdl-switch__input" onchange="handleUnlockAllFps()">
-                  <span class="mdl-switch__label" data-i18n="Unlock all possible frame rate options for this device">
-                    Unlock all possible frame rate options for this device
-                  </span>
+              <div id="optimizeGamesMenu">
+                <label id="optimizeGamesBtn" class="mdl-switch mdl-js-switch" for="optimizeGamesSwitch">
+                  <input type="checkbox" id="optimizeGamesSwitch" class="mdl-switch__input">
                 </label>
               </div>
             </div>
             <div class="setting-option">
-              <label data-i18n="Optimize bitrate presets">Optimize bitrate presets</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Calculates a low bitrate from the resolution, frame rate, codec and HDR settings, e.g. about 45 Mbps for 4K at 60 FPS with HEVC HDR. For the best image quality keep it off and set the bitrate by hand.">
-                - Calculates a low bitrate from the resolution, frame rate, codec and HDR settings, e.g. about 45 Mbps for 4K at 60 FPS with HEVC HDR. For the best image quality keep it off and set the bitrate by hand.
+              <label data-i18n="Full color range">Full color range</label>
+              <span class="mdl-list__item-text-body" data-i18n="- Keep it off: TVs expect the limited range, otherwise detail in dark and bright areas is lost.">
+                - Keep it off: TVs expect the limited range, otherwise detail in dark and bright areas is lost.
               </span>
-              <div id="optimizeBitrateMenu">
-                <label id="optimizeBitrateBtn" class="mdl-switch mdl-js-switch" for="optimizeBitrateSwitch">
-                  <input type="checkbox" id="optimizeBitrateSwitch" class="mdl-switch__input">
-                  <span class="mdl-switch__label" data-i18n="Optimize bitrate to balance stream quality, performance, and bandwidth usage">
-                    Optimize bitrate to balance stream quality, performance, and bandwidth usage
-                  </span>
+              <div id="colorRangeMenu">
+                <label id="fullRangeBtn" class="mdl-switch mdl-js-switch" for="fullRangeSwitch">
+                  <input type="checkbox" id="fullRangeSwitch" class="mdl-switch__input">
                 </label>
               </div>
             </div>
             <div class="setting-option">
-              <label data-i18n="Connection warnings">Connection warnings</label>
-              <span class="mdl-list__item-text-body"></span>
+              <label data-i18n="Hide connection warnings">Hide connection warnings</label>
+              <span class="mdl-list__item-text-body" data-i18n="- Hides the message 'Slow connection to PC' during a stream.">
+                - Hides the message 'Slow connection to PC' during a stream.
+              </span>
               <div id="connectionWarningsMenu">
                 <label id="disableWarningsBtn" class="mdl-switch mdl-js-switch" for="disableWarningsSwitch">
                   <input type="checkbox" id="disableWarningsSwitch" class="mdl-switch__input">
-                  <span class="mdl-switch__label" data-i18n="Disable on-screen connection warning messages while streaming">
-                    Disable on-screen connection warning messages while streaming
-                  </span>
                 </label>
               </div>
             </div>
@@ -695,6 +595,41 @@
                 <li class="mdl-menu__item" data-value="bottom-right" data-i18n="Bottom right">Bottom right</li>
               </ul>
             </div>
+            <!-- The settings that weren't tested on a TV yet -->
+            <div class="settings-group" data-i18n="Experimental">Experimental</div>
+            <div class="setting-option">
+              <label data-i18n="Reference frame invalidation">Reference frame invalidation</label>
+              <span class="mdl-list__item-text-body" data-i18n="- Recovers from packet loss without a full keyframe, which avoids traffic spikes and blurry frames. Disable it if artifacts remain after a frame drop.">
+                - Recovers from packet loss without a full keyframe, which avoids traffic spikes and blurry frames. Disable it if artifacts remain after a frame drop.
+              </span>
+              <div id="refFrameInvalidationMenu">
+                <label id="refFrameInvalidationBtn" class="mdl-switch mdl-js-switch" for="refFrameInvalidationSwitch">
+                  <input type="checkbox" id="refFrameInvalidationSwitch" class="mdl-switch__input">
+                </label>
+              </div>
+            </div>
+            <div class="setting-option">
+              <label data-i18n="HDR static metadata">HDR static metadata</label>
+              <span class="mdl-list__item-text-body" data-i18n="- Passes the HDR metadata of the display of the PC (peak brightness, color primaries) to the TV with every HEVC keyframe, so that its HDR tone mapping matches. Disable it if HDR streams fail to start or look wrong.">
+                - Passes the HDR metadata of the display of the PC (peak brightness, color primaries) to the TV with every HEVC keyframe, so that its HDR tone mapping matches. Disable it if HDR streams fail to start or look wrong.
+              </span>
+              <div id="hdrMetadataMenu">
+                <label id="hdrMetadataBtn" class="mdl-switch mdl-js-switch" for="hdrMetadataSwitch">
+                  <input type="checkbox" id="hdrMetadataSwitch" class="mdl-switch__input">
+                </label>
+              </div>
+            </div>
+            <div id="decryptHostAudioOption" class="setting-option">
+              <label data-i18n="Decrypt host audio">Decrypt host audio</label>
+              <span class="mdl-list__item-text-body" data-i18n="- This is only necessary for Wolf and Punktfunk-style hosts that encrypt GameStream audio without advertising it.">
+                - This is only necessary for Wolf and Punktfunk-style hosts that encrypt GameStream audio without advertising it.
+              </span>
+              <div id="decryptHostAudioMenu">
+                <label id="decryptHostAudioBtn" class="mdl-switch mdl-js-switch" for="decryptHostAudioSwitch">
+                  <input type="checkbox" id="decryptHostAudioSwitch" class="mdl-switch__input">
+                </label>
+              </div>
+            </div>
           </div>
           <div id="aboutSettings" class="settings-options">
             <div class="setting-option">
@@ -720,11 +655,11 @@
             </div>
             <div class="setting-option">
               <label data-i18n="Navigation guide">Navigation guide</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Useful for users who need guidance or help navigating the app.">
-                - Useful for users who need guidance or help navigating the app.
+              <span class="mdl-list__item-text-body" data-i18n="- The keys of the remote, the keyboard and the controllers in each view and during a stream.">
+                - The keys of the remote, the keyboard and the controllers in each view and during a stream.
               </span>
               <div id="navigationGuideMenu">
-                <button type="button" id="navigationGuideBtn" class="mdl-button mdl-js-button" aria-label="Navigation Guide">
+                <button type="button" id="navigationGuideBtn" class="mdl-button mdl-js-button" aria-label="Navigation guide">
                   <span data-i18n="Discover navigation controls for all input devices">
                     Discover navigation controls for all input devices
                   </span>
@@ -808,21 +743,20 @@
   <script type="text/javascript" src="platform/input_test.js"></script>
   <script type="text/javascript" src="platform/remote_controller.js"></script>
   <script type="text/javascript" src="static/js/utils.js"></script>
-  <script type="text/javascript" src="static/js/mdns-browser/dns.js"></script>
   <script type="text/javascript" src="static/js/mdns-browser/main.js"></script>
   <div id="addHostDialogOverlay" class="dialog-overlay">
     <dialog id="addHostDialog" class="mdl-dialog">
       <span class="dialog-badge" aria-hidden="true"><svg class="icon"><use xlink:href="#i-plus"/></svg></span>
-      <h3 id="addHostDialogTitle" class="mdl-dialog__title" data-i18n="Add Host">Add Host</h3>
+      <h3 id="addHostDialogTitle" class="mdl-dialog__title" data-i18n="Add PC">Add PC</h3>
       <div id="ipAddressInputField" class="mdl-dialog__content">
         <div class="mdl-textfield mdl-js-textfield mdl-textfield--floating-label">
-          <label class="mdl-textfield__label" for="ipAddressTextInput" data-i18n="IP address or hostname of host PC">IP address or hostname of host PC</label>
+          <label class="mdl-textfield__label" for="ipAddressTextInput" data-i18n="IP address or host name of the PC">IP address or host name of the PC</label>
           <input type="text" id="ipAddressTextInput" class="mdl-textfield__input" maxlength="253" placeholder="Enter IP, Hostname or [IP]:Port..." data-i18n-placeholder="Enter IP, Hostname or [IP]:Port...">
         </div>
       </div>
       <div id="ipAddressSelectFields" class="mdl-dialog__content">
         <div class="select-option-field select-option-field-floating-label">
-          <label class="mdl-textfield__label" data-i18n="IP address of host PC">IP address of host PC</label>
+          <label class="mdl-textfield__label" data-i18n="IP address of the PC">IP address of the PC</label>
           <select id="ipAddressField1" class="ip-address-select-field" name="ipAddressField1" tabindex="-1"></select>
           <select id="ipAddressField2" class="ip-address-select-field" name="ipAddressField2" tabindex="-1"></select>
           <select id="ipAddressField3" class="ip-address-select-field" name="ipAddressField3" tabindex="-1"></select>
@@ -843,7 +777,6 @@
         <p id="pairingDialogText">
           Please enter the following PIN on the target PC: XXXX<br><br>
           If your host PC is running Sunshine (all GPUs), navigate to the Sunshine Web UI to enter the PIN.<br><br>
-          Alternatively, if your host PC has NVIDIA GameStream (NVIDIA-only), navigate to the GeForce Experience to enter the PIN.<br><br>
           This dialog will close once the pairing is complete.
         </p>
       </div>
@@ -875,10 +808,10 @@
   <div id="deleteHostDialogOverlay" class="dialog-overlay">
     <dialog id="deleteHostDialog" class="mdl-dialog">
       <span class="dialog-badge badge-warm" aria-hidden="true"><svg class="icon"><use xlink:href="#i-alert"/></svg></span>
-      <h3 id="deleteHostDialogTitle" class="mdl-dialog__title">Delete Host</h3>
+      <h3 id="deleteHostDialogTitle" class="mdl-dialog__title">Delete PC</h3>
       <div class="mdl-dialog__content">
         <p id="deleteHostDialogText">
-          Are you sure you want to delete this host?
+          Are you sure you want to delete this PC?
         </p>
       </div>
       <div class="mdl-dialog__actions">
@@ -905,7 +838,7 @@
   <div id="quitAppDialogOverlay" class="dialog-overlay">
     <dialog id="quitAppDialog" class="mdl-dialog">
       <span class="dialog-badge badge-warm" aria-hidden="true"><svg class="icon"><use xlink:href="#i-quit"/></svg></span>
-      <h3 id="quitAppDialogTitle" class="mdl-dialog__title" data-i18n="Quit Running App">Quit Running App</h3>
+      <h3 id="quitAppDialogTitle" class="mdl-dialog__title" data-i18n="Quit app on the PC">Quit app on the PC</h3>
       <div class="mdl-dialog__content">
         <p id="quitAppDialogText">
           Y is already running. Would you like to quit Y?
@@ -940,7 +873,7 @@
   <div id="navGuideDialogOverlay" class="dialog-overlay">
     <dialog id="navGuideDialog" class="mdl-dialog large-dialog">
       <span class="dialog-badge" aria-hidden="true"><svg class="icon"><use xlink:href="#i-gamepad"/></svg></span>
-      <h3 id="navGuideDialogTitle" class="mdl-dialog__title" data-i18n="Navigation Guide">Navigation Guide</h3>
+      <h3 id="navGuideDialogTitle" class="mdl-dialog__title" data-i18n="Navigation guide">Navigation guide</h3>
       <div class="mdl-dialog__content">
         <div class="navGuideContainer">
           <span class="navGuideLabel navGuideRemoteColor"></span>
@@ -952,73 +885,48 @@
         </div>
         <div class="navGuideContainer">
           <span class="navGuideLabel navGuideGamepadColor"></span>
-          <span class="navGuideLabelText" data-i18n="Gamepad">Gamepad</span>&nbsp;(<span data-i18n="Xbox layout: A = bottom button">Xbox layout: A = bottom button</span>)
+          <span class="navGuideLabelText" data-i18n="Controller">Controller</span>&nbsp;(<span data-i18n="Xbox layout: A = bottom button">Xbox layout: A = bottom button</span>)
         </div>
         <ul id="navGuideDialogText">
           <li class="navGuideDialogControls">
             <span class="navGuideRemoteText" data-i18n="UP">UP</span> / <span class="navGuideKeyboardText" data-i18n="UP ARROW">UP ARROW</span> / <span class="navGuideGamepadText" data-i18n="D-PAD UP">D-PAD UP</span> / <span class="navGuideGamepadText" data-i18n="L-STICK UP">L-STICK UP</span>
-            <span data-i18n="— Navigate to the above view, previous item, category, option, or row, increase the IP address value, increase the bitrate in 5 Mbps steps, and move the mouse cursor up in emulation.">— Navigate to the above view, previous item, category, option, or row, increase the IP address value, increase the bitrate in 5 Mbps steps, and move the mouse cursor up in emulation.</span>
+            <span data-i18n="— Navigate to the above view, previous item, category, option, or row, increase the IP address value, and increase the bitrate in 5 Mbps steps.">— Navigate to the above view, previous item, category, option, or row, increase the IP address value, and increase the bitrate in 5 Mbps steps.</span>
           </li>
           <li class="navGuideDialogControls">
             <span class="navGuideRemoteText" data-i18n="DOWN">DOWN</span> / <span class="navGuideKeyboardText" data-i18n="DOWN ARROW">DOWN ARROW</span> / <span class="navGuideGamepadText" data-i18n="D-PAD DOWN">D-PAD DOWN</span> / <span class="navGuideGamepadText" data-i18n="L-STICK DOWN">L-STICK DOWN</span>
-            <span data-i18n="— Navigate to the below view, next item, category, option, or row, decrease the IP address value, decrease the bitrate in 5 Mbps steps, and move the mouse cursor down in emulation.">— Navigate to the below view, next item, category, option, or row, decrease the IP address value, decrease the bitrate in 5 Mbps steps, and move the mouse cursor down in emulation.</span>
+            <span data-i18n="— Navigate to the below view, next item, category, option, or row, decrease the IP address value, and decrease the bitrate in 5 Mbps steps.">— Navigate to the below view, next item, category, option, or row, decrease the IP address value, and decrease the bitrate in 5 Mbps steps.</span>
           </li>
           <li class="navGuideDialogControls">
             <span class="navGuideRemoteText" data-i18n="LEFT">LEFT</span> / <span class="navGuideKeyboardText" data-i18n="LEFT ARROW">LEFT ARROW</span> / <span class="navGuideGamepadText" data-i18n="D-PAD LEFT">D-PAD LEFT</span> / <span class="navGuideGamepadText" data-i18n="L-STICK LEFT">L-STICK LEFT</span>
-            <span data-i18n="— Navigate to the previous item, decrease the bitrate in 0.5 Mbps steps, and move the mouse cursor left in emulation.">— Navigate to the previous item, decrease the bitrate in 0.5 Mbps steps, and move the mouse cursor left in emulation.</span>
+            <span data-i18n="— Navigate to the previous item, and decrease the bitrate in 0.5 Mbps steps.">— Navigate to the previous item, and decrease the bitrate in 0.5 Mbps steps.</span>
           </li>
           <li class="navGuideDialogControls">
             <span class="navGuideRemoteText" data-i18n="RIGHT">RIGHT</span> / <span class="navGuideKeyboardText" data-i18n="RIGHT ARROW">RIGHT ARROW</span> / <span class="navGuideGamepadText" data-i18n="D-PAD RIGHT">D-PAD RIGHT</span> / <span class="navGuideGamepadText" data-i18n="L-STICK RIGHT">L-STICK RIGHT</span>
-            <span data-i18n="— Navigate to the next item, increase the bitrate in 0.5 Mbps steps, and move the mouse cursor right in emulation.">— Navigate to the next item, increase the bitrate in 0.5 Mbps steps, and move the mouse cursor right in emulation.</span>
+            <span data-i18n="— Navigate to the next item, and increase the bitrate in 0.5 Mbps steps.">— Navigate to the next item, and increase the bitrate in 0.5 Mbps steps.</span>
           </li>
           <li class="navGuideDialogControls">
-            <span class="navGuideGamepadText" data-i18n="R-STICK UP">R-STICK UP</span> / <span class="navGuideGamepadText" data-i18n="R-STICK DOWN">R-STICK DOWN</span>
-            <span data-i18n="— Scroll the mouse vertically in emulation.">— Scroll the mouse vertically in emulation.</span>
-          </li>
-          <li class="navGuideDialogControls">
-            <span class="navGuideGamepadText" data-i18n="R-STICK LEFT">R-STICK LEFT</span> / <span class="navGuideGamepadText" data-i18n="R-STICK RIGHT">R-STICK RIGHT</span>
-            <span data-i18n="— Scroll the mouse horizontally in emulation.">— Scroll the mouse horizontally in emulation.</span>
-          </li>
-          <li class="navGuideDialogControls">
-            <span class="navGuideGamepadText" data-i18n="X">X</span> / <span class="navGuideGamepadText" data-i18n="Y">Y</span>
-            <span data-i18n="— Click the middle mouse button in emulation.">— Click the middle mouse button in emulation.</span>
-          </li>
-          <li class="navGuideDialogControls">
-            <span class="navGuideRemoteText" data-i18n="SELECT">SELECT</span> / <span class="navGuideKeyboardText" data-i18n="ENTER">ENTER</span> / <span class="navGuideKeyboardText" data-i18n="SPACE">SPACE</span> / <span class="navGuideGamepadText" data-i18n="A">A</span>
-            <span data-i18n="— Navigate to the next view, select the current item, enable or disable settings, load the app or game list, start the streaming session, and click the left mouse button in emulation.">— Navigate to the next view, select the current item, enable or disable settings, load the app or game list, start the streaming session, and click the left mouse button in emulation.</span>
+            <span class="navGuideRemoteText" data-i18n="OK">OK</span> / <span class="navGuideKeyboardText" data-i18n="ENTER">ENTER</span> / <span class="navGuideKeyboardText" data-i18n="SPACE">SPACE</span> / <span class="navGuideGamepadText" data-i18n="A">A</span>
+            <span data-i18n="— Navigate to the next view, select the current item, enable or disable settings, load the app or game list, and start the streaming session.">— Navigate to the next view, select the current item, enable or disable settings, load the app or game list, and start the streaming session.</span>
           </li>
           <li class="navGuideDialogControls">
             <span class="navGuideRemoteText" data-i18n="RETURN">RETURN</span> / <span class="navGuideKeyboardText" data-i18n="ESC">ESC</span> / <span class="navGuideGamepadText" data-i18n="B">B</span>
-            <span data-i18n="— Return to the previous view, close any active menu or dialog, cancel the operation, exit the application with confirmation, and click the right mouse button in emulation.">— Return to the previous view, close any active menu or dialog, cancel the operation, exit the application with confirmation, and click the right mouse button in emulation.</span>
-          </li>
-          <li class="navGuideDialogControls">
-            <span class="navGuideGamepadText" data-i18n="LEFT BUMPER">LEFT BUMPER</span>
-            <span data-i18n="— Click the left mouse button in emulation.">— Click the left mouse button in emulation.</span>
-          </li>
-          <li class="navGuideDialogControls">
-            <span class="navGuideGamepadText" data-i18n="RIGHT BUMPER">RIGHT BUMPER</span>
-            <span data-i18n="— Click the right mouse button in emulation.">— Click the right mouse button in emulation.</span>
-          </li>
-          <li class="navGuideDialogControls">
-            <span class="navGuideRemoteText" data-i18n="VOLUME UP">VOLUME UP</span> / <span class="navGuideKeyboardText" data-i18n="F9">F9</span> / <span class="navGuideRemoteText" data-i18n="VOLUME DOWN">VOLUME DOWN</span> /
-            <span class="navGuideKeyboardText" data-i18n="F10">F10</span> / <span class="navGuideRemoteText" data-i18n="VOLUME MUTE">VOLUME MUTE</span> / <span class="navGuideKeyboardText" data-i18n="F8">F8</span>
-            <span data-i18n="— Adjust the TV volume: increase, decrease, or mute.">— Adjust the TV volume: increase, decrease, or mute.</span>
+            <span data-i18n="— Return to the previous view, close any active menu or dialog, cancel the operation, and exit the application with confirmation. During a stream, RETURN sends Esc to the PC.">— Return to the previous view, close any active menu or dialog, cancel the operation, and exit the application with confirmation. During a stream, RETURN sends Esc to the PC.</span>
           </li>
           <li class="navGuideDialogControls">
             <span class="navGuideRemoteText" data-i18n="CHANNEL UP">CHANNEL UP</span> / <span class="navGuideRemoteText" data-i18n="PLAY/PAUSE">PLAY/PAUSE</span> / <span class="navGuideKeyboardText" data-i18n="F11">F11</span> / <span class="navGuideGamepadText" data-i18n="SELECT">SELECT</span>
-            <span data-i18n="— Open the menu of a host PC or an app.">— Open the menu of a host PC or an app.</span>
-          </li>
-          <li class="navGuideDialogControls">
-            <span class="navGuideRemoteText" data-i18n="CHANNEL DOWN">CHANNEL DOWN</span> / <span class="navGuideKeyboardText" data-i18n="F12">F12</span> / <span class="navGuideGamepadText" data-i18n="START">START</span>
-            <span data-i18n="— Set focus to the current item, and press &amp; hold for 1 second to toggle mouse emulation for the gamepad.">— Set focus to the current item, and press &amp; hold for 1 second to toggle mouse emulation for the gamepad.</span>
+            <span data-i18n="— Open the menu of a PC or an app.">— Open the menu of a PC or an app.</span>
           </li>
           <li class="navGuideDialogControls">
             <span class="navGuideRemoteText" data-i18n="PLAY/PAUSE">PLAY/PAUSE</span> / <span class="navGuideGamepadText" data-i18n="SELECT + START (HOLD 1 S)">SELECT + START (HOLD 1 S)</span>
-            <span data-i18n="— Open or close the Stream Menu during the streaming session: resume, performance statistics, mouse emulation, keys for the PC, disconnect, and disconnect and quit the app.">— Open or close the Stream Menu during the streaming session: resume, performance statistics, mouse emulation, keys for the PC, disconnect, and disconnect and quit the app.</span>
+            <span data-i18n="— Open or close the Stream Menu during a stream.">— Open or close the Stream Menu during a stream.</span>
+          </li>
+          <li class="navGuideDialogControls">
+            <span class="navGuideGamepadText" data-i18n="START (HOLD 1 S)">START (HOLD 1 S)</span>
+            <span data-i18n="— Turn the mouse emulation on or off during a stream, if the Input Settings allow it (the Stream Menu always can): the left stick moves the pointer, the right stick scrolls, A or LB clicks left, B or RB clicks right, X or Y clicks the middle button.">— Turn the mouse emulation on or off during a stream, if the Input Settings allow it (the Stream Menu always can): the left stick moves the pointer, the right stick scrolls, A or LB clicks left, B or RB clicks right, X or Y clicks the middle button.</span>
           </li>
           <li class="navGuideDialogControls">
             <span class="navGuideRemoteText" data-i18n="RED">RED</span> / <span class="navGuideKeyboardText" data-i18n="F1">F1</span> / <span class="navGuideKeyboardText" data-i18n="CTRL + ALT + SHIFT + Q">CTRL + ALT + SHIFT + Q</span> / <span class="navGuideGamepadText" data-i18n="SELECT + START + LB + RB">SELECT + START + LB + RB</span>
-            <span data-i18n="— Stop the streaming session.">— Stop the streaming session.</span>
+            <span data-i18n="— Disconnect, while the app keeps running on the PC; cancels a stream that is starting.">— Disconnect, while the app keeps running on the PC; cancels a stream that is starting.</span>
           </li>
           <li class="navGuideDialogControls">
             <span class="navGuideRemoteText" data-i18n="YELLOW">YELLOW</span> / <span class="navGuideKeyboardText" data-i18n="F3">F3</span> / <span class="navGuideKeyboardText" data-i18n="CTRL + ALT + SHIFT + S">CTRL + ALT + SHIFT + S</span> / <span class="navGuideGamepadText" data-i18n="SELECT + LB + RB + X">SELECT + LB + RB + X</span>
@@ -1034,7 +942,7 @@
   <div id="diagnosticLogDialogOverlay" class="dialog-overlay">
     <dialog id="diagnosticLogDialog" class="mdl-dialog large-dialog">
       <h3 class="mdl-dialog__title" data-i18n="Diagnostic log">Diagnostic log</h3>
-      <p class="dialog-note" data-i18n="Kept only in the memory of the TV. The PIN, the input keys, the ID of the TV and the RTSP address are hidden. UP and DOWN scroll.">Kept only in the memory of the TV. The PIN, the input keys, the ID of the TV and the RTSP address are hidden. UP and DOWN scroll.</p>
+      <p class="dialog-note" data-i18n="Kept only in the memory of the TV. The PIN, the encryption keys of the stream, the ID of the TV and the RTSP address are hidden. UP and DOWN scroll.">Kept only in the memory of the TV. The PIN, the encryption keys of the stream, the ID of the TV and the RTSP address are hidden. UP and DOWN scroll.</p>
       <div class="mdl-dialog__content">
         <div id="diagnosticLogText" class="log-text"></div>
       </div>
@@ -1069,8 +977,8 @@
       <span class="dialog-badge badge-optimal" aria-hidden="true"><svg class="icon"><use xlink:href="#i-sparkle"/></svg></span>
       <span class="dialog-badge badge-amber badge-warning" aria-hidden="true"><svg class="icon"><use xlink:href="#i-alert"/></svg></span>
       <h3 id="warningDialogTitle" class="mdl-dialog__title">Warning</h3>
-      <!-- Value tiles of the optimal settings (launcher.js) -->
-      <div id="warningDialogValues" class="value-tiles" aria-hidden="true"></div>
+      <!-- Value tiles of the optimal settings (launcher.js), which screen readers read in place of a list in the text -->
+      <div id="warningDialogValues" class="value-tiles"></div>
       <div class="mdl-dialog__content">
         <p id="warningDialogText">
           This is a warning message, proceed with caution!
@@ -1167,7 +1075,7 @@
         <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-stop"/></svg><span class="overlay-menu-label" data-i18n="Disconnect">Disconnect</span>
       </button>
       <button type="button" id="streamMenuQuit" class="overlay-menu-item is-danger" role="menuitem">
-        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-power"/></svg><span class="overlay-menu-label" data-i18n="Disconnect and quit the app on the PC">Disconnect and quit the app on the PC</span>
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-power"/></svg><span class="overlay-menu-label" data-i18n="Quit app on the PC">Quit app on the PC</span>
       </button>
       <div class="overlay-menu-hint" data-i18n="RETURN, Play/Pause or B: back to the game">RETURN, Play/Pause or B: back to the game</div>
     </div>
@@ -1202,7 +1110,7 @@
         <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-play"/></svg><span class="overlay-menu-label" data-i18n="Resume">Resume</span>
       </button>
       <button type="button" id="appMenuQuit" class="overlay-menu-item is-danger" role="menuitem">
-        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-quit"/></svg><span class="overlay-menu-label" data-i18n="Quit app">Quit app</span>
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-quit"/></svg><span class="overlay-menu-label" data-i18n="Quit app on the PC">Quit app on the PC</span>
       </button>
       <button type="button" id="appMenuFavorite" class="overlay-menu-item" role="menuitem">
         <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-star"/></svg><span class="overlay-menu-label" data-i18n="Add to favorites">Add to favorites</span>

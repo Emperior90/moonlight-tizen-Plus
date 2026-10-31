@@ -44,10 +44,8 @@ var bitrateWarning = false; // Flag indicating whether the warning about a bitra
 var audioWarning = false; // Flag indicating whether the audio configuration warning message has shown, initial value is false
 var codecWarning = false; // Flag indicating whether the video codec warning message has shown, initial value is false
 var ethernetBitrateWarning = false; // Flag indicating whether the Ethernet bitrate warning message has shown, initial value is false
-var ethernetPresetNotice = false; // Flag indicating whether the Ethernet bitrate preset limit message has shown, initial value is false
-var recommendedPresetNotice = false; // Flag indicating whether the message about a bitrate preset limited to the recommendation for the TV has shown, initial value is false
 var h264ResolutionWarning = false; // Flag indicating whether the H.264 resolution warning message has shown, initial value is false
-var autoAdjustBitrate = false; // Flag indicating whether resolution, frame rate, codec and HDR changes apply the bitrate presets, which stops once the bitrate is picked by hand, initial value is false
+var autoAdjustBitrate = false; // Flag indicating whether resolution and frame rate changes apply the bitrate presets, which stops once the bitrate is picked by hand, initial value is false
 var keptBitrateNotice = false; // Flag indicating whether the notice about a kept hand-picked bitrate has shown, initial value is false
 var tvScreenSaverEnabled = null; // Last screensaver state requested from the TV, initial value is null (never requested)
 var streamNetworkInfo = ''; // Network connection summary shown in the performance statistics while streaming, initial value is empty
@@ -135,7 +133,7 @@ function attachListeners() {
   $('.videoResolutionMenu li:not(.unsupported-resolution)').on('click', saveResolution);
   $('.videoFramerateMenu li').on('click', saveFramerate);
   $('#bitrateSlider').on('input', function() {
-    // A bitrate picked by hand is kept when the resolution, frame rate, codec or HDR changes
+    // A bitrate picked by hand is kept when the resolution or frame rate changes
     setAutoAdjustBitrate(false);
     saveBitrate();
   });
@@ -172,7 +170,6 @@ function attachListeners() {
   $('#refFrameInvalidationSwitch').on('click', saveRefFrameInvalidation);
   $('#hdrMetadataSwitch').on('click', saveHdrMetadata);
   $('#unlockAllFpsSwitch').on('click', saveUnlockAllFps);
-  $('#optimizeBitrateSwitch').on('click', saveOptimizeBitrate);
   $('#disableWarningsSwitch').on('click', saveDisableWarnings);
   $('.performanceStatsMenu li').on('click', choosePerformanceStatsLevel);
   $('.statsPositionMenu li').on('click', chooseStatsPosition);
@@ -553,7 +550,7 @@ function rescanNetwork() {
   isNetworkRescanRunning = true;
   console.log('%c[index.js, rescanNetwork]', 'color: green;', 'Rescanning the local network for hosts...');
   $('#rescanNetworkBtn').addClass('is-scanning');
-  snackbarLog('Scanning the local network to discover new hosts...');
+  snackbarLog('Scanning the local network for new PCs...');
   stopPollingHosts();
   return Promise.resolve().then(function() {
     return startSubnetScanner();
@@ -599,7 +596,7 @@ function showHostsMode() {
   }
   console.log('%c[index.js, showHostsMode]', 'color: green;', 'Entering "Show Hosts" mode.');
   // Keep the key of the view title, so that a later translation pass translates it instead of resetting it to the app name
-  $('#header-title').attr('data-i18n', 'Hosts').html(t('Hosts'));
+  $('#header-title').attr('data-i18n', 'PCs').html(t('PCs'));
   $('#header-logo').show();
   $('#main-header').show();
   $('#appMenuHint').hide();
@@ -676,36 +673,6 @@ function restoreUiAfterWasmLoad() {
   // Set focus to current item and/or scroll to the current host row
   setTimeout(() => Navigation.switch(), 100);
 
-  // Find mDNS host discovered using ServiceFinder (network service discovery)
-  // findNvService(function(finder, opt_error) {
-  //   if (finder.byService_['_nvstream._tcp']) {
-  //     var ips = Object.keys(finder.byService_['_nvstream._tcp']);
-  //     for (var i in ips) {
-  //       var ip = ips[i];
-  //       if (finder.byService_['_nvstream._tcp'][ip]) {
-  //         var mDnsDiscoveredHost = new NvHTTP(ip, myUniqueid);
-  //         mDnsDiscoveredHost.pollServer(function(returnedDiscoveredHost) {
-  //           // Just drop this if the host doesn't respond
-  //           if (!returnedDiscoveredHost.online) {
-  //             return;
-  //           }
-  //           if (hosts[returnedDiscoveredHost.serverUid] != null) {
-  //             // If we're seeing a host we've already seen before, update it for the current local IP
-  //             hosts[returnedDiscoveredHost.serverUid].address = returnedDiscoveredHost.address;
-  //             hosts[returnedDiscoveredHost.serverUid].updateExternalAddressIP4();
-  //           } else {
-  //             // Host must be in the grid before starting background polling
-  //             addHostToGrid(returnedDiscoveredHost, true);
-  //             beginBackgroundPollingOfHost(returnedDiscoveredHost);
-  //           }
-  //           saveHosts();
-  //         });
-  //       }
-  //     }
-  //   }
-  // });
-
-
   // Automatically check for a new update after 10 seconds delay at application startup once every 24 hours
   setTimeout(() => checkForAppUpdatesAtStartup(), 10000);
 }
@@ -758,7 +725,7 @@ function hostChosen(host, onSuccessCallback) {
     } else {
       // Let the user know what to do to bring the host back online and until then, we'll be back to the previous view.
       console.error('%c[index.js, hostChosen]', 'color: green;', 'Error: Connection to host failed or host is offline!');
-      snackbarLogLong('Failed to connect to %1$s. Ensure Sunshine is running on your host PC or GameStream is enabled in GeForce Experience SHIELD settings.', t('the host'));
+      snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', t('the PC'));
     }
     return;
   }
@@ -1064,7 +1031,7 @@ function parseHostAndPortInput(rawInput) {
   const input = (rawInput || '').trim();
 
   if (!input) {
-    return { valid: false, error: t('Please enter a valid host address!') };
+    return { valid: false, error: t('Please enter a valid PC address!') };
   }
 
   let hostPart = input;
@@ -1094,11 +1061,11 @@ function parseHostAndPortInput(rawInput) {
   }
 
   if (!hostPart) {
-    return { valid: false, error: t('Please enter a valid host address!') };
+    return { valid: false, error: t('Please enter a valid PC address!') };
   }
 
   if (!isValidHostAddress(hostPart)) {
-    return { valid: false, error: t('Please enter a valid host address!') };
+    return { valid: false, error: t('Please enter a valid PC address!') };
   }
 
   if (portPart) {
@@ -1117,8 +1084,8 @@ function parseHostAndPortInput(rawInput) {
   return { valid: true, addr: hostPart, port: 47989 };
 }
 
-// If the `Add Host +` is selected on the host grid, then show the 
-// Add Host dialog to enter the connection details for the host PC
+// If the `Add PC +` is selected on the host grid, then show the 
+// Add PC dialog to enter the connection details for the host PC
 function addHostDialog() {
   if (typeof window.abortSubnetScan === 'function') window.abortSubnetScan();
   // Find the existing overlay and dialog elements
@@ -1237,7 +1204,7 @@ function addHostDialog() {
       initIpAddressFields();
     }.bind(this), function(failure) {
       console.error('%c[index.js, addHostDialog]', 'color: green;', 'Error: Failed API object:\n', _nvhttpHost, '\n' + _nvhttpHost.toString()); // Logging both object (for console) and toString-ed object (for text logs)
-      snackbarLogLong('Failed to connect to %1$s. Ensure Sunshine is running on your host PC or GameStream is enabled in GeForce Experience SHIELD settings.', _nvhttpHost.hostname || t('the host'));
+      snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', _nvhttpHost.hostname || t('the PC'));
       // Re-enable the Continue button after failure processing
       $('#continueAddHost').removeClass('mdl-button--disabled').prop('disabled', false);
       // Clear the input field after failure processing
@@ -1265,7 +1232,7 @@ function pairingDialog(nvhttpHost, onSuccess, onFailure) {
   nvhttpHost.pollServer(function(returnedNvHTTPHost) {
     if (!returnedNvHTTPHost.online) {
       console.error('%c[index.js, pairingDialog]', 'color: green;', 'Error: Failed to connect to ' + nvhttpHost.hostname + '. Ensure your host PC is online!', nvhttpHost, '\n' + nvhttpHost.toString()); // Logging both object (for console) and toString-ed object (for text logs)
-      snackbarLogLong('Failed to connect to %1$s. Ensure Sunshine is running on your host PC or GameStream is enabled in GeForce Experience SHIELD settings.', nvhttpHost.hostname || t('the host'));
+      snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', nvhttpHost.hostname || t('the PC'));
       onFailure();
       return;
     }
@@ -1293,7 +1260,6 @@ function pairingDialog(nvhttpHost, onSuccess, onFailure) {
     $('#pairingDialogText').html(
       t('Please enter the following PIN on the target PC: %1$s<br><br>', '<b>' + randomNumber + '</b>') + 
       t('If your host PC is running Sunshine (all GPUs), navigate to the Sunshine Web UI to enter the PIN.<br><br>') + 
-      t('Alternatively, if your host PC has NVIDIA GameStream (NVIDIA-only), navigate to the GeForce Experience to enter the PIN.<br><br>') + 
       t('This dialog will close once the pairing is complete.')
     );
 
@@ -1346,12 +1312,12 @@ function pairingDialog(nvhttpHost, onSuccess, onFailure) {
       // If the host is already in a streaming session or failed during pairing,
       // change the dialog text element to include the hostname and display the returned error message
       if (nvhttpHost.currentGame != 0) {
-        $('#pairingDialogText').html(t('Error: %1$s is currently busy!<br><br>You must stop the running app in order to pair with the host.', escapeHTML(nvhttpHost.hostname)));
+        $('#pairingDialogText').html(t('Error: %1$s is currently busy!<br><br>You must stop the running app in order to pair with the PC.', escapeHTML(nvhttpHost.hostname)));
       } else if (String(failedPairing) === '-7') {
         // GS_PIN_WRONG of libgamestream/errors.h: the host answered with a hash that doesn't match the PIN (gs_pair())
-        $('#pairingDialogText').html(t('Error: The PIN entered on %1$s was wrong.<br><br>Please, try pairing with the host again and enter the new PIN.', escapeHTML(nvhttpHost.hostname)));
+        $('#pairingDialogText').html(t('Error: The PIN entered on %1$s was wrong.<br><br>Please, try pairing with the PC again and enter the new PIN.', escapeHTML(nvhttpHost.hostname)));
       } else {
-        $('#pairingDialogText').html(t('Error: Failed to pair with %1$s.<br><br>Please, try pairing with the host again.', escapeHTML(nvhttpHost.hostname)));
+        $('#pairingDialogText').html(t('Error: Failed to pair with %1$s.<br><br>Please, try pairing with the PC again.', escapeHTML(nvhttpHost.hostname)));
       }
       onFailure();
     });
@@ -1806,7 +1772,7 @@ function deleteHostDialog(host) {
   var deleteHostDialog = document.querySelector('#deleteHostDialog');
 
   // Change the dialog title and text elements to include the hostname
-  document.getElementById('deleteHostDialogTitle').innerHTML = t('Delete Host');
+  document.getElementById('deleteHostDialogTitle').innerHTML = t('Delete PC');
   document.getElementById('deleteHostDialogText').innerHTML = t('Are you sure you want to delete %1$s?', escapeHTML(host.hostname));
 
   // Show the dialog and push the view
@@ -1862,7 +1828,7 @@ function deleteHostDialog(host) {
 function deleteAllHostsDialog() {
   if (Object.keys(hosts).length === 0) {
     // If there are no hosts, show snackbar message
-    snackbarLog('No host exists.');
+    snackbarLog('No PC is saved.');
     return;
   } else {
     // Find the existing overlay and dialog elements
@@ -1870,8 +1836,8 @@ function deleteAllHostsDialog() {
     var deleteHostDialog = document.querySelector('#deleteHostDialog');
 
     // Change the dialog title and text elements
-    document.getElementById('deleteHostDialogTitle').innerHTML = t('Delete All Hosts');
-    document.getElementById('deleteHostDialogText').innerHTML = t('Are you sure you want to delete all existing hosts?');
+    document.getElementById('deleteHostDialogTitle').innerHTML = t('Delete All PCs');
+    document.getElementById('deleteHostDialogText').innerHTML = t('Are you sure you want to delete all saved PCs?');
     
     // Show the dialog and push the view
     deleteHostOverlay.style.display = 'flex';
@@ -1911,7 +1877,7 @@ function deleteAllHostsDialog() {
         }
       }
       // If all hosts removed, show snackbar message
-      snackbarLog('All hosts have been deleted successfully.');
+      snackbarLog('All PCs have been deleted.');
       // Clear the preview app cache and update Smart Hub Preview
       _previewApps = {};
       savePreviewApps();
@@ -1945,8 +1911,8 @@ function hostDetailsDialog(host) {
   $('<h3>', {
     id: 'hostDetailsDialogTitle-' + host.serverUid,
     class: 'mdl-dialog__title',
-    'data-i18n': 'Host Details',
-    text: t('Host Details')
+    'data-i18n': 'PC Details',
+    text: t('PC Details')
   }).appendTo(hostDetailsDialog);
 
   // Create a content section inside the dialog
@@ -2150,11 +2116,8 @@ function handleSettingsView(category) {
     case 'basicSettings': // Navigate to the BasicSettings view
       navigateSettingsView(Views.BasicSettings);
       break;
-    case 'interfaceSettings': // Navigate to the InterfaceSettings view
+    case 'interfaceSettings': // Navigate to the InterfaceSettings view (General)
       navigateSettingsView(Views.InterfaceSettings);
-      break;
-    case 'hostSettings': // Navigate to the HostSettings view
-      navigateSettingsView(Views.HostSettings);
       break;
     case 'inputSettings': // Navigate to the InputSettings view
       navigateSettingsView(Views.InputSettings);
@@ -2659,10 +2622,24 @@ function restoreDefaultsDialog() {
 }
 
 // Show the Warning dialog
+// Name the two buttons of the warning dialog: Close and Continue, which every dialog but the optimal settings uses, or
+// Cancel and Apply there (optimalSettingsDialog()). The locale key goes into data-i18n as well, so that a translation
+// pass while the dialog is open keeps the names.
+function setWarningButtonLabels(isOptimalSettings) {
+  if (isOptimalSettings) {
+    $('#closeWarning').attr('data-i18n', 'Cancel').text(t('Cancel'));
+    $('#continueWarning').attr('data-i18n', 'Apply').text(t('Apply'));
+  } else {
+    $('#closeWarning').attr('data-i18n', 'Close').text(t('Close'));
+    $('#continueWarning').attr('data-i18n', 'Continue').text(t('Continue'));
+  }
+}
+
 function warningDialog(title, message) {
   // Find the existing overlay and dialog elements
   var warningDialogOverlay = document.querySelector('#warningDialogOverlay');
   var warningDialog = document.querySelector('#warningDialog');
+  setWarningButtonLabels(false);
 
   // Change the dialog title and text element with a custom warning message, without the optimal settings tiles
   document.getElementById('warningDialogTitle').innerHTML = t(title);
@@ -2700,6 +2677,7 @@ function wakeOnLanWarningDialog(host) {
 
   // Set the title and message, without the value tiles of the optimal settings
   warningDialog.classList.remove('is-optimal');
+  setWarningButtonLabels(false);
   document.getElementById('warningDialogTitle').innerHTML = t('Wake-on-LAN Warning');
   document.getElementById('warningDialogText').innerHTML = t(
     'The MAC address of %1$s (%2$s) appears to be randomly generated.', escapeHTML(host.hostname), escapeHTML(host.macAddress)) + '<br><br>' +
@@ -2931,6 +2909,20 @@ function stylizeBoxArts(freshApi, appsList) {
       appBox.title = app.title;
     }
   });
+  // The button that quits the running app goes with the mark of its tile
+  if (document.body && document.body.getAttribute('data-view') === 'apps') {
+    updateQuitRunningAppButton(freshApi);
+  }
+}
+
+// Show the button 'Quit app on the PC' in the header of the app list only while an app runs on the host, instead of a
+// button that only says that no app runs. Its place in the header row (Views.AppsNav in navigation.js) goes with it.
+function updateQuitRunningAppButton(host) {
+  const isAppRunning = !!(host && host.currentGame && host.currentGame != 0);
+  $('#quitRunningAppBtn').toggle(isAppRunning);
+  if (!isAppRunning && typeof Views !== 'undefined' && Views.AppsNav.view.index > 0) {
+    Views.AppsNav.view.index = 0;
+  }
 }
 
 // The order of the setting 'Sort the list of apps' that the settings show (APP_SORT_ORDERS in menus.js)
@@ -3001,7 +2993,7 @@ function showAppsMode() {
   $('#header-logo').show();
   $('#main-header').show();
   $('#goBackBtn').show();
-  $('#quitRunningAppBtn').show();
+  updateQuitRunningAppButton(api);
   // Tell how to open the menu of an app (menus.js)
   $('#appMenuHint').show();
   $('#main-content').children().not('#listener, #loadingSpinner, #wasmSpinner').show();
@@ -3368,7 +3360,7 @@ function quitAppDialog() {
         isDialogOpen = false;
         Navigation.pop();
         stopGame(api, function() {
-          // After stopping the game, set focus back to the 'Quit Running App' button
+          // After stopping the game, set the focus again, on the back button when the quit button is gone
           setTimeout(() => Navigation.switch(), 3000);
         });
       });
@@ -3483,7 +3475,7 @@ function classifyLaunchAnswer(statusCode, statusMessage) {
 function hostPermissionDialog(host, hostMessage) {
   var text = t('%1$s doesn\'t allow this TV to start apps. In the web UI of Apollo or Vibepollo, open the paired devices (Device Management or Client Management) and allow "List Apps", "Launch Apps" and the input permissions for this TV. Then open the host again.', host.hostname);
   if (hostMessage) {
-    text += '\n\n' + t('The host says: %1$s', hostMessage);
+    text += '\n\n' + t('The PC says: %1$s', hostMessage);
   }
   warningDialog(t('Permission needed'), formatDialogText(text));
 }
@@ -4575,26 +4567,28 @@ function setAutoAdjustBitrate(enabled) {
   storeData('autoAdjustBitrate', enabled, null);
 }
 
-// Apply the bitrate presets after the resolution, frame rate, codec or HDR changed. A bitrate that was picked by hand,
-// or set by the optimal streaming settings for the network connection, is kept instead, like moonlight-qt does, so
-// that e.g. a trip to 120 FPS and back doesn't leave 4K at 60 FPS with the lower preset of 80 Mbps unnoticed.
+// Apply the bitrate presets after the resolution or frame rate changed: the recommended bitrate for them on this TV and
+// its network connection (presetBitrate() in tv_profile.js), which is already limited for the 100 Mbps Ethernet port
+// and the decoder cap of the TV. A bitrate that was picked by hand is kept instead, like moonlight-qt does, until the
+// optimal streaming settings or Restore Defaults let the bitrate follow the presets again.
 function applyBitratePresets() {
+  const preset = presetBitrate(String($('#selectResolution').data('value')), $('#selectFramerate').data('value').toString(),
+    getActiveConnectionType(), tvCapabilities);
   if (!autoAdjustBitrate) {
-    console.log('%c[index.js, applyBitratePresets]', 'color: green;', 'Keeping the bitrate of ' + $('#bitrateSlider').val() + ' Mbps');
-    // Explain once how to get the presets back, since nothing else changes on screen, with the bitrates that the
-    // presets set for the selected video settings on this TV (presetBitrates() in tv_profile.js)
+    console.log('%c[index.js, applyBitratePresets]', 'color: green;', 'Keeping the bitrate of ' + $('#bitrateSlider').val() + ' Mbps instead of the preset of ' + preset + ' Mbps');
+    // Explain once how to get the presets back, since nothing else changes on screen
     if (!keptBitrateNotice) {
-      const presets = presetBitrates(String($('#selectResolution').data('value')), $('#selectFramerate').data('value').toString(),
-        $('#selectCodec').data('value').toString(), $('#hdrModeSwitch').parent().hasClass('is-checked'), getActiveConnectionType(), tvCapabilities);
-      snackbarLogLong('Keeping your bitrate of %1$s Mbps. For the selected video settings, turning \'Optimize bitrate presets\' on applies %2$s Mbps, turning it off applies the standard preset of %3$s Mbps.',
-        $('#bitrateSlider').val(), presets.optimized, presets.standard !== null ? presets.standard : $('#bitrateSlider').val());
+      snackbarLogLong('Keeping your bitrate of %1$s Mbps (recommended for these video settings: %2$s Mbps). After the optimal settings button, the bitrate follows the video settings again.',
+        $('#bitrateSlider').val(), preset);
       keptBitrateNotice = true;
     }
     // Re-check the bitrate warnings, e.g. for the Ethernet port of the TV
     warnBitrate();
     return;
   }
-  $('#optimizeBitrateSwitch').prop('checked') ? optimizeBitratePresets() : standardBitratePresets();
+  console.log('%c[index.js, applyBitratePresets]', 'color: green;', 'Applying the bitrate preset of ' + preset + ' Mbps');
+  $('#bitrateSlider')[0].MaterialSlider.change(String(preset));
+  saveBitrate();
 }
 
 function warnBitrate() {
@@ -4626,69 +4620,6 @@ function warnBitrate() {
     // Reset the flag for video bitrate warning if the condition goes back to normal (at or below the decoder cap)
     bitrateWarning = false;
   }
-}
-
-// Apply the standard bitrate preset of the selected resolution and frame rate (STANDARD_BITRATE_PRESETS and
-// getStandardPresetBitrate() are in tv_profile.js)
-function standardBitratePresets() {
-  console.log('%c[index.js, standardBitratePresets]', 'color: green;', 'Applying standard bitrate presets...');
-  var res = $('#selectResolution').data('value');
-  var frameRate = $('#selectFramerate').data('value').toString();
-
-  // Set the bitrate based on the selected resolution and frame rate
-  var preset = getStandardPresetBitrate(res, frameRate);
-  if (preset !== null) {
-    $('#bitrateSlider')[0].MaterialSlider.change(String(preset));
-  }
-
-  // Keep the bitrate within what the network connection and the video decoder of the TV can carry
-  limitPresetBitrate();
-
-  // Update the bitrate value
-  saveBitrate();
-}
-
-// Limit the bitrate of a preset to what the network connection and the video decoder of the TV can carry
-// (presetBitrateLimit() in tv_profile.js). A preset above the recommended bitrate for the 100 Mbps Ethernet port that
-// Samsung TVs usually have (e.g. 120 Mbps for 4K at 120 FPS) would cause packet loss and frame drops, and on a TV
-// without a tested profile a preset stays within the highest bitrate that the app recommends for it.
-function limitPresetBitrate() {
-  var presetBitrate = parseFloat($('#bitrateSlider').val());
-  const limit = presetBitrateLimit(getActiveConnectionType(), tvCapabilities);
-  if (!limit || !(presetBitrate > limit.mbps)) {
-    return;
-  }
-  console.log('%c[index.js, limitPresetBitrate]', 'color: green;', 'Limiting the preset bitrate from ' + presetBitrate + ' to ' + limit.mbps + ' Mbps (' + limit.reason + ')');
-  $('#bitrateSlider')[0].MaterialSlider.change(String(limit.mbps));
-  // Explain the limit only once, since the presets are applied on every resolution and frame rate change
-  if (limit.reason === 'ethernet') {
-    if (!ethernetPresetNotice) {
-      snackbarLogLong('The bitrate has been limited to %1$s Mbps, because Samsung TVs usually have a 100 Mbps Ethernet port.', limit.mbps);
-      ethernetPresetNotice = true;
-    }
-  } else if (!recommendedPresetNotice) {
-    snackbarLogLong('The bitrate has been limited to %1$s Mbps, the highest bitrate that the app recommends for this TV and network connection. You can still raise it with the bitrate slider.', limit.mbps);
-    recommendedPresetNotice = true;
-  }
-}
-
-// Apply the optimized bitrate preset of the selected resolution, frame rate, codec and HDR mode
-// (getOptimizedPresetBitrate() is in tv_profile.js)
-function optimizeBitratePresets() {
-  console.log('%c[index.js, optimizeBitratePresets]', 'color: green;', 'Applying optimize bitrate presets...');
-  var res = $('#selectResolution').data('value');
-  var frameRate = $('#selectFramerate').data('value').toString();
-  var videoCodec = $('#selectCodec').data('value').toString();
-  var hdrMode = $('#hdrModeSwitch').parent().hasClass('is-checked');
-
-  // Set the bitrate slider value based on the calculated optimized bitrate
-  $('#bitrateSlider')[0].MaterialSlider.change(getOptimizedPresetBitrate(res, frameRate, videoCodec, hdrMode));
-
-  // Keep the bitrate within what the network connection and the video decoder of the TV can carry
-  limitPresetBitrate();
-
-  // Update the bitrate value
-  saveBitrate();
 }
 
 function saveFramePacing() {
@@ -4884,10 +4815,10 @@ function saveDecryptHostAudio() {
     console.log('%c[index.js, saveDecryptHostAudio]', 'color: green;', 'Saving decrypt host audio state: ' + chosenDecryptHostAudio);
     storeData('decryptHostAudio', chosenDecryptHostAudio, null);
 
-    // Warning when enabling decrypt host audio for non-Wolf/Punktfunk-style hosts
+    // A note when enabling decrypt host audio: Sunshine supports the encryption of the audio that it asks for, so it
+    // keeps working there, only without any need
     if (chosenDecryptHostAudio) {
-      // Show a warning message when enabling decrypt host audio
-      snackbarLogLong('Warning: Enable this only for Wolf or Punktfunk-style hosts, and leave it disabled for Sunshine or GameStream hosts to avoid audio streaming issues!');
+      snackbarLogLong('Only Wolf and Punktfunk-style hosts need this. With Sunshine it only turns on the encryption of the audio, which isn\'t needed.');
     }
   }, 100);
 }
@@ -4901,7 +4832,7 @@ function saveVideoCodec() {
   if (enabledHdrMode && chosenVideoCodec === selectedH264Codec) { // Selecting H.264 while HDR mode is enabled
     // H.264 does not support HDR profile, so stay on H.264 codec
     updateVideoCodec('#h264', selectedH264Codec);
-    snackbarLog('HDR has been disabled due to unsupported H.264 codec.');
+    snackbarLog('H.264 has no HDR, so HDR is off.');
     // Turn off the HDR mode switch and save the state
     document.querySelector('#hdrModeBtn').MaterialSwitch.off();
     updateHdrMode();
@@ -4917,10 +4848,6 @@ function updateVideoCodec(chosenCodecId, chosenCodecValue) {
   console.log('%c[index.js, updateVideoCodec]', 'color: green;', 'Saving video codec value: ' + chosenCodecValue);
   storeData('videoCodec', chosenCodecValue, null);
 
-  // Update the bitrate value based on the selected codec, unless it was picked by hand
-  if ($('#optimizeBitrateSwitch').prop('checked')) {
-    applyBitratePresets();
-  }
   // Trigger warning check after changing video codec
   warnVideoCodec();
   warnH264Resolution();
@@ -4943,36 +4870,18 @@ function warnVideoCodec() {
 
 function saveHdrMode() {
   setTimeout(() => {
-    var selectedVideoCodec = $('#selectCodec').data('value');
-    const chosenH264Codec = $('#h264').data('value');
-    const chosenHevcCodec = $('#hevc').data('value');
-    const chosenAv1Codec = $('#av1').data('value');
-
-    // Handle HDR mode switch based on the selected codec
-    if (selectedVideoCodec === chosenH264Codec) { // H.264
-      // H.264 does not support HDR profile, so stay on H.264 codec
-      snackbarLog('H.264 codec does not support the HDR profile.');
+    // H.264 has no HDR profile, so HDR stays off with it. HEVC and AV1 switch to their HDR profile (Main10). The codec
+    // menu offers no other codec.
+    if ($('#selectCodec').data('value') === $('#h264').data('value')) {
+      snackbarLog('H.264 has no HDR, so HDR is off.');
       // Turn off the HDR mode switch and save the state
       document.querySelector('#hdrModeBtn').MaterialSwitch.off();
       updateHdrMode();
-    } else if (selectedVideoCodec === chosenHevcCodec) { // HEVC
-      // Select the HDR profile of the HEVC codec (HEVC Main10)
+    } else {
       // Toggle the HDR mode switch and save the state
       updateHdrMode();
       // Warn when HDR was switched on for a TV that doesn't report HDR support
       warnHdrMode();
-    } else if (selectedVideoCodec === chosenAv1Codec) { // AV1
-      // Select the HDR profile of the AV1 codec (AV1 Main10)
-      // Toggle the HDR mode switch and save the state
-      updateHdrMode();
-      // Warn when HDR was switched on for a TV that doesn't report HDR support
-      warnHdrMode();
-    } else { // Undefined
-      // Unknown codec format does not support HDR profile
-      snackbarLog('Selected codec does not support the HDR profile.');
-      // Turn off the HDR mode switch and save the state
-      document.querySelector('#hdrModeBtn').MaterialSwitch.off();
-      updateHdrMode();
     }
   }, 100);
 }
@@ -4982,11 +4891,6 @@ function updateHdrMode() {
     const chosenHdrMode = $('#hdrModeSwitch').parent().hasClass('is-checked');
     console.log('%c[index.js, updateHdrMode]', 'color: green;', 'Saving HDR mode state: ' + chosenHdrMode);
     storeData('hdrMode', chosenHdrMode, null);
-
-    // Update the bitrate value based on the selected HDR state, unless it was picked by hand
-    if ($('#optimizeBitrateSwitch').prop('checked')) {
-      applyBitratePresets();
-    }
   }, 100);
 }
 
@@ -5009,14 +4913,14 @@ function saveGameMode() {
       // Show a warning dialog when turning on Game Mode on Tizen 9.0 or higher
       setTimeout(() => {
         warningDialog(t('Compatibility Warning'),
-          t('Game Mode (Ultra Low Latency) is not compatible with Tizen %1$s due to platform changes introduced by Samsung.', platformVer) + 
+          t('The Ultra low latency mode is not compatible with Tizen %1$s due to platform changes introduced by Samsung.', platformVer) + 
           t('Enabling this option may result in video freezing on the first rendered frame, black screen, unstable performance, and other streaming issues.<br><br>') + 
           t('For more information about this incompatibility and the ForceGM variant, see <b>ForceGM variant and game mode</b> in the guide of Moonlight Plus, which the Support button at the top of the screen links to.')
         );
       }, 250);
     } else if (parseFloat(platformVer) < 9.0 && !chosenGameMode) { // Check if the Tizen version is lower than 9.0 and the Game Mode is turned off
       // Show a warning message when turning off Game Mode on compatible Tizen versions
-      snackbarLogLong('Warning: Disabling game mode may increase latency and affect your game streaming performance!');
+      snackbarLogLong('Warning: Turning off the Ultra low latency mode may increase latency and affect your game streaming performance!');
     }
   }, 100);
 }
@@ -5068,19 +4972,6 @@ function handleUnlockAllFps() {
       warnResolutionFramerate();
     }
   }
-}
-
-function saveOptimizeBitrate() {
-  setTimeout(() => {
-    const chosenOptimizeBitrate = $('#optimizeBitrateSwitch').parent().hasClass('is-checked');
-    console.log('%c[index.js, saveOptimizeBitrate]', 'color: green;', 'Saving optimize bitrate state: ' + chosenOptimizeBitrate);
-    storeData('optimizeBitrate', chosenOptimizeBitrate, null);
-
-    // Toggling the presets asks for them explicitly, so they follow the video settings again from now on
-    setAutoAdjustBitrate(true);
-    // Update the bitrate value based on the selected preset mode
-    chosenOptimizeBitrate ? optimizeBitratePresets() : standardBitratePresets();
-  }, 100);
 }
 
 function saveDisableWarnings() {
@@ -5194,10 +5085,9 @@ function saveHdrMetadata() {
 // Apply the optimal streaming settings for this TV and its network connection (deriveOptimalSettings() in tv_profile.js),
 // which are also the defaults of the video settings: the highest resolution of the panel up to 4K at 60 FPS with HEVC,
 // HDR when the TV supports it and a bitrate for the network connection, with all frame rates unlocked only for a tested
-// model with a high refresh rate panel (VERIFIED_PROFILES).
-// With followPresets, the bitrate follows later changes of the resolution and frame rate (Restore Defaults). Without it,
-// the recommended bitrate is kept until the user picks another one (the optimal streaming settings button).
-function applyOptimalStreamingSettings(connectionType, followPresets) {
+// model with a high refresh rate panel (VERIFIED_PROFILES). The bitrate then follows later changes of the resolution and
+// frame rate with the bitrate presets, until the user picks one by hand.
+function applyOptimalStreamingSettings(connectionType) {
   console.log('%c[index.js, applyOptimalStreamingSettings]', 'color: green;', 'Applying the optimal streaming settings for the network connection: ' + connectionType);
   const optimalSettings = deriveOptimalSettings(tvCapabilities, connectionType);
 
@@ -5240,10 +5130,6 @@ function applyOptimalStreamingSettings(connectionType, followPresets) {
   document.querySelector('#framePacingBtn').MaterialSwitch.on();
   storeData('framePacing', optimalSettings.framePacing, null);
 
-  // Use the bitrate for the network connection instead of the optimized presets, which aim for a lower bitrate
-  document.querySelector('#optimizeBitrateBtn').MaterialSwitch.off();
-  storeData('optimizeBitrate', optimalSettings.optimizeBitrate, null);
-
   // Set the game mode based on the Tizen platform version and the WASM player (see getGameModeDefault() in tv_profile.js)
   if (optimalSettings.gameMode === false) {
     // Turn off for Tizen 9.0 and newer to avoid compatibility issues, where the ForceGM variant enables the game mode
@@ -5265,9 +5151,9 @@ function applyOptimalStreamingSettings(connectionType, followPresets) {
 
   $('#bitrateSlider')[0].MaterialSlider.change(String(optimalSettings.bitrate));
   saveBitrate();
-  // Either let the bitrate presets follow later changes of the resolution and frame rate, or keep the recommended
-  // bitrate for the network connection when they change
-  autoAdjustBitrate = !!followPresets;
+  // Let the bitrate presets follow later changes of the resolution and frame rate again, which they do until the
+  // bitrate is picked by hand
+  autoAdjustBitrate = true;
   storeData('autoAdjustBitrate', autoAdjustBitrate, null);
 
   // Re-run the one-shot warning checks so their flags match the applied resolution, frame rate and codec
@@ -5278,7 +5164,8 @@ function applyOptimalStreamingSettings(connectionType, followPresets) {
 
 // Describe what the app detected about the TV for the optimal settings dialog, e.g. '4K panel, HDR, Tizen 9.0, Wi-Fi',
 // which also tells a screenshot of the dialog what the settings are based on (see detectTvCapabilities() in
-// tv_profile.js). A product API that failed counts as a Full HD panel without HDR, like everywhere else in the app.
+// tv_profile.js), ending with 'tested model' when its settings were tested on this model (VERIFIED_PROFILES). A product
+// API that failed counts as a Full HD panel without HDR, like everywhere else in the app.
 function describeDetectedTv(connectionType) {
   const parts = [];
   if (is8kPanel) {
@@ -5297,49 +5184,44 @@ function describeDetectedTv(connectionType) {
   } else {
     parts.push(t('unknown connection'));
   }
+  if (tvCapabilities && tvCapabilities.profile) {
+    parts.push(t('tested model'));
+  }
   return parts.join(', ');
 }
 
 // Show the optimal streaming settings for this TV along with what was detected and advice for the network connection,
-// and apply them once the user confirms, because they replace the stored video settings. The listed values come from
-// the same function that applies them (deriveOptimalSettings() in tv_profile.js), so the text always matches what is
-// applied.
+// and apply them once the user confirms, because they replace the stored video settings. The tiles show the resolution,
+// frame rate, bitrate and codec, and the text lists the other settings only. Both come from the same function that
+// applies them (deriveOptimalSettings() in tv_profile.js), so the dialog always matches what is applied.
 function optimalSettingsDialog() {
   const connectionType = getActiveConnectionType();
   const optimalSettings = deriveOptimalSettings(tvCapabilities, connectionType);
-  const optimalResolutionText = $('.videoResolutionMenu li[data-value="' + optimalSettings.resolution + '"]').text().trim();
 
-  // Start with what the settings are based on, and whether they were tested on this model (VERIFIED_PROFILES)
-  let message = t('Detected: %1$s', describeDetectedTv(connectionType)) + '<br>';
-  if (tvCapabilities.profile) {
-    message += t('Tested model: these settings were tested on this TV model.') + '<br>';
-  }
-  message += '<br>';
+  // Start with what the settings are based on, and whether they were tested on this model (describeDetectedTv())
+  let message = t('Detected: %1$s', describeDetectedTv(connectionType)) + '<br><br>';
 
   message += t('The following streaming settings will be applied:') + '<br>' +
-    '&#8226; ' + t('Video resolution') + ': ' + escapeHTML(optimalResolutionText) + ', ' + optimalSettings.frameRate + ' FPS<br>' +
-    '&#8226; ' + t('Video codec') + ': ' + (optimalSettings.hdrMode ? t('HEVC Main10 with HDR') : t('HEVC')) + '<br>' +
-    '&#8226; ' + t('Video bitrate') + ': ' + optimalSettings.bitrate + ' Mbps<br>' +
     '&#8226; ' + (optimalSettings.unlockAllFps
-      ? t('Video frame pacing on, limited color range, unlock all frame rates on, optimize bitrate presets off')
-      : t('Video frame pacing on, limited color range, unlock all frame rates off, optimize bitrate presets off')) + '<br>';
-  // Name the game mode state, which depends on the Tizen version (the note below covers Tizen 9.0 and newer) and on
-  // whether the WASM player offers the Ultra Low Latency mode
+      ? t('Video frame pacing on, limited color range, unlock all frame rates on')
+      : t('Video frame pacing on, limited color range, unlock all frame rates off')) + '<br>';
+  // Name the state of the ultra low latency mode, which depends on the Tizen version (the note below covers Tizen 9.0
+  // and newer) and on whether the WASM player offers it
   if (optimalSettings.gameMode === true) {
-    message += '&#8226; ' + t('Game mode on') + '<br>';
+    message += '&#8226; ' + t('Ultra low latency mode on') + '<br>';
   } else if (isGameModeUnavailable(tvCapabilities)) {
-    message += '&#8226; ' + t('Game mode off, because the video player of this TV doesn\'t offer the Ultra Low Latency mode') + '<br>';
+    message += '&#8226; ' + t('Ultra low latency mode off, because the video player of this TV doesn\'t offer it') + '<br>';
   } else if (optimalSettings.gameMode === false && !(parseFloat(platformVer) >= 9.0)) {
     // Below Tizen 9.0, off means Tizen 5.5 with a WASM player that offers the mode, where the switch can be turned on,
-    // so say that Continue turns it off
-    message += '&#8226; ' + t('Game mode off') + '<br>';
+    // so say that Apply turns it off
+    message += '&#8226; ' + t('Ultra low latency mode off') + '<br>';
   }
   message += '<br>';
 
   // Point the owners of a 4K or 8K TV with a 120 Hz panel to the higher frame rates, which stay locked without a tested
   // profile, because the refresh rate of the panel can't be detected and many TVs show 60 Hz (plan decision D7)
   if (!optimalSettings.unlockAllFps && (is4kPanel || is8kPanel)) {
-    message += t('If this TV has a 120 Hz panel, you can turn on \'Unlock all frame rates\' in the Advanced Settings to stream at up to 120 FPS.') + '<br><br>';
+    message += t('If this TV has a 120 Hz panel, you can turn on \'Unlock all frame rates\' below the frame rate to stream at up to 120 FPS.') + '<br><br>';
   }
 
   // Explain the bitrate limits of the network connection and how to stream without frame drops
@@ -5363,9 +5245,9 @@ function optimalSettingsDialog() {
   // already installed
   if (parseFloat(platformVer) >= 9.0) {
     if (checkForceGMVariant()) {
-      message += '<br><br>' + t('ForceGM variant detected: the app asks the TV for its Game Mode, so the Game mode setting stays off here and the decoder uses the Low Latency mode.');
+      message += '<br><br>' + t('ForceGM variant detected: the app asks the TV for its Game Mode, so the Ultra low latency mode setting stays off here and the decoder uses the Low Latency mode.');
     } else {
-      message += '<br><br>' + t('Game mode stays disabled on Tizen %1$s, so install the ForceGM variant for the lowest latency.', platformVer);
+      message += '<br><br>' + t('The Ultra low latency mode stays off on Tizen %1$s, so install the ForceGM variant for the lowest latency.', platformVer);
     }
   }
 
@@ -5389,7 +5271,8 @@ function optimalSettingsDialog() {
   isDialogOpen = true;
   Navigation.push(Views.WarningDialog);
 
-  // Show the Continue button next to the Close button, which acts as Cancel
+  // Show the Apply button next to the Cancel button, which this dialog names so instead of Continue and Close
+  setWarningButtonLabels(true);
   $('#continueWarning').show();
   // Remove single-button class since both buttons are now visible
   warningDialog.classList.remove('single-button');
@@ -5403,11 +5286,12 @@ function optimalSettingsDialog() {
     isDialogOpen = false;
     // Restore the default state for future standard warnings
     $('#continueWarning').hide();
+    setWarningButtonLabels(false);
     Navigation.pop();
     Navigation.switch();
   });
 
-  // Continue — apply the settings
+  // Apply — apply the settings
   $('#continueWarning').off('click');
   $('#continueWarning').on('click', function() {
     console.log('%c[index.js, optimalSettingsDialog]', 'color: green;', 'User confirmed the optimal settings. Applying the settings for the network connection: ' + connectionType);
@@ -5416,9 +5300,9 @@ function optimalSettingsDialog() {
     isDialogOpen = false;
     // Restore the default state for future standard warnings
     $('#continueWarning').hide();
+    setWarningButtonLabels(false);
     Navigation.pop();
-    // Keep the recommended bitrate when the resolution or frame rate changes later, as the dialog applied it on purpose
-    applyOptimalStreamingSettings(connectionType, false);
+    applyOptimalStreamingSettings(connectionType);
     Navigation.switch();
     snackbarLog('The optimal streaming settings for this TV have been applied.');
   });
@@ -5428,7 +5312,7 @@ function optimalSettingsDialog() {
 function restoreDefaultsSettingsValues() {
   // Restore the video settings to the optimal streaming settings for this TV and its network connection, like a fresh
   // install, whose bitrate follows the resolution and frame rate until the user picks one by hand
-  applyOptimalStreamingSettings(getActiveConnectionType(), true);
+  applyOptimalStreamingSettings(getActiveConnectionType());
 
   const defaultIpAddressFieldMode = true;
   document.querySelector('#ipAddressFieldModeBtn').MaterialSwitch.on();
@@ -5460,7 +5344,7 @@ function restoreDefaultsSettingsValues() {
   storeData('controllerType', defaultControllerType, null);
 
   const defaultAudioBackend = 'EMSS';
-  $('#selectAudioBackend').text('EMSS').attr('data-value', defaultAudioBackend).data('value', defaultAudioBackend);
+  $('#selectAudioBackend').text(t('TV media player (EMSS)')).attr('data-value', defaultAudioBackend).data('value', defaultAudioBackend);
   storeData('audioBackend', defaultAudioBackend, null);
   // Show the settings of the restored audio backend
   updateAudioBackendSettings();
@@ -5722,8 +5606,8 @@ function loadSystemInfo() {
   // Get the system information from the TV
   if (systemInfoPlaceholder) {
     const controllerTypeSetting = String($('#selectControllerType').data('value') || 'Auto');
-    const gamepadsText = connectedGamepads.length === 0 ? t('Gamepads: None') : connectedGamepads.map((info) =>
-      t('Gamepad %1$s: %2$s (%3$s, %4$s buttons, %5$s axes, rumble: %6$s, type: %7$s)', info.index, info.name ? info.name : t('Unknown'),
+    const gamepadsText = connectedGamepads.length === 0 ? t('Controllers: None') : connectedGamepads.map((info) =>
+      t('Controller %1$s: %2$s (%3$s, %4$s buttons, %5$s axes, rumble: %6$s, type: %7$s)', info.index, info.name ? info.name : t('Unknown'),
         info.mapping === 'standard' ? t('standard layout') : t('non-standard layout'), info.buttons, info.axes,
         info.rumble ? t('Yes') : t('No'), describeGamepadType(info, controllerTypeSetting))
     ).join('\n');
@@ -5783,10 +5667,15 @@ function loadUserDataCb() {
 // for its TV. The unique ID of a fresh install is stored together with the schema version (loadHTTPCertsCb()), and both
 // are read here in one transaction, so a fresh install is never mistaken for an existing one, whichever runs first.
 // An existing install of settings schema 2 or older also stores the defaults of settings schema 2 that settings schema 3
-// changed (schema2Snapshot()), and drops the stored values of the settings that settings schema 3 removed, which are
-// logged first, so that the diagnostic log still says what was set.
+// changed (schema2Snapshot()) and what replaces the settings that settings schema 3 removed (schema3Replacements()),
+// and drops the stored values of those settings, which are logged first, so that the diagnostic log still says what was
+// set.
 function migrateSettingsSchema(callbackFunction) {
-  const keys = ['uniqueid', SETTINGS_SCHEMA_KEY].concat(LEGACY_SNAPSHOT_KEYS, Object.keys(SCHEMA_2_DEFAULTS), SCHEMA_3_REMOVED_KEYS);
+  const keys = ['uniqueid', SETTINGS_SCHEMA_KEY].concat(LEGACY_SNAPSHOT_KEYS, Object.keys(SCHEMA_2_DEFAULTS), SCHEMA_3_REMOVED_KEYS)
+    .filter(function(key, index, allKeys) {
+      // Read each key once (e.g. optimizeBitrate is a key of both the snapshot and the removed settings)
+      return allKeys.indexOf(key) === index;
+    });
   getMultipleData(keys, function(storedValues) {
     if (storedValues === null) {
       // Leave everything as it is when the settings can't be read, and try again at the next start
@@ -5812,7 +5701,16 @@ function migrateSettingsSchema(callbackFunction) {
       const schema2Values = schema2Snapshot(storedValues);
       console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Existing install of settings schema ' + (storedSchema == null ? 1 : storedSchema) + ', storing the defaults of settings schema 2 that changed: ' + JSON.stringify(schema2Values));
       Object.assign(migratedValues, schema2Values);
+      // What replaces the removed settings, e.g. 'Optimize bitrate presets' that was on keeps the bitrate following the
+      // video settings (schema3Replacements())
+      const replacements = schema3Replacements(storedValues);
+      if (Object.keys(replacements).length > 0) {
+        console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Storing what replaces the settings that no longer exist: ' + JSON.stringify(replacements));
+        Object.assign(migratedValues, replacements);
+      }
       SCHEMA_3_REMOVED_KEYS.forEach(function(key) {
+        // The snapshot of settings schema 1 may hold a removed setting as well, which is not stored then
+        delete migratedValues[key];
         if (storedValues[key] != null) {
           console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Removing the stored value of a setting that no longer exists: ' + key + ' = ' + JSON.stringify(storedValues[key]));
           removeData(key, null);
@@ -6166,55 +6064,6 @@ function loadStoredSettings() {
     }
   });
 
-  console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored optimizeBitrate preferences.');
-  getData('optimizeBitrate', function(previousValue) {
-    if (previousValue.optimizeBitrate == null) {
-      // Set the default state, which uses the standard bitrate presets
-      optimalSettings.optimizeBitrate ? document.querySelector('#optimizeBitrateBtn').MaterialSwitch.on() : document.querySelector('#optimizeBitrateBtn').MaterialSwitch.off();
-    } else if (previousValue.optimizeBitrate == false) {
-      document.querySelector('#optimizeBitrateBtn').MaterialSwitch.off();
-    } else {
-      document.querySelector('#optimizeBitrateBtn').MaterialSwitch.on();
-    }
-    const storedOptimizeBitrate = previousValue.optimizeBitrate == true;
-    // Load whether the bitrate presets follow the video settings
-    getData('autoAdjustBitrate', function(storedValue, isPresetStateReadFailed) {
-      if (storedValue.autoAdjustBitrate != null) {
-        autoAdjustBitrate = storedValue.autoAdjustBitrate == true;
-        console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Auto adjust bitrate state: ' + autoAdjustBitrate);
-        return;
-      }
-      // Without a stored value, decide once whether the bitrate presets follow the video settings. A fresh install has
-      // no stored bitrate, so its recommended bitrate follows the resolution and frame rate until the user picks one by
-      // hand. Otherwise (an update from a version without this setting, whose settings snapshot already stores the
-      // decision, so this only remains as a fallback) the presets keep following the settings if the stored bitrate
-      // came from them (followsBitratePresets() in tv_profile.js), and a bitrate that was picked by hand or set by the
-      // optimal streaming settings is kept.
-      getData('bitrate', function(storedBitrate, isBitrateReadFailed) {
-        getData('resolution', function(storedResolution, isResolutionReadFailed) {
-          getData('frameRate', function(storedFramerate, isFramerateReadFailed) {
-            // When one of the values can't be read, keep the bitrate for this start and decide again at the next one,
-            // instead of storing a decision that a read error made, which could replace a stored preset state
-            if (isPresetStateReadFailed || isBitrateReadFailed || isResolutionReadFailed || isFramerateReadFailed) {
-              autoAdjustBitrate = false;
-              console.warn('%c[index.js, loadUserDataCb]', 'color: green;', 'Warning: Auto adjust bitrate state not decided, since a stored value could not be read: ' + autoAdjustBitrate);
-              return;
-            }
-            var followsPresets = storedBitrate.bitrate == null || followsBitratePresets({
-              bitrate: storedBitrate.bitrate,
-              resolution: storedResolution.resolution,
-              frameRate: storedFramerate.frameRate,
-              optimizeBitrate: storedOptimizeBitrate,
-            }, getActiveConnectionType());
-            autoAdjustBitrate = followsPresets;
-            storeData('autoAdjustBitrate', autoAdjustBitrate, null);
-            console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Auto adjust bitrate state (first decision): ' + autoAdjustBitrate);
-          });
-        });
-      });
-    });
-  });
-
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored disableWarnings preferences.');
   getData('disableWarnings', function(previousValue) {
     if (previousValue.disableWarnings == null) {
@@ -6236,6 +6085,47 @@ function loadStoredSettings() {
   getData('statsPosition', function(previousValue) {
     // Top left without a stored value
     showStatsPosition(parseStatsPosition(previousValue.statsPosition));
+  });
+
+  // Load whether the bitrate presets follow the video settings, as the last stored setting, whose log line tells the
+  // tests that the stored settings are loaded
+  console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored autoAdjustBitrate preferences.');
+  getData('autoAdjustBitrate', function(storedValue, isPresetStateReadFailed) {
+    if (storedValue.autoAdjustBitrate != null) {
+      autoAdjustBitrate = storedValue.autoAdjustBitrate == true;
+      console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Auto adjust bitrate state: ' + autoAdjustBitrate);
+      return;
+    }
+    // Without a stored value, decide once whether the bitrate presets follow the video settings. A fresh install has no
+    // stored bitrate, so its recommended bitrate follows the resolution and frame rate until the user picks one by hand.
+    // Otherwise (an update from a version without this setting, whose settings snapshot already stores the decision,
+    // so this only remains as a fallback) the presets keep following the settings if the stored bitrate came from them
+    // or the removed switch 'Optimize bitrate presets' is still stored on (followsBitratePresets() in tv_profile.js),
+    // and a bitrate that was picked by hand or set by the optimal streaming settings is kept.
+    getData('optimizeBitrate', function(storedOptimizeBitrate, isOptimizeReadFailed) {
+      getData('bitrate', function(storedBitrate, isBitrateReadFailed) {
+        getData('resolution', function(storedResolution, isResolutionReadFailed) {
+          getData('frameRate', function(storedFramerate, isFramerateReadFailed) {
+            // When one of the values can't be read, keep the bitrate for this start and decide again at the next one,
+            // instead of storing a decision that a read error made, which could replace a stored preset state
+            if (isPresetStateReadFailed || isOptimizeReadFailed || isBitrateReadFailed || isResolutionReadFailed || isFramerateReadFailed) {
+              autoAdjustBitrate = false;
+              console.warn('%c[index.js, loadUserDataCb]', 'color: green;', 'Warning: Auto adjust bitrate state not decided, since a stored value could not be read: ' + autoAdjustBitrate);
+              return;
+            }
+            var followsPresets = storedBitrate.bitrate == null || followsBitratePresets({
+              bitrate: storedBitrate.bitrate,
+              resolution: storedResolution.resolution,
+              frameRate: storedFramerate.frameRate,
+              optimizeBitrate: storedOptimizeBitrate.optimizeBitrate,
+            }, getActiveConnectionType());
+            autoAdjustBitrate = followsPresets;
+            storeData('autoAdjustBitrate', autoAdjustBitrate, null);
+            console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Auto adjust bitrate state (first decision): ' + autoAdjustBitrate);
+          });
+        });
+      });
+    });
   });
 }
 
@@ -6359,7 +6249,7 @@ function discoverHostsAtStartup() {
       isSubnetScanFinished = true;
       return;
     }
-    console.log('%c[index.js, discoverHostsAtStartup]', 'color: green;', 'Scanning the local network to discover new hosts...');
+    console.log('%c[index.js, discoverHostsAtStartup]', 'color: green;', 'Scanning the local network for new PCs...');
     // Stop background polling while sweeping the subnet to prevent network exhaustion
     stopPollingHosts();
     const resumePolling = () => {
@@ -6402,7 +6292,7 @@ function waitForHostAndNavigate(serverUid) {
     } else if (!host && isHostsLoaded) {
       clearInterval(interval);
       console.warn('%c[index.js, waitForHostAndNavigate]', 'color: orange;', 'Host ' + serverUid + ' no longer exists in Moonlight.');
-      snackbarLogLong('The selected host is no longer available on Moonlight.');
+      snackbarLogLong('The selected PC is no longer available in Moonlight.');
       if (typeof updatePreviewData === 'function') updatePreviewData();
     } else if (attempts > 30) {
       clearInterval(interval);
@@ -6479,7 +6369,7 @@ function waitForHostAndNavigateToApp(serverUid, appId) {
         } else {
           // App no longer exists: connect to host and show the current app list
           console.warn('%c[index.js, waitForHostAndNavigateToApp]', 'color: orange;', 'App ' + appId + ' not found on host, showing current app list.');
-          snackbarLogLong('The selected app is no longer available on this host. Showing the current app list.');
+          snackbarLogLong('The selected app is no longer available on this PC. Showing the current app list.');
           hostChosen(host);
         }
       }, function() {
@@ -6489,7 +6379,7 @@ function waitForHostAndNavigateToApp(serverUid, appId) {
     } else if (!host && isHostsLoaded) {
       clearInterval(interval);
       console.warn('%c[index.js, waitForHostAndNavigateToApp]', 'color: orange;', 'Host ' + serverUid + ' no longer exists in Moonlight.');
-      snackbarLogLong('The selected host is no longer available on Moonlight.');
+      snackbarLogLong('The selected PC is no longer available in Moonlight.');
       if (typeof updatePreviewData === 'function') updatePreviewData();
     } else if (attempts > 30) { // 30s timeout
       clearInterval(interval);
@@ -6873,7 +6763,7 @@ function showNonStandardGamepadNotice(gamepadInfo) {
   }
   nonStandardGamepadNotices.add(gamepadInfo.id);
   console.warn('%c[index.js, showNonStandardGamepadNotice]', 'color: green;', 'Warning: Gamepad ' + gamepadInfo.index + ' reports a non-standard layout (mapping="' + gamepadInfo.mapping + '"), so its buttons may be mapped wrongly.');
-  snackbarLogLong('Gamepad %1$s (%2$s) has a non-standard button layout, so some buttons may be wrong. Try its XInput or Xbox mode, or another connection.',
+  snackbarLogLong('Controller %1$s (%2$s) has a non-standard button layout, so some buttons may be wrong. Try its XInput or Xbox mode, or another connection.',
     gamepadInfo.index, gamepadInfo.name ? gamepadInfo.name : t('Unknown'));
 }
 
@@ -6887,7 +6777,7 @@ window.addEventListener('gamepadconnected', function(e) {
   // it and which controller type Auto detects for it (the 'Controller type sent to the PC' setting can override what the
   // stream announces, which the log of the stream names)
   console.log('%c[index.js, gamepadconnected]', 'color: green;', 'Gamepad ' + gamepadIndex + ' connected: ' + Controller.formatGamepadInfo(gamepadInfo), connectedGamepad);
-  snackbarLog('Gamepad %1$s has been connected.', gamepadIndex);
+  snackbarLog('Controller %1$s (%2$s) has been connected.', gamepadIndex, gamepadInfo.name ? gamepadInfo.name : t('Unknown'));
   showNonStandardGamepadNotice(gamepadInfo);
   // Check if the rumble feedback switch is checked
   if (rumbleFeedbackSwitch && rumbleFeedbackSwitch.checked) {
@@ -6906,7 +6796,7 @@ window.addEventListener('gamepaddisconnected', function(e) {
   const disconnectedGamepad = e.gamepad;
   const gamepadIndex = disconnectedGamepad.index;
   console.log('%c[index.js, gamepaddisconnected]', 'color: green;', 'Gamepad ' + gamepadIndex + ' disconnected: ' + Controller.formatGamepadInfo(Controller.describeGamepad(disconnectedGamepad)), disconnectedGamepad);
-  snackbarLog('Gamepad %1$s has been disconnected.', gamepadIndex);
+  snackbarLog('Controller %1$s (%2$s) has been disconnected.', gamepadIndex, Controller.describeGamepad(disconnectedGamepad).name || t('Unknown'));
   console.warn('%c[index.js, gamepaddisconnected]', 'color: green;', 'Warning: Lost connection to gamepad ' + gamepadIndex + '. Please reconnect your gamepad!');
   // Stop replaying a rumble for the slot, so that the next gamepad in it doesn't start rumbling
   Rumble.stop(gamepadIndex);

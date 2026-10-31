@@ -20,7 +20,6 @@
     localePreference: 'auto',
     effectiveLocale: SOURCE_LOCALE,
     dictionary: {},
-    sourceDictionary: {},
     initialized: false,
     refreshCallbacks: [],
   };
@@ -36,10 +35,9 @@
     });
   }
 
+  // The source texts are the keys, so a text without a translation (and every text in English) shows the key itself
   function t(key, ...values) {
-    const translated = state.dictionary[key];
-    const source = state.sourceDictionary[key];
-    const result = translated || source || key;
+    const result = state.dictionary[key] || key;
     return formatPositional(result, values);
   }
 
@@ -146,7 +144,13 @@
     }
   }
 
+  // The dictionary of a locale. English is the language of the source texts and needs none: static/locales/en-US.json
+  // only lists the keys for the tools and the translators (every text in it is its own key), and the package leaves
+  // it out (CMakeLists.txt)
   function loadLocaleFile(locale) {
+    if (locale === SOURCE_LOCALE) {
+      return Promise.resolve({});
+    }
     return fetch(`static/locales/${locale}.json`, { cache: 'no-store' }).then((response) => {
       if (!response.ok) {
         throw new Error(`Locale file not found: ${locale}`);
@@ -333,7 +337,7 @@
     })).catch((error) => {
       console.warn('[i18n.js] Failed to load locale. Falling back to source locale.', error);
       state.effectiveLocale = SOURCE_LOCALE;
-      state.dictionary = state.sourceDictionary;
+      state.dictionary = {};
       updateDocumentLanguage(SOURCE_LOCALE);
       refreshUI();
       return SOURCE_LOCALE;
@@ -348,14 +352,7 @@
     return readStoredPreference().then((storedPreference) => {
       const preference = storedPreference || 'auto';
       state.localePreference = preference;
-      return loadLocaleFile(SOURCE_LOCALE)
-        .then((sourceDict) => {
-          state.sourceDictionary = sourceDict || {};
-        })
-        .catch(() => {
-          state.sourceDictionary = {};
-        })
-        .then(() => setLanguage(preference))
+      return setLanguage(preference)
         .then((effectiveLocale) => {
           state.initialized = true;
           return effectiveLocale;

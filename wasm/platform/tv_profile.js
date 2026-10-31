@@ -21,8 +21,9 @@
 // installs (legacySettingsSnapshot()), and a fresh install starts at version 2 with the defaults derived for its TV.
 // When a later build changes the default of a stored setting again, it raises the version and freezes the defaults of
 // the previous version the same way. Version 3 turned the rumble on by default, so it stores the earlier default (off)
-// once for an existing install that never switched it (schema2Snapshot()), and it drops the stored value of the switch
-// 'Continuous audio from the host', which is gone since the host always keeps sending audio (SCHEMA_3_REMOVED_KEYS).
+// once for an existing install that never switched it (schema2Snapshot()), and it drops the stored values of the
+// switches 'Continuous audio from the host', which is gone since the host always keeps sending audio, and 'Optimize
+// bitrate presets', which is gone since the presets are the recommended bitrates (SCHEMA_3_REMOVED_KEYS).
 const SETTINGS_SCHEMA_VERSION = 3;
 const SETTINGS_SCHEMA_KEY = 'settingsSchema';
 
@@ -81,8 +82,10 @@ const LEGACY_SNAPSHOT_KEYS = Object.freeze(['resolution', 'unlockAllFps', 'frame
 const SCHEMA_2_DEFAULTS = Object.freeze({ rumbleFeedback: false });
 
 // The stored keys of the settings that settings schema 3 removed: the switch 'Continuous audio from the host' of an
-// A/B test, since the launch and resume requests always ask for audio during silence now
-const SCHEMA_3_REMOVED_KEYS = Object.freeze(['continuousAudio']);
+// A/B test, since the launch and resume requests always ask for audio during silence now, and the switch 'Optimize
+// bitrate presets', whose presets aimed below the recommended bitrate, since the presets are the recommended bitrates
+// now (recommendedBitrate()). The stored bitrate stays (schema3Replacements()).
+const SCHEMA_3_REMOVED_KEYS = Object.freeze(['continuousAudio', 'optimizeBitrate']);
 
 // Call a Tizen or Samsung API and return its result, or the fallback value if the call throws (e.g. a missing API
 // object, a missing privilege or an unusual firmware) or returns nothing
@@ -462,74 +465,19 @@ function bitrateRaiseLimit(res, frameRate, caps) {
   return Math.min(2 * preset, MAX_BITRATE_MBPS, getDecoderCapMbps(caps));
 }
 
-// Return the highest bitrate that a bitrate preset may set on this TV and network connection, as { mbps, reason }, or
-// null for no limit:
-// - over Ethernet RECOMMENDED_ETHERNET_BITRATE (reason 'ethernet'), since the 100 Mbps port that Samsung TVs usually
-//   have can't carry more without packet loss
-// - on a TV without a tested profile, also the highest bitrate that recommendedBitrate() gives for any resolution and
-//   frame rate on this connection (reason 'recommended'): the decoder cap of the TV (getDecoderCapMbps()), and over an
-//   unknown connection UNKNOWN_CONNECTION_MAX_BITRATE, so that a preset (e.g. 120 Mbps for 4K at 120 FPS) never sets a
-//   bitrate above the recommendation of the app, which the bitrate warning would then warn about
-// A TV with a tested profile keeps the standard presets above its decoder cap (e.g. 120 Mbps for 4K at 120 FPS on the
-// first model of VERIFIED_PROFILES), which its tests went up to. The bitrate slider still goes up to MAX_BITRATE_MBPS on
-// every TV.
-function presetBitrateLimit(connectionType, caps) {
-  let limit = null;
-  if (connectionType === 'ethernet') {
-    limit = { mbps: RECOMMENDED_ETHERNET_BITRATE, reason: 'ethernet' };
-  }
-  if (!(caps && caps.profile)) {
-    let recommendedMax = getDecoderCapMbps(caps);
-    if (connectionType !== 'ethernet' && connectionType !== 'wifi') {
-      recommendedMax = Math.min(recommendedMax, UNKNOWN_CONNECTION_MAX_BITRATE);
-    }
-    if (!limit || recommendedMax < limit.mbps) {
-      limit = { mbps: recommendedMax, reason: 'recommended' };
-    }
-  }
-  return limit;
-}
-
 // Return the bitrate in Mbps as the bitrate slider (index.html) holds it: rounded to its steps of 0.5 Mbps, within 0.5
 // and MAX_BITRATE_MBPS
 function sliderBitrate(mbps) {
   return Math.min(MAX_BITRATE_MBPS, Math.max(0.5, Math.round(mbps * 2) / 2));
 }
 
-// Return the optimized bitrate preset ('Optimize bitrate presets') in Mbps for a resolution, frame rate, codec and HDR
-// mode, before the bitrate slider rounds it: the luma samples per second divided by 8309 (SDR) or 6630.5 (HDR) give
-// the bitrate in kbps for H.264, of which HEVC needs 60 % and AV1 40 %. A result that isn't positive gives 10 kbps.
-// Sweet-spot formula reference: https://www.reddit.com/r/MoonlightStreaming/comments/1gg2cdy/sweet_spot_bitrate/
-function getOptimizedPresetBitrate(res, frameRate, videoCodec, hdrMode) {
-  const size = parseResolution(res) || { width: NaN, height: NaN };
-  // Multiplier to adjust bitrate based on codec efficiency
-  const codecMultiplier = { H264: 1.0, HEVC: 0.6, AV1: 0.4 }[videoCodec];
-  // Bitrate factor depends on HDR state
-  const bitrateFactor = hdrMode ? 6630.5 : 8309;
-  const baseBitrate = size.width * size.height * Number(frameRate) / bitrateFactor;
-  let finalBitrate = Math.round(baseBitrate * codecMultiplier);
-  // Apply the default bitrate value in case of invalid calculation
-  if (finalBitrate <= 0) {
-    finalBitrate = 10;
-  }
-  return finalBitrate / 1000;
-}
-
-// Return the bitrates in Mbps that the standard and the optimized bitrate presets set for a resolution, frame rate,
-// codec and HDR mode on this TV and network connection, rounded like the bitrate slider and limited like
-// presetBitrateLimit() says, as { standard, optimized }. standard is null for a frame rate without a standard preset,
-// which leaves the bitrate as it is.
-function presetBitrates(res, frameRate, videoCodec, hdrMode, connectionType, caps) {
-  const limit = presetBitrateLimit(connectionType, caps);
-  const limited = function(mbps) {
-    const bitrate = sliderBitrate(mbps);
-    return limit && bitrate > limit.mbps ? limit.mbps : bitrate;
-  };
-  const standard = getStandardPresetBitrate(res, frameRate);
-  return {
-    standard: standard === null ? null : limited(standard),
-    optimized: limited(getOptimizedPresetBitrate(res, frameRate, videoCodec, hdrMode)),
-  };
+// Return the bitrate in Mbps that the bitrate presets set for a resolution and frame rate on this TV and network
+// connection, as the bitrate slider holds it: the recommended bitrate (recommendedBitrate()), which is already limited
+// for the 100 Mbps Ethernet port and the decoder cap of the TV. So a change of the resolution or frame rate gives the
+// same bitrate as the optimal streaming settings for it, e.g. 100 Mbps again after 4K at 60 FPS, 1440p and back on the
+// tested model over Wi-Fi.
+function presetBitrate(res, frameRate, connectionType, caps) {
+  return sliderBitrate(recommendedBitrate(res, frameRate, connectionType, caps));
 }
 
 // Return the default of the game mode (Ultra Low Latency mode of the WASM player) for a Tizen platform version and the
@@ -569,8 +517,8 @@ function isGameModeUnavailable(caps) {
 // - 'Unlock all frame rates' only for a tested profile with a high refresh rate panel, since most TVs show 60 Hz
 // - the game mode by Tizen version and by what the WASM player offers (getGameModeDefault()), with null meaning off,
 //   disabled and not stored
-// - frame pacing on, the limited color range (the standard for video, which keeps the detail in dark and bright areas),
-//   and the standard bitrate presets instead of the optimized ones, which aim for a lower bitrate
+// - frame pacing on and the limited color range (the standard for video, which keeps the detail in dark and bright
+//   areas)
 function deriveOptimalSettings(caps, connectionType) {
   const capabilities = caps || {};
   const profile = capabilities.profile || null;
@@ -586,7 +534,6 @@ function deriveOptimalSettings(caps, connectionType) {
     gameMode: getGameModeDefault(capabilities.platformVer, capabilities.wasmPlayer ? capabilities.wasmPlayer.ultraLowLatency : 'unknown'),
     framePacing: true,
     fullRange: false,
-    optimizeBitrate: false,
   };
 }
 
@@ -800,6 +747,20 @@ function schema2Snapshot(stored) {
   return snapshot;
 }
 
+// Return what settings schema 3 stores for an existing install in place of the settings that it removed
+// (SCHEMA_3_REMOVED_KEYS): the optimized presets of 'Optimize bitrate presets' always followed the video settings, so an
+// install that had the switch on and never stored the state of the bitrate presets keeps following them, now with the
+// recommended bitrates (presetBitrate()). Its stored bitrate stays until the resolution or frame rate changes, and a
+// stored state of the bitrate presets is never replaced.
+function schema3Replacements(stored) {
+  const values = stored || {};
+  const replacements = {};
+  if (values.optimizeBitrate == true && values.autoAdjustBitrate == null) {
+    replacements.autoAdjustBitrate = true;
+  }
+  return replacements;
+}
+
 // Export the functions and constants for the unit tests in Node, where this file is loaded as a module
 if (typeof module === 'object' && module && module.exports) {
   module.exports = {
@@ -836,10 +797,8 @@ if (typeof module === 'object' && module && module.exports) {
     getDecoderCapMbps: getDecoderCapMbps,
     recommendedBitrate: recommendedBitrate,
     bitrateRaiseLimit: bitrateRaiseLimit,
-    presetBitrateLimit: presetBitrateLimit,
     sliderBitrate: sliderBitrate,
-    getOptimizedPresetBitrate: getOptimizedPresetBitrate,
-    presetBitrates: presetBitrates,
+    presetBitrate: presetBitrate,
     getGameModeDefault: getGameModeDefault,
     isGameModeUnavailable: isGameModeUnavailable,
     deriveOptimalSettings: deriveOptimalSettings,
@@ -858,5 +817,6 @@ if (typeof module === 'object' && module && module.exports) {
     SCHEMA_2_DEFAULTS: SCHEMA_2_DEFAULTS,
     SCHEMA_3_REMOVED_KEYS: SCHEMA_3_REMOVED_KEYS,
     schema2Snapshot: schema2Snapshot,
+    schema3Replacements: schema3Replacements,
   };
 }

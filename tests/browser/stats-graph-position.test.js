@@ -204,15 +204,16 @@ test('the setting offers the four corners, top left by default, reached with the
     assert.deepEqual(await positionSetting(page), { value: 'top-left', label: 'Top left' });
     assert.deepEqual(await page.evaluate(() => $('.statsPositionMenu li').map((i, li) => li.getAttribute('data-value') + ' ' + li.textContent.trim()).get()),
       ['top-left Top left', 'top-right Top right', 'bottom-left Bottom left', 'bottom-right Bottom right']);
-    // Settings, DOWN to the Advanced Settings, OK, DOWN to the last row: the remote reaches it after the statistics
+    // Settings, DOWN to the Advanced Settings (the sixth section), OK, DOWN four times: the remote reaches it after the
+    // statistics, before the Experimental block
     await page.evaluate(() => $('#settingsBtn').trigger('click'));
     await page.waitForFunction(() => $('#settings-list').is(':visible') && !$('#wasmSpinner').is(':visible'));
     await page.waitForTimeout(100);
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 5; i++) {
       await page.keyboard.press('ArrowDown');
     }
     await page.keyboard.press('Enter');
-    await page.waitForFunction(() => Views.AdvancedSettings.view.current() === 'unlockAllFpsBtn', null, { timeout: 3000 });
+    await page.waitForFunction(() => Views.AdvancedSettings.view.current() === 'optimizeGamesBtn', null, { timeout: 3000 });
     for (let i = 0; i < 4; i++) {
       await page.keyboard.press('ArrowDown');
     }

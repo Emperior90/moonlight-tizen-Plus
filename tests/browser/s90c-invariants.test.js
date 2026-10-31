@@ -108,14 +108,14 @@ test('S90C: the applied settings are what the next start loads', async () => {
     try {
       await app.page.evaluate(() => $('#optimalSettingsBtn').trigger('click'));
       await app.page.evaluate(() => $('#continueWarning').trigger('click'));
-      await waitForStorage(app.page, (values) => values.resolution === '3840:2160' && 'bitrate' in values && values.autoAdjustBitrate === false && 'gameMode' in values);
+      await waitForStorage(app.page, (values) => values.resolution === '3840:2160' && 'bitrate' in values && values.autoAdjustBitrate === true && 'gameMode' in values);
       const applied = await readVideoSettings(app.page);
       await reloadApp(app);
       assert.deepEqual(await readVideoSettings(app.page), applied, conn);
       assert.deepEqual(
         [applied.resolution, applied.frameRate, applied.codec, applied.hdr, applied.bitrate, applied.unlockAllFps, applied.gameMode,
-          applied.framePacing, applied.fullRange, applied.optimizeBitrate, applied.autoAdjustBitrate],
-        ['3840:2160', '60', 'HEVC', true, { ethernet: '75', wifi: '100', unknown: '80' }[conn], true, false, true, false, false, false],
+          applied.framePacing, applied.fullRange, applied.autoAdjustBitrate],
+        ['3840:2160', '60', 'HEVC', true, { ethernet: '75', wifi: '100', unknown: '80' }[conn], true, false, true, false, true],
         conn);
       assert.deepEqual(app.errors, []);
     } finally {

@@ -112,7 +112,7 @@ test('the remote reaches the button with UP and starts a scan with OK, which pau
     let current = await state(app.page);
     assert.deepEqual(current.events, ['stop polling', 'scan']);
     assert.equal(current.scanning, true, 'the icon turns while the scan runs');
-    assert.deepEqual(current.messages, ['Scanning the local network to discover new hosts...']);
+    assert.deepEqual(current.messages, ['Scanning the local network for new PCs...']);
 
     // A second OK during the scan starts no second scan
     await app.page.keyboard.press('Enter');
@@ -337,7 +337,7 @@ test('the scan of the start runs quietly while the hosts are shown, and resumes 
     const seen = await app.page.evaluate(() => ({ scans: window.__scans, messages: window.__messages, finished: isSubnetScanFinished }));
     // Nobody asked for this scan, so only the log says that it runs
     assert.deepEqual(seen, { scans: [true], messages: [], finished: true });
-    assert.ok(app.logs.some((line) => line.indexOf('Scanning the local network to discover new hosts...') >= 0));
+    assert.ok(app.logs.some((line) => line.indexOf('Scanning the local network for new PCs...') >= 0));
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

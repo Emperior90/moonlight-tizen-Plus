@@ -334,7 +334,7 @@ function getSessionReportHintText(hint) {
     case 'tv':
       return t('The TV could not keep up with the video: lower the bitrate, the resolution or the frame rate.');
     case 'keyframes':
-      return t('The PC often sent whole frames again after a loss: turn on Reference frame invalidation in the Video Settings.');
+      return t('The PC often sent whole frames again after a loss: turn on Reference frame invalidation in the Advanced Settings.');
     case 'fec':
       return t('Error correction repaired many lost packets: the network is near its limit, so a cable or a lower bitrate gives more headroom.');
     case 'memory':

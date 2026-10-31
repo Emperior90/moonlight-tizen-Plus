@@ -1,8 +1,10 @@
 'use strict';
 
 // The 'Optimal settings for this TV' button and its dialog (plan WP3) on the settings screen:
-// - the dialog lists exactly what Continue then applies and shows, and its 'Detected:' and 'Tested model' lines match
-//   what the app detected, on TVs with and without a tested profile, HDR, a 4K or 8K panel, and over every connection
+// - the dialog shows exactly what Apply then applies and shows (the tiles the resolution, frame rate, bitrate and codec,
+//   the text the other settings, without repeating the tiles), and its 'Detected:' line, which ends with 'tested model'
+//   for a tested profile, matches what the app detected, on TVs with and without a tested profile, HDR, a 4K or 8K
+//   panel, and over every connection; its buttons are Apply and Cancel, and the other warnings keep Close and Continue
 // - the bitrate advice over Wi-Fi stays within the decoder cap, where the bitrate warning starts (plan WP3, WP4 case 5)
 // - the button is the first item of the basic settings, and the remote reaches it, opens the dialog and gets back to it
 // The values themselves are pinned in video-defaults.test.js; this file checks that the text and the settings agree.
@@ -46,13 +48,18 @@ const DIALOG_TVS = {
   'TV whose product APIs fail': { tv: 's90c', failApis: FAILING_PRODUCT_APIS },
 };
 
-// Open the dialog of the button and read its title and text, split into lines without the list bullets
+// Open the dialog of the button and read its title, text (split into lines without the list bullets), value tiles and
+// buttons
 async function openDialog(page) {
   await page.evaluate(() => $('#optimalSettingsBtn').trigger('click'));
   const dialog = await page.evaluate(() => ({
     title: document.getElementById('warningDialogTitle').innerHTML,
     text: document.getElementById('warningDialogText').innerHTML,
     open: isDialogOpen,
+    tiles: Array.prototype.map.call(document.querySelectorAll('#warningDialogValues .value-tile'), (tile) =>
+      [tile.querySelector('.value-number').textContent, tile.querySelector('.value-unit').textContent]),
+    tilesHidden: document.getElementById('warningDialogValues').getAttribute('aria-hidden'),
+    buttons: [$('#closeWarning').text().trim(), $('#continueWarning').text().trim()],
   }));
   dialog.lines = dialog.text.split('<br>').map((line) => line.replace(/^• /, ''));
   return dialog;
@@ -84,7 +91,7 @@ function setBitrateByHand(page, bitrate) {
   }, String(bitrate));
 }
 
-describe('the dialog lists exactly what Continue applies', { concurrency: 3 }, () => {
+describe('the dialog shows exactly what Apply applies', { concurrency: 3 }, () => {
   for (const tvName of Object.keys(DIALOG_TVS)) {
     for (const conn of ['ethernet', 'wifi', 'unknown']) {
       test(`${tvName} over ${conn}`, async () => {
@@ -94,35 +101,44 @@ describe('the dialog lists exactly what Continue applies', { concurrency: 3 }, (
           const dialog = await openDialog(app.page);
           assert.equal(dialog.open, true);
           assert.equal(dialog.title, detected.modelName ? `Optimal settings for this TV (${detected.modelName})` : 'Optimal settings for this TV');
-          assert.equal(lineAfter(dialog, 'Detected: '), [detected.panel, detected.hdr, detected.tizen, detected.connection].join(', '), dialog.text);
-          assert.equal(dialog.lines.indexOf('Tested model: these settings were tested on this TV model.') >= 0, detected.tested, dialog.text);
+          assert.equal(lineAfter(dialog, 'Detected: '),
+            [detected.panel, detected.hdr, detected.tizen, detected.connection].concat(detected.tested ? ['tested model'] : []).join(', '), dialog.text);
+          // The text doesn't repeat the tiles any more (resolution, codec and bitrate had a line each until 2.1.0)
+          ['Tested model', 'Video resolution', 'Video codec', 'Video bitrate'].forEach((prefix) => {
+            assert.equal(dialog.lines.some((line) => line.indexOf(prefix) === 0), false, prefix + ': ' + dialog.text);
+          });
+          // At most 6 lines of text (2.1.0 had up to 10 under the tiles)
+          assert.ok(dialog.lines.filter((line) => line).length <= 6, dialog.text);
+          assert.equal(dialog.tilesHidden, null, 'screen readers read the tiles');
+          assert.deepEqual(dialog.buttons, ['Cancel', 'Apply']);
           const listed = {
-            resolution: lineAfter(dialog, 'Video resolution: '),
-            codec: lineAfter(dialog, 'Video codec: '),
-            bitrate: lineAfter(dialog, 'Video bitrate: '),
             settings: dialog.lines.find((line) => line.indexOf('Video frame pacing ') === 0),
-            gameMode: dialog.lines.indexOf('Game mode on') >= 0,
+            gameMode: dialog.lines.indexOf('Ultra low latency mode on') >= 0,
             hint120Hz: dialog.text.indexOf('If this TV has a 120 Hz panel, you can turn on') >= 0,
           };
 
           await app.page.evaluate(() => $('#continueWarning').trigger('click'));
           const shown = await readVideoSettings(app.page);
-          assert.equal(listed.resolution, `${shown.resolutionLabel}, ${shown.frameRate} FPS`);
+          assert.deepEqual(dialog.tiles, [
+            [shown.resolution === '3840:2160' ? '4K' : shown.resolution.split(':')[1] + 'p', shown.resolution.replace(':', ' x ')],
+            [shown.frameRate, 'FPS'],
+            [shown.bitrate, 'Mbps'],
+            ['HEVC', shown.hdr ? 'HDR' : 'no HDR'],
+          ]);
           assert.equal(shown.codec, 'HEVC');
-          assert.equal(listed.codec, shown.hdr ? 'HEVC Main10 with HDR' : 'HEVC');
-          assert.equal(listed.bitrate, `${shown.bitrate} Mbps`);
           assert.equal(listed.settings, [
             'Video frame pacing ' + (shown.framePacing ? 'on' : 'off'),
             shown.fullRange ? 'full color range' : 'limited color range',
             'unlock all frame rates ' + (shown.unlockAllFps ? 'on' : 'off'),
-            'optimize bitrate presets ' + (shown.optimizeBitrate ? 'on' : 'off'),
           ].join(', '));
-          assert.equal(listed.gameMode, shown.gameMode, 'the game mode line names a game mode that is on');
+          assert.equal(listed.gameMode, shown.gameMode, 'the line of the ultra low latency mode names a mode that is on');
           // A 4K or 8K TV whose higher frame rates stay locked is told how to unlock them for a 120 Hz panel (plan D7)
           assert.equal(listed.hint120Hz, !shown.unlockAllFps && detected.panel !== 'Full HD panel', dialog.text);
-          // The button keeps the bitrate it listed when the resolution or frame rate changes later (plan D9)
-          assert.equal(shown.autoAdjustBitrate, false);
-          const stored = await waitForStorage(app.page, (values) => values.autoAdjustBitrate === false && values.bitrate === shown.bitrate);
+          // After the button, the bitrate follows the resolution and frame rate with the presets again (2.2.0)
+          assert.equal(shown.autoAdjustBitrate, true);
+          const stored = await waitForStorage(app.page, (values) => values.autoAdjustBitrate === true && values.bitrate === shown.bitrate);
+          // The other warnings get their buttons back
+          assert.deepEqual(await app.page.evaluate(() => [$('#closeWarning').text().trim(), $('#continueWarning').text().trim()]), ['Close', 'Continue']);
           assert.equal(stored.resolution, shown.resolution);
           assert.ok(app.logs.some((line) => line.indexOf('The optimal streaming settings for this TV have been applied.') >= 0));
           assert.deepEqual(app.errors, []);
@@ -182,7 +198,8 @@ test('the button is the first of the basic settings, with its generic label and 
       help: '- Applies the best image quality this TV supports (its highest resolution up to 4K, HEVC, and HDR if the TV supports it) with a bitrate that matches its network connection.',
       ariaLabel: 'Apply the optimal settings for this TV',
       text: 'Apply the optimal streaming settings for this TV',
-      navigationItems: ['optimalSettingsBtn', 'selectResolution', 'selectFramerate', 'selectBitrate', 'framePacingBtn'],
+      // 'Unlock all frame rates' right below the frame rate that it extends (frame pacing is in the Video Settings)
+      navigationItems: ['optimalSettingsBtn', 'selectResolution', 'selectFramerate', 'unlockAllFpsBtn', 'selectBitrate'],
       firstOption: 'optimalSettingsBtn',
     });
   } finally {
@@ -219,15 +236,15 @@ describe('the remote reaches the button', { concurrency: 2 }, () => {
         await app.page.keyboard.press('Enter');
         await app.page.waitForFunction(() => isDialogOpen === true);
         assert.ok((await app.page.evaluate(() => document.getElementById('warningDialogTitle').innerHTML)).indexOf('Optimal settings for this TV') === 0);
-        // Continue gets the focus (the view of the dialog moves it there about 100 ms after the dialog opened it on
-        // Close), and RIGHT moves it to Close
+        // Apply gets the focus (the view of the dialog moves it there about 100 ms after the dialog opened it on
+        // Cancel), and RIGHT moves it to Cancel
         await waitForFocus(app.page, 'continueWarning');
         await app.page.keyboard.press('ArrowRight');
         assert.equal(await focused(app.page), 'closeWarning');
         await app.page.keyboard.press('Enter');
         await app.page.waitForFunction(() => isDialogOpen === false);
         assert.equal(await focused(app.page), 'optimalSettingsBtn');
-        assert.deepEqual(await readVideoSettings(app.page), before, 'Close keeps the settings');
+        assert.deepEqual(await readVideoSettings(app.page), before, 'Cancel keeps the settings');
 
         // DOWN and UP move through the basic settings in their order
         await app.page.keyboard.press('ArrowDown');
@@ -241,7 +258,7 @@ describe('the remote reaches the button', { concurrency: 2 }, () => {
     });
   }
 
-  test('ENTER on Continue applies the settings and returns the focus to the button', async () => {
+  test('ENTER on Apply applies the settings and returns the focus to the button', async () => {
     const app = await openApp(harness, { tv: { tv: 'uhd', conn: 'wifi' } });
     try {
       await setBitrateByHand(app.page, 33);
@@ -253,7 +270,8 @@ describe('the remote reaches the button', { concurrency: 2 }, () => {
       await app.page.waitForFunction(() => isDialogOpen === false);
       assert.equal(await focused(app.page), 'optimalSettingsBtn');
       const shown = await readVideoSettings(app.page);
-      assert.deepEqual([shown.resolution, shown.bitrate, shown.autoAdjustBitrate], ['3840:2160', '80', false]);
+      // The bitrate picked by hand (33 Mbps) follows the presets again after the button
+      assert.deepEqual([shown.resolution, shown.bitrate, shown.autoAdjustBitrate], ['3840:2160', '80', true]);
       assert.ok(app.logs.some((line) => line.indexOf('The optimal streaming settings for this TV have been applied.') >= 0));
       assert.deepEqual(app.errors, []);
     } finally {
@@ -264,28 +282,29 @@ describe('the remote reaches the button', { concurrency: 2 }, () => {
 
 test('in pt-BR the dialog has no English line: tested S90C on Tizen 9.0, an HDR TV on Tizen 6.5, an unknown connection', async () => {
   // English texts that stayed untranslated next to translated lines before
-  const ENGLISH = ['with HDR', 'Video frame pacing on', 'Game mode on', 'Game mode stays disabled', 'could not be detected', 'Detected:', 'The following'];
+  const ENGLISH = ['Video frame pacing on', 'Ultra low latency mode', 'tested model', 'could not be detected', 'Detected:', 'The following'];
   for (const tv of [{ tv: 's90c', conn: 'wifi' }, { tv: 'uhd', conn: 'unknown' }, { tv: 'fhd', conn: 'ethernet', wasmPlayer: 'ull' }]) {
     const app = await openApp(harness, { tv });
     try {
       await app.page.evaluate(() => window.i18n.setLanguage('pt-BR'));
       if (tv.wasmPlayer) {
-        // Tizen 5.5 with the Ultra Low Latency mode: a game mode that is on gets the line that Continue turns it off
+        // Tizen 5.5 with the Ultra Low Latency mode: a mode that is on gets the line that Apply turns it off
         await app.page.evaluate(() => $('#gameModeSwitch').trigger('click'));
         await waitForStorage(app.page, (values) => values.gameMode === true);
       }
       const dialog = await openDialog(app.page);
-      const label = JSON.stringify(tv) + ': ' + dialog.text;
+      const label = JSON.stringify(tv) + ': ' + dialog.text + ' ' + dialog.buttons.join(' ');
       ENGLISH.forEach((text) => assert.ok(dialog.text.indexOf(text) < 0, text + ' in ' + label));
+      assert.deepEqual(dialog.buttons, ['Cancelar', 'Aplicar'], label);
       if (tv.tv === 's90c') {
-        assert.ok(dialog.lines.indexOf('Ajuste de ritmo de quadros ativado, faixa de cores limitada, desbloquear todas as taxas de quadros ativado, otimizar predefinições de taxa de bits desativado') >= 0, label);
-        assert.ok(dialog.text.indexOf('HEVC Main10 com HDR') >= 0, label);
-        assert.ok(dialog.text.indexOf('O Modo jogo fica desativado no Tizen 9.0, então instale a variante ForceGM para a menor latência.') >= 0, label);
+        assert.equal(lineAfter(dialog, 'Detectado: '), 'painel 4K, HDR, Tizen 9.0, Wi-Fi, modelo testado', label);
+        assert.ok(dialog.lines.indexOf('Ajuste de ritmo de quadros ativado, faixa de cores limitada, desbloquear todas as taxas de quadros ativado') >= 0, label);
+        assert.ok(dialog.text.indexOf('O modo de latência ultrabaixa fica desativado no Tizen 9.0, então instale a variante ForceGM para a menor latência.') >= 0, label);
       } else if (tv.tv === 'uhd') {
-        assert.ok(dialog.lines.indexOf('Modo jogo ligado') >= 0, label);
+        assert.ok(dialog.lines.indexOf('Modo de latência ultrabaixa ligado') >= 0, label);
         assert.ok(dialog.text.indexOf('Não foi possível detectar o tipo de conexão de rede da TV') >= 0, label);
       } else {
-        assert.ok(dialog.lines.indexOf('Modo jogo desligado') >= 0, label);
+        assert.ok(dialog.lines.indexOf('Modo de latência ultrabaixa desligado') >= 0, label);
       }
       assert.deepEqual(app.errors, [], label);
     } finally {

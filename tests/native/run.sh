@@ -23,7 +23,6 @@ flags=(
   -std=c++17 -g -O1 -fno-omit-frame-pointer
   -fsanitize=address,undefined -fno-sanitize=vptr -fno-sanitize-recover=all
   -I"$here/stubs" -I"$repo/wasm" -I"$repo/wasm/dispatcher" -I"$repo/moonlight-common-c/src" -I"$repo/opus/include"
-  -I"$repo/h264bitstream"
 )
 cflags=(
   -std=gnu99 -g -O1 -fno-omit-frame-pointer
@@ -73,13 +72,40 @@ for source in "$here"/*_test.c; do
   fi
 done
 
+# Build the Opus library from the files and definitions that CMakeLists.txt gives it (only the decoder: the app never
+# encodes) into a static library, as the release build does, then link and run tests/native/opus_decoder/decode.c,
+# which decodes with the functions of the app. A file that the decoder needs and the list leaves out fails the link.
+opus_out="$out/opus"
+rm -rf "$opus_out"
+mkdir -p "$opus_out"
+# shellcheck disable=SC2207
+opus_sources=($(sed -n '/^add_library(opus STATIC/,/^)/p' "$repo/CMakeLists.txt" | grep -o 'opus/[A-Za-z0-9_/]*\.c'))
+# shellcheck disable=SC2207
+opus_defines=($(sed -n '/^target_compile_definitions(opus PUBLIC/,/)/p' "$repo/CMakeLists.txt" |
+  sed -e 's/target_compile_definitions(opus PUBLIC//' -e 's/)//' | tr -s ' \n' '\n' | sed -e '/^$/d' -e 's/^/-D/'))
+echo "# Building the Opus decoder from the ${#opus_sources[@]} files of CMakeLists.txt (${opus_defines[*]})"
+for source in "${opus_sources[@]}"; do
+  if ! "$cc" -std=gnu99 -O1 -w "${opus_defines[@]}" -I"$repo/opus/include" -I"$repo/opus/src" -I"$repo/opus/silk" \
+      -I"$repo/opus/celt" -I"$repo/opus/silk/fixed" -c "$repo/$source" -o "$opus_out/$(echo "$source" | tr / _).o"; then
+    echo "# $source doesn't compile"
+    failed=1
+  fi
+done
+ar rcs "$opus_out/libopus.a" "$opus_out"/*.o
+echo "# Running opus_decoder/decode.c"
+if ! "$cc" -std=gnu99 -O1 -I"$repo/opus/include" -o "$opus_out/decode" "$here/opus_decoder/decode.c" "$opus_out/libopus.a" -lm ||
+    ! "$opus_out/decode"; then
+  echo "# The Opus decoder of CMakeLists.txt doesn't link or decode"
+  failed=1
+fi
+
 # Compile every source file of the WebAssembly module without linking (-fsyntax-only), with the same stubs, so that an
 # error that only the release build would see (e.g. a private member used outside its class) fails here: most of
 # these files are in no test. wasm/http.cpp needs the headers of curl and OpenSSL and is checked when they exist.
 syntax_flags=(-std=gnu++17 -fsyntax-only -DSAMSUNG_WRT -DOS_WASM -DNDEBUG
   -I"$here/stubs" -I"$repo/wasm" -I"$repo/wasm/dispatcher" -I"$repo/moonlight-common-c/src"
   -I"$repo/moonlight-common-c/enet/include" -I"$repo/moonlight-common-c/reedsolomon" -I"$repo/libgamestream"
-  -I"$repo/h264bitstream" -I"$repo/opus/include")
+  -I"$repo/opus/include")
 for source in "$repo"/wasm/*.cpp; do
   name="$(basename "$source")"
   if [ "$name" = "http.cpp" ] && ! printf '#include <curl/curl.h>\n#include <openssl/ssl.h>\n' |

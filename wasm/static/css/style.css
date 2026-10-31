@@ -429,10 +429,9 @@ button, .mdl-button, .mdl-menu__item, .mdl-textfield__input, .mdl-switch__label,
 }
 .status-chip.chip-online { color: var(--mint); background: rgba(46, 230, 160, 0.12); box-shadow: inset 0 0 0 1px rgba(46, 230, 160, 0.28); }
 .status-chip.chip-offline { color: #A9B0CC; background: rgba(169, 176, 204, 0.10); }
-.status-chip.chip-paired { color: #9FB8FF; background: rgba(61, 123, 255, 0.14); box-shadow: inset 0 0 0 1px rgba(61, 123, 255, 0.3); }
 .status-chip.chip-locked { color: var(--amber); background: rgba(255, 197, 71, 0.12); box-shadow: inset 0 0 0 1px rgba(255, 197, 71, 0.3); }
 /* Running is mint on every screen, like the ring of the running app */
-.status-chip.chip-running { color: #04261A; background: var(--grad-mint); box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3); }
+.status-chip.chip-running { color: #04261A; background: var(--grad-mint); box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3); text-transform: uppercase; }
 .status-chip.chip-hidden { color: var(--text-2); text-transform: uppercase; }
 .status-chip.chip-favorite { color: var(--amber); background: rgba(255, 197, 71, 0.12); box-shadow: inset 0 0 0 1px rgba(255, 197, 71, 0.3); text-transform: uppercase; }
 /* Dark fills keep the chips readable over the ambient light of bright box art */
@@ -462,7 +461,6 @@ button, .mdl-button, .mdl-menu__item, .mdl-textfield__input, .mdl-switch__label,
 }
 body[data-section="basicSettings"] { --hue: 139, 107, 255; }
 body[data-section="interfaceSettings"] { --hue: 255, 92, 154; }
-body[data-section="hostSettings"] { --hue: 56, 189, 248; }
 body[data-section="inputSettings"] { --hue: 46, 230, 160; }
 body[data-section="audioSettings"] { --hue: 255, 176, 58; }
 body[data-section="videoSettings"] { --hue: 255, 90, 110; }
@@ -1401,21 +1399,16 @@ body:not([data-view="hosts"]):not([data-view="apps"]) .launcher-hero {
   width: 34px;
   height: 34px;
 }
-/* The main action of the settings. Its title keeps the badge on its line: the button wraps instead (pt-BR). Only a title
-   wider than 668px (the row without the gap and the 440px of the button) wraps as well, with the badge next to it, so
-   that the row never overflows. */
+/* The main action of the settings. Its title keeps its line: the button wraps instead (pt-BR). Only a title wider than
+   668px (the row without the gap and the 440px of the button) wraps as well, so that the row never overflows. */
 #basicSettings > :first-child {
   grid-template-columns: minmax(max-content, 1fr) auto;
 }
 #basicSettings > :first-child > label {
   display: grid;
-  grid-template-columns: minmax(0, max-content) max-content;
+  grid-template-columns: minmax(0, max-content);
   justify-content: start;
-  align-items: start;
   max-width: 668px;
-}
-#basicSettings > :first-child .badge {
-  margin: 2px 0 0 16px;
 }
 /* Its help text spans both columns and must not widen the first */
 #basicSettings > :first-child > span {
@@ -1427,6 +1420,16 @@ body:not([data-view="hosts"]):not([data-view="apps"]) .launcher-hero {
   color: #fff;
   background: var(--grad-brand);
   box-shadow: 0 12px 30px rgba(61, 123, 255, 0.35);
+}
+/* The heading of a block of rows, the Experimental settings at the end of the Advanced Settings */
+.settings-group {
+  margin: 34px 0 16px 28px;
+  color: var(--amber);
+  font-size: 19px;
+  font-weight: 800;
+  line-height: 1.3;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
 }
 /* Switches: a toggle in the colour of the section, without the fades, layer and focus box of MDL */
 .mdl-switch {
@@ -1558,7 +1561,6 @@ body:not([data-view="hosts"]):not([data-view="apps"]) .launcher-hero {
   text-transform: uppercase;
   vertical-align: 3px;
 }
-.badge-new { color: #04261A; background: var(--grad-mint); }
 .badge-experimental { color: #2A1300; background: var(--grad-amber); }
 /* Popup menus of the settings (MDL) */
 .mdl-button {

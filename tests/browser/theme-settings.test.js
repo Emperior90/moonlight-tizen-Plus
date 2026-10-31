@@ -35,8 +35,9 @@ const TV = { tv: 's90c', conn: 'wifi' };
 // English (null: the language of the simulated TV) and every other language of the app, which can be longer
 const LANGUAGES = [null].concat(fs.readdirSync(path.join(REPO_ROOT, 'wasm/static/locales')).filter((name) => name.endsWith('.json'))
   .map((name) => name.replace(/\.json$/, '')).filter((locale) => locale !== 'en-US').sort());
-const CATEGORIES = ['basicSettings', 'interfaceSettings', 'hostSettings', 'inputSettings', 'audioSettings', 'videoSettings',
-  'advancedSettings', 'aboutSettings'];
+// The sections in their order since 2.2.0: interfaceSettings holds General (the UI and Host Settings of earlier versions)
+const CATEGORIES = ['basicSettings', 'videoSettings', 'audioSettings', 'inputSettings', 'interfaceSettings', 'advancedSettings',
+  'aboutSettings'];
 
 // The colours [r, g, b] of the pixels of a region of the screen as the page shows it, row by row
 async function pixels(page, clip) {
@@ -171,10 +172,13 @@ test('a badge stays on the line of its title in every language: the button of th
             };
           }), category));
         }
-        assert.equal(badges.length, 6, JSON.stringify(badges));
+        // Unlock all frame rates and the audio configuration (the Experimental block of the Advanced Settings names its
+        // rows once, without a badge on each, and the badge New is gone)
+        assert.equal(badges.length, 2, JSON.stringify(badges));
         badges.forEach((badge) => assert.deepEqual([badge.onTitleLine, badge.clear], [true, true], where + ' ' + JSON.stringify(badges)));
-        // The button of the optimal settings: one line in English, two in Brazilian Portuguese and German, at most two in
-        // another language and with wider text (where the English one wraps as well), inside its row either way
+        // The button of the optimal settings: one line in English and Brazilian Portuguese (whose title lost the badge New),
+        // two in German, at most two in another language and with wider text (where the English one wraps as well),
+        // inside its row either way
         const button = await app.page.evaluate(() => {
           handleSettingsView('basicSettings');
           const element = document.getElementById('optimalSettingsBtn');
@@ -182,7 +186,7 @@ test('a badge stays on the line of its title in every language: the button of th
           return { lines: Math.round(span.getBoundingClientRect().height / parseFloat(getComputedStyle(span).lineHeight)),
             inside: element.scrollWidth <= element.clientWidth + 1 };
         });
-        const expectedLines = { 'en-US': 1, 'pt-BR': 2, 'de-DE': 2 }[language || 'en-US'];
+        const expectedLines = { 'en-US': 1, 'pt-BR': 1, 'de-DE': 2 }[language || 'en-US'];
         if (expectedLines && !stress) {
           assert.deepEqual(button, { lines: expectedLines, inside: true }, where);
         } else {
@@ -193,6 +197,57 @@ test('a badge stays on the line of its title in every language: the button of th
     } finally {
       await app.context.close();
     }
+  }
+});
+
+test('the sections and their rows come in the order of 2.2.0: streaming first, Unlock all frame rates below the frame rate, the Experimental block at the end', async () => {
+  const app = await openApp(harness, { tv: TV });
+  try {
+    await openSettings(app.page);
+    const order = await app.page.evaluate(() => ({
+      sections: Array.prototype.map.call(document.querySelectorAll('.settings-category'), (tile) =>
+        tile.getAttribute('data-category') + ' ' + tile.querySelector('label').textContent.trim()),
+      panes: Array.prototype.map.call(document.querySelectorAll('#settings-right-pane > .settings-options'), (pane) => pane.id),
+      basic: Views.BasicSettings.view.func(),
+      video: Views.VideoSettings.view.func(),
+      audio: Views.AudioSettings.view.func(),
+      general: Views.InterfaceSettings.view.func(),
+      advanced: Views.AdvancedSettings.view.func(),
+      // The children of the Advanced Settings: the control of each row, or the heading of a block
+      advancedChildren: Array.prototype.map.call(document.getElementById('advancedSettings').children, (child) =>
+        child.classList.contains('settings-group') ? 'group ' + child.textContent.trim() : child.querySelector('[id$="Btn"], [id^="select"]').id),
+      // Labels of switches, which a row only has without a help text, and the badge New that is gone
+      switchLabels: Array.prototype.map.call(document.querySelectorAll('.setting-option .mdl-switch__label'), (label) => label.closest('.mdl-switch').id),
+      newBadges: document.querySelectorAll('.badge-new').length,
+    }));
+    assert.deepEqual(order.sections, ['basicSettings Basic Settings', 'videoSettings Video Settings', 'audioSettings Audio Settings',
+      'inputSettings Input Settings', 'interfaceSettings General', 'advancedSettings Advanced Settings', 'aboutSettings About']);
+    assert.deepEqual(order.panes, CATEGORIES);
+    assert.deepEqual(order.basic, ['optimalSettingsBtn', 'selectResolution', 'selectFramerate', 'unlockAllFpsBtn', 'selectBitrate']);
+    assert.deepEqual(order.video, ['selectCodec', 'hdrModeBtn', 'framePacingBtn', 'gameModeBtn']);
+    assert.deepEqual(order.audio, ['selectAudioBackend', 'selectAudio', 'audioSyncBtn', 'playHostAudioBtn']);
+    assert.deepEqual(order.general, ['selectLanguage', 'selectSortAppsList', 'ipAddressFieldModeBtn', 'removeAllHostsBtn']);
+    assert.deepEqual(order.advanced, ['optimizeGamesBtn', 'fullRangeBtn', 'disableWarningsBtn', 'selectPerformanceStats', 'selectStatsPosition',
+      'refFrameInvalidationBtn', 'hdrMetadataBtn', 'decryptHostAudioBtn']);
+    assert.deepEqual(order.advancedChildren, ['optimizeGamesBtn', 'fullRangeBtn', 'disableWarningsBtn', 'selectPerformanceStats',
+      'selectStatsPosition', 'group Experimental', 'refFrameInvalidationBtn', 'hdrMetadataBtn', 'decryptHostAudioBtn']);
+    assert.deepEqual(order.switchLabels, ['playHostAudioBtn', 'rumbleFeedbackBtn', 'mouseEmulationBtn']);
+    assert.equal(order.newBadges, 0);
+    // Without audio output, the decryption of the audio leaves the Experimental block, as the audio rows leave theirs
+    await app.page.evaluate(() => {
+      $('#selectAudioBackend').attr('data-value', 'Disabled').data('value', 'Disabled');
+      updateAudioBackendSettings();
+    });
+    assert.deepEqual(await app.page.evaluate(() => [Views.AdvancedSettings.view.func().slice(-1)[0], $('#decryptHostAudioOption').css('display')]),
+      ['hdrMetadataBtn', 'none']);
+    // The heading of the block in German, and General in every language
+    await app.page.evaluate(() => i18n.setLanguage('de-DE'));
+    await app.page.waitForTimeout(400);
+    assert.deepEqual(await app.page.evaluate(() => [$('#advancedSettings .settings-group').text().trim(),
+      $('.settings-category[data-category="interfaceSettings"] label').text().trim()]), ['Experimentell', 'Allgemein']);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
   }
 });
 
@@ -313,7 +368,7 @@ test('the switches keep no fades or layers of the framework, only the thumb move
       await app.page.keyboard.press('ArrowDown');
       await app.page.waitForTimeout(150);
     }
-    assert.deepEqual(seen, ['rumbleFeedbackBtn', 'mouseEmulationBtn', 'unlockAllFpsBtn', 'optimizeBitrateBtn', 'disableWarningsBtn'].map((id) =>
+    assert.deepEqual(seen, ['rumbleFeedbackBtn', 'mouseEmulationBtn', 'optimizeGamesBtn', 'fullRangeBtn', 'disableWarningsBtn'].map((id) =>
       [id, 'rgba(0, 0, 0, 0)', true]));
     assert.deepEqual(app.errors, []);
   } finally {
@@ -487,10 +542,10 @@ test('the settings rows are opaque, and rows that scroll out at the top of the p
   const app = await openApp(harness, { tv: TV });
   try {
     await openSettings(app.page);
-    await app.page.evaluate(() => handleSettingsView('videoSettings'));
+    await app.page.evaluate(() => handleSettingsView('advancedSettings'));
     await app.page.waitForTimeout(500);
     const state = () => app.page.evaluate(() => {
-      const rows = Array.prototype.filter.call(document.querySelectorAll('#videoSettings > .setting-option'), (row) => row.offsetParent !== null);
+      const rows = Array.prototype.filter.call(document.querySelectorAll('#advancedSettings > .setting-option'), (row) => row.offsetParent !== null);
       return {
         scrolled: document.getElementById('settings-right-pane').scrollTop,
         // The background colour of every row, the current one included, has no alpha (rgb() instead of rgba())
@@ -512,7 +567,7 @@ test('the settings rows are opaque, and rows that scroll out at the top of the p
     const band = await app.page.evaluate(() => {
       const pane = document.getElementById('settings-right-pane');
       // The second shown row, which isn't the current one (the first, after the keys above)
-      const row = Array.prototype.filter.call(document.querySelectorAll('#videoSettings > .setting-option'),
+      const row = Array.prototype.filter.call(document.querySelectorAll('#advancedSettings > .setting-option'),
         (element) => element.offsetParent !== null)[1];
       pane.scrollTop = 0;
       const top = pane.getBoundingClientRect().top;
@@ -542,9 +597,9 @@ test('the arrow keys move through every row of a long section without scrolling 
       window.__prevented = [];
       document.addEventListener('keydown', (event) => window.__prevented.push(event.key + ':' + event.defaultPrevented));
     });
-    // Video Settings (6 rows) and About (5 tall rows) need the pane to scroll for their last rows, Basic Settings (5 rows)
-    // fits on the screen
-    const ROWS = { videoSettings: 6, aboutSettings: 5, basicSettings: 5 };
+    // Advanced Settings (8 rows and the heading of the Experimental block) and About (5 tall rows) need the pane to scroll
+    // for their last rows, Basic Settings (5 rows) fits on the screen
+    const ROWS = { advancedSettings: 8, aboutSettings: 5, basicSettings: 5 };
     for (const section of Object.keys(ROWS)) {
       await app.page.evaluate((name) => handleSettingsView(name), section);
       await app.page.waitForTimeout(400);
@@ -599,7 +654,7 @@ test('the arrow keys move through every row of a long section without scrolling 
       assert.equal(Math.max.apply(null, scrolls) > 0, section !== 'basicSettings', section + ': ' + JSON.stringify(scrolls));
     }
     const prevented = await app.page.evaluate(() => window.__prevented);
-    assert.equal(prevented.length, 2 * 2 * (6 + 5 + 5), JSON.stringify(prevented));
+    assert.equal(prevented.length, 2 * 2 * (8 + 5 + 5), JSON.stringify(prevented));
     assert.ok(prevented.every((entry) => /:true$/.test(entry)), JSON.stringify(prevented));
 
     // During a stream the arrow keys keep their own action, for the PC

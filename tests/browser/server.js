@@ -4,7 +4,8 @@
 // with the simulated TV in place of the Tizen runtime and a stub in place of the WebAssembly module:
 //   /index.html                    wasm/index.html, with tv-mock.js inserted as the first script of <head>
 //   /platform.js                   res/platform.js
-//   /platform/*, /static/*         wasm/platform, wasm/static
+//   /platform/*, /static/*         wasm/platform, wasm/static (without the files that CMakeLists.txt leaves out of the
+//                                  widget, e.g. static/locales/en-US.json)
 //   /$WEBAPIS/webapis/webapis.js   tests/browser/mocks/webapis.js (simulated Samsung product APIs)
 //   /moonlight-wasm.js             tests/browser/mocks/moonlight-wasm.js (stub of the WebAssembly module)
 //   /__test__/*                    tests/browser/mocks (tv-mock.js, blank.html)
@@ -16,6 +17,7 @@
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
+const { installedDirectories, isExcluded } = require('../lib/widget-files');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const MOCKS_DIR = path.join(__dirname, 'mocks');
@@ -37,11 +39,20 @@ const CONTENT_TYPES = {
   '.woff2': 'font/woff2',
 };
 
+// The EXCLUDE patterns of an installed folder of CMakeLists.txt, so that the app can't use a file the TV won't have
+function excludesOf(dir) {
+  const entry = installedDirectories(REPO_ROOT).find((item) => item.dir === dir);
+  if (!entry) {
+    throw new Error('CMakeLists.txt does not install ' + dir + ' into the widget');
+  }
+  return entry.excludes;
+}
+
 // Folders served below a URL prefix, in the layout of the installed widget
 const MOUNTS = [
-  { prefix: '/platform/', dir: path.join(REPO_ROOT, 'wasm', 'platform') },
-  { prefix: '/static/', dir: path.join(REPO_ROOT, 'wasm', 'static') },
-  { prefix: '/__test__/', dir: MOCKS_DIR },
+  { prefix: '/platform/', dir: path.join(REPO_ROOT, 'wasm', 'platform'), excludes: excludesOf('wasm/platform') },
+  { prefix: '/static/', dir: path.join(REPO_ROOT, 'wasm', 'static'), excludes: excludesOf('wasm/static') },
+  { prefix: '/__test__/', dir: MOCKS_DIR, excludes: [] },
 ];
 
 // Single files served at a fixed URL
@@ -72,6 +83,10 @@ function resolveFile(urlPath) {
       const file = path.resolve(mount.dir, '.' + path.sep + urlPath.slice(mount.prefix.length));
       // Never serve anything outside the mounted folder
       if (file.indexOf(mount.dir + path.sep) !== 0) {
+        return null;
+      }
+      // Nor a file that the build leaves out of the widget
+      if (isExcluded(path.relative(mount.dir, file), mount.excludes)) {
         return null;
       }
       return file;

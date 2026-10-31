@@ -102,22 +102,22 @@ const snackbarMessages = (page) => page.evaluate(() => window.__snackbarMessages
 
 // The lines of System information after the TV lines (innerText turned the line breaks into <br> elements)
 function readGamepadLines(page) {
-  return page.evaluate(() => document.getElementById('systemInfoBtn').innerHTML.split(/<br\s*\/?>/).filter((line) => /^Gamepad/.test(line)));
+  return page.evaluate(() => document.getElementById('systemInfoBtn').innerHTML.split(/<br\s*\/?>/).filter((line) => /^(Controller|Controle)/.test(line)));
 }
 
 test('a standard controller is logged with its fields, listed in System information, gets no notice, and its first press counts', async () => {
   const app = await openWithGamepads();
   const { page } = app;
   try {
-    assert.deepEqual(await readGamepadLines(page), ['Gamepads: None']);
+    assert.deepEqual(await readGamepadLines(page), ['Controllers: None']);
     // The controller wakes up with a press of A, which is already in the snapshot of its connection event
     await connect(page, 0, xbox(0, { pressed: [0], rumble: true }));
     await page.waitForTimeout(AFTER_DELAY_MS);
     assert.deepEqual(await operations(page), ['accept']);
     assert.ok(app.logs.some((line) => line.indexOf('Gamepad 0 connected: id="' + XBOX_ID + '", mapping="standard", buttons=17, axes=4, rumble=yes, type=Xbox') >= 0),
       JSON.stringify(app.logs.filter((line) => line.indexOf('gamepadconnected') >= 0)));
-    assert.deepEqual(await snackbarMessages(page), ['Gamepad 0 has been connected.']);
-    assert.deepEqual(await readGamepadLines(page), ['Gamepad 0: Xbox Wireless Controller (standard layout, 17 buttons, 4 axes, rumble: Yes, type: Xbox)']);
+    assert.deepEqual(await snackbarMessages(page), ['Controller 0 (Xbox Wireless Controller) has been connected.']);
+    assert.deepEqual(await readGamepadLines(page), ['Controller 0: Xbox Wireless Controller (standard layout, 17 buttons, 4 axes, rumble: Yes, type: Xbox)']);
 
     // Releasing A and pressing Select and Start: press and switch
     for (const button of [8, 9]) {
@@ -131,7 +131,7 @@ test('a standard controller is logged with its fields, listed in System informat
     // Disconnecting logs the fields again and removes it from System information
     await disconnect(page, 0);
     assert.ok(app.logs.some((line) => line.indexOf('Gamepad 0 disconnected: id="' + XBOX_ID + '"') >= 0));
-    assert.deepEqual(await readGamepadLines(page), ['Gamepads: None']);
+    assert.deepEqual(await readGamepadLines(page), ['Controllers: None']);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
@@ -143,7 +143,9 @@ test('controllers with a non-standard layout get one notice per controller id, a
   const { page } = app;
   try {
     await connect(page, 0, eightBitDo());
-    assert.deepEqual(await snackbarMessages(page), ['Gamepad 0 has been connected.', 'Gamepad 0 (8BitDo SN30 Pro)' + NOTICE]);
+    // The rumble, on by default, tells once that this controller has no vibration motor for the browser
+    assert.deepEqual(await snackbarMessages(page), ['Controller 0 (8BitDo SN30 Pro) has been connected.', 'Controller 0 (8BitDo SN30 Pro)' + NOTICE,
+      'Controller 0 (8BitDo SN30 Pro) does not support rumble on this TV.']);
     // 8BitDo controllers are announced to the PC as Xbox controllers, the layout of their X-input mode
     assert.ok(app.logs.some((line) => line.indexOf('Gamepad 0 connected: id="' + EIGHTBITDO_ID + '", mapping="", buttons=16, axes=6, rumble=no, type=Xbox') >= 0));
     assert.ok(app.logs.some((line) => line.indexOf('Warning: Gamepad 0 reports a non-standard layout (mapping=""), so its buttons may be mapped wrongly.') >= 0));
@@ -157,12 +159,12 @@ test('controllers with a non-standard layout get one notice per controller id, a
     await connect(page, 1, dualShockRaw());
     const messages = await snackbarMessages(page);
     assert.deepEqual(messages.filter((message) => message.indexOf(NOTICE) >= 0), [
-      'Gamepad 0 (8BitDo SN30 Pro)' + NOTICE,
-      'Gamepad 1 (Wireless Controller)' + NOTICE,
+      'Controller 0 (8BitDo SN30 Pro)' + NOTICE,
+      'Controller 1 (Wireless Controller)' + NOTICE,
     ]);
     assert.deepEqual(await readGamepadLines(page), [
-      'Gamepad 1: Wireless Controller (non-standard layout, 13 buttons, 8 axes, rumble: No, type: PlayStation)',
-      'Gamepad 2: 8BitDo SN30 Pro (non-standard layout, 16 buttons, 6 axes, rumble: No, type: Xbox)',
+      'Controller 1: Wireless Controller (non-standard layout, 13 buttons, 8 axes, rumble: No, type: PlayStation)',
+      'Controller 2: 8BitDo SN30 Pro (non-standard layout, 16 buttons, 6 axes, rumble: No, type: Xbox)',
     ]);
     // The triggers of the raw layout rest at -1 on axes 2 and 5, which doesn't move the menus
     await page.waitForTimeout(AFTER_DELAY_MS);
@@ -171,15 +173,17 @@ test('controllers with a non-standard layout get one notice per controller id, a
     // System information and the notice are translated
     await page.evaluate(() => window.i18n.setLanguage('pt-BR'));
     assert.deepEqual(await readGamepadLines(page), [
-      'Gamepad 1: Wireless Controller (layout não padrão, 13 botões, 8 eixos, vibração: Não, tipo: PlayStation)',
-      'Gamepad 2: 8BitDo SN30 Pro (layout não padrão, 16 botões, 6 eixos, vibração: Não, tipo: Xbox)',
+      'Controle 1: Wireless Controller (layout não padrão, 13 botões, 8 eixos, vibração: Não, tipo: PlayStation)',
+      'Controle 2: 8BitDo SN30 Pro (layout não padrão, 16 botões, 6 eixos, vibração: Não, tipo: Xbox)',
     ]);
     await connect(page, 3, dualShockRaw({ id: 'Generic USB Joystick (Vendor: 0079 Product: 0006)' }));
-    assert.equal((await snackbarMessages(page)).slice(-1)[0],
-      'O gamepad 3 (Generic USB Joystick) tem um layout de botões não padrão, então alguns botões podem estar errados. Tente o modo XInput ou Xbox dele, ou outra conexão.');
+    // The notice of the layout, then the one of the rumble, which is on by default
+    assert.deepEqual((await snackbarMessages(page)).slice(-2), [
+      'O controle 3 (Generic USB Joystick) tem um layout de botões não padrão, então alguns botões podem estar errados. Tente o modo XInput ou Xbox dele, ou outra conexão.',
+      'O controle 3 (Generic USB Joystick) não suporta vibração nesta TV.']);
     // A controller of an unknown type
     assert.equal((await readGamepadLines(page)).slice(-1)[0],
-      'Gamepad 3: Generic USB Joystick (layout não padrão, 13 botões, 8 eixos, vibração: Não, tipo: Desconhecido)');
+      'Controle 3: Generic USB Joystick (layout não padrão, 13 botões, 8 eixos, vibração: Não, tipo: Desconhecido)');
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
@@ -195,23 +199,23 @@ test('System information names the controller type that the stream announces, al
     // The setting PlayStation is sent for every controller (gamepad.cpp), so a controller detected as another type
     // names both, like the log of the stream
     assert.deepEqual(await readGamepadLines(page), [
-      'Gamepad 0: Xbox Wireless Controller (standard layout, 17 buttons, 4 axes, rumble: No, type: PlayStation (setting, detected: Xbox))',
-      'Gamepad 1: Wireless Controller (non-standard layout, 13 buttons, 8 axes, rumble: No, type: PlayStation)',
+      'Controller 0: Xbox Wireless Controller (standard layout, 17 buttons, 4 axes, rumble: No, type: PlayStation (setting, detected: Xbox))',
+      'Controller 1: Wireless Controller (non-standard layout, 13 buttons, 8 axes, rumble: No, type: PlayStation)',
     ]);
     assert.ok(app.logs.some((line) => line.indexOf('(controller type setting: PlayStation)') >= 0));
     // Back on Auto, the detected type is the one sent
     await page.evaluate(() => saveControllerType.call($('.controllerTypeMenu li[data-value="Auto"]')[0]));
     await page.evaluate(() => loadSystemInfo());
     assert.deepEqual(await readGamepadLines(page), [
-      'Gamepad 0: Xbox Wireless Controller (standard layout, 17 buttons, 4 axes, rumble: No, type: Xbox)',
-      'Gamepad 1: Wireless Controller (non-standard layout, 13 buttons, 8 axes, rumble: No, type: PlayStation)',
+      'Controller 0: Xbox Wireless Controller (standard layout, 17 buttons, 4 axes, rumble: No, type: Xbox)',
+      'Controller 1: Wireless Controller (non-standard layout, 13 buttons, 8 axes, rumble: No, type: PlayStation)',
     ]);
     // A controller of an unknown type with the setting Nintendo, translated
     await page.evaluate(() => saveControllerType.call($('.controllerTypeMenu li[data-value="Nintendo"]')[0]));
     await connect(page, 2, dualShockRaw({ id: 'Generic USB Joystick (Vendor: 0079 Product: 0006)' }));
     await page.evaluate(() => window.i18n.setLanguage('pt-BR'));
     assert.equal((await readGamepadLines(page)).slice(-1)[0],
-      'Gamepad 2: Generic USB Joystick (layout não padrão, 13 botões, 8 eixos, vibração: Não, tipo: Nintendo (configuração, detectado: Desconhecido))');
+      'Controle 2: Generic USB Joystick (layout não padrão, 13 botões, 8 eixos, vibração: Não, tipo: Nintendo (configuração, detectado: Desconhecido))');
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
@@ -230,7 +234,7 @@ test('a controller that never fired gamepadconnected works in the menus and is l
     assert.deepEqual(await operations(page), ['down']);
     assert.ok(app.logs.some((line) => line.indexOf('Found gamepad 1 without a connection event: id="' + XBOX_ID + '"') >= 0));
     await page.evaluate(() => loadSystemInfo());
-    assert.deepEqual(await readGamepadLines(page), ['Gamepad 1: Xbox Wireless Controller (standard layout, 17 buttons, 4 axes, rumble: No, type: Xbox)']);
+    assert.deepEqual(await readGamepadLines(page), ['Controller 1: Xbox Wireless Controller (standard layout, 17 buttons, 4 axes, rumble: No, type: Xbox)']);
     // A Tizen placeholder, which never sent input, is neither listed nor used
     await setPad(page, 0, xbox(0, { timestamp: 0, pressed: [0] }));
     await page.waitForTimeout(AFTER_DELAY_MS);

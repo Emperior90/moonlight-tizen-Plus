@@ -25,8 +25,7 @@ target_compile_definitions(moonlight-enet PUBLIC
     LC_CHROME
     HAS_SOCKLEN_T=1
     HAS_FCNTL=1
-    NO_MSGAPI=1
-    HAS_SOCKLEN_T=1)
+    NO_MSGAPI=1)
 target_include_directories(moonlight-enet PUBLIC
     moonlight-common-c/enet/include)
 
@@ -77,20 +76,13 @@ set_target_properties(libgamestream
         COMPILE_FLAGS
             "-s USE_CRYPTO=1 -s USE_SSL=1 -s USE_CURL=1")
 
-add_library(h264bitstream STATIC
-    h264bitstream/h264_nal.c
-    h264bitstream/h264_sei.c
-    h264bitstream/h264_stream.c
-)
-target_include_directories(h264bitstream PUBLIC
-    h264bitstream)
-target_compile_features(h264bitstream PUBLIC c_std_99)
-
+# The decoder of Opus (the app only decodes): the files of the encoder are left out. Every file here is one that the
+# decoder links (opus_multistream_decoder_create(), opus_multistream_decode()); tests/native/run.sh builds this list
+# and decodes with it.
 add_library(opus STATIC
     opus/celt/bands.c
     opus/celt/celt.c
     opus/celt/celt_decoder.c
-    opus/celt/celt_encoder.c
     opus/celt/celt_lpc.c
     opus/celt/cwrs.c
     opus/celt/entcode.c
@@ -105,18 +97,10 @@ add_library(opus STATIC
     opus/celt/quant_bands.c
     opus/celt/rate.c
     opus/celt/vq.c
-    opus/silk/A2NLSF.c
-    opus/silk/ana_filt_bank_1.c
-    opus/silk/biquad_alt.c
     opus/silk/bwexpander_32.c
     opus/silk/bwexpander.c
-    opus/silk/check_control_input.c
     opus/silk/CNG.c
     opus/silk/code_signs.c
-    opus/silk/control_audio_bandwidth.c
-    opus/silk/control_codec.c
-    opus/silk/control_SNR.c
-    opus/silk/debug.c
     opus/silk/dec_API.c
     opus/silk/decode_core.c
     opus/silk/decode_frame.c
@@ -125,52 +109,29 @@ add_library(opus STATIC
     opus/silk/decode_pitch.c
     opus/silk/decode_pulses.c
     opus/silk/decoder_set_fs.c
-    opus/silk/enc_API.c
-    opus/silk/encode_indices.c
-    opus/silk/encode_pulses.c
     opus/silk/gain_quant.c
-    opus/silk/HP_variable_cutoff.c
     opus/silk/init_decoder.c
-    opus/silk/init_encoder.c
-    opus/silk/inner_prod_aligned.c
-    opus/silk/interpolate.c
     opus/silk/lin2log.c
     opus/silk/log2lin.c
     opus/silk/LPC_analysis_filter.c
     opus/silk/LPC_fit.c
     opus/silk/LPC_inv_pred_gain.c
-    opus/silk/LP_variable_cutoff.c
     opus/silk/NLSF2A.c
     opus/silk/NLSF_decode.c
-    opus/silk/NLSF_del_dec_quant.c
-    opus/silk/NLSF_encode.c
     opus/silk/NLSF_stabilize.c
     opus/silk/NLSF_unpack.c
-    opus/silk/NLSF_VQ.c
-    opus/silk/NLSF_VQ_weights_laroia.c
-    opus/silk/NSQ.c
-    opus/silk/NSQ_del_dec.c
     opus/silk/pitch_est_tables.c
     opus/silk/PLC.c
-    opus/silk/process_NLSFs.c
-    opus/silk/quant_LTP_gains.c
     opus/silk/resampler.c
-    opus/silk/resampler_down2_3.c
-    opus/silk/resampler_down2.c
     opus/silk/resampler_private_AR2.c
     opus/silk/resampler_private_down_FIR.c
     opus/silk/resampler_private_IIR_FIR.c
     opus/silk/resampler_private_up2_HQ.c
     opus/silk/resampler_rom.c
     opus/silk/shell_coder.c
-    opus/silk/sigm_Q15.c
     opus/silk/sort.c
     opus/silk/stereo_decode_pred.c
-    opus/silk/stereo_encode_pred.c
-    opus/silk/stereo_find_predictor.c
-    opus/silk/stereo_LR_to_MS.c
     opus/silk/stereo_MS_to_LR.c
-    opus/silk/stereo_quant_pred.c
     opus/silk/sum_sqr_shift.c
     opus/silk/table_LSF_cos.c
     opus/silk/tables_gain.c
@@ -180,41 +141,10 @@ add_library(opus STATIC
     opus/silk/tables_other.c
     opus/silk/tables_pitch_lag.c
     opus/silk/tables_pulses_per_block.c
-    opus/silk/VAD.c
-    opus/silk/VQ_WMat_EC.c
-    opus/silk/fixed/apply_sine_window_FIX.c
-    opus/silk/fixed/autocorr_FIX.c
-    opus/silk/fixed/burg_modified_FIX.c
-    opus/silk/fixed/corrMatrix_FIX.c
-    opus/silk/fixed/encode_frame_FIX.c
-    opus/silk/fixed/find_LPC_FIX.c
-    opus/silk/fixed/find_LTP_FIX.c
-    opus/silk/fixed/find_pitch_lags_FIX.c
-    opus/silk/fixed/find_pred_coefs_FIX.c
-    opus/silk/fixed/k2a_FIX.c
-    opus/silk/fixed/k2a_Q16_FIX.c
-    opus/silk/fixed/LTP_analysis_filter_FIX.c
-    opus/silk/fixed/LTP_scale_ctrl_FIX.c
-    opus/silk/fixed/noise_shape_analysis_FIX.c
-    opus/silk/fixed/pitch_analysis_core_FIX.c
-    opus/silk/fixed/process_gains_FIX.c
-    opus/silk/fixed/regularize_correlations_FIX.c
-    opus/silk/fixed/residual_energy16_FIX.c
-    opus/silk/fixed/residual_energy_FIX.c
-    opus/silk/fixed/schur64_FIX.c
-    opus/silk/fixed/schur_FIX.c
-    opus/silk/fixed/vector_ops_FIX.c
-    opus/silk/fixed/warped_autocorrelation_FIX.c
-    opus/src/analysis.c
-    opus/src/mlp.c
-    opus/src/mlp_data.c
     opus/src/opus.c
     opus/src/opus_decoder.c
-    opus/src/opus_encoder.c
     opus/src/opus_multistream.c
     opus/src/opus_multistream_decoder.c
-    opus/src/opus_multistream_encoder.c
-    opus/src/repacketizer.c
 )
 target_include_directories(opus PUBLIC
     opus/include
@@ -237,7 +167,6 @@ add_executable(moonlight-wasm
     wasm/http.cpp
     wasm/input.cpp
     wasm/main.cpp
-    wasm/profiling.cpp
     wasm/wasmplayer.cpp
 )
 target_include_directories(moonlight-wasm PUBLIC
@@ -247,7 +176,6 @@ target_include_directories(moonlight-wasm PUBLIC
     moonlight-common-c/enet/include
     moonlight-common-c/reedsolomon
     libgamestream
-    h264bitstream
     opus/include
     opus/src
     opus/silk
@@ -278,7 +206,6 @@ set_target_properties(moonlight-wasm
              -s USE_CURL=1")
 target_link_libraries(moonlight-wasm PUBLIC
     libgamestream
-    h264bitstream
     opus
     moonlight-common-c
     moonlight-enet
@@ -293,7 +220,11 @@ set(EMSCRIPTEN_OUTPUT_FILES
 
 install(TARGETS moonlight-wasm RUNTIME DESTINATION widget)
 install(FILES ${EMSCRIPTEN_OUTPUT_FILES} DESTINATION widget OPTIONAL)
-install(DIRECTORY wasm/static DESTINATION widget)
+# en-US.json only lists the source texts for the tools and the translators (the app needs no dictionary for English),
+# and i18n-sync.js is a Node tool for the developers: neither goes into the widget
+install(DIRECTORY wasm/static DESTINATION widget
+    PATTERN "en-US.json" EXCLUDE
+    PATTERN "i18n-sync.js" EXCLUDE)
 install(DIRECTORY wasm/platform DESTINATION widget)
 install(DIRECTORY res/service DESTINATION widget)
 install(FILES wasm/index.html DESTINATION widget)

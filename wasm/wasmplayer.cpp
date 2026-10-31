@@ -14,8 +14,6 @@
 #include <utility>
 #include <vector>
 
-#include <h264_stream.h>
-
 #include <assert.h>
 #include <pthread.h>
 #include <unistd.h>

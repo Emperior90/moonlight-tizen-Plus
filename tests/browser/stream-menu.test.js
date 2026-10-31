@@ -5,7 +5,7 @@
 // combo of the WebAssembly module opens it as well ('streamMenuRequested'), the remote and a simulated gamepad move
 // through it while no key reaches the stream (a listener on the video element stands in for the keyboard handler of the
 // module), RETURN and B close it and resume the stream, and its entries run: the performance statistics, the mouse
-// emulation, the keys for the PC (every key released again), Disconnect and 'Disconnect and quit the app on the PC'. It
+// emulation, the keys for the PC (every key released again), Disconnect and 'Quit app on the PC'. It
 // stays inside the safe area of the screen with every entry showing without scrolling and every label on one line in
 // every language, also with text 10 % wider than this machine draws it (tests/browser/text-stress.js), and the video
 // keeps showing. The bitrate entry and 'Type text…' are checked by stream-menu-entries.test.js. The controller side (the
@@ -559,7 +559,7 @@ test('when the mouse emulation entry goes under the selection, the entry before 
   }
 });
 
-test('Disconnect ends the stream, and Disconnect and quit also quits the app on the host once the stream ended', async () => {
+test('Disconnect ends the stream, and Quit app on the PC also quits the app on the host once the stream ended', async () => {
   const app = await openStreaming();
   try {
     await remoteKey(app.page, ...PLAY_PAUSE);

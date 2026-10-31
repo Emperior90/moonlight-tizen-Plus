@@ -5,7 +5,7 @@
 // - the warnings that the TV classes of docs/GUIDE.md section 2 get above 60 FPS at 4K (resolutionFramerateWarningKey())
 // - the game mode on Tizen 5.5 with a WASM player that offers the Ultra Low Latency mode, and the switch that stays
 //   disabled on a TV whose WASM player doesn't offer it (getGameModeDefault())
-// - the limit of the bitrate presets on TVs without a tested profile (presetBitrateLimit())
+// - the bitrate presets, which give the recommended bitrate of every resolution and frame rate (presetBitrate())
 // - the controller type that System information shows when the setting overrides the detection
 // - the Start of a hold that switches the mouse emulation on, which the game sees (wasm/gamepad.cpp)
 // - the version suffix of a release promoted from a pre-release, and what the earlier release v1.19.0-s90c.1 offers
@@ -74,7 +74,8 @@ test('the TV classes of the guide name the warnings that 4K above 60 FPS gets on
 test('the guide gives the game mode of Tizen 5.5 with the exception for a WASM player that offers the mode', () => {
   assert.equal(profile.getGameModeDefault('5.5', 'yes'), false, 'off, but the switch can be turned on');
   assert.equal(profile.getGameModeDefault('5.5', 'unknown'), null, 'off and disabled');
-  const gameModeItem = GUIDE.split('\n').find((line) => line.indexOf('- **Game mode:**') === 0);
+  // The setting is called Ultra low latency mode since 2.2.0 (the stored key is still gameMode)
+  const gameModeItem = GUIDE.split('\n').find((line) => line.indexOf('- **Ultra low latency mode:**') === 0);
   assert.match(gameModeItem, /On Tizen 5\.5 it is off and disabled, unless the video player of the TV says that it offers the Ultra Low Latency mode/);
   // The patch notes of 1.19.100: a disabled switch on every TV whose WASM player says that it lacks the mode
   for (const version of ['5.5', '6.0', '6.5', '7.0', '8.0', '9.0']) {
@@ -84,23 +85,36 @@ test('the guide gives the game mode of Tizen 5.5 with the exception for a WASM p
   assert.match(read('docs/PATCH_NOTES.md'), /a disabled \*Game mode\* switch where the TV can't use it/);
 });
 
-test('the guide names the limit of the bitrate presets on TVs without a tested profile', () => {
-  assert.deepEqual(profile.presetBitrateLimit('unknown', capsOf({ tv: 'uhd' })), { mbps: profile.UNKNOWN_CONNECTION_MAX_BITRATE, reason: 'recommended' });
-  assert.match(GUIDE, /On a TV without a tested profile they are also limited to the highest bitrate that the app recommends for it, which is the decoder cap of the TV class, or 80 Mbps when the connection isn't detected\./);
-  assert.equal(profile.UNKNOWN_CONNECTION_MAX_BITRATE, 80);
+test('the guide names the bitrates of the presets at other resolutions and frame rates as the code gives them', () => {
+  const uhd = capsOf({ tv: 'uhd' });
+  const s90c = capsOf({ tv: 's90c' });
+  assert.equal(profile.presetBitrate('2560:1440', 60, 'wifi', uhd), 50);
+  assert.match(GUIDE, /every other resolution and frame rate gets its bitrate by the same rules, e\.g\. 50 Mbps for 2560 x 1440 at 60 FPS over Wi-Fi\./);
+  for (const fps of [90, 120, 144]) {
+    assert.equal(profile.presetBitrate('3840:2160', fps, 'wifi', s90c), 100, 'S90C at 4K and ' + fps + ' FPS');
+  }
+  assert.equal(profile.getDecoderCapMbps(s90c), 100);
+  assert.match(GUIDE, /On the tested S90C over Wi-Fi, 4K at 90, 120 or 144 FPS gets 100 Mbps, its decoder cap;/);
+  // The presets are the bitrates that the optimal settings button applies for the same resolution and frame rate
+  for (const conn of ['ethernet', 'wifi', 'unknown']) {
+    const optimal = profile.deriveOptimalSettings(s90c, conn);
+    assert.equal(profile.presetBitrate(optimal.resolution, optimal.frameRate, conn, s90c), optimal.bitrate, conn);
+  }
+  assert.match(GUIDE, /Once you move the bitrate slider yourself \(or change the bitrate in the Stream Menu\), the app keeps your bitrate/);
 });
 
 test('the documents describe the controller type of System information and the Start of the mouse emulation as the code does', () => {
   const locale = JSON.parse(read('wasm/static/locales/en-US.json'));
   assert.ok(Object.prototype.hasOwnProperty.call(locale, '%1$s (setting, detected: %2$s)'));
-  assert.ok(tableRow('Gamepad N')[1].indexOf('*PlayStation (setting, detected: Xbox)*') >= 0);
+  assert.ok(Object.prototype.hasOwnProperty.call(locale, 'Controller %1$s: %2$s (%3$s, %4$s buttons, %5$s axes, rumble: %6$s, type: %7$s)'));
+  assert.ok(tableRow('Controller N')[1].indexOf('*PlayStation (setting, detected: Xbox)*') >= 0);
   const controllers = read('docs/CONTROLLERS.md');
   assert.match(controllers, /System information shows the type sent to the PC for each controller\. When the setting overrides the detection, it names the detected type as well/);
   assert.doesNotMatch(controllers, /System information shows the type that Auto detects/);
   // Only the hold that switches the mouse emulation off keeps Start from the game (mouseEmulationHold[].toggled in
   // wasm/gamepad.cpp); the hold that switches it on sends Start until the switch
   assert.match(read('wasm/gamepad.cpp'), /mouseEmulationHold\[gamepadID\]\.toggled/);
-  assert.match(controllers, /When a hold switches mouse mode off, the game doesn't get that Start\. When a hold switches it on, the game sees Start held until the switch/);
+  assert.match(controllers, /When a hold switches mouse emulation off, the game doesn't get that Start\. When a hold switches it on, the game sees Start held until the switch/);
   assert.doesNotMatch(controllers, /The game doesn't get the Start of the hold that switched it\./);
 });
 
@@ -122,9 +136,9 @@ test('the section on surround sound with a soundbar describes the audio path of 
   // The entry of the audio configuration that the section names, and EMSS as the default backend
   const html = read('wasm/index.html');
   assert.match(html, /data-value="51Surround" data-i18n="5\.1 Surround Sound"/);
-  assert.match(html, /id="selectAudioBackend"[^>]*data-value="EMSS"/);
+  assert.match(html, /id="selectAudioBackend"[^>]*data-value="EMSS" data-i18n="TV media player \(EMSS\)"/);
   assert.match(read('wasm/platform/index.js'), /const defaultAudioBackend = 'EMSS';/);
-  assert.match(section, /\*Audio configuration\*: \*5\.1 Surround Sound\*, and \*Audio backend\*: \*EMSS\* \(the default\)/);
+  assert.match(section, /\*Audio configuration\*: \*5\.1 Surround Sound\*, and \*Audio backend\*: \*TV media player \(EMSS\)\* \(the default\)/);
   // Only the EMSS backend gives the media player of the TV an audio track: PCM with the 5.1 layout for 6 channels
   const player = read('wasm/wasmplayer.cpp');
   assert.match(player, /if \(g_Instance->m_AudioBackend == AudioBackend::Emss\) \{[\s\S]*?case 6:\s*channelLayout = samsung::wasm::ChannelLayout::k5_1;[\s\S]*?"audio\/webm; codecs=\\"pcm\\""/);

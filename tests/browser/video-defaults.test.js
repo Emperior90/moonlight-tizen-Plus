@@ -7,8 +7,9 @@
 //
 // The S90C rows are the golden values of plan section 3 and must stay as they are. The other TVs get the values derived
 // from their capabilities since plan WP2: the bitrate for their panel and connection (D6), 'Unlock all frame rates' off
-// (D7) and HDR when the TV reports it (D8). On every TV, a fresh install and Restore Defaults let the bitrate follow the
-// resolution and frame rate, while the button keeps the recommended bitrate (D9). A fresh install stores the settings
+// (D7) and HDR when the TV reports it (D8). On every TV, a fresh install, Restore Defaults and (since 2.2.0) the button
+// let the bitrate follow the resolution and frame rate (D9). The dialog of the button shows the resolution, frame rate,
+// bitrate and codec as tiles and lists only the other settings. A fresh install stores the settings
 // schema with its unique ID, and an existing install gets a one-time snapshot instead (plan WP1, existing-install.test.js).
 
 const { after, before, describe, test } = require('node:test');
@@ -17,8 +18,8 @@ const {
   VIDEO_KEYS, openApp, pick, readOtherSettings, readStorage, readVideoSettings, startHarness, waitForStorage,
 } = require('./harness');
 
-const SETTINGS_LINE_UNLOCKED = 'Video frame pacing on, limited color range, unlock all frame rates on, optimize bitrate presets off';
-const SETTINGS_LINE_LOCKED = 'Video frame pacing on, limited color range, unlock all frame rates off, optimize bitrate presets off';
+const SETTINGS_LINE_UNLOCKED = 'Video frame pacing on, limited color range, unlock all frame rates on';
+const SETTINGS_LINE_LOCKED = 'Video frame pacing on, limited color range, unlock all frame rates off';
 
 // Per simulated TV (tests/browser/mocks/tv-mock.js): the resolution, HDR, frame rates, game mode and bitrate per
 // connection it gets, and the dialog lines
@@ -35,7 +36,6 @@ const TVS = {
     gameModeDisabled: false,
     storedGameMode: false,
     bitrates: { ethernet: '75', wifi: '100', unknown: '80' },
-    codecLine: 'HEVC Main10 with HDR',
     settingsLine: SETTINGS_LINE_UNLOCKED,
     gameModeLine: false,
     forceGmHint: true,
@@ -57,7 +57,6 @@ const TVS = {
     gameModeDisabled: false,
     storedGameMode: true,
     bitrates: { ethernet: '75', wifi: '80', unknown: '80' },
-    codecLine: 'HEVC Main10 with HDR',
     settingsLine: SETTINGS_LINE_LOCKED,
     gameModeLine: true,
     forceGmHint: false,
@@ -81,7 +80,6 @@ const TVS = {
     gameModeDisabled: true,
     storedGameMode: undefined,
     bitrates: { ethernet: '25', wifi: '25', unknown: '20' },
-    codecLine: 'HEVC',
     settingsLine: SETTINGS_LINE_LOCKED,
     gameModeLine: false,
     forceGmHint: false,
@@ -101,7 +99,7 @@ const CONNECTIONS = {
 };
 
 // The hint of the dialog for the owners of a 4K or 8K TV with a 120 Hz panel, when the higher frame rates stay locked
-const HINT_120HZ = 'If this TV has a 120 Hz panel, you can turn on \'Unlock all frame rates\' in the Advanced Settings to stream at up to 120 FPS.';
+const HINT_120HZ = 'If this TV has a 120 Hz panel, you can turn on \'Unlock all frame rates\' below the frame rate to stream at up to 120 FPS.';
 
 // The bitrate advice of the dialog over Wi-Fi: up to a higher bitrate, or that it is already the highest recommended
 const WIFI_RAISE_ADVICE = 'If the performance statistics show no dropped frames, you can raise the bitrate up to %s Mbps.';
@@ -178,8 +176,7 @@ const DEFAULT_OTHER_SETTINGS = {
 };
 
 // The video settings the settings screen shows on a fresh install, after the button and after Restore Defaults. The
-// bitrate follows the resolution and frame rate (autoAdjustBitrate) after a fresh install and Restore Defaults, and is
-// kept after the button.
+// bitrate follows the resolution and frame rate (autoAdjustBitrate) after each of them.
 function expectedVideoSettings(tv, connName, followsPresets) {
   return {
     resolution: tv.resolution,
@@ -195,7 +192,6 @@ function expectedVideoSettings(tv, connName, followsPresets) {
     fullRange: false,
     gameMode: tv.gameMode,
     gameModeDisabled: tv.gameModeDisabled,
-    optimizeBitrate: false,
     autoAdjustBitrate: followsPresets,
   };
 }
@@ -212,7 +208,6 @@ function expectedStoredVideoSettings(tv, connName, followsPresets) {
     framePacing: true,
     fullRange: false,
     gameMode: tv.storedGameMode,
-    optimizeBitrate: false,
     autoAdjustBitrate: followsPresets,
   };
   if (tv.storedGameMode === undefined) {
@@ -274,20 +269,23 @@ for (const tvName of Object.keys(TVS)) {
             text: document.getElementById('warningDialogText').innerHTML,
             open: isDialogOpen,
             continueShown: $('#continueWarning').css('display') !== 'none',
+            tiles: Array.prototype.map.call(document.querySelectorAll('#warningDialogValues .value-tile'), (tile) =>
+              [tile.querySelector('.value-number').textContent, tile.querySelector('.value-unit').textContent]),
           }));
           assert.equal(dialog.title, `Optimal settings for this TV (${tv.model})`);
           assert.equal(dialog.open, true);
           assert.equal(dialog.continueShown, true);
           const text = dialog.text;
-          // What the settings are based on comes first, and a tested model says so (plan WP3)
-          assert.ok(text.indexOf(`Detected: ${tv.detected}, ${conn.label}<br>`) === 0, text);
-          assert.equal(text.indexOf('Tested model: these settings were tested on this TV model.<br>') >= 0, tv.testedModel, text);
+          // What the settings are based on comes first, and a tested model says so at its end (plan WP3)
+          assert.ok(text.indexOf(`Detected: ${tv.detected}, ${conn.label}${tv.testedModel ? ', tested model' : ''}<br>`) === 0, text);
+          assert.ok(text.indexOf('Tested model') < 0, text);
           assert.ok(text.indexOf('The following streaming settings will be applied:<br>') >= 0, text);
-          assert.ok(text.indexOf(`Video resolution: ${tv.resolutionLabel}, 60 FPS<br>`) >= 0, text);
-          assert.ok(text.indexOf(`Video codec: ${tv.codecLine}<br>`) >= 0, text);
-          assert.ok(text.indexOf(`Video bitrate: ${tv.bitrates[connName]} Mbps<br>`) >= 0, text);
+          // The tiles show the resolution, frame rate, bitrate and codec, which the text doesn't repeat
+          assert.deepEqual(dialog.tiles, [[tv.resolution === '3840:2160' ? '4K' : '1080p', tv.resolution.replace(':', ' x ')], ['60', 'FPS'],
+            [tv.bitrates[connName], 'Mbps'], ['HEVC', tv.hdr ? 'HDR' : 'no HDR']]);
+          ['Video resolution: ', 'Video codec: ', 'Video bitrate: '].forEach((line) => assert.ok(text.indexOf(line) < 0, line + text));
           assert.ok(text.indexOf(tv.settingsLine + '<br>') >= 0, text);
-          assert.equal(text.indexOf('Game mode on<br>') >= 0, tv.gameModeLine, text);
+          assert.equal(text.indexOf('Ultra low latency mode on<br>') >= 0, tv.gameModeLine, text);
           assert.equal(text.indexOf(HINT_120HZ) >= 0, tv.hint120Hz, text);
           assert.ok(text.indexOf(conn.advice) >= 0, text);
           if (connName === 'wifi') {
@@ -299,11 +297,11 @@ for (const tvName of Object.keys(TVS)) {
           assert.ok(!/S90C/i.test(text), text);
 
           await app.page.evaluate(() => $('#continueWarning').trigger('click'));
-          // The button keeps the recommended bitrate when the resolution or frame rate changes later (plan section 3)
-          const expectedStored = expectedStoredVideoSettings(tv, connName, false);
+          // After the button the bitrate follows later changes of the resolution and frame rate (since 2.2.0)
+          const expectedStored = expectedStoredVideoSettings(tv, connName, true);
           const stored = await waitForStorage(app.page, storedMatches(expectedStored));
           assert.deepEqual(pick(stored, VIDEO_KEYS), expectedStored);
-          assert.deepEqual(await readVideoSettings(app.page), expectedVideoSettings(tv, connName, false));
+          assert.deepEqual(await readVideoSettings(app.page), expectedVideoSettings(tv, connName, true));
           assert.equal(await app.page.evaluate(() => isDialogOpen), false);
           assert.ok(app.logs.some((line) => line.indexOf('The optimal streaming settings for this TV have been applied.') >= 0));
           assert.deepEqual(app.errors, []);
@@ -323,8 +321,10 @@ for (const tvName of Object.keys(TVS)) {
           const loaded = await readVideoSettings(app.page);
           assert.deepEqual(
             [loaded.resolution, loaded.frameRate, loaded.frameRateOptions, loaded.codec, loaded.bitrate, loaded.hdr, loaded.unlockAllFps,
-              loaded.framePacing, loaded.fullRange, loaded.optimizeBitrate, loaded.autoAdjustBitrate],
-            ['1280:720', '30', ['30', '60'], 'H264', '33', false, false, false, true, true, true]);
+              loaded.framePacing, loaded.fullRange, loaded.autoAdjustBitrate],
+            ['1280:720', '30', ['30', '60'], 'H264', '33', false, false, false, true, true]);
+          // The removed switch 'Optimize bitrate presets', stored on, is dropped once
+          assert.equal('optimizeBitrate' in (await readStorage(app.page)), false);
           if (tv.storedGameMode !== undefined) {
             assert.equal(loaded.gameMode, !tv.storedGameMode);
           }

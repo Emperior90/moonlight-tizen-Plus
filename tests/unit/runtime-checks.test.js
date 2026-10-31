@@ -234,9 +234,9 @@ describe('the game mode with the answer of the WASM player', () => {
   test('the S90C keeps its optimal settings with every answer, and the game mode stays off (plan section 3)', () => {
     const caps = profile.detectTvCapabilities(Object.assign(tvMock.createTizenApis(tvMock.parseConfig('', { tv: 's90c' }), (callback) => callback()), { tizentvwasm: null, mediaSource: null }));
     const golden = {
-      ethernet: { resolution: '3840:2160', frameRate: 60, videoCodec: 'HEVC', hdrMode: true, bitrate: 75, unlockAllFps: true, gameMode: false, framePacing: true, fullRange: false, optimizeBitrate: false },
-      wifi: { resolution: '3840:2160', frameRate: 60, videoCodec: 'HEVC', hdrMode: true, bitrate: 100, unlockAllFps: true, gameMode: false, framePacing: true, fullRange: false, optimizeBitrate: false },
-      unknown: { resolution: '3840:2160', frameRate: 60, videoCodec: 'HEVC', hdrMode: true, bitrate: 80, unlockAllFps: true, gameMode: false, framePacing: true, fullRange: false, optimizeBitrate: false },
+      ethernet: { resolution: '3840:2160', frameRate: 60, videoCodec: 'HEVC', hdrMode: true, bitrate: 75, unlockAllFps: true, gameMode: false, framePacing: true, fullRange: false },
+      wifi: { resolution: '3840:2160', frameRate: 60, videoCodec: 'HEVC', hdrMode: true, bitrate: 100, unlockAllFps: true, gameMode: false, framePacing: true, fullRange: false },
+      unknown: { resolution: '3840:2160', frameRate: 60, videoCodec: 'HEVC', hdrMode: true, bitrate: 80, unlockAllFps: true, gameMode: false, framePacing: true, fullRange: false },
     };
     for (const mode of ['none', 'ull', 'disagree']) {
       const withPlayer = Object.assign({}, caps, { wasmPlayer: profile.detectWasmPlayerFeatures(wasmPlayerOf(mode)) });

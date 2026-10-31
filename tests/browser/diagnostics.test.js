@@ -193,7 +193,7 @@ test('a stream starts a session of the log, keeps its report, and its heartbeat 
       'FEC-Reparaturen: 900 Blöcke, 6 fehlgeschlagen',
       'WASM-Heap am Ende: 62 von 128 MB (+1 MB in dieser Sitzung)',
       'Tipp: Viele Frames gingen im Netzwerk verloren: Nutze ein Kabel oder senke die Bitrate.',
-      'Tipp: Der PC musste nach Verlusten oft ganze Frames neu senden: Schalte Referenzbild-Invalidierung in den Videoeinstellungen ein.',
+      'Tipp: Der PC musste nach Verlusten oft ganze Frames neu senden: Schalte Referenzbild-Invalidierung in den erweiterten Einstellungen ein.',
     ]);
     // A stream that ended normally leaves no notice for the next start
     await reloadApp(app);
@@ -269,6 +269,10 @@ const FOUR_PADS = ['Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Prod
   'Pro Controller (STANDARD GAMEPAD Vendor: 057e Product: 2009)'];
 
 test('System information with four controllers and a report with three hints fits the screen in every language, and UP and DOWN scroll it', async () => {
+  // The languages whose lines were taller than the box, so that UP and DOWN scrolled it. Since the model year shares
+  // the line of the model group, the English lines can just fit the box (whether they do depends on how wide the
+  // machine draws the text), while the longer lines of the other languages still need a scroll.
+  const scrolled = [];
   for (const locale of ['en_US', 'de_DE', 'es_ES', 'fr_FR', 'pt_BR']) {
     const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi', locale } });
     try {
@@ -303,7 +307,19 @@ test('System information with four controllers and a report with three hints fit
       assert.equal(info.length - info.indexOf('') - 1, 8, locale + ': ' + info.join('\n'));
       // The whole box is on the screen, below the top of the pane
       assert.ok(first.top >= first.paneTop && first.bottom <= first.screen, locale + ': ' + JSON.stringify(first));
-      assert.ok(first.maxScroll > 0, locale + ': the lines are taller than the box');
+      if (first.maxScroll <= 0) {
+        // All lines show at once, so DOWN moves on right away, and UP comes back to it
+        assert.equal(locale, 'en_US', locale + ': the lines are taller than the box');
+        await remoteKey(app.page, ...DOWN);
+        assert.equal((await box()).focus, 'diagnosticLogBtn', locale);
+        await remoteKey(app.page, ...UP);
+        assert.deepEqual(await box().then((state) => [state.focus, state.scrollTop]), ['systemInfoBtn', 0], locale);
+        await remoteKey(app.page, ...UP);
+        assert.equal((await box()).focus, 'restartAppBtn', locale);
+        assert.deepEqual(app.errors, [], locale);
+        continue;
+      }
+      scrolled.push(locale);
       // DOWN scrolls to its last line, then moves on; UP comes back and scrolls to its first line
       let state = first;
       let presses = 0;
@@ -335,6 +351,9 @@ test('System information with four controllers and a report with three hints fit
     } finally {
       await app.context.close();
     }
+  }
+  for (const locale of ['de_DE', 'es_ES', 'fr_FR', 'pt_BR']) {
+    assert.ok(scrolled.includes(locale), locale + ': the lines are taller than the box');
   }
 });
 

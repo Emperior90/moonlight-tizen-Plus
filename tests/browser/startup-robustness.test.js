@@ -240,7 +240,7 @@ test('the dialogs whose texts the app sets keep them through a later translation
     });
     assert.deepEqual(opened, {
       restart: 'In order for your changes to take effect, a restart of the application is required.<br><br>Would you like to proceed with the restart?',
-      deleteHost: ['Delete Host', 'Are you sure you want to delete Test PC?'],
+      deleteHost: ['Delete PC', 'Are you sure you want to delete Test PC?'],
     });
     // The static title of the restart dialog is still translated
     assert.equal(await app.page.evaluate(() => document.getElementById('restartAppDialogTitle').textContent), 'Restart Moonlight');

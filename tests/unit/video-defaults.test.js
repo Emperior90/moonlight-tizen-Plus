@@ -153,7 +153,7 @@ test('index.js loads when the Tizen and Samsung APIs fail, with the fallbacks of
   // The defaults follow from the fallbacks
   assert.deepEqual(plain(platform.get('deriveOptimalSettings(tvCapabilities, "wifi")')), {
     resolution: '1920:1080', frameRate: 60, videoCodec: 'HEVC', hdrMode: false, bitrate: 25, unlockAllFps: false, gameMode: true,
-    framePacing: true, fullRange: false, optimizeBitrate: false,
+    framePacing: true, fullRange: false,
   });
 });
 

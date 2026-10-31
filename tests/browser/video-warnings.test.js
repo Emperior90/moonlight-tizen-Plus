@@ -218,13 +218,14 @@ test('a preset stays within the decoder cap of a TV without a tested profile, so
   }
 });
 
-test('on the S90C a preset above its decoder cap is kept and warns about the bitrate, as before', async () => {
+test('on the S90C the presets stop at its decoder cap, so 4K at 120 FPS no longer warns about the bitrate', async () => {
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
   try {
     await app.page.evaluate(() => setAutoAdjustBitrate(true));
     await pickFrameRate(app.page, 120);
-    assert.equal(await app.page.evaluate(() => $('#bitrateSlider').val()), '120');
-    assert.deepEqual(counts(app), only({ lowerEnd: 1, decoderCap: 1 }));
+    // The standard preset of 120 Mbps of 2.1.0 went past the cap of 100 Mbps and warned about it
+    assert.equal(await app.page.evaluate(() => $('#bitrateSlider').val()), '100');
+    assert.deepEqual(counts(app), only({ lowerEnd: 1 }));
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

@@ -705,7 +705,7 @@ var handlePromiseMessage = function(callbackId, type, msg) {
  * leaveStreamView - Leaves the stream view and returns to the app list, after a stream ended or its start was cancelled
  *
  * @param  {Object} host The host of the stream
- * @param  {boolean} quitApp Whether to quit the app on the host first ('Disconnect and quit the app on the PC' of the
+ * @param  {boolean} quitApp Whether to quit the app on the host first ('Quit app on the PC' of the
  *     Stream Menu)
  * @return {void}
  */
@@ -860,7 +860,8 @@ function showStreamTerminationMessage(errorCode, videoTrackRejection, blockedPor
       snackbarLogLong('The video player of the TV stopped with an error during the stream. Start the stream again; if it keeps happening, try a lower bitrate, resolution or frame rate.');
       break;
     default:
-      snackbarLogLong('Connection terminated');
+      // Name the error code, which a report of the problem needs
+      snackbarLogLong('The connection to the PC was lost (error %1$s).', errorCode);
       break;
   }
 }
@@ -869,9 +870,9 @@ function showStreamTerminationMessage(errorCode, videoTrackRejection, blockedPor
 // the connection named for it, if any
 function showNoVideoMessage(blockedPorts) {
   if (blockedPorts) {
-    snackbarLogLong('No video received from host. Check that the firewall of the host PC and your router don\'t block these ports: %1$s', keepPortsTogether(blockedPorts));
+    snackbarLogLong('No video received from the PC. Check that the firewall of the host PC and your router don\'t block these ports: %1$s', keepPortsTogether(blockedPorts));
   } else {
-    snackbarLogLong('No video received from host. Check the host PC\'s firewall and port forwarding rules.');
+    snackbarLogLong('No video received from the PC. Check the host PC\'s firewall and port forwarding rules.');
   }
 }
 
@@ -897,7 +898,7 @@ function dispatchMessage(msg) {
     quitAppAfterStream = false;
     streamMouseEmulationActive = false;
     // Each step on its own (runGuarded()), so that an error in one of them can't leave the app in the stream view.
-    // The Stream Menu belongs to the stream, and 'Disconnect and quit the app on the PC' to this end of it (menus.js)
+    // The Stream Menu belongs to the stream, and 'Quit app on the PC' to this end of it (menus.js)
     runGuarded('closeStreamMenu', function() { closeStreamMenu(false); });
     // The bitrate entry of the Stream Menu ended the stream to resume it with a new bitrate: the launch screen shows
     // until it reconnects (resumeStreamAfterBitrateChange() in index.js)
@@ -941,9 +942,6 @@ function dispatchMessage(msg) {
   } else if (msg.indexOf('ProgressMsg: ') === 0) {
     // Show progress message under loading spinner
     $('#loadingSpinnerMessage').text(translateBackendMessage(msg.replace('ProgressMsg: ', '')));
-  } else if (msg.indexOf('TransientMsg: ') === 0) {
-    // Show transient message as notification
-    snackbarLogLong(translateBackendMessage(msg.replace('TransientMsg: ', '')));
   } else if (msg.indexOf('CodecFallbackMsg: ') === 0) {
     // Tell the user that the host could only provide a fallback for the selected codec or HDR mode
     switch (msg.replace('CodecFallbackMsg: ', '')) {

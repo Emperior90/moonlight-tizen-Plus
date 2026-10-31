@@ -30,7 +30,7 @@ The TV connects the controller, over USB or Bluetooth (pair it in the settings o
 The app expects the standard layout of the Gamepad API, with the button positions of an Xbox controller: A at the bottom, B on the right, X on the left, Y at the top. The browser of the TV gives a controller this layout only when it knows the controller. Otherwise it reports the raw layout of the controller driver, and some buttons and sticks may be wrong.
 
 - **Use the X-input or Xbox mode** of controllers that have several modes (e.g. 8BitDo controllers with X-input, D-input, Switch and macOS modes).
-- When a controller reports a non-standard layout, the app shows a notice once per controller after it starts: "Gamepad N (name) has a non-standard button layout, so some buttons may be wrong. Try its XInput or Xbox mode, or another connection." This happens e.g. with an 8BitDo controller in D-input mode, or with a newer controller on a TV whose browser predates the mapping of that controller.
+- When a controller reports a non-standard layout, the app shows a notice once per controller after it starts: "Controller N (name) has a non-standard button layout, so some buttons may be wrong. Try its XInput or Xbox mode, or another connection." This happens e.g. with an 8BitDo controller in D-input mode, or with a newer controller on a TV whose browser predates the mapping of that controller.
 - System information shows *standard layout* or *non-standard layout* for each controller.
 - The app can't fix a non-standard layout: the [button mapping](#8-button-mapping-and-stick-calibration) assumes the standard positions. The [input test](#9-input-test) shows which index each button of such a controller reports.
 
@@ -40,14 +40,14 @@ The menus use the button positions (Xbox names first, PlayStation names in brack
 
 | Button | Action |
 |---|---|
-| A (Cross) | Select the current item, like SELECT on the remote |
+| A (Cross) | Select the current item, like OK on the remote |
 | B (Circle) | Back, like RETURN on the remote |
 | D-pad, left stick | Move. Holding them repeats the move after 350 ms, then every 100 ms. Small stick movements are ignored. |
-| Select / View (Share, Create) | Like CH+ on the remote: open the menu of the host PC or of the selected app ([app menu](GUIDE.md#16-stream-menu-and-app-menu)) |
+| Select / View (Share, Create) | Like CH+ on the remote: open the menu of the selected PC or app ([app menu](GUIDE.md#16-stream-menu-and-app-menu)) |
 | Start / Menu (Options) | Like CH- on the remote: set the focus on the current item |
 
 - A, B, Select and Start act 50 ms after the press, close to the keys of the remote. A move of the left stick acts after 150 ms, so that a diagonal movement doesn't make two steps.
-- The in-app *Navigation guide* (Settings → About) lists the same buttons, with the remote and keyboard keys next to them.
+- The in-app *Navigation guide* (Settings → About) lists the same buttons, with the remote and keyboard keys next to them, and one line for the mouse emulation (see [section 7](#7-mouse-emulation)).
 - The [button mapping](#8-button-mapping-and-stick-calibration) only applies during a stream. In the menus, the bottom button always selects, also on Nintendo controllers, whose labels differ.
 - Buttons that are still held when a stream ends (e.g. the stop combo) don't trigger anything in the menus.
 
@@ -84,7 +84,7 @@ X means the left face button (Square on PlayStation controllers), whatever the b
 - If one of them was held alone for longer than 0.1 seconds first, the game has it already: it sees that button held until the menu opens.
 - Pressing LB + RB as well within the second ends the stream instead (the stop combo). The hold of Start for the mouse emulation never counts a hold of Select + Start.
 
-**While the Stream Menu is open**, the PC gets every controller released (no buttons, sticks centred, triggers at 0) and no mouse buttons, and the controllers move through the menu like through the other menus (D-pad or left stick, A to choose, B back to the game). Buttons that are still held when the menu closes, e.g. A on *Resume*, reach the game only after you release them and press them again. Mouse mode stays as it was.
+**While the Stream Menu is open**, the PC gets every controller released (no buttons, sticks centred, triggers at 0) and no mouse buttons, and the controllers move through the menu like through the other menus (D-pad or left stick, A to choose, B back to the game). Buttons that are still held when the menu closes, e.g. A on *Resume*, reach the game only after you release them and press them again. Mouse emulation stays as it was.
 
 ## 5. Controller type sent to the PC
 
@@ -112,19 +112,19 @@ Settings → Input Settings → *Rumble feedback*: on for a new install and afte
 - During a stream, the controller plays the rumble that the game sends. The TV ends every rumble effect after 5 seconds, so the app plays it again every 4 seconds until the game stops it.
 - Rumble also stops when the stream ends and when the controller disconnects.
 - The app only tells the PC that a controller can rumble when the setting is on and the controller has a vibration motor that the browser can use.
-- A controller that can't rumble on the TV (it has no vibration motor for the browser, or the TV refuses the effect) gets a notice once: "Gamepad N (name) does not support rumble on this TV."
+- A controller that can't rumble on the TV (it has no vibration motor for the browser, or the TV refuses the effect) gets a notice once: "Controller N (name) does not support rumble on this TV."
 - Only the two main motors rumble. Trigger rumble isn't available.
 
 ## 7. Mouse emulation
 
 Settings → Input Settings → *Mouse emulation* (off by default) lets a controller act as the mouse of the PC by holding Start.
 
-- During a stream, hold Start for 1 second to switch mouse mode on or off. A notice says "Mouse emulation is activated" or "deactivated".
+- During a stream, hold Start for 1 second to switch mouse emulation on or off. A notice says "Mouse emulation is activated" or "deactivated".
 - The *Mouse emulation* entry of the [Stream Menu](GUIDE.md#16-stream-menu-and-app-menu) switches it as well, also with the setting off. The entry shows *On* or *Off*, so no notice covers the game then.
 - It switches once per hold, so holding Start longer doesn't switch it back. A hold of Start together with Select, LB or RB, which belong to the button combos, never switches it.
-- When a hold switches mouse mode off, the game doesn't get that Start. When a hold switches it on, the game sees Start held until the switch (from 0.1 seconds after the press, see the Stream Menu combo above, to 1 second), and then the controller released, so a game may open its pause menu.
+- When a hold switches mouse emulation off, the game doesn't get that Start. When a hold switches it on, the game sees Start held until the switch (from 0.1 seconds after the press, see the Stream Menu combo above, to 1 second), and then the controller released, so a game may open its pause menu.
 
-In mouse mode:
+With the mouse emulation on:
 
 | Controller | Mouse |
 |---|---|
@@ -134,10 +134,10 @@ In mouse mode:
 | B or RB | Right button |
 | X or Y | Middle button |
 
-- Mouse mode applies to all controllers at once, and they share one mouse.
+- Mouse emulation applies to all controllers at once, and they share one mouse.
 - While it is on, the game sees the controllers with nothing pressed and the sticks centred.
 - The buttons follow the button mapping.
-- Every stream starts without mouse mode.
+- Every stream starts without mouse emulation.
 
 ## 8. Button mapping and stick calibration
 

@@ -5,7 +5,7 @@
 // - 'Add to favorites' in the app menu (with the remote or a gamepad) puts the app first in the grid with a star badge
 //   and a Favorite chip in the hero, stored per host and matched by title, so the old ID of a favorite never marks, orders
 //   or removes another app; 'Remove from favorites' takes it back; the Smart Hub tiles show the favorites first as well;
-// - the setting offers A to Z (the default), Z to A, Recently played and As on the host, reached with the remote and a
+// - the setting offers A to Z (the default), Z to A, Recently played and As on the PC, reached with the remote and a
 //   gamepad, stored, named in the language of the app; each orders the grid, after the favorites; Recently played
 //   follows the starts of streams that the host accepted (not a refused or failed launch, nor the Terminate tile of
 //   Apollo), and the true of the switch of earlier versions is Z to A.
@@ -254,13 +254,13 @@ const sortSetting = (page) => page.evaluate(() => ({
   label: $('#selectSortAppsList').text().trim(),
 }));
 
-test('the setting offers A to Z, Z to A, Recently played and As on the host, with the remote and a gamepad, and orders the grid', async () => {
+test('the setting offers A to Z, Z to A, Recently played and As on the PC, with the remote and a gamepad, and orders the grid', async () => {
   const app = await openAppList({ storage: { favoriteApps_HOST1: [{ id: '13', title: 'Cyberpunk 2077' }] } });
   const { page } = app;
   try {
     assert.deepEqual(await sortSetting(page), { value: 'az', label: 'A to Z' });
     assert.deepEqual(await page.evaluate(() => $('.sortAppsListMenu li').map((i, li) => li.getAttribute('data-value') + ' ' + li.textContent.trim()).get()),
-      ['az A to Z', 'za Z to A', 'recent Recently played', 'host As on the host']);
+      ['az A to Z', 'za Z to A', 'recent Recently played', 'host As on the PC']);
     assert.deepEqual(await grid(page), ['★ Cyberpunk 2077 [Running]', 'Desktop', 'Forza Horizon 5', 'Steam Big Picture']);
     // The Running badge of a favorite ends before its star, also with a long label
     const gap = await page.evaluate(() => {
@@ -272,18 +272,21 @@ test('the setting offers A to Z, Z to A, Recently played and As on the host, wit
     });
     assert.ok(gap >= 16, 'gap ' + gap);
 
-    // Settings, DOWN to the Host Settings, OK: the setting is the first row; OK opens its menu, DOWN to Z to A, OK
+    // Settings, DOWN to General (the fifth section), OK, DOWN: the setting is the second row, below the language; OK opens
+    // its menu, DOWN to Z to A, OK
     await page.evaluate(() => {
       showHostsMode();
       $('#settingsBtn').trigger('click');
     });
     await page.waitForFunction(() => $('#settings-list').is(':visible') && !$('#wasmSpinner').is(':visible'));
     await page.waitForTimeout(100);
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < 4; i++) {
       await page.keyboard.press('ArrowDown');
     }
     await page.keyboard.press('Enter');
-    await page.waitForFunction(() => Views.HostSettings.view.current() === 'selectSortAppsList', null, { timeout: 3000 });
+    await page.waitForFunction(() => Views.InterfaceSettings.view.current() === 'selectLanguage', null, { timeout: 3000 });
+    await page.keyboard.press('ArrowDown');
+    await page.waitForFunction(() => Views.InterfaceSettings.view.current() === 'selectSortAppsList', null, { timeout: 3000 });
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => isPopupMenuActive('sortAppsListMenu'));
     await page.keyboard.press('ArrowDown');
@@ -295,15 +298,15 @@ test('the setting offers A to Z, Z to A, Recently played and As on the host, wit
     await rebuildGrid(page);
     assert.deepEqual(await grid(page), ['★ Cyberpunk 2077 [Running]', 'Steam Big Picture', 'Forza Horizon 5', 'Desktop']);
 
-    // With a gamepad: A opens the menu, the D-pad goes down twice to As on the host, A chooses it
+    // With a gamepad: A opens the menu, the D-pad goes down twice to As on the PC, A chooses it
     await page.evaluate(() => {
       showHostsMode();
       $('#settingsBtn').trigger('click');
     });
     await page.waitForFunction(() => $('#settings-list').is(':visible'));
     await page.evaluate(() => {
-      Navigation.change(Views.HostSettings);
-      Views.HostSettings.view.index = 0;
+      Navigation.change(Views.InterfaceSettings);
+      Views.InterfaceSettings.view.index = 1;
       focusElement('selectSortAppsList');
     });
     await gamepadButton(page, 0);
@@ -313,7 +316,7 @@ test('the setting offers A to Z, Z to A, Recently played and As on the host, wit
     }
     await gamepadButton(page, 0);
     await waitForStorage(page, (values) => values.sortAppsList === 'host');
-    assert.deepEqual(await sortSetting(page), { value: 'host', label: 'As on the host' });
+    assert.deepEqual(await sortSetting(page), { value: 'host', label: 'As on the PC' });
     await rebuildGrid(page);
     assert.deepEqual(await grid(page), ['★ Cyberpunk 2077 [Running]', 'Desktop', 'Steam Big Picture', 'Forza Horizon 5']);
     assert.deepEqual(app.errors, []);
@@ -373,7 +376,7 @@ test('Recently played follows the starts of streams, kept per host; the switch o
     assert.deepEqual(await page.evaluate(() => loadRecentApps('HOST2')), []);
     // The Smart Hub tiles follow the order as well
     assert.deepEqual(await smartHubTiles(page), [[['Forza Horizon 5', 'Steam Big Picture', 'Cyberpunk 2077', 'Desktop']]]);
-    // Choosing As on the host puts the Smart Hub tiles in the order of the host at once
+    // Choosing As on the PC puts the Smart Hub tiles in the order of the host at once
     await page.evaluate(() => $('.sortAppsListMenu li[data-value="host"]').trigger('click'));
     assert.deepEqual(await smartHubTiles(page), [[['Desktop', 'Steam Big Picture', 'Cyberpunk 2077', 'Forza Horizon 5']]]);
     assert.deepEqual(app.errors, []);

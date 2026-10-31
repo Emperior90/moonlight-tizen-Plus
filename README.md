@@ -22,7 +22,7 @@ Moonlight Plus is an unofficial fork of [Moonlight Tizen](https://github.com/bri
 - **Stream Menu** on Play/Pause or Select + Start: change the bitrate during the game (the stream reconnects with it), type text on the PC with the keyboard of the TV, send keys such as Alt + Tab, and disconnect.
 - **App list:** favorites first with a star, sorted A to Z, Z to A, by the recently played or as the host lists them, box art that never holds up the start of a game, and clear hints for the permissions and control tiles of [Apollo and Vibepollo](docs/GUIDE.md#apollo-and-vibepollo).
 - **Update check** that reads the releases of this fork.
-- **Languages:** the interface follows the language of the TV (German also on Austrian and Swiss TVs, Spanish also in Mexico and the rest of the Americas, French also in Canada, Belgium and Switzerland, Portuguese also in Portugal) and can be chosen in Settings → UI Settings: English, German, Spanish, French and Brazilian Portuguese. How to keep the translations complete: [Translating](docs/TRANSLATING.md).
+- **Languages:** the interface follows the language of the TV (German also on Austrian and Swiss TVs, Spanish also in Mexico and the rest of the Americas, French also in Canada, Belgium and Switzerland, Portuguese also in Portugal) and can be chosen in Settings → General: English, German, Spanish, French and Brazilian Portuguese. How to keep the translations complete: [Translating](docs/TRANSLATING.md).
 
 What changed in each version, in short: [patch notes](docs/PATCH_NOTES.md). Every detail: [changelog](CHANGELOG.md).
 

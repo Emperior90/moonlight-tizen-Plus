@@ -195,7 +195,7 @@ test('a launch that Apollo answers with "Permission denied" explains what to all
       title: 'Permission needed',
       text: 'GAMING-PC doesn\'t allow this TV to start apps. In the web UI of Apollo or Vibepollo, open the paired devices (Device ' +
         'Management or Client Management) and allow "List Apps", "Launch Apps" and the input permissions for this TV. Then open the host ' +
-        'again.\n\nThe host says: Permission denied',
+        'again.\n\nThe PC says: Permission denied',
     });
     const messages = await page.evaluate(() => window.__snackbarMessages.slice());
     assert.ok(!messages.some((message) => /^Error/.test(message)), JSON.stringify(messages));

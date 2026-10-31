@@ -5,3 +5,5 @@ Dockerfile
 build/
 .vscode/
 tests/node_modules/
+# The machine-learning models of Opus (about 18 MB), which the build never compiles
+opus/dnn

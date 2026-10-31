@@ -157,7 +157,7 @@ test('a stored game mode stays stored but off, the remote explains why, and the 
     }));
     assert.equal(dialog.open, true);
     assert.equal(dialog.title, 'Unsupported Feature');
-    assert.ok(dialog.text.indexOf('The video player of this TV reports that it doesn\'t offer the Ultra Low Latency mode that Game Mode uses, so the stream uses the Low Latency mode.<br><br>Since the Game Mode cannot be enabled') === 0, dialog.text);
+    assert.ok(dialog.text.indexOf('The video player of this TV reports that it doesn\'t offer the Ultra Low Latency mode, so the stream uses the Low Latency mode.<br><br>Since the Ultra low latency mode cannot be turned on') === 0, dialog.text);
     await page.evaluate(() => $('#closeWarning').trigger('click'));
     shown = await readVideoSettings(page);
     assert.deepEqual([shown.gameMode, shown.gameModeDisabled], [false, true]);
@@ -179,8 +179,8 @@ test('the optimal settings say why the game mode stays off and remove a stored v
   try {
     await page.evaluate(() => $('#optimalSettingsBtn').trigger('click'));
     const text = await page.evaluate(() => document.getElementById('warningDialogText').innerHTML);
-    assert.ok(text.indexOf('• Game mode off, because the video player of this TV doesn\'t offer the Ultra Low Latency mode<br>') >= 0, text);
-    assert.ok(text.indexOf('Game mode on') < 0, text);
+    assert.ok(text.indexOf('• Ultra low latency mode off, because the video player of this TV doesn\'t offer it<br>') >= 0, text);
+    assert.ok(text.indexOf('Ultra low latency mode on') < 0, text);
     await page.evaluate(() => $('#continueWarning').trigger('click'));
     const stored = await waitForStorage(page, (values) => values.bitrate === '80');
     assert.equal(Object.prototype.hasOwnProperty.call(stored, 'gameMode'), false);
@@ -244,8 +244,8 @@ test('on Tizen 5.5 with the Ultra Low Latency mode, the optimal settings say tha
     await waitForStorage(page, (values) => values.gameMode === true);
     await page.evaluate(() => $('#optimalSettingsBtn').trigger('click'));
     const text = await page.evaluate(() => document.getElementById('warningDialogText').innerHTML);
-    assert.ok(text.indexOf('• Game mode off<br>') >= 0, text);
-    assert.ok(text.indexOf('Game mode on') < 0, text);
+    assert.ok(text.indexOf('• Ultra low latency mode off<br>') >= 0, text);
+    assert.ok(text.indexOf('Ultra low latency mode on') < 0, text);
     await page.evaluate(() => $('#continueWarning').trigger('click'));
     const stored = await waitForStorage(page, (values) => values.gameMode === false);
     assert.equal(stored.gameMode, false);
@@ -261,7 +261,7 @@ test('on Tizen 5.5 with the Ultra Low Latency mode, the optimal settings say tha
     try {
       await other.page.evaluate(() => $('#optimalSettingsBtn').trigger('click'));
       const text = await other.page.evaluate(() => document.getElementById('warningDialogText').innerHTML);
-      assert.ok(text.indexOf('• Game mode off<br>') < 0, JSON.stringify(tv) + ': ' + text);
+      assert.ok(text.indexOf('• Ultra low latency mode off<br>') < 0, JSON.stringify(tv) + ': ' + text);
       assert.deepEqual(other.errors, []);
     } finally {
       await other.context.close();
@@ -281,10 +281,12 @@ test('the S90C keeps its settings and the ForceGM hint with the Ultra Low Latenc
       await withMode.page.evaluate(() => $('#optimalSettingsBtn').trigger('click'));
       const text = await withMode.page.evaluate(() => document.getElementById('warningDialogText').innerHTML);
       const hint = forceGM
-        ? 'ForceGM variant detected: the app asks the TV for its Game Mode, so the Game mode setting stays off here and the decoder uses the Low Latency mode.'
-        : 'Game mode stays disabled on Tizen 9.0, so install the ForceGM variant for the lowest latency.';
+        ? 'ForceGM variant detected: the app asks the TV for its Game Mode, so the Ultra low latency mode setting stays off here and the decoder uses the Low Latency mode.'
+        : 'The Ultra low latency mode stays off on Tizen 9.0, so install the ForceGM variant for the lowest latency.';
       assert.ok(text.indexOf(hint) >= 0, text);
+      // No line about a video player without the mode, and none that lists the mode as on or off
       assert.ok(text.indexOf('Ultra Low Latency') < 0, text);
+      assert.ok(text.indexOf('• Ultra low latency mode') < 0, text);
       assert.deepEqual(withMode.errors, []);
     } finally {
       await reference.context.close();

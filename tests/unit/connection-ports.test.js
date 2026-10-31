@@ -85,12 +85,12 @@ test('a stream without video names the ports that the module sent before the ter
   const app = loadMessages('en-US');
   app.handleMessage('TerminationPortsMsg: UDP 47998, UDP 48000');
   app.handleMessage('streamTerminated: -100');
-  assert.deepEqual(app.notices, ['No video received from host. Check that the firewall of the host PC and your router don\'t block these ports: ' +
+  assert.deepEqual(app.notices, ['No video received from the PC. Check that the firewall of the host PC and your router don\'t block these ports: ' +
     'UDP\u00a047998, UDP\u00a048000']);
   // The ports belong to that termination only
   app.platform.run('isInGame = true;');
   app.handleMessage('streamTerminated: -100');
-  assert.equal(app.notices[1], 'No video received from host. Check the host PC\'s firewall and port forwarding rules.');
+  assert.equal(app.notices[1], 'No video received from the PC. Check the host PC\'s firewall and port forwarding rules.');
 });
 
 test('the native code sends the ports of the stage and of the termination, moved to the ports of the host', () => {
@@ -142,4 +142,14 @@ test('the progress line of a stage is one sentence in each language, and the ove
   assert.equal(readLocale('de-DE')['Starting'], 'Wird gestartet');
   // The ellipsis of the glossary in German, Spanish and French
   ['de-DE', 'es-ES', 'fr-FR'].forEach((locale) => assert.ok(/…$/.test(readLocale(locale)['Starting the %1$s...']), locale));
+});
+
+test('a stream that ends with an error of no other message names the error code, which a report of the problem needs', () => {
+  const app = loadMessages('en-US');
+  app.handleMessage('streamTerminated: -1');
+  assert.deepEqual(app.notices, ['The connection to the PC was lost (error -1).']);
+  // The German text keeps the code as well
+  const german = loadMessages('de-DE');
+  german.handleMessage('streamTerminated: 10054');
+  assert.deepEqual(german.notices, ['Die Verbindung zum PC wurde getrennt (Fehler 10054).']);
 });

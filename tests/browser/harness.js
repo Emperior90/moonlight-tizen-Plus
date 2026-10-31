@@ -32,7 +32,7 @@ const READY_SETTLE_MS = 150;
 // The video settings that the optimal settings button and Restore Defaults store. A fresh install stores only the
 // last one (whether the bitrate presets follow the video settings) and works the others out at every start.
 const VIDEO_KEYS = ['resolution', 'frameRate', 'bitrate', 'videoCodec', 'hdrMode', 'unlockAllFps', 'framePacing',
-  'fullRange', 'gameMode', 'optimizeBitrate', 'autoAdjustBitrate'];
+  'fullRange', 'gameMode', 'autoAdjustBitrate'];
 
 // Start the server and the browser that a test file shares between its tests
 async function startHarness() {
@@ -227,7 +227,6 @@ function readVideoSettings(page) {
       fullRange: switchState('fullRangeSwitch'),
       gameMode: switchState('gameModeSwitch'),
       gameModeDisabled: document.getElementById('gameModeSwitch').disabled,
-      optimizeBitrate: switchState('optimizeBitrateSwitch'),
       autoAdjustBitrate: autoAdjustBitrate,
     };
   });

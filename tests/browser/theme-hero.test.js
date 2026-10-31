@@ -150,7 +150,7 @@ test('the hero keeps the last host while the focus is elsewhere, and never shows
     assert.equal((await hero(app.page)).title, 'Find your gaming PC');
     await installHosts(app.page);
     // The Add Host card still has the focus: it names itself, no longer the empty state
-    assert.deepEqual(await hero(app.page), { kind: 'host', state: 'add', title: 'Add Host', chips: [], hints: 'visible' });
+    assert.deepEqual(await hero(app.page), { kind: 'host', state: 'add', title: 'Add PC', chips: [], hints: 'visible' });
     // The focus moves to the header before any host had it: a summary of the hosts
     await press(app.page, 'ArrowUp');
     assert.equal(await app.page.evaluate(() => document.querySelector('#main-header .hovered').id), 'rescanNetworkBtn');
@@ -160,7 +160,8 @@ test('the hero keeps the last host while the focus is elsewhere, and never shows
     // key hints
     await press(app.page, 'ArrowDown');
     await press(app.page, 'ArrowRight');
-    const gamingPc = { kind: 'host', state: 'running', title: 'GAMING-PC', chips: ['RUNNING', 'ONLINE', 'PAIRED'], hints: 'visible' };
+    // One chip, the one of its card (running means online and paired as well)
+    const gamingPc = { kind: 'host', state: 'running', title: 'GAMING-PC', chips: ['Running'], hints: 'visible' };
     assert.deepEqual(await hero(app.page), gamingPc);
     await press(app.page, 'ArrowUp');
     assert.equal(await app.page.evaluate(() => document.querySelector('#host-container-A .host-menu.hovered') !== null), true);
@@ -596,6 +597,105 @@ test('the tooltips of the header buttons lie above the PC illustration of the he
       assert.equal(layout.shown, true, id);
       assert.ok(layout.bottom + 8 <= layout.bezel, id + ': ' + JSON.stringify(layout));
     }
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a PC shows one state chip in the hero, the same as on its card: Running, Online, Unpaired or Offline', async () => {
+  const app = await openApp(harness, { tv: TV });
+  try {
+    await installHosts(app.page);
+    const seen = [];
+    // From the Add PC card to the four PCs: GAMING-PC (a game runs), HTPC (offline), OFFICE (not paired), STUDIO (online)
+    for (let i = 0; i < 4; i++) {
+      await press(app.page, 'ArrowRight');
+      seen.push(await app.page.evaluate(() => {
+        const title = document.getElementById('hero-title').textContent;
+        const host = window.__hosts.find((entry) => entry.hostname === title);
+        const current = document.getElementById('host-container-' + host.serverUid);
+        return {
+          title: title,
+          hero: Array.prototype.map.call(document.querySelectorAll('#hero-chips .status-chip'), (chip) => chip.className + ' ' + chip.textContent),
+          card: Array.prototype.map.call(current.querySelectorAll('.host-chips .status-chip'), (chip) => chip.className + ' ' + chip.textContent),
+          // The stylesheet writes the running state in capitals, like the other states
+          shown: Array.prototype.map.call(document.querySelectorAll('#hero-chips .status-chip'), (chip) => getComputedStyle(chip).textTransform),
+        };
+      }));
+    }
+    assert.deepEqual(seen.map((entry) => [entry.title, entry.hero]), [
+      ['GAMING-PC', ['status-chip chip-running Running']],
+      ['HTPC', ['status-chip chip-offline OFFLINE']],
+      ['OFFICE', ['status-chip chip-locked UNPAIRED']],
+      ['STUDIO', ['status-chip chip-online ONLINE']],
+    ]);
+    seen.forEach((entry) => assert.deepEqual(entry.hero, entry.card, entry.title));
+    assert.equal(seen[0].shown[0], 'uppercase');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('the hint of an app says Start like its menu, and Resume for the running app', async () => {
+  const app = await openAppList();
+  try {
+    const hint = () => app.page.evaluate(() => document.querySelector('#hero-hints .hint').textContent);
+    assert.equal(await hint(), 'OKStart');
+    await app.page.evaluate(() => {
+      window.__host.currentGame = 21;
+      stylizeBoxArts(window.__host, window.__apps);
+      Launcher.refresh();
+    });
+    await focusApp(app.page, 'A Steam Cover');
+    assert.equal(await hint(), 'OKResume');
+    await app.page.evaluate(() => i18n.setLanguage('de-DE'));
+    await app.page.waitForTimeout(400);
+    await focusApp(app.page, 'B Sunshine Cover');
+    assert.equal(await hint(), 'OKStarten');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('the button Quit app on the PC only shows while an app runs, and the header row of the app list goes with it', async () => {
+  const app = await openAppList();
+  try {
+    const header = () => app.page.evaluate(() => ({
+      shown: $('#quitRunningAppBtn').css('display') !== 'none',
+      row: Views.AppsNav.view.func(),
+      tooltip: $('#quitRunningAppTooltip').text().trim(),
+    }));
+    // No app runs on the host: no button that would only say so
+    assert.deepEqual(await header(), { shown: false, row: ['goBackBtn'], tooltip: 'Quit app on the PC' });
+    // An app runs: the button shows with the mark of its tile, and the header row reaches it
+    await app.page.evaluate(async () => {
+      window.__host.currentGame = 22;
+      await showApps(window.__host);
+    });
+    await app.page.waitForFunction(() => $('#game-container-22').hasClass('current-game-active'));
+    assert.deepEqual(await header(), { shown: true, row: ['goBackBtn', 'quitRunningAppBtn'], tooltip: 'Quit app on the PC' });
+    await app.page.evaluate(() => {
+      Navigation.change(Views.AppsNav);
+      Views.AppsNav.view.index = 1;
+    });
+    // The app quits: the button goes, and the header row falls back to the back button
+    await app.page.evaluate(async () => {
+      window.__host.currentGame = 0;
+      await showApps(window.__host);
+    });
+    await app.page.waitForFunction(() => !$('#game-container-22').hasClass('current-game-active'));
+    assert.deepEqual(await header(), { shown: false, row: ['goBackBtn'], tooltip: 'Quit app on the PC' });
+    assert.equal(await app.page.evaluate(() => Views.AppsNav.view.current()), 'goBackBtn');
+    // Back on the hosts and into the apps of a host whose app runs, the button shows at once
+    await app.page.evaluate(async () => {
+      showHostsMode();
+      window.__host.currentGame = 21;
+      await showApps(window.__host);
+    });
+    assert.equal((await header()).shown, true);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

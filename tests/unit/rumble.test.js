@@ -11,7 +11,7 @@ const assert = require('node:assert/strict');
 const { loadPlatformScripts } = require('./helpers/platform-loader');
 
 const XBOX_ID = 'Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)';
-const NOTICE = 'Gamepad 0 (Xbox Wireless Controller) does not support rumble on this TV.';
+const NOTICE = 'Controller 0 (Xbox Wireless Controller) does not support rumble on this TV.';
 
 // Fake timers for the context, advanced by hand. Timers due at the same time run in the order they were created.
 function createFakeTimers() {

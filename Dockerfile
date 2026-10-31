@@ -65,7 +65,6 @@ RUN ./emsdk activate latest-fastcomp
 WORKDIR /home/moonlight
 RUN mkdir -p moonlight-tizen
 COPY --chown=moonlight CMakeLists.txt ./moonlight-tizen/
-COPY --chown=moonlight h264bitstream ./moonlight-tizen/h264bitstream/
 COPY --chown=moonlight libgamestream ./moonlight-tizen/libgamestream/
 COPY --chown=moonlight moonlight-common-c ./moonlight-tizen/moonlight-common-c/
 COPY --chown=moonlight opus ./moonlight-tizen/opus/

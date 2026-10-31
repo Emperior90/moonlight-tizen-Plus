@@ -353,7 +353,7 @@ const Rumble = (function() {
     }
     unsupportedNotices.add(id);
     const name = gamepad ? Controller.describeGamepad(gamepad).name : '';
-    snackbarLogLong('Gamepad %1$s (%2$s) does not support rumble on this TV.', index, name ? name : t('Unknown'));
+    snackbarLogLong('Controller %1$s (%2$s) does not support rumble on this TV.', index, name ? name : t('Unknown'));
   }
 
   function clearReplay(index) {

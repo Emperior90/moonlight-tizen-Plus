@@ -262,7 +262,7 @@ test('the whole menu path: a pad that disconnects while its D-pad is held stops 
   menus.platform.context.dispatchEvent({ type: 'gamepaddisconnected', gamepad: Object.assign(pad([14]), { connected: false }) });
   menus.clock.advance(1000);
   assert.equal(menus.count('left'), moves);
-  assert.deepEqual(menus.snackbars, [['Gamepad %1$s has been disconnected.', 0]]);
+  assert.deepEqual(menus.snackbars, [['Controller %1$s (%2$s) has been disconnected.', 0, 'Pro Controller']]);
 });
 
 test('a stick held past the threshold repeats, ignores its jitter there, and stops back below the threshold', () => {

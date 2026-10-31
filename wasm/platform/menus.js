@@ -25,7 +25,7 @@
 var isStreamMenuOpen = false;
 // Whether the mouse emulation of the stream is on, from the 'mouseEmulationOn' and 'mouseEmulationOff' messages
 var streamMouseEmulationActive = false;
-// Whether the user chose 'Disconnect and quit the app on the PC', so the app is quit once the stream ended (messages.js)
+// Whether the user chose 'Quit app on the PC', so the app is quit once the stream ended (messages.js)
 var quitAppAfterStream = false;
 // Whether the stream had the pointer locked when the Stream Menu opened, so that Resume locks it again
 var streamMenuPointerWasLocked = false;
@@ -442,7 +442,7 @@ function selectStreamTextItem(index) {
   focusElement(view.current());
 }
 
-// Let the field of the text panel take the text and open the keyboard of the TV for it, like the field of the Add Host
+// Let the field of the text panel take the text and open the keyboard of the TV for it, like the field of the Add PC
 // dialog (handleIpTextFieldState() in navigation.js): the keyboard of the TV opens for a focused field that is clicked
 function startStreamTextEditing() {
   const input = document.getElementById('streamTextInput');

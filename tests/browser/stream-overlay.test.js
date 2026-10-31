@@ -279,19 +279,22 @@ test('audio clock sync is offered only with the Web Audio backend, off by defaul
   }
 });
 
-test('the corrected help texts of SOPS, the optimized presets, the game mode and HDR', async () => {
+test('the corrected help texts of SOPS, the ultra low latency mode and HDR keep their point in about one sentence', async () => {
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
   try {
     const texts = await app.page.evaluate(() => ({
-      sops: $('#optimizeGamesMenu').prev().text(),
-      presets: $('#optimizeBitrateMenu').prev().text(),
-      gameMode: $('#gameModeMenu').prev().text(),
-      hdr: $('#videoHdrMenu').prev().text(),
+      sops: $('#optimizeGamesMenu').prev().text().trim(),
+      presets: $('#optimizeBitrateMenu').length,
+      gameMode: $('#gameModeMenu').prev().text().trim(),
+      hdr: $('#videoHdrMenu').prev().text().trim(),
     }));
-    assert.ok(texts.sops.indexOf('Lets Sunshine switch the host display') >= 0, texts.sops);
-    assert.ok(texts.presets.indexOf('about 45 Mbps') >= 0, texts.presets);
-    assert.ok(texts.gameMode.indexOf('Tizen 9') >= 0, texts.gameMode);
-    assert.ok(texts.hdr.indexOf('10-bit SDR') >= 0, texts.hdr);
+    assert.ok(texts.sops.indexOf('Lets Sunshine switch the display of the PC') >= 0, texts.sops);
+    // The optimized presets are gone (2.2.0)
+    assert.equal(texts.presets, 0);
+    assert.ok(texts.gameMode.indexOf('On Tizen 9 and newer it can freeze the picture') >= 0, texts.gameMode);
+    assert.ok(texts.hdr.indexOf('HDR must be on for the display of the PC as well, otherwise the stream is 10-bit SDR') >= 0, texts.hdr);
+    // Read from 3 m away: each of them, which had 51 to 66 words, has about one sentence now
+    [texts.sops, texts.gameMode, texts.hdr].forEach((text) => assert.ok(text.split(/\s+/).length <= 33, text));
   } finally {
     await app.context.close();
   }

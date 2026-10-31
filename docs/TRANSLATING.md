@@ -1,6 +1,6 @@
 # Translating Moonlight Plus
 
-The app shows its texts in English, German, Spanish, French or Brazilian Portuguese. It follows the language of the TV, and the language can be chosen in Settings → UI Settings → *Language*. This page is for anyone who adds a text to the app, corrects a translation or adds a language.
+The app shows its texts in English, German, Spanish, French or Brazilian Portuguese. It follows the language of the TV, and the language can be chosen in Settings → General → *Language*. This page is for anyone who adds a text to the app, corrects a translation or adds a language.
 
 ## Contents
 
@@ -31,7 +31,7 @@ The app shows its texts in English, German, Spanish, French or Brazilian Portugu
 - **Placeholders** such as `%1$s` stay, each exactly once; their order in the sentence may change.
 - **HTML** such as `<br>`, `<b>` and `<strong>` stays. Write characters as they are, never as `&amp;`: the texts of `data-i18n` elements are set as text, so a character reference would show as it is.
 - **Help texts** of the settings start with `- ` and the lines of the navigation guide with `— `. Keep them: the stylesheet hides the first character of a help text.
-- **Whole sentences:** a word is never put in front of another translated text. A line that names a value has a template of its own, and so does the same line without a value: *Starting the %1$s...* for the progress line of a stage of the connection, *Gamepads: None* next to *Gamepad %1$s: …*, *Registered by Moonlight: None* next to *Registered by Moonlight: %1$s*. So each language builds its own sentence and agrees *none* with its noun (Spanish *ninguna* for *teclas*, French *aucune* for *manettes*, German *keine* in lower case after a colon). The single word *None* is only the value of its own, e.g. the target of a button in the button mapping.
+- **Whole sentences:** a word is never put in front of another translated text. A line that names a value has a template of its own, and so does the same line without a value: *Starting the %1$s...* for the progress line of a stage of the connection, *Controllers: None* next to *Controller %1$s: …*, *Registered by Moonlight: None* next to *Registered by Moonlight: %1$s*. So each language builds its own sentence and agrees *none* with its noun (Spanish *ninguna* for *teclas*, French *aucune* for *manettes*, German *keine* in lower case after a colon). The single word *None* is only the value of its own, e.g. the target of a button in the button mapping.
 - **Key names stay as printed** on the remote, the keyboard and the gamepad: OK, RETURN, Play/Pause, CH+, SELECT, START, A, B, LB, RB, F1. Keys without a printed name get the word of the language (the arrow keys, the coloured keys).
 - **Names of settings, menu entries and values** in a sentence are written as the translated UI shows them, e.g. the name of the *Unlock all frame rates* switch in the hint of the optimal settings dialog.
 - **Product names** stay: Moonlight Plus, Sunshine, GeForce Experience, GameStream, Wake-on-LAN, ForceGM, HEVC, AV1, HDR. A section of the English guide is named by its English heading.
@@ -48,7 +48,7 @@ The German texts address the user with the informal *du* and use the words of th
 | gamepad, controller | Controller | |
 | remote | Fernbedienung | |
 | TV | TV | *der TV*, *des TVs*, not *Fernseher* |
-| settings | Einstellungen | sections: *Grundeinstellungen*, *Oberflächeneinstellungen*, *PC-Einstellungen*, *Eingabeeinstellungen*, *Audioeinstellungen*, *Videoeinstellungen*, *Erweiterte Einstellungen*, *Info* |
+| settings | Einstellungen | sections: *Grundeinstellungen*, *Videoeinstellungen*, *Audioeinstellungen*, *Eingabeeinstellungen*, *Allgemein*, *Erweiterte Einstellungen*, *Info*; the block *Experimentell* |
 | Auto | Automatisch | |
 | On, Off | An, Aus | |
 | stream, streaming | Stream, streamen | *beim Streamen*, *Streaming-Einstellungen* |
@@ -64,7 +64,8 @@ The German texts address the user with the informal *du* and use the words of th
 | frame, keyframe | Frame, Keyframe | |
 | frame pacing | Frame-Pacing | |
 | dropped frames | verworfene Frames | |
-| game mode | Spielmodus | the decoder modes stay *Ultra Low Latency* and *Low Latency* |
+| game mode (of the TV) | Spielmodus | the decoder modes stay *Ultra Low Latency* and *Low Latency* |
+| Ultra low latency mode (the setting) | Ultra-Low-Latency-Modus | |
 | rumble | Vibration | |
 | mouse emulation | Mausemulation | |
 | button mapping | Tastenbelegung, Belegung | *Belegung aller Controller*, *Eigene Belegung* |
@@ -92,7 +93,7 @@ The Spanish texts address the user with the informal *tú* (*Selecciona*, *Pulsa
 
 | English | Spanish | Note |
 |---|---|---|
-| host | equipo | *Añadir equipo*, *Ajustes del equipo* |
+| host | equipo | *Añadir equipo*, *Eliminar todos los equipos* |
 | PC | PC | *el PC*, *Enviar al PC*, *Despertar el PC* |
 | pair, pairing | vincular, vinculación | |
 | gamepad, controller | mando | *Mandos* |
@@ -109,7 +110,8 @@ The Spanish texts address the user with the informal *tú* (*Selecciona*, *Pulsa
 | frame, keyframe | fotograma, fotograma clave | FPS stays |
 | frame rate | frecuencia de fotogramas | |
 | bitrate | tasa de bits | Mbps stays |
-| game mode | modo de juego | |
+| game mode (of the TV) | Modo Juego | |
+| Ultra low latency mode (the setting) | modo de latencia ultrabaja | |
 | rumble | vibración del mando | |
 | mouse emulation | emulación del ratón | |
 | button mapping | asignación de botones | |
@@ -136,7 +138,7 @@ The French texts address the user with *vous*, as the menus of French TVs do (*S
 | gamepad, controller | manette | |
 | remote | télécommande | |
 | TV | téléviseur | |
-| settings | Paramètres | sections: *Paramètres généraux*, *Paramètres de l’interface*, *Paramètres des PC*, *Paramètres des commandes*, *Paramètres audio*, *Paramètres vidéo*, *Paramètres avancés*, *À propos* |
+| settings | Paramètres | sections: *Paramètres de base*, *Paramètres vidéo*, *Paramètres audio*, *Paramètres des commandes*, *Général*, *Paramètres avancés*, *À propos*; the block *Expérimental* |
 | Auto | Automatique | |
 | On, Off | Activé, Désactivé | |
 | stream, streaming | streaming | *pendant le streaming* |
@@ -147,7 +149,8 @@ The French texts address the user with *vous*, as the menus of French TVs do (*S
 | frame, keyframe | image, image clé | FPS stays |
 | frame rate | fréquence d’images | |
 | bitrate | débit | Mbps stays (*Mo* for megabytes) |
-| game mode | mode Jeu | as in the picture settings of the TV |
+| game mode (of the TV) | mode Jeu | as in the picture settings of the TV |
+| Ultra low latency mode (the setting) | mode latence ultra-faible | |
 | rumble | vibrations | |
 | mouse emulation | émulation de la souris | |
 | button mapping | attribution des boutons | |

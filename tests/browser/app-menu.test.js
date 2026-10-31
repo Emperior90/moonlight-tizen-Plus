@@ -3,7 +3,7 @@
 // Checks the menu of an app tile in the real page (wasm/platform/menus.js, Views.Apps and Views.AppMenu in
 // navigation.js, showApps() in index.js): the running app has a visible Running badge and the header tells how to open
 // the menu; CH+ and Play/Pause of the remote and Select of a gamepad open it for the selected tile; it offers Resume and
-// Quit for the running app and Start for the others, which run like OK on the tile and the Quit Running App button;
+// Quit for the running app and Start for the others, which run like OK on the tile and the button Quit app on the PC;
 // Hide app leaves the app out of the grid and the Smart Hub tiles, stored per host and matched by ID or title, 'Show
 // hidden apps' shows the hidden apps dimmed, and 'Show app again' brings one back. The host and its apps are simulated.
 
@@ -107,7 +107,7 @@ test('the running app has a Running badge, the header names the keys of the app 
   try {
     assert.deepEqual(await grid(app.page), ['Cyberpunk 2077 [Running]', 'Desktop', 'Forza Horizon 5', 'Steam Big Picture']);
     assert.deepEqual(await app.page.evaluate(() => ({ shown: $('#appMenuHint').is(':visible'), text: $('#appMenuHint').text().trim() })),
-      { shown: true, text: 'App options: CH+ or Play/Pause on the remote, Select on a gamepad' });
+      { shown: true, text: 'App options: CH+ or Play/Pause on the remote, Select on a controller' });
     // The running app is selected; CH+ opens its menu with Resume and Quit
     assert.equal(await selectedApp(app.page), 'Cyberpunk 2077');
     await remote(app.page, 'KEY_CHANNEL_UP');
@@ -155,7 +155,7 @@ test('Start and Resume run like OK on the tile, and Quit app asks to quit the ru
     await gamepadButton(app.page, 0);
     assert.deepEqual(await app.page.evaluate(() => window.__starts.slice()), ['HOST1 13', 'HOST1 11']);
 
-    // Quit app shows the confirmation of the Quit Running App button for the running app
+    // Quit app on the PC shows the confirmation of the button of the same name in the header for the running app
     await app.page.waitForTimeout(2100);
     await remote(app.page, 'KEY_LEFT');
     await remote(app.page, 'KEY_CHANNEL_UP');

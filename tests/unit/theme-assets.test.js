@@ -8,8 +8,9 @@
 // referenced with xlink:href, so the Material icon fonts (about 900 KB) and their stylesheet are gone and nothing may
 // use them again; the sprite holds only symbols that the page or the scripts use. Texts are at least 16 px, the weights
 // of the theme lie in the weight range of its Manrope face, the face lists exactly the characters of its font file and
-// that file has every character of the UI texts, and the ambient light of the box art needs no canvas. tests/browser/theme-ui.test.js, theme-hero.test.js and
-// theme-settings.test.js check the rendered page.
+// that file has every character of the UI texts, and the ambient light of the box art needs no canvas. No element asks
+// for the ripple effect of MDL, and res/platform.js keeps only what the app uses. tests/browser/theme-ui.test.js,
+// theme-hero.test.js and theme-settings.test.js check the rendered page.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -20,7 +21,8 @@ const { readCodePoints } = require('./helpers/woff2');
 const { readAppLocales } = require('../tools/i18n-check');
 
 const read = (file) => fs.readFileSync(path.join(REPO_ROOT, file), 'utf8');
-// The stylesheets of this app (material.min.css is the unchanged library of Material Design Lite)
+// The stylesheets of this app (material.min.css is the library of Material Design Lite, only trimmed to the rules the
+// app can use by tools/trim-mdl-css.js, see tests/unit/mdl-css.test.js)
 const OWN_STYLESHEETS = ['wasm/static/css/style.css', 'wasm/static/css/roboto.css'];
 const INDEX_HTML = 'wasm/index.html';
 
@@ -161,8 +163,9 @@ test('no Material icon ligature, icon font or icon stylesheet is left', () => {
   });
   const files = listFiles('wasm/static');
   assert.deepEqual(files.filter((file) => /MaterialIcons|material-icons\.css/.test(file)), []);
-  // The widget gets the whole static folder, so a removed file needs no change of the install list
-  assert.match(read('CMakeLists.txt'), /install\(DIRECTORY wasm\/static DESTINATION widget\)/);
+  // The widget gets the whole static folder (apart from the files CMakeLists.txt excludes by name), so a removed file
+  // needs no change of the install list
+  assert.match(read('CMakeLists.txt'), /install\(DIRECTORY wasm\/static DESTINATION widget(\s+PATTERN "[^"]+" EXCLUDE)*\)/);
   assert.doesNotMatch(read('CMakeLists.txt'), /MaterialIcons|material-icons/);
 });
 
@@ -232,4 +235,23 @@ test('the ambient light of the box art is drawn with CSS gradients, without a ca
   assert.doesNotMatch(css, /canvas/);
   // The glows take the colours that launcher.js sets
   ['--a1', '--a2', '--a3'].forEach((name) => assert.match(css, new RegExp('radial-gradient\\([^;]*rgba\\(var\\(' + name + '\\)')));
+});
+
+test('no element asks for the MDL ripple effect, which the theme never shows, and the focus circle of the switches stays hidden', () => {
+  const sources = [INDEX_HTML, 'wasm/platform/index.js', 'wasm/platform/menus.js', 'wasm/platform/launcher.js', 'wasm/platform/navigation.js'];
+  sources.forEach((file) => assert.equal(read(file).indexOf('mdl-js-ripple-effect'), -1, file));
+  // Without the class MDL builds no ripple container, so the stylesheet needs no rule to hide one; the grey circle that
+  // MDL draws around the thumb of a focused switch stays hidden
+  const css = cssWithoutComments('wasm/static/css/style.css');
+  assert.equal(/ripple/.test(css), false);
+  assert.match(css, /\.mdl-switch__focus-helper\s*\{\s*display:\s*none\s*!important;\s*\}/);
+});
+
+test('res/platform.js keeps the key codes, platformOnLoad() and the copyright line of Samsung, without the unused list of key names', () => {
+  const platform = read('res/platform.js');
+  assert.equal(platform.split('\n')[0], '// Copyright (c) 2015 Samsung Electronics. All rights reserved.');
+  assert.equal(platform.indexOf('buttonsNames'), -1);
+  assert.equal(platform.indexOf('Sample usage'), -1);
+  assert.match(platform, /function platformOnLoad\(handler\)/);
+  assert.match(platform, /KEY_PLAY_PAUSE: 10252,/);
 });

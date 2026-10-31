@@ -2,7 +2,7 @@
 
 // The optimal streaming settings for each TV (plan WP2) on the settings screen, beyond the matrix of
 // video-defaults.test.js: the bitrate of a fresh install follows the resolution and frame rate until the user picks one
-// (plan D9), the button and Restore Defaults switch between keeping and following it, the button locks the higher
+// (plan D9), the button and Restore Defaults both let a bitrate picked by hand follow again, the button locks the higher
 // frame rates on a TV without a tested profile without a stray notice, HDR follows what the TV reports (D8), an 8K TV,
 // a TV whose product APIs fail still starts, and both reset a stored game mode on Tizen 5.5, which doesn't support it.
 
@@ -58,10 +58,13 @@ async function restoreDefaults(page) {
 
 test('lowering the resolution after a fresh install lowers the bitrate (plan D9)', async () => {
   const cases = [
-    { tv: 'uhd', conn: 'wifi', start: ['3840:2160', '80'], pick: '1920:1080', bitrate: '20' },
-    { tv: 'fhd', conn: 'ethernet', start: ['1920:1080', '25'], pick: '1280:720', bitrate: '10' },
-    { tv: 's90c', conn: 'wifi', start: ['3840:2160', '100'], pick: '1920:1080', bitrate: '20' },
-    { tv: 's90c', conn: 'ethernet', start: ['3840:2160', '75'], pick: '2560:1440', bitrate: '40' },
+    // The recommended bitrate of the new resolution: 25 % above the standard preset with a known connection (2.1.0 gave
+    // the standard presets of 20, 10, 20 and 40 Mbps here)
+    { tv: 'uhd', conn: 'wifi', start: ['3840:2160', '80'], pick: '1920:1080', bitrate: '25' },
+    { tv: 'fhd', conn: 'ethernet', start: ['1920:1080', '25'], pick: '1280:720', bitrate: '13' },
+    { tv: 's90c', conn: 'wifi', start: ['3840:2160', '100'], pick: '1920:1080', bitrate: '25' },
+    { tv: 's90c', conn: 'ethernet', start: ['3840:2160', '75'], pick: '2560:1440', bitrate: '50' },
+    { tv: 'uhd', conn: 'unknown', start: ['3840:2160', '80'], pick: '1920:1080', bitrate: '20' },
   ];
   for (const entry of cases) {
     const label = JSON.stringify(entry);
@@ -87,7 +90,7 @@ test('lowering the frame rate after a fresh install lowers the bitrate', async (
   try {
     await pickFrameRate(app.page, 30);
     const shown = await readVideoSettings(app.page);
-    assert.deepEqual([shown.frameRate, shown.bitrate], ['30', '40']);
+    assert.deepEqual([shown.frameRate, shown.bitrate], ['30', '50']);
   } finally {
     await app.context.close();
   }
@@ -111,20 +114,37 @@ test('after a fresh install, a bitrate picked by hand is kept from then on', asy
   }
 });
 
-test('the button keeps the recommended bitrate, and Restore Defaults lets it follow the presets again', async () => {
+test('the button and Restore Defaults both let a bitrate picked by hand follow the presets again', async () => {
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
+  // Pick a bitrate by hand, which the presets then keep
+  const pickByHand = async () => {
+    await app.page.evaluate(() => {
+      $('#bitrateSlider')[0].MaterialSlider.change('62');
+      $('#bitrateSlider').trigger('input');
+    });
+    await waitForStorage(app.page, (values) => values.autoAdjustBitrate === false && values.bitrate === '62');
+  };
   try {
+    await pickByHand();
     await applyButton(app.page);
     let shown = await readVideoSettings(app.page);
-    assert.deepEqual([shown.bitrate, shown.autoAdjustBitrate], ['100', false]);
+    assert.deepEqual([shown.bitrate, shown.autoAdjustBitrate], ['100', true]);
+    await waitForStorage(app.page, (values) => values.autoAdjustBitrate === true && values.bitrate === '100');
+    // The next change of the frame rate sets the recommended bitrate for it, and so does the way back
+    await pickFrameRate(app.page, 120);
+    assert.equal((await readVideoSettings(app.page)).bitrate, '100');
+    await pickResolution(app.page, '2560:1440');
+    assert.equal((await readVideoSettings(app.page)).bitrate, '75');
+    await pickFrameRate(app.page, 60);
+    assert.equal((await readVideoSettings(app.page)).bitrate, '50');
+    await pickResolution(app.page, '3840:2160');
+    assert.equal((await readVideoSettings(app.page)).bitrate, '100');
+    await pickByHand();
     await restoreDefaults(app.page);
     shown = await readVideoSettings(app.page);
     assert.deepEqual([shown.bitrate, shown.autoAdjustBitrate, shown.unlockAllFps, shown.hdr], ['100', true, true, true]);
     await waitForStorage(app.page, (values) => values.autoAdjustBitrate === true);
-    await applyButton(app.page);
-    shown = await readVideoSettings(app.page);
-    assert.deepEqual([shown.bitrate, shown.autoAdjustBitrate], ['100', false]);
-    await waitForStorage(app.page, (values) => values.autoAdjustBitrate === false);
+    assert.equal(count(app, 'Keeping your bitrate of'), 0);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
@@ -172,7 +192,7 @@ test('the button locks the higher frame rates on a TV without a tested profile, 
     await applyButton(app.page);
     shown = await readVideoSettings(app.page);
     assert.deepEqual([shown.frameRate, shown.frameRateOptions, shown.unlockAllFps, shown.bitrate, shown.autoAdjustBitrate],
-      ['60', ['30', '60'], false, '80', false]);
+      ['60', ['30', '60'], false, '80', true]);
     assert.equal(count(app, 'Keeping your bitrate of'), 0);
     const stored = await waitForStorage(app.page, (values) => values.unlockAllFps === false && values.bitrate === '80');
     assert.equal(stored.frameRate, 60);
@@ -193,8 +213,9 @@ test('HDR is on by default when the TV reports it, whatever the panel (plan D8)'
     try {
       assert.equal((await readVideoSettings(app.page)).hdr, entry.hdr, JSON.stringify(entry));
       await app.page.evaluate(() => $('#optimalSettingsBtn').trigger('click'));
-      const text = await app.page.evaluate(() => document.getElementById('warningDialogText').innerHTML);
-      assert.ok(text.indexOf('Video codec: ' + (entry.hdr ? 'HEVC Main10 with HDR' : 'HEVC') + '<br>') >= 0, text);
+      // The tile of the codec says whether the stream is HDR
+      const tile = await app.page.evaluate(() => $('#warningDialogValues .value-tile').eq(3).text());
+      assert.equal(tile, 'Video codecHEVC' + (entry.hdr ? 'HDR' : 'no HDR'));
       await app.page.evaluate(() => $('#closeWarning').trigger('click'));
     } finally {
       await app.context.close();
@@ -212,8 +233,8 @@ test('an 8K TV gets 4K with HDR at the 80 Mbps cap of TVs without a tested profi
         ['3840:2160', '60', 'HEVC', true, bitrate, false, true, true], conn);
       await app.page.evaluate(() => $('#optimalSettingsBtn').trigger('click'));
       const text = await app.page.evaluate(() => document.getElementById('warningDialogText').innerHTML);
-      assert.ok(text.indexOf('Video bitrate: ' + bitrate + ' Mbps<br>') >= 0, text);
-      assert.ok(text.indexOf('Game mode on<br>') >= 0, text);
+      assert.equal(await app.page.evaluate(() => $('#warningDialogValues .value-tile').eq(2).find('.value-number').text()), bitrate);
+      assert.ok(text.indexOf('Ultra low latency mode on<br>') >= 0, text);
       await app.page.evaluate(() => $('#closeWarning').trigger('click'));
     } finally {
       await app.context.close();
@@ -250,7 +271,7 @@ test('a TV whose product APIs fail still starts, with the defaults of a Full HD 
       'WASM player API levels: Unknown',
       'Video decoders (MediaSource check): H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
       'Video decoders at level 5.2 (4K above 60 FPS): HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
-      'Gamepads: None',
+      'Controllers: None',
       // The report of the last stream, after an empty line (diagnostics.js)
       '',
       'Last session: None yet',

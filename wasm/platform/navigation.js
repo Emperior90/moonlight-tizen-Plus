@@ -58,22 +58,22 @@ function clickElement(target) {
   // Prevent clicking if the element is disabled based on common disabled states
   if (element.disabled || element.getAttribute('aria-disabled') === 'true' || element.classList.contains('is-disabled')) {
     console.warn('%c[navigation.js, clickElement]', 'color: gray;', 'Cannot click the disabled target element:', element);
-    // Check if the disabled element is the Game Mode switch, which the WASM player says it can't support (see
+    // Check if the disabled element is the switch of the Ultra low latency mode (gameMode), which the WASM player says it can't support (see
     // detectWasmPlayerFeatures() in tv_profile.js), or which stays disabled on Tizen 5.5
     if (element.id === 'gameModeBtn' && typeof isGameModeUnavailable === 'function' && isGameModeUnavailable(tvCapabilities)) {
       setTimeout(() => {
         warningDialog(t('Unsupported Feature'),
-          t('The video player of this TV reports that it doesn\'t offer the Ultra Low Latency mode that Game Mode uses, so the stream uses the Low Latency mode.') + '<br><br>' +
-          t('Since the Game Mode cannot be enabled, you may experience slightly higher latency while streaming. To further reduce latency, it is highly recommended to open your TV\'s Picture Settings menu and disable post-processing features such as <b>Picture Clarity</b>, <b>Contrast Enhancer</b>, and other video enhancements.')
+          t('The video player of this TV reports that it doesn\'t offer the Ultra Low Latency mode, so the stream uses the Low Latency mode.') + '<br><br>' +
+          t('Since the Ultra low latency mode cannot be turned on, you may experience slightly higher latency while streaming. To further reduce latency, it is highly recommended to open your TV\'s Picture Settings menu and disable post-processing features such as <b>Picture Clarity</b>, <b>Contrast Enhancer</b>, and other video enhancements.')
         );
       }, 250);
     } else if (element.id === 'gameModeBtn' && parseFloat(platformVer) === 5.5) {
-      // Show a warning message when attempting to enable game mode on Tizen 5.5 platform
+      // Show a warning message when attempting to enable the Ultra low latency mode on Tizen 5.5 platform
       setTimeout(() => {
         warningDialog(t('Unsupported Feature'),
-          t('Game Mode (Ultra Low Latency) is not supported on Tizen %1$s due to platform limitations and lack of support from the WASM player.', platformVer) + 
+          t('The Ultra low latency mode is not supported on Tizen %1$s due to platform limitations and lack of support from the WASM player.', platformVer) + 
           t('Attempting to enable this option will have no effect, as the decoder will force a fallback to standard Low Latency mode to maintain streaming stability.<br><br>') + 
-          t('Since the Game Mode cannot be enabled, you may experience slightly higher latency while streaming. To further reduce latency, it is highly recommended to open your TV\'s Picture Settings menu and disable post-processing features such as <b>Picture Clarity</b>, <b>Contrast Enhancer</b>, and other video enhancements.')
+          t('Since the Ultra low latency mode cannot be turned on, you may experience slightly higher latency while streaming. To further reduce latency, it is highly recommended to open your TV\'s Picture Settings menu and disable post-processing features such as <b>Picture Clarity</b>, <b>Contrast Enhancer</b>, and other video enhancements.')
         );
       }, 250);
     }
@@ -472,7 +472,7 @@ const Views = {
           Navigation.change(Views.HostsMenuHighlight);
           focusElement(Views.HostsMenuHighlight.view.current());
         } else {
-          // Set focus on the first navigation item in HostsNav view when transitioning from Add Host container
+          // Set focus on the first navigation item in HostsNav view when transitioning from Add PC container
           Navigation.change(Views.HostsNav);
           focusElement(Views.HostsNav.view.current());
         }
@@ -494,9 +494,9 @@ const Views = {
     },
     accept: function() {
       const currentItem = resolveElement(this.view.current());
-      // Check if the current item is the Add Host container
+      // Check if the current item is the Add PC container
       if (currentItem && currentItem.id === 'addHostContainer') {
-        // Click the Add Host container itself to open the Add Host dialog
+        // Click the Add PC container itself to open the Add PC dialog
         clickElement(currentItem);
       } else {
         // If the current item has children, click the first child element (the host card)
@@ -510,7 +510,7 @@ const Views = {
     },
     press: function() {
       const currentItem = resolveElement(this.view.current());
-      // Check if the current item is not the Add Host container
+      // Check if the current item is not the Add PC container
       if (currentItem && currentItem.id !== 'addHostContainer') {
         // If the current item has children, set focus on the second child element (the menu button)
         const menuButton = currentItem.children ? currentItem.children[1] : null;
@@ -521,9 +521,9 @@ const Views = {
     },
     switch: function() {
       const currentItem = resolveElement(this.view.current());
-      // Check if the current item is the Add Host container
+      // Check if the current item is the Add PC container
       if (currentItem && currentItem.id === 'addHostContainer') {
-        // Set focus on the Add Host container itself
+        // Set focus on the Add PC container itself
         focusElement(currentItem);
       } else {
         // Scroll to the current Host card row to ensure is visible when switching back from another view
@@ -1019,8 +1019,8 @@ const Views = {
       'optimalSettingsBtn',
       'selectResolution',
       'selectFramerate',
-      'selectBitrate',
-      'framePacingBtn'
+      'unlockAllFpsBtn',
+      'selectBitrate'
     ]),
     up: function() {
       this.view.prevOption();
@@ -1162,10 +1162,13 @@ const Views = {
       unmark(this.view.current());
     },
   },
+  // General (the section kept the id interfaceSettings of the UI Settings of earlier versions)
   InterfaceSettings: {
     view: new ListView(() => [
       'selectLanguage',
-      'ipAddressFieldModeBtn'
+      'selectSortAppsList',
+      'ipAddressFieldModeBtn',
+      'removeAllHostsBtn'
     ]),
     up: function() {
       this.view.prevOption();
@@ -1233,46 +1236,6 @@ const Views = {
       unmark(this.view.current());
     },
   },
-  HostSettings: {
-    view: new ListView(() => [
-      'selectSortAppsList',
-      'optimizeGamesBtn',
-      'removeAllHostsBtn'
-    ]),
-    up: function() {
-      this.view.prevOption();
-      focusElement(this.view.current());
-    },
-    down: function() {
-      this.view.nextOption();
-      focusElement(this.view.current());
-    },
-    left: function() {},
-    right: function() {},
-    accept: function() {
-      clickElement(this.view.current());
-    },
-    back: function() {
-      // Remove focus from the current element before changing the view
-      blurElement(this.view.current());
-      // Reset the current settings view before navigating to the next settings view
-      resetSettingsView();
-      // Navigate to the Settings view
-      Navigation.change(Views.Settings);
-      // Set focus on the category item in Settings view when transitioning from HostSettings view
-      focusElement(Views.Settings.view.current());
-    },
-    press: function() {},
-    switch: function() {
-      focusElement(this.view.current());
-    },
-    enter: function() {
-      mark(this.view.current());
-    },
-    leave: function() {
-      unmark(this.view.current());
-    },
-  },
   InputSettings: {
     view: new ListView(() => [
       'rumbleFeedbackBtn',
@@ -1323,8 +1286,7 @@ const Views = {
       // and neither is shown when the audio output is disabled
       isAudioOutputDisabled() ? null : isWebAudioBackendSelected() ? 'selectAudioJitter' : 'audioSyncBtn',
       isAudioOutputDisabled() || !isWebAudioBackendSelected() ? null : 'audioClockSyncBtn',
-      'playHostAudioBtn',
-      isAudioOutputDisabled() ? null : 'decryptHostAudioBtn'
+      'playHostAudioBtn'
     ].filter(Boolean)),
     up: function() {
       this.view.prevOption();
@@ -1494,10 +1456,8 @@ const Views = {
     view: new ListView(() => [
       'selectCodec',
       'hdrModeBtn',
-      'fullRangeBtn',
-      'gameModeBtn',
-      'refFrameInvalidationBtn',
-      'hdrMetadataBtn'
+      'framePacingBtn',
+      'gameModeBtn'
     ]),
     up: function() {
       this.view.prevOption();
@@ -1663,12 +1623,16 @@ const Views = {
   },
   AdvancedSettings: {
     view: new ListView(() => [
-      'unlockAllFpsBtn',
-      'optimizeBitrateBtn',
+      'optimizeGamesBtn',
+      'fullRangeBtn',
       'disableWarningsBtn',
       'selectPerformanceStats',
-      'selectStatsPosition'
-    ]),
+      'selectStatsPosition',
+      // The Experimental block, whose decryption of the audio doesn't apply when the audio output is disabled
+      'refFrameInvalidationBtn',
+      'hdrMetadataBtn',
+      isAudioOutputDisabled() ? null : 'decryptHostAudioBtn'
+    ].filter(Boolean)),
     up: function() {
       this.view.prevOption();
       focusElement(this.view.current());
@@ -1941,10 +1905,11 @@ const Views = {
     },
   },
   AppsNav: {
+    // The quit button shows only while an app runs on the host (updateQuitRunningAppButton() in index.js)
     view: new ListView(() => [
       'goBackBtn',
-      'quitRunningAppBtn'
-    ]),
+      $('#quitRunningAppBtn').css('display') !== 'none' ? 'quitRunningAppBtn' : null
+    ].filter(Boolean)),
     up: function() {},
     down: function() {
       // Navigate to the Apps view

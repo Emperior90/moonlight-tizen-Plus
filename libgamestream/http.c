@@ -103,7 +103,6 @@ int http_request(const char* url, const char* ppkstr, PHTTP_DATA data) {
 
   curl = curl_easy_init();
 
-  curl_easy_setopt(curl, CURLOPT_CAINFO, "/curl/ca-bundle.crt");
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, _write_curl);
   curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
   curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);

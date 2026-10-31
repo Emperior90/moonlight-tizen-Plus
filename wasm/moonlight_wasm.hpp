@@ -22,13 +22,6 @@
 #include "samsung/html/html_media_element.h"
 #include "samsung/html/html_media_element_listener.h"
 
-// Uncomment this line to enable the profiling infrastructure
-// #define ENABLE_PROFILING 1
-
-// Use this define to choose the time threshold in milliseconds above
-// which a profiling message is printed
-#define PROFILING_MESSAGE_THRESHOLD 1
-
 #define DR_FLAG_FORCE_SW_DECODE 0x01
 
 // These will mostly be I/O bound so we'll create
@@ -117,8 +110,6 @@ class MoonlightInstance {
 
   virtual ~MoonlightInstance();
 
-  bool Init(uint32_t argc, const char* argn[], const char* argv[]);
-
   EM_BOOL HandleMouseDown(const EmscriptenMouseEvent& event);
   EM_BOOL HandleMouseMove(const EmscriptenMouseEvent& event);
   EM_BOOL HandleMouseUp(const EmscriptenMouseEvent& event);
@@ -141,15 +132,6 @@ class MoonlightInstance {
   void CancelPendingSetup();
   void CloseMediaSource();
 
-  static uint32_t ProfilerGetPackedMillis();
-  static uint64_t ProfilerGetMillis();
-  static uint64_t ProfilerUnpackTime(uint32_t packedTime);
-  static void ProfilerPrintPackedDelta(const char* message, uint32_t packedTimeA, uint32_t packedTimeB);
-  static void ProfilerPrintDelta(const char* message, uint64_t timeA, uint64_t timeB);
-  static void ProfilerPrintPackedDeltaFromNow(const char* message, uint32_t packedTime);
-  static void ProfilerPrintDeltaFromNow(const char* message, uint64_t time);
-  static void ProfilerPrintWarning(const char* message);
-
   static void* ConnectionThreadFunc(void* context);
   static void* InputThreadFunc(void* context);
   static void* StopThreadFunc(void* context);
@@ -158,8 +140,6 @@ class MoonlightInstance {
   static void ClStageFailed(int stage, int errorCode);
   static void ClConnectionStarted(void);
   static void ClConnectionTerminated(int errorCode);
-  static void ClDisplayMessage(const char* message);
-  static void ClDisplayTransientMessage(const char* message);
   static void ClLogMessage(const char* format, ...);
   static void ClControllerRumble(unsigned short controllerNumber, unsigned short lowFreqMotor, unsigned short highFreqMotor);
   static void ClConnectionStatusUpdate(int connectionStatus);
@@ -240,7 +220,6 @@ class MoonlightInstance {
   static AUDIO_RENDERER_CALLBACKS s_ArCallbacks;
 
   std::string m_Host;
-  int m_HttpPort;
   std::string m_AppVersion;
   std::string m_GfeVersion;
   std::string m_RtspUrl;
@@ -249,18 +228,10 @@ class MoonlightInstance {
   int m_RequestedVideoFormat = 0;
 
   bool m_FramePacingEnabled;
-  bool m_OptimizeGamesEnabled;
-  bool m_RumbleFeedbackEnabled;
-  bool m_MouseEmulationEnabled;
   AudioBackend m_AudioBackend;
   int m_AudioConfig;
   bool m_AudioSyncEnabled;
   int m_AudioJitterMs;
-  bool m_PlayHostAudioEnabled;
-  bool m_DecryptHostAudioEnabled;
-  bool m_HdrModeEnabled;
-  bool m_FullRangeEnabled;
-  bool m_GameModeEnabled;
   bool m_DisableWarningsEnabled;
   // Level of the performance stats overlay (kPerformanceStatsOff, kPerformanceStatsCompact or kPerformanceStatsFull of
   // compact_stats.hpp). Written by TogglePerformanceStats() on the main thread or the gamepad thread and read by the
