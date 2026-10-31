@@ -124,5 +124,5 @@ body:
   - type: textarea
     attributes:
       label: Diagnostic log and Sunshine log
-      description: The app keeps no log files. Take a photo of the end of Settings → About → Diagnostic log right after the problem, and add the Sunshine log if you have it. Please remove or mask your private IP addresses.
+      description: The app keeps no log files. Take a photo of the end of Settings → About → Diagnostic log right after the problem, and add the Sunshine log if you have it. The diagnostic log hides the keys, the public IP address and the MAC addresses, but shows the local addresses and the name of your PC, which you can cover before you upload the photo.
       placeholder: "Drag and drop the photo and the Sunshine log here."

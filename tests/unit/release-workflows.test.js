@@ -14,6 +14,9 @@
 //   notes of the commit of the run with one line of links (the commit of the files, and the documents of the commit of
 //   the run), but only once the patch notes of that commit date the section of the version instead of calling it a
 //   pre-release
+// - the build of the widget files: the target wgt of the Dockerfile written to the runner with a local output, with no
+//   image pushed anywhere and no login to a registry, so that no image publishes the Tizen Studio CLI and the Ubuntu
+//   packages of the build; the promotion builds nothing
 // - the permissions of the jobs: only those that their steps use
 
 const test = require('node:test');
@@ -166,7 +169,7 @@ test('the release workflow runs the support check before it publishes, as a warn
   const promotion = development.slice(development.indexOf('  promote-pre-release:'));
   assert.ok(/SUPPORT_CHECK_MODE: warn\s+run: bash \.github\/scripts\/check-support-path\.sh/.test(promotion));
   assert.ok(promotion.indexOf('check-support-path.sh') < promotion.indexOf('- name: Promote the pre-release to a full release'));
-  const preRelease = development.slice(development.indexOf('  run-and-upload-release:'), development.indexOf('  promote-pre-release:'));
+  const preRelease = development.slice(development.indexOf('  build-and-release:'), development.indexOf('  promote-pre-release:'));
   assert.ok(/SUPPORT_CHECK_MODE: warn\s+run: bash \.github\/scripts\/check-support-path\.sh/.test(preRelease));
   assert.ok(preRelease.indexOf('check-support-path.sh') < preRelease.indexOf('- name: Create GitHub pre-release'));
 });
@@ -454,8 +457,76 @@ function jobPermissions(workflow) {
 
 test('each job of the release workflow gets only the permissions that its steps use', () => {
   assert.deepEqual(jobPermissions(readWorkflow()), {
-    'build-and-push-image': { contents: 'read', packages: 'write' },
-    'run-and-upload-release': { contents: 'write', packages: 'read' },
+    'build-and-release': { contents: 'write' },
     'promote-pre-release': { contents: 'write' },
   });
+});
+
+// Return the step of a workflow by its name, as text up to the next step
+function stepText(workflow, stepName) {
+  const start = workflow.indexOf('      - name: ' + stepName + '\n');
+  assert.ok(start >= 0, 'step ' + stepName);
+  const next = workflow.indexOf('\n      - name: ', start + 1);
+  const nextJob = workflow.indexOf('\n  promote-pre-release:', start + 1);
+  const end = [next, nextJob].filter((index) => index > 0).reduce((a, b) => Math.min(a, b), workflow.length);
+  return workflow.slice(start, end);
+}
+
+test('the release builds only the widget files, writes them to the runner and pushes no image', () => {
+  const workflow = readWorkflow();
+  // No registry, no login, no image tags, no permission for packages, no container to copy the files out of
+  assert.doesNotMatch(workflow, /ghcr\.io|REGISTRY|IMAGE_NAME|docker\/login-action|docker\/metadata-action|packages:/);
+  assert.doesNotMatch(workflow, /push: true|docker (run|cp|create|pull|push)\b/);
+  const build = workflow.slice(workflow.indexOf('  build-and-release:'), workflow.indexOf('  promote-pre-release:'));
+  assert.match(build, /if: github\.ref != 'refs\/heads\/master' && inputs\.promote_tag == ''/);
+  [['Standard', 'false', 'out/standard'], ['ForceGM', 'true', 'out/forcegm']].forEach(([variant, forceGameMode, dest]) => {
+    const step = stepText(workflow, 'Build the widget file (' + variant + ' variant)');
+    assert.match(step, /uses: docker\/build-push-action@v\d+/);
+    assert.match(step, /\n\s+target: wgt\n/);
+    assert.match(step, /\n\s+push: false\n/);
+    assert.ok(step.indexOf('\n          outputs: type=local,dest=' + dest + '\n') > 0, step);
+    assert.ok(new RegExp('\\n\\s+FORCE_GAME_MODE=' + forceGameMode + '(\\n|$)').test(step), step);
+    assert.match(step, /BUILD_TYPE=development\n\s+REPO_OWNER=\$\{\{ github\.repository_owner \}\}\n\s+REPO_NAME=\$\{\{ github\.event\.repository\.name \}\}/);
+    // A registry cache would need a login and publish the layers; the build cache of the runner is enough
+    assert.doesNotMatch(step, /cache-(from|to):\s*type=registry|tags:/);
+  });
+  // The builds come first, so that a failed build keeps the earlier pre-release of the branch
+  const order = ['Build the widget file (Standard variant)', 'Build the widget file (ForceGM variant)', 'Collect the widget files',
+    'Check and delete any existing GitHub pre-releases from the same branch', 'Create GitHub pre-release'].map((name) => build.indexOf('- name: ' + name + '\n'));
+  assert.ok(order.every((index, i) => index > 0 && (i === 0 || index > order[i - 1])), JSON.stringify(order));
+  // The promotion builds nothing and keeps the files of the pre-release
+  const promotion = workflow.slice(workflow.indexOf('  promote-pre-release:'));
+  assert.match(promotion, /if: inputs\.promote_tag != ''/);
+  assert.doesNotMatch(promotion, /docker|build-push-action/);
+});
+
+test('the target wgt of the Dockerfile holds only the widget file, and a plain docker build still gives the full image', () => {
+  const dockerfile = fs.readFileSync(path.join(REPO_ROOT, 'Dockerfile'), 'utf8');
+  const stages = dockerfile.split('\n').filter((line) => /^FROM /.test(line));
+  assert.deepEqual(stages, ['FROM ubuntu:22.04 AS sdk', 'FROM sdk AS base', 'FROM scratch AS wgt', 'FROM ubuntu:22.04']);
+  const wgt = dockerfile.slice(dockerfile.indexOf('FROM scratch AS wgt'), dockerfile.lastIndexOf('FROM ubuntu:22.04'));
+  assert.deepEqual(wgt.split('\n').filter((line) => line.trim() !== '' && !/^#/.test(line)),
+    ['FROM scratch AS wgt', 'COPY --from=base /home/moonlight/Moonlight*.wgt /']);
+  // The stage base names the file Moonlight.wgt or Moonlight-ForceGM.wgt in /home/moonlight, which the collect step takes
+  assert.match(dockerfile, /WORKDIR \/home\/moonlight\nRUN mkdir -p moonlight-tizen/);
+  assert.match(dockerfile, /mv "\$1" "Moonlight\$\{SUFFIX\}\.wgt"/);
+  // Run the collect step on the folders that the two builds write
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'moonlight-wgt-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'out', 'standard'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'out', 'forcegm'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'out', 'standard', 'Moonlight.wgt'), 'standard');
+    fs.writeFileSync(path.join(dir, 'out', 'forcegm', 'Moonlight-ForceGM.wgt'), 'forcegm');
+    const script = stepScript(WORKFLOW_FILE, 'Collect the widget files');
+    const result = runBash(script, { cwd: dir });
+    assert.equal(result.status, 0, result.output);
+    assert.equal(fs.readFileSync(path.join(dir, 'Moonlight.wgt'), 'utf8'), 'standard');
+    assert.equal(fs.readFileSync(path.join(dir, 'Moonlight-ForceGM.wgt'), 'utf8'), 'forcegm');
+    // A build that wrote no file stops the run before anything is published
+    fs.rmSync(path.join(dir, 'out', 'forcegm', 'Moonlight-ForceGM.wgt'));
+    fs.rmSync(path.join(dir, 'Moonlight-ForceGM.wgt'));
+    assert.notEqual(runBash(script, { cwd: dir }).status, 0);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

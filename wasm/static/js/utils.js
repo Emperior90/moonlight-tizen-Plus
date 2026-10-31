@@ -1150,7 +1150,8 @@ NvHTTP.prototype = {
     return sendMessage('STUN', []).then(function(addr) {
       if (addr) {
         this.externalIP = addr;
-        console.log('%c[utils.js, updateExternalAddressIP4]', 'color: gray;', 'External IPv4 address of ' + this.hostname + ' is ' + this.externalIP);
+        // The address itself stays out of the log, whose photos users post on the issue tracker
+        console.log('%c[utils.js, updateExternalAddressIP4]', 'color: gray;', 'Found the external IPv4 address of ' + this.hostname + '.');
       } else {
         console.error('%c[utils.js, updateExternalAddressIP4]', 'color: gray;', 'Error: External IPv4 address lookup failed!');
       }

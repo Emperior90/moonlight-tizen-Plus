@@ -435,7 +435,7 @@ When the decoder check counts and says No for AV1, the codec menu labels AV1 "ma
 Settings → About → *Diagnostic log* shows the log of the app for this session and the one before, oldest first: the lines of the app and the lines of its streaming engine, by their time. A session starts with the app and with each stream (a start once more of the same stream stays in its session). UP and DOWN scroll, OK or RETURN close it.
 
 - The log is kept only in the memory of the TV, at most 600 lines per session. It is never written to a file or sent anywhere; it leaves the TV only if you take a photo of it.
-- The PIN, the encryption keys of the stream (the remote input keys of the protocol), the unique ID of the TV, the private key of its pairing certificate and the RTSP address of a stream are hidden (*&lt;hidden&gt;*).
+- The PIN, the encryption keys of the stream (the remote input keys of the protocol), the unique ID of the TV, the private key of its pairing certificate, the RTSP address of a stream, the public IP address of your network and the MAC addresses are hidden (*&lt;hidden&gt;*). The local IP addresses and the names of your PCs stay, since they help to find a problem; cover them before you post a photo of the log if you prefer.
 - If Moonlight ended during a stream the last time (a crash, a freeze that you ended, or the TV was switched off), the next start says so once. The log of that session is gone, since it was in memory only, but the notice tells you that it happened; describe what you saw in the report.
 
 ## When Moonlight goes to the background

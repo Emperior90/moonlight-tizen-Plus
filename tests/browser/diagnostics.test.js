@@ -2,7 +2,8 @@
 
 // Checks the diagnostics of wasm/platform/diagnostics.js in the real page: the diagnostic log under About, reached with
 // the remote and a gamepad, with the lines of the app and the native lines of the module (from the stub of the module)
-// merged, the input keys, the unique ID of the install (also in the lines about a host) and the RTSP address hidden,
+// merged, the input keys, the unique ID of the install (also in the lines about a host), the RTSP address, the public IP
+// address and the MAC address of a host hidden (its name and local address shown),
 // scrolled with UP and DOWN and closed with RETURN; a new session of the log for each stream, not for its start once
 // more; the report of the last session in System information, also in German, and System information that fits the
 // screen and scrolls with UP and DOWN in every language; and the heartbeat of a stream: the notice at the next start
@@ -70,6 +71,9 @@ test('the diagnostic log under About: app and native lines, secrets hidden, scro
       // A host as the app lists and polls it, logged as an object and with NvHTTP.toString() (utils.js)
       const host = new NvHTTP('10.0.0.3', myUniqueid, '10.0.0.3');
       host.hostname = 'GAMING-PC';
+      // The public address that STUN found and the MAC address of the PC
+      host.externalIP = '203.0.113.7';
+      host.macAddress = '3C:7C:3F:12:AB:CD';
       console.log('%c[index.js, showApps]', 'color: green;', 'Current host object: \n', host, '\n' + host.toString());
       return myUniqueid;
     });
@@ -113,10 +117,12 @@ test('the diagnostic log under About: app and native lines, secrets hidden, scro
     const launch = shown.text.indexOf('[utils.js, openUrl] https://10.0.0.2:47984/launch?uniqueid=<hidden>&rikey=<hidden>&rikeyid=<hidden>');
     const rtsp = shown.text.indexOf('native RTSP handshake with rtsp://<hidden>');
     assert.ok(native >= 0 && launch > native && rtsp > launch, shown.text.slice(0, 2000));
-    ['0123456789ABCDEF', '00112233445566778899aabbccddeeff', '1946282817', '10.0.0.2:48010', uniqueId].forEach((secret) => {
-      assert.equal(shown.text.indexOf(secret), -1, secret);
-    });
+    ['0123456789ABCDEF', '00112233445566778899aabbccddeeff', '1946282817', '10.0.0.2:48010', uniqueId, '203.0.113.7', '3C:7C:3F:12:AB:CD']
+      .forEach((secret) => assert.equal(shown.text.indexOf(secret), -1, secret));
     assert.ok(shown.text.indexOf('client UID: <hidden>') > 0, 'the host line is in the log');
+    // The public IP address and the MAC address are hidden, the name and the local address of the PC stay for support
+    ['external IP: <hidden>', 'mac address: <hidden>', 'host name: GAMING-PC', 'host address: 10.0.0.3']
+      .forEach((line) => assert.ok(shown.text.indexOf(line) > 0, line));
     // UP scrolls up, DOWN down again, and RETURN closes the log with the focus back on its button
     await remoteKey(app.page, ...UP);
     const up = await app.page.evaluate(() => document.getElementById('diagnosticLogText').parentElement.scrollTop);

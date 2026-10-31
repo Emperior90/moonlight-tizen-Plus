@@ -4,16 +4,18 @@
 // file placed there ships to every TV, used or not. This is how 2.1.0 shipped a CA bundle that curl never read
 // (221 KB), eight icons of the Chrome app and a Node tool. A file under wasm/static must be used by the app: named by
 // a src or href of wasm/index.html, a string of a script (wasm/platform, wasm/static/js, res) or a url() of a
-// stylesheet. Allowed without that are the locale files (i18n.js builds their names), and the licence of the Manrope
-// font, which the SIL OFL requires next to the font. Files that CMakeLists.txt leaves out of the widget (PATTERN ...
-// EXCLUDE) need no use, and every such pattern must still match a file.
+// stylesheet. Allowed without that are the locale files (i18n.js builds their names), the licence of the Manrope
+// font, which the SIL OFL requires next to the font, and the notices of the third-party components with their licence
+// texts (tests/unit/third-party-notices.test.js). Files that CMakeLists.txt leaves out of the widget (PATTERN ...
+// EXCLUDE) need no use, and every such pattern must still match a file. Besides these folders, the widget gets the
+// single files that CMakeLists.txt installs, among them LICENSE, the GPL-3.0 text.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { REPO_ROOT } = require('../lib/dev-modules');
-const { installedDirectories, isExcluded } = require('../lib/widget-files');
+const { installedDirectories, installedFiles, isExcluded } = require('../lib/widget-files');
 
 const WASM_DIR = path.join(REPO_ROOT, 'wasm');
 const STATIC_DIR = path.join(WASM_DIR, 'static');
@@ -21,6 +23,7 @@ const STATIC_DIR = path.join(WASM_DIR, 'static');
 const ALLOWED = [
   /^static\/locales\/[a-z]{2}-[A-Z]{2}\.json$/,
   /^static\/fonts\/Manrope-OFL\.txt$/,
+  /^static\/licenses\/THIRD-PARTY-NOTICES\.txt$/,
 ];
 
 function listFiles(dir) {
@@ -113,4 +116,19 @@ test('the leftovers of moonlight-chrome are gone from the widget: CA bundle, app
   assert.match(scanner, /function startSubnetScanner\(/);
   assert.equal(/ServiceFinder|^\s*\/\/.*chrome\.sockets/m.test(scanner), false);
   assert.equal(/ServiceFinder|finder\.byService_/.test(fs.readFileSync(path.join(WASM_DIR, 'platform', 'index.js'), 'utf8')), false);
+});
+
+test('the widget gets the GPL-3.0 text and the third-party notices, and the Docker build has both', () => {
+  // The single files of the widget, in the order of CMakeLists.txt
+  assert.deepEqual(installedFiles(REPO_ROOT), ['wasm/index.html', 'res/config.xml', 'res/platform.js', 'LICENSE']);
+  installedFiles(REPO_ROOT).forEach((file) => assert.ok(fs.existsSync(path.join(REPO_ROOT, file)), file));
+  const packaged = packagedStaticFiles().map(relativeToWasm);
+  assert.ok(packaged.indexOf('static/licenses/THIRD-PARTY-NOTICES.txt') >= 0, packaged.join(', '));
+  // The Docker build installs from the files it copied into its own tree, so LICENSE must be among them
+  const dockerfile = fs.readFileSync(path.join(REPO_ROOT, 'Dockerfile'), 'utf8');
+  assert.match(dockerfile, /^COPY --chown=moonlight LICENSE \.\/moonlight-tizen\/$/m);
+  assert.match(dockerfile, /^COPY --chown=moonlight wasm\/static\/ \.\/moonlight-tizen\/wasm\/static\/$/m);
+  const lines = dockerfile.split(/\r?\n/);
+  assert.ok(lines.findIndex((line) => /^COPY --chown=moonlight LICENSE /.test(line)) <
+    lines.findIndex((line) => /^RUN cmake --install build --prefix build$/.test(line)), 'LICENSE is copied before cmake --install');
 });

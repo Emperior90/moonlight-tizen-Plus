@@ -9,7 +9,7 @@ Thanks for contributing to Moonlight Plus! Whether you're opening an issue or pr
 - Clearly explain your feature request or the problem you're facing.
 - Include steps to reproduce the issue whenever possible.
 - Include screenshots or video demonstrations when they help explain the issue.
-- When posting an issue, include a photo of the end of the diagnostic log (Settings → About → *Diagnostic log*) and the Sunshine log if you have it (**please remove or mask your private IP**).
+- When posting an issue, include a photo of the end of the diagnostic log (Settings → About → *Diagnostic log*) and the Sunshine log if you have it. The diagnostic log hides the keys, the public IP address and the MAC addresses, but shows the local addresses and the name of your PC, which you can cover before you upload the photo.
 
 ## Reporting Issues
 
@@ -87,10 +87,10 @@ This repository includes several third-party dependencies required for applicati
   The following file currently requires manual updates to preserve Tizen-specific functionality:
   - `moonlight-common-c/enet/unix.c`
 - `opus` — **manual modifications are not allowed**; updates should only come from the official [upstream repository](https://github.com/xiph/opus) and be performed by the maintainer. The app only decodes, so `CMakeLists.txt` builds only the files that the decoder links; after an update of Opus, `npm test --prefix tests` (`tests/native/run.sh`) builds that list and decodes with it.
-- `ports` — **manual modifications are not allowed**; there is no dedicated upstream repository. Updates, if ever required, should only be performed by the maintainer.
 
 ### Dependency Guidelines
 
+- Every third-party component that goes into the app has an entry with its licence text in `wasm/static/licenses/THIRD-PARTY-NOTICES.txt`, which ships in the app. Add or update its entry together with the component.
 - Avoid modifying third-party libraries manually unless the change is required and follows the rules above.
 - Updates should come from the official upstream repositories whenever possible.
 - If changes to these libraries are needed, please discuss them with the maintainer first.

@@ -6,7 +6,8 @@
 // :focus-visible, inset, the individual transform properties, selector lists in :not()), and the weak CPUs of the TVs
 // only animate transform and opacity, with no blur filter and no will-change. The icons are SVG symbols of one sprite,
 // referenced with xlink:href, so the Material icon fonts (about 900 KB) and their stylesheet are gone and nothing may
-// use them again; the sprite holds only symbols that the page or the scripts use. Texts are at least 16 px, the weights
+// use them again; the sprite holds only symbols that the page or the scripts use, and the images of static/res draw no
+// glyph of the icon font (the badges of the app list use icons of the sprite). Texts are at least 16 px, the weights
 // of the theme lie in the weight range of its Manrope face, the face lists exactly the characters of its font file and
 // that file has every character of the UI texts, and the ambient light of the box art needs no canvas. No element asks
 // for the ripple effect of MDL, and res/platform.js keeps only what the app uses. tests/browser/theme-ui.test.js,
@@ -169,12 +170,32 @@ test('no Material icon ligature, icon font or icon stylesheet is left', () => {
   assert.doesNotMatch(read('CMakeLists.txt'), /MaterialIcons|material-icons/);
 });
 
+test('the images of static/res draw no glyph of Material Icons: the badges of the app list use the icons of the sprite', () => {
+  // The glyphs of the icon font sit on a grid of 960 units with y from -960 to 0 and use quadratic curves (Q), scaled
+  // down with scale(.1). Two badges carried the glyphs sports_esports and warning (Apache-2.0) until 2.2.0.
+  listFiles('wasm/static/res').filter((file) => /\.svg$/.test(file)).forEach((file) => {
+    const svg = read(file);
+    assert.doesNotMatch(svg, /scale\(\.1\)|\bd="M-?\d+ -\d{3}/, file);
+    (svg.match(/\sd="[^"]*"/g) || []).forEach((path) => assert.doesNotMatch(path, /Q/, file));
+  });
+  const html = read(INDEX_HTML);
+  const symbolPath = (id) => new RegExp('<symbol id="' + id + '" viewBox="0 0 24 24"><path d="([^"]+)"/></symbol>').exec(html)[1];
+  [['wasm/static/res/applist_empty.svg', 'i-gamepad'], ['wasm/static/res/applist_error.svg', 'i-alert']].forEach(([file, id]) => {
+    const svg = read(file);
+    assert.ok(svg.indexOf(' d="' + symbolPath(id) + '"') >= 0, file + ' draws ' + id + ' of the sprite');
+    assert.match(svg, /<path transform="matrix\(4 0 0 4 332 12\d\)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="/, file);
+  });
+});
+
 test('Manrope is the font of the UI, with Roboto as its fallback, and its licence ships with it', () => {
   const css = cssWithoutComments('wasm/static/css/style.css');
   assert.match(css, /--font: 'Manrope', 'Roboto', /);
   assert.match(css, /src: url\(\.\.\/fonts\/Manrope-latin-wght\.woff2\) format\('woff2'\);/);
   assert.ok(fs.existsSync(path.join(REPO_ROOT, 'wasm/static/fonts/Manrope-latin-wght.woff2')));
   assert.match(read('wasm/static/fonts/Manrope-OFL.txt'), /SIL OPEN FONT LICENSE Version 1\.1/);
+  // The copyright line of Manrope (google/fonts ofl/manrope/OFL.txt), which 2.1.0 shipped as 'Google Inc.'
+  assert.equal(read('wasm/static/fonts/Manrope-OFL.txt').split('\n')[0],
+    'Copyright 2018 The Manrope Project Authors (https://github.com/googlefonts/manrope)');
   assert.match(read(INDEX_HTML), /<link rel="stylesheet" href="static\/css\/roboto\.css">/);
 });
 

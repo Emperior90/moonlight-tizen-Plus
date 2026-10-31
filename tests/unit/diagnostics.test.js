@@ -1,7 +1,8 @@
 'use strict';
 
 // Pins wasm/platform/diagnostics.js: what the log hides (the remote input keys, the pairing secrets and PIN, the unique
-// ID and the RTSP session URL), the log of the current and the previous session (a new session for each stream, the
+// ID, the RTSP session URL, the public IP address and every MAC address but the all-zero one) and what it keeps (the
+// local addresses and the names of the PCs), the log of the current and the previous session (a new session for each stream, the
 // lines of the console with the style of '%c' left out and the console still getting them, the lines that only repeat
 // the overlay left out, a repeated line counted, the oldest lines dropped when a session is full, the native lines of the
 // module merged by their time and hidden the same way), the report of the last session read from the messages of
@@ -119,6 +120,47 @@ test('the log hides the unique ID of the client in every form that the app logs,
   // A new start replaces the key it hides
   hide('rikey', 'ffeeddccbbaa99887766554433221100');
   assert.equal(redact('ffeeddccbbaa99887766554433221100 and 0123456789ABCDEF'), '<hidden> and <hidden>');
+});
+
+test('the log hides the public IP address and the MAC addresses, but keeps the all-zero MAC, the local addresses and the PC names', () => {
+  const app = loadDiagnostics();
+  const redact = app.platform.get('redactDiagnosticText');
+  const cases = [
+    // NvHTTP.toString() (utils.js), which errors of the host polling and the app list print
+    ['host name: GAMING-PC\r\nhost address: 192.168.1.20\r\nlocal address: 192.168.1.20\r\nexternal IP: 203.0.113.7\r\nmac address: 3C:7C:3F:12:AB:CD\r\nhttps port: 47984',
+      'host name: GAMING-PC\r\nhost address: 192.168.1.20\r\nlocal address: 192.168.1.20\r\nexternal IP: <hidden>\r\nmac address: <hidden>\r\nhttps port: 47984'],
+    // The line of the STUN result before 2.2.0, in a log of an older build
+    ['[utils.js, updateExternalAddressIP4] External IPv4 address of GAMING-PC is 203.0.113.7',
+      '[utils.js, updateExternalAddressIP4] External IPv4 address of GAMING-PC is <hidden>'],
+    // A host object as JSON (the stored hosts, formatConsoleArguments()), also inside a JSON string
+    ['Storing data at key: hosts with data: {"A1":{"hostname":"GAMING-PC","address":"192.168.1.20","externalIP":"203.0.113.7","macAddress":"3c-7c-3f-12-ab-cd"}}',
+      'Storing data at key: hosts with data: {"A1":{"hostname":"GAMING-PC","address":"192.168.1.20","externalIP":"<hidden>","macAddress":"<hidden>"}}'],
+    ['{"value":"{\\"externalIP\\":\\"203.0.113.7\\",\\"x\\":1}"}', '{"value":"{\\"externalIP\\":\\"<hidden>\\",\\"x\\":1}"}'],
+    // The server info of the host
+    ['<ExternalIP>203.0.113.7</ExternalIP><LocalIP>192.168.1.20</LocalIP><mac>3c:7c:3f:12:ab:cd</mac>',
+      '<ExternalIP><hidden></ExternalIP><LocalIP>192.168.1.20</LocalIP><mac><hidden></mac>'],
+    // Wake-on-LAN (index.js and the native lines of main.cpp): the all-zero MAC of a host that never reported its MAC stays
+    ['Updated MAC address for host GAMING-PC from 00:00:00:00:00:00 to 3C:7C:3F:12:AB:CD',
+      'Updated MAC address for host GAMING-PC from 00:00:00:00:00:00 to <hidden>'],
+    ['Sent 6 of 6 magic packets to MAC address: 3C:7C:3F:12:AB:CD (subnet broadcast: 192.168.1.255)',
+      'Sent 6 of 6 magic packets to MAC address: <hidden> (subnet broadcast: 192.168.1.255)'],
+  ];
+  cases.forEach(([text, expected]) => assert.equal(redact(text), expected));
+  // What support needs stays: the all-zero MAC, local and link-local addresses, times and other hex numbers
+  ['Not sending a magic packet: the MAC address of the host is unknown (00:00:00:00:00:00)', 'Invalid MAC address format: 00-00-00-00-00-00',
+    'Found host with IP address: 192.168.1.20', 'Looking for the external IPv4 address of GAMING-PC...', 'fe80::1a2b:3c4d at 12:34:56',
+    'Error: External IPv4 address lookup failed!', 'aa:bb:cc:dd:ee', 'external port: 47989']
+    .forEach((text) => assert.equal(redact(text), text));
+  // The native lines of the module are hidden the same way
+  app.module.nativeLog = app.clock.now + '\tSent 6 of 6 magic packets to MAC address: 3c:7c:3f:12:ab:cd (subnet broadcast: 192.168.1.255)\n';
+  assert.deepEqual(texts(app.log.getSessions()[0]), ['Sent 6 of 6 magic packets to MAC address: <hidden> (subnet broadcast: 192.168.1.255)']);
+  // The app no longer logs the address that STUN found, and NvHTTP.toString() keeps the labels that the log hides
+  const utils = fs.readFileSync(path.join(REPO_ROOT, 'wasm/static/js/utils.js'), 'utf8');
+  const stun = utils.slice(utils.indexOf('updateExternalAddressIP4: function()'), utils.indexOf('pair: function('));
+  assert.ok(stun.length > 0);
+  (stun.match(/console\.\w+\([^\n]*/g) || []).forEach((line) => assert.doesNotMatch(line, /externalIP|addr\b/, line));
+  assert.match(utils, /string \+= 'external IP: ' \+ this\.externalIP/);
+  assert.match(utils, /string \+= 'mac address: ' \+ this\.macAddress/);
 });
 
 test('the console lines go into the log without their styles, and the console still gets them', () => {
