@@ -1,6 +1,6 @@
 'use strict';
 
-// The runtime checks of plan WP8 in the real page, with the simulated tizentvwasm and MediaSource of the TV
+// The runtime checks of the Ultra Low Latency mode and the video decoders in the real page, with the simulated tizentvwasm and MediaSource of the TV
 // (tests/browser/mocks/tv-mock.js, options wasmPlayer and codecs):
 // - Game mode: a WASM player that says clearly that it doesn't offer the Ultra Low Latency mode keeps the switch off
 //   and disabled whatever is stored, explains it, and starts the stream without it. With the mode, or without a clear
@@ -269,7 +269,7 @@ test('on Tizen 5.5 with the Ultra Low Latency mode, the optimal settings say tha
   }
 });
 
-test('the S90C keeps its settings and the ForceGM hint with the Ultra Low Latency mode (plan section 3)', async () => {
+test('the S90C keeps its settings and the ForceGM hint with the Ultra Low Latency mode', async () => {
   for (const forceGM of [0, 1]) {
     const reference = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi', forceGM } });
     const withMode = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi', forceGM, wasmPlayer: 'ull' } });

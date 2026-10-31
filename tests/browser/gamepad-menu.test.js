@@ -2,7 +2,7 @@
 
 // Pins how a gamepad drives the menus in the real page: the 'gamepadinputchanged' handler that attachListeners()
 // registers (handleGamepadMenuInput() in wasm/platform/index.js) maps buttons and sticks to Navigation operations, and
-// the Controller of gamepad.js polls navigator.getGamepads() only while the menus are shown. Since plan WP6 Select
+// the Controller of gamepad.js polls navigator.getGamepads() only while the menus are shown. Since 1.19.100 Select
 // presses and Start switches, as the in-app guide promises (before, Select threw and Start did nothing). The exact
 // repeat counts are in tests/unit/gamepad-menu-handler.test.js, the simulated controllers in gamepad-controllers.test.js.
 

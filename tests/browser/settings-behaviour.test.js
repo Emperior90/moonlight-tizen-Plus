@@ -91,7 +91,7 @@ test('1800p has its own presets, and 90 FPS shows its cadence hint after each sw
 test('a hand-picked bitrate is kept when the video settings change, with one notice that names the recommended one', async () => {
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
   try {
-    // The bitrate of a fresh install follows the presets (plan D9) until it is picked by hand
+    // The bitrate of a fresh install follows the presets until it is picked by hand
     await app.page.evaluate(() => {
       $('#bitrateSlider')[0].MaterialSlider.change('62');
       $('#bitrateSlider').trigger('input');

@@ -173,7 +173,7 @@ jobs:
           API_URL: ${{ github.api_url }}/repos/${{ github.repository }}
           SUPPORT_CHECK_MODE: warn
         run: bash .github/scripts/check-support-path.sh
-      # Builds the description of the pre-release: the title, the short release notes from `docs/RELEASE_NOTES_DEV.md` under
+      # Builds the description of the pre-release: the title, the short release notes from `docs/RELEASE_NOTES.md` under
       # the "## What's Changed:" heading, one line of links (the commit, and the patch notes and the guide of the commit when
       # it has them) and a one-line warning. The update dialog of the app stops reading the notes at the commit line
       # (extractReleaseNotes() in wasm/platform/index.js), so the links and the warning stay out of it.
@@ -186,8 +186,8 @@ jobs:
             echo
             echo "## What's Changed:"
             echo
-            if [ -s docs/RELEASE_NOTES_DEV.md ]; then
-              cat docs/RELEASE_NOTES_DEV.md
+            if [ -s docs/RELEASE_NOTES.md ]; then
+              cat docs/RELEASE_NOTES.md
             else
               echo "- No release notes have been provided for this pre-release yet."
             fi
@@ -225,8 +225,8 @@ jobs:
     # This job turns an existing pre-release into a full release, so that a tested build stays available: the cleanup of
     # the next pre-release of the branch only deletes pre-releases. It keeps the files of the pre-release and moves it to the
     # tag "v" + the version in `res/config.xml`, which the in-app update check compares with the installed version (the
-    # timestamp of a pre-release tag would read as a newer version). The description comes from `docs/RELEASE_NOTES_STABLE.md`,
-    # with the same line of links as a pre-release, and the promotion stops while the section of the version in
+    # timestamp of a pre-release tag would read as a newer version). The description comes from `docs/RELEASE_NOTES.md` of
+    # this commit, with the same line of links as a pre-release, and the promotion stops while the section of the version in
     # `docs/PATCH_NOTES.md` still says Pre-release.
     steps:
       - name: Checkout repository
@@ -268,8 +268,8 @@ jobs:
               exit 1
             fi
           done
-          if [ ! -s docs/RELEASE_NOTES_STABLE.md ]; then
-            echo "The release notes docs/RELEASE_NOTES_STABLE.md are missing."
+          if [ ! -s docs/RELEASE_NOTES.md ]; then
+            echo "The release notes docs/RELEASE_NOTES.md are missing."
             exit 1
           fi
 
@@ -326,7 +326,7 @@ jobs:
             echo
             echo "## What's Changed:"
             echo
-            cat docs/RELEASE_NOTES_STABLE.md
+            cat docs/RELEASE_NOTES.md
             echo
             # The commit link names the build, the documents link the commit these release notes come from
             links="- **Commit**: [\`${sha:0:7}\`](${REPO_URL}/commit/${sha})"

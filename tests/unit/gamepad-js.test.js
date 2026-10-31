@@ -3,7 +3,7 @@
 // Pins the menu gamepad polling of wasm/platform/gamepad.js (the Controller object): it polls
 // navigator.getGamepads() every 16 ms while the menus are shown and reports changed buttons and axes as a
 // 'gamepadinputchanged' event, which index.js maps to Navigation operations (tests/unit/gamepad-menu-handler.test.js).
-// Since plan WP6 it also takes a fresh snapshot of a controller whose layout changed, finds controllers that never
+// Since 1.19.100 it also takes a fresh snapshot of a controller whose layout changed, finds controllers that never
 // fired gamepadconnected, reports the press that woke a controller, ignores small stick movements, and describes the
 // controllers for the log, the notice about a non-standard layout and System information.
 

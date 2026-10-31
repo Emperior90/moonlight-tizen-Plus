@@ -2,7 +2,7 @@
 
 // Checks statements of the documents that describe what the code does, against the code, so that a change of the rules
 // fails here until the documents follow (the table of recommended bitrates has its own test, guide-bitrate-table.test.js):
-// - the warnings that the TV classes of docs/GUIDE.md section 2 get above 60 FPS at 4K (resolutionFramerateWarningKey())
+// - the warnings that the TV classes of docs/GUIDE.md get above 60 FPS at 4K (resolutionFramerateWarningKey())
 // - the game mode on Tizen 5.5 with a WASM player that offers the Ultra Low Latency mode, and the switch that stays
 //   disabled on a TV whose WASM player doesn't offer it (getGameModeDefault())
 // - the bitrate presets, which give the recommended bitrate of every resolution and frame rate (presetBitrate())
@@ -12,7 +12,7 @@
 // - the audio path that the section on surround sound with a soundbar describes: the 5.1 entry of the audio
 //   configuration, the 6-channel PCM track that only the EMSS backend adds, the two channels of the Web Audio output and
 //   the Audio stream line that the check reads
-// The release notes of a release (docs/RELEASE_NOTES_STABLE.md) only give the essentials, so the statements that they
+// The release notes of a release (docs/RELEASE_NOTES.md) only give the essentials, so the statements that they
 // carried until 1.19.100 are checked in the guide and the patch notes (docs/PATCH_NOTES.md), where they are now.
 
 const test = require('node:test');
@@ -66,7 +66,7 @@ test('the TV classes of the guide name the warnings that 4K above 60 FPS gets on
   assert.match(row8k, /4K at 90 or 120 FPS gets the warning that many Samsung TVs have 60 Hz panels instead of the Level 5.2 warning/);
   assert.match(row8k, /4K at 144 FPS still gets the warning that it exceeds Level 5.2/);
   // No document calls level 5.2 the highest level of all Samsung TVs any more
-  for (const file of ['docs/GUIDE.md', 'docs/RELEASE_NOTES_STABLE.md', 'docs/PATCH_NOTES.md', 'CHANGELOG.md', 'wasm/platform/tv_profile.js']) {
+  for (const file of ['docs/GUIDE.md', 'docs/RELEASE_NOTES.md', 'docs/PATCH_NOTES.md', 'CHANGELOG.md', 'wasm/platform/tv_profile.js']) {
     assert.doesNotMatch(read(file), /highest (decoder )?level of Samsung TVs|Level 5\.2 on every Samsung TV/i, file);
   }
 });
@@ -123,16 +123,19 @@ test('the documents explain the version of a promoted release and what the earli
   for (const file of ['README.md', 'docs/GUIDE.md', 'docs/PATCH_NOTES.md']) {
     assert.match(read(file), /announces (later )?is (a release of )?the regular Moonlight Tizen app/, file);
   }
-  const archive = read('docs/profiles/S90C/RELEASE_NOTES_v1.19.0-s90c.1.md');
-  assert.match(archive.split('\n').slice(0, 4).join('\n'), /\*\*Correction:\*\* the note under \*Hinweise\* that the update check/);
+  // The German notes of v1.19.0-s90c.1 stay at its tag, whose note on the update check the guide corrects: that release
+  // will never offer Moonlight Plus
+  assert.match(GUIDE, /The earlier release v1\.19\.0-s90c\.1 \(\*Moonlight S90C\* on the TV\) checks the releases of upstream Moonlight Tizen, so it will never offer Moonlight Plus/);
   // Tizen Studio always needs a Samsung account for the Samsung certificate, Apps2Samsung only on Tizen 7.0 and newer
   assert.match(GUIDE, /Apps2Samsung asks for a Samsung account on Tizen 7\.0 and newer\. Tizen Studio always needs one/);
 });
 
 test('the section on surround sound with a soundbar describes the audio path of the app as the code does', () => {
   const start = GUIDE.indexOf('### Surround sound with a soundbar');
-  assert.ok(start > GUIDE.indexOf('## 11. Audio') && start < GUIDE.indexOf('## 12. '), 'a part of section 11');
-  const section = GUIDE.slice(start, GUIDE.indexOf('## 12. '));
+  const audioSection = GUIDE.indexOf('\n## Audio\n');
+  const nextSection = GUIDE.indexOf('\n## ', audioSection + 1);
+  assert.ok(audioSection > 0 && start > audioSection && start < nextSection, 'a part of the section Audio');
+  const section = GUIDE.slice(start, nextSection);
   // The entry of the audio configuration that the section names, and EMSS as the default backend
   const html = read('wasm/index.html');
   assert.match(html, /data-value="51Surround" data-i18n="5\.1 Surround Sound"/);
@@ -159,4 +162,51 @@ test('the section on surround sound with a soundbar describes the audio path of 
   assert.match(section, /Untested: nobody has confirmed discrete 5\.1 from the app on a TV yet/);
   assert.ok(section.indexOf('](https://www.samsung.com/sg/support/tv-audio-video/what-is-earc-and-how-to-set-on-samsung-smart-tv/)') > 0);
   assert.ok(section.indexOf('](https://github.com/fidoboy/moonlight-tizen-ac3/blob/master/docs/Troubleshooting-Guide.md)') > 0);
+});
+
+// The headings of level 2 of a Markdown document, without the contents list
+const level2Headings = (text) => text.split('\n').filter((line) => /^## /.test(line)).map((line) => line.slice(3).trim()).filter((heading) => heading !== 'Contents');
+
+test('the guide and the controller page have headings without numbers, in the order of use, each in the contents list', () => {
+  // Numbers in the headings changed every link to a heading whenever a section was added or moved
+  assert.deepEqual(level2Headings(GUIDE), ['Requirements', 'Installation', 'The screens of the app', 'Optimal settings for this TV',
+    'Stream Menu and app menu', 'Finding your bitrate', 'Host settings (Sunshine)', 'ForceGM variant and game mode', 'HDR', 'Audio',
+    'Performance statistics', 'System information and diagnostic log', 'When Moonlight goes to the background', 'Known limits',
+    'Troubleshooting']);
+  for (const file of ['docs/GUIDE.md', 'docs/CONTROLLERS.md']) {
+    const text = read(file);
+    text.split('\n').filter((line) => /^#{2,4} /.test(line)).forEach((line) => {
+      assert.doesNotMatch(line, /^#+ \d+\.?\s/, file + ': ' + line);
+    });
+    // The contents list links each section in its order (the guide adds some subsections on the same line)
+    const contents = text.slice(text.indexOf('## Contents'), text.indexOf('\n## ', text.indexOf('## Contents') + 1));
+    const listed = contents.split('\n').filter((line) => /^- \[/.test(line)).map((line) => /^- \[([^\]]+)\]/.exec(line)[1]);
+    assert.deepEqual(listed, level2Headings(text), file);
+  }
+});
+
+test('the sections of the guide that the app names by their heading exist', () => {
+  // e.g. "see <b>ForceGM variant and game mode</b> in the guide of Moonlight Plus" (wasm/platform/index.js)
+  const named = [];
+  for (const file of ['wasm/platform/index.js', 'wasm/index.html']) {
+    const pattern = /<b>([^<]+)<\/b> in the guide/g;
+    let match;
+    while ((match = pattern.exec(read(file))) !== null) {
+      named.push(match[1]);
+    }
+  }
+  assert.ok(named.indexOf('ForceGM variant and game mode') >= 0, named.join(', '));
+  const headings = GUIDE.split('\n').filter((line) => /^#{2,4} /.test(line)).map((line) => line.replace(/^#+ /, '').trim());
+  named.forEach((name) => assert.ok(headings.indexOf(name) >= 0, 'the guide has the heading ' + name));
+});
+
+test('the guide gives the tested bitrate steps of the S90C itself and links the documents of v1.19.0-s90c.1 at their tag', () => {
+  const bitrate = GUIDE.slice(GUIDE.indexOf('\n## Finding your bitrate\n'), GUIDE.indexOf('\n## ', GUIDE.indexOf('\n## Finding your bitrate\n') + 1));
+  assert.match(bitrate, /\*\*Samsung S90C over Wi-Fi:\*\* starts at its cap of 100 Mbps\. The tuning plan of this model tests 100 → 120 → 135 → 150 Mbps/);
+  // The archive of the German documents left the branch; the tag keeps them
+  assert.ok(!fs.existsSync(path.join(REPO_ROOT, 'docs', 'profiles')));
+  const tagLink = 'https://github.com/Emperior90/moonlight-tizen-Plus/tree/v1.19.0-s90c.1/docs';
+  for (const file of ['docs/GUIDE.md', 'README.md', 'docs/PATCH_NOTES.md']) {
+    assert.ok(read(file).indexOf('](' + tagLink + ')') >= 0, file + ' links the tag v1.19.0-s90c.1');
+  }
 });

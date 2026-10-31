@@ -4,14 +4,14 @@
 // - extractReleaseNotes() in wasm/platform/index.js reads the "What's Changed" section of a release and turns its
 //   Markdown into plain text lines (headings, bullets, bold, italics, links, inline code), escaped as HTML, and ends
 //   long notes with a pointer to the release page, since the dialog can't scroll
-// - docs/RELEASE_NOTES_DEV.md and docs/RELEASE_NOTES_STABLE.md fit the release descriptions that the workflows build
-//   around them: no heading of level 1 or 2, which would end the section in the dialog, and no relative links, which
-//   don't work in a release description
-// - both stay short (the owner asked for only the essentials in a release description): a budget of lines and
+// - docs/RELEASE_NOTES.md, which the pre-release and the promotion both read, fits the release descriptions that the
+//   workflow builds around it: no heading of level 1 or 2, which would end the section in the dialog, and no relative
+//   links, which don't work in a release description
+// - it stays short (the owner asked for only the essentials in a release description): a budget of lines and
 //   characters, the version of res/config.xml that they describe, which file to install, that a first install goes
 //   next to the regular Moonlight app, how the version was tested, no link to the patch notes of their own (the line of
-//   links of the workflows has it, and the dialog would show a link as text that can't be followed), and the stable
-//   notes, which the update dialog shows to the installs of the last release, fit the dialog without being cut
+//   links of the workflow has it, and the dialog would show a link as text that can't be followed), and, since the
+//   update dialog shows them to the installs of the last release, they fit the dialog without being cut
 // - the release descriptions that the release workflow release-development.yml builds (pre-release and promotion) are
 //   run with bash on the documents of the repository and read back by extractReleaseNotes(): the title, the notes, one
 //   line of links (commit, and the patch notes and the guide when the commit has them) and, for a pre-release, a
@@ -170,7 +170,7 @@ test('a single line longer than the dialog is still shown', () => {
   assert.equal(lines[1], MORE_CHANGES);
 });
 
-for (const name of ['RELEASE_NOTES_DEV.md', 'RELEASE_NOTES_STABLE.md']) {
+for (const name of ['RELEASE_NOTES.md']) {
   test(`docs/${name} has no level 1 or 2 heading and no relative link`, () => {
     const notes = fs.readFileSync(path.join(REPO_ROOT, 'docs', name), 'utf8');
     assert.ok(notes.trim().length > 0, 'the release notes are empty');
@@ -190,7 +190,7 @@ const APP_VERSION = /<widget[^>]*\sversion="([^"]+)"/.exec(fs.readFileSync(path.
 const MAX_NOTE_LINES = 15;
 const MAX_NOTE_LINE_CHARS = 160;
 
-for (const name of ['RELEASE_NOTES_DEV.md', 'RELEASE_NOTES_STABLE.md']) {
+for (const name of ['RELEASE_NOTES.md']) {
   test(`docs/${name} stays short, names the version ${APP_VERSION} of res/config.xml and leaves the patch notes to the workflows`, () => {
     const notes = fs.readFileSync(path.join(REPO_ROOT, 'docs', name), 'utf8');
     const lines = notes.replace(/\s+$/, '').split(/\r?\n/);
@@ -207,18 +207,18 @@ for (const name of ['RELEASE_NOTES_DEV.md', 'RELEASE_NOTES_STABLE.md']) {
   });
 }
 
-test('the stable release notes keep the manual update of v1.19.0-s90c.1, and the update dialog shows them in full', () => {
-  const notes = fs.readFileSync(path.join(REPO_ROOT, 'docs', 'RELEASE_NOTES_STABLE.md'), 'utf8');
+test('the release notes keep the manual update of v1.19.0-s90c.1, and the update dialog shows them in full', () => {
+  const notes = fs.readFileSync(path.join(REPO_ROOT, 'docs', 'RELEASE_NOTES.md'), 'utf8');
   assert.ok(notes.indexOf('v1.19.0-s90c.1') >= 0 && notes.indexOf('by hand') >= 0);
   // The installs of the last release read these notes in the update dialog, which can't scroll: they fit without the
   // pointer to the release page, so nothing of them is cut
   const lines = dialogLines(notes);
-  assert.notEqual(lines[lines.length - 1], MORE_CHANGES, 'the dialog cuts the stable notes');
+  assert.notEqual(lines[lines.length - 1], MORE_CHANGES, 'the dialog cuts the release notes');
   assert.ok(lines.reduce((sum, line) => sum + rowsOf(line), 0) <= MAX_ROWS);
   assert.ok(lines.some((line) => line.indexOf('v1.19.0-s90c.1') >= 0), 'the dialog shows the note about v1.19.0-s90c.1');
 });
 
-test('the stable release notes list what is new since the last full release, which the installs of it have', () => {
+test('the release notes list what is new since the last full release, which the installs of it have', () => {
   // The newest version of the list of docs/PATCH_NOTES.md with a date, other than the version that these notes describe
   // (dated already on the day of its own release), is the last full release; the versions above it are pre-releases,
   // which a promotion of this version may skip
@@ -226,7 +226,7 @@ test('the stable release notes list what is new since the last full release, whi
   const released = patchNotes.split('\n').map((line) => /^- \[(\d+\.\d+\.\d+)\]\(#\d+\): \d{4}-\d{2}-\d{2},/.exec(line))
     .filter((match) => match && match[1] !== APP_VERSION)[0];
   assert.ok(released, 'the patch notes list a full release');
-  const notes = fs.readFileSync(path.join(REPO_ROOT, 'docs', 'RELEASE_NOTES_STABLE.md'), 'utf8');
+  const notes = fs.readFileSync(path.join(REPO_ROOT, 'docs', 'RELEASE_NOTES.md'), 'utf8');
   assert.equal(notes.split('\n')[0], '**New since ' + released[1] + ':**');
 });
 
@@ -266,8 +266,8 @@ function runBlock(block, cwd) {
 }
 
 const WORKFLOW_DESCRIPTIONS = [
-  { workflow: 'release-development.yml', index: 0, title: '# Moonlight Plus v2026.1025.1200', notes: 'RELEASE_NOTES_DEV.md', preRelease: true },
-  { workflow: 'release-development.yml', index: 1, title: '# Moonlight Plus v1.19.100', notes: 'RELEASE_NOTES_STABLE.md', preRelease: false },
+  { workflow: 'release-development.yml', index: 0, title: '# Moonlight Plus v2026.1025.1200', notes: 'RELEASE_NOTES.md', preRelease: true },
+  { workflow: 'release-development.yml', index: 1, title: '# Moonlight Plus v1.19.100', notes: 'RELEASE_NOTES.md', preRelease: false },
 ];
 
 test('the workflow builds its release descriptions in the expected places', () => {
@@ -329,7 +329,7 @@ test('the line of links of a release description names the patch notes and the g
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'moonlight-release-notes-'));
   try {
     fs.mkdirSync(path.join(dir, 'docs'));
-    ['RELEASE_NOTES_DEV.md', 'RELEASE_NOTES_STABLE.md'].forEach((name) => fs.copyFileSync(path.join(REPO_ROOT, 'docs', name), path.join(dir, 'docs', name)));
+    ['RELEASE_NOTES.md'].forEach((name) => fs.copyFileSync(path.join(REPO_ROOT, 'docs', name), path.join(dir, 'docs', name)));
     for (const entry of WORKFLOW_DESCRIPTIONS) {
       const description = runBlock(releaseNoteBlocks(entry.workflow)[entry.index], dir);
       const linkLine = description.split('\n').find((line) => line.indexOf('- **Commit**: ') === 0);

@@ -15,14 +15,14 @@ function onTv(tvOptions, screen) {
   return loadPlatformScripts(INDEX_SCRIPTS, { tv: tvOptions, screen });
 }
 
-test('the S90C keeps its recommended bitrates of 75 / 100 / 80 Mbps at 4K (plan section 3)', () => {
+test('the S90C keeps its recommended bitrates of 75 / 100 / 80 Mbps at 4K', () => {
   const platform = onTv({ tv: 's90c' });
   const derive = (conn) => plain(platform.get('deriveOptimalSettings')(platform.get('tvCapabilities'), conn));
   assert.deepEqual(['ethernet', 'wifi', 'unknown'].map((conn) => derive(conn).bitrate), [75, 100, 80]);
   assert.equal(derive('wifi').resolution, '3840:2160');
 });
 
-test('other TVs get the recommended bitrate for their panel and connection (plan WP2, D6)', () => {
+test('other TVs get the recommended bitrate for their panel and connection', () => {
   const bitratesOn = (tv) => {
     const platform = onTv({ tv });
     return ['ethernet', 'wifi', 'unknown'].map((conn) => platform.get('deriveOptimalSettings')(platform.get('tvCapabilities'), conn).bitrate);
@@ -50,7 +50,7 @@ test('the default resolution is the highest the panel supports, up to 4K', () =>
   assert.equal(resolutionOn({ tv: 'uhd' }), '3840:2160');
   assert.equal(resolutionOn({ tv: '8k' }), '3840:2160');
   assert.equal(resolutionOn({ tv: 'fhd' }), '1920:1080');
-  // A screen that reports 1440p no longer decides the default (plan section 5, item 13): Samsung sells no 1440p panels
+  // A screen that reports 1440p no longer decides the default: Samsung sells no 1440p panels
   assert.equal(resolutionOn({ tv: 'fhd' }, { width: 2560, height: 1440 }), '1920:1080');
 });
 
@@ -112,7 +112,7 @@ test('the tested profile of the S90C is selected by the model name or the model 
   assert.equal(profileOn({ tv: 'uhd', model: 'qe65s90caexxu' }), 'S90C', 'case-insensitive, other sizes and regions');
   assert.equal(profileOn({ tv: 'uhd', series: '23_S90C_OLED' }), 'S90C', 'from the model series');
   assert.equal(profileOn({ tv: 'uhd', model: 'QE55S95CAT' }), null, 'the S95C is another model');
-  // Plan WP3: the model check only drove the 'not an S90C' note of the dialog, which is gone
+  // The model check only drove the 'not an S90C' note of the dialog, which is gone
   assert.equal(onTv({ tv: 's90c' }).get('typeof isS90cModel'), 'undefined');
 });
 
@@ -129,7 +129,7 @@ test('the ForceGM variant is detected from the game mode metadata of the app', (
   assert.equal(onTv({ tv: 's90c', forceGM: true }).get('checkForceGMVariant()'), true);
 });
 
-test('index.js loads when the Tizen and Samsung APIs fail, with the fallbacks of a Full HD TV without HDR (plan WP2)', () => {
+test('index.js loads when the Tizen and Samsung APIs fail, with the fallbacks of a Full HD TV without HDR', () => {
   const platform = createPlatformContext({ tv: { tv: 's90c' } });
   // Every call that index.js made at load without protection before, failing in a different way
   platform.run(`

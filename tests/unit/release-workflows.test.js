@@ -211,7 +211,7 @@ function createRepository(version) {
   git('init', '-q');
   setVersion(version);
   write('wasm/platform/index.js', '// app\n');
-  write('docs/RELEASE_NOTES_STABLE.md', 'Notes\n');
+  write('docs/RELEASE_NOTES.md', 'Notes\n');
   write('CHANGELOG.md', '# Changelog\n');
   write('tests/unit/example.test.js', '// test\n');
   git('add', '-A');
@@ -276,7 +276,7 @@ test('the promotion checks the release tag against the version of the pre-releas
   const repo = createRepository('1.19.100');
   try {
     repo.write('tests/unit/example.test.js', '// a fixed test\n');
-    repo.write('docs/RELEASE_NOTES_STABLE.md', 'Final notes\n');
+    repo.write('docs/RELEASE_NOTES.md', 'Final notes\n');
     repo.write('docs/PATCH_NOTES.md', '# Patch notes\n');
     repo.write('.github/workflows/release.yml', 'name: x\n');
     const runSha = repo.commit();

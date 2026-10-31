@@ -1,13 +1,13 @@
 'use strict';
 
-// The one-time settings snapshot of plan WP1. Up to settings schema 1, the defaults of the video settings were worked
+// The one-time settings snapshot of an existing install (since 1.19.100). Up to settings schema 1, the defaults of the video settings were worked
 // out again at every start instead of being stored, so settings the user never changed followed the defaults of
-// whatever build was installed (plan finding K1). An existing install (one with a stored unique ID but no settings
+// whatever build was installed. An existing install (one with a stored unique ID but no settings
 // schema) therefore stores the defaults of settings schema 1 once for every unset video setting, so that the new
-// defaults of plan WP2 never change it. A fresh install stores the schema with its unique ID and gets the new defaults.
+// defaults that 1.19.100 derives from the TV never change it. A fresh install stores the schema with its unique ID and gets the new defaults.
 //
 // The values of an existing install below are what the previous build showed on these TVs (the "current behaviour"
-// pinned before WP1), and must not change.
+// pinned before 1.19.100), and must not change.
 //
 // Settings schema 3 turned the rumble on by default: an existing install of settings schema 2 or older that never
 // switched it stores the earlier default (off) once, and the stored values of the removed switches 'Continuous audio
@@ -115,7 +115,7 @@ async function checkSnapshot(tvOptions, legacy) {
   }
 }
 
-test('an existing S90C install keeps the values it showed before, and stores them once (plan WP1)', async () => {
+test('an existing S90C install keeps the values it showed before, and stores them once', async () => {
   await checkSnapshot({ tv: 's90c', conn: 'wifi' }, LEGACY_VALUES.s90cWifi);
 });
 
@@ -123,11 +123,11 @@ test('an existing install on a generic UHD TV keeps 100 Mbps and the unlocked fr
   await checkSnapshot({ tv: 'uhd', conn: 'wifi' }, LEGACY_VALUES.uhdWifi);
 });
 
-test('an existing Full HD install on Tizen 5.5 keeps 75 Mbps, and its game mode switch stays disabled (plan K2)', async () => {
+test('an existing Full HD install on Tizen 5.5 keeps 75 Mbps, and its game mode switch stays disabled', async () => {
   await checkSnapshot({ tv: 'fhd', conn: 'ethernet' }, LEGACY_VALUES.fhdEthernet);
 });
 
-test('a stored 120 FPS stays selected after the unlock default turned off (the trap of plan K1)', async () => {
+test('a stored 120 FPS stays selected after the unlock default turned off', async () => {
   // The user picked 120 FPS but never touched 'Unlock all frame rates'. Without the snapshot, the 120 FPS entry would
   // disappear on a TV whose new default is off, and streams would silently run at 60 FPS.
   for (const tv of ['uhd', 's90c']) {

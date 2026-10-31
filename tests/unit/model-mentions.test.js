@@ -1,10 +1,10 @@
 'use strict';
 
-// Checks that the app (everything under wasm/ and res/) mentions the S90C only where the generalization plan keeps it
-// (plan WP3 and WP5, decisions D1 and D2, section 5): the internal IDs that let existing installs update in place (the
+// Checks that the app (everything under wasm/ and res/) mentions the S90C only where it must stay: the
+// internal IDs that let existing installs update in place (the
 // widget, package, app and service IDs in res/config.xml and the preview file prefix) and the tested profile in
 // VERIFIED_PROFILES. Every other place names "this TV" and takes its values from the TV profile
-// (wasm/platform/tv_profile.js), and the display name is 'Moonlight Plus' (decision D1), so the earlier display name
+// (wasm/platform/tv_profile.js), and the display name is 'Moonlight Plus', so the earlier display name
 // 'Moonlight S90C' appears nowhere. Like `grep -ri s90c wasm/ res/`, but every line it finds must be on the allow-list
 // below, and every entry of the allow-list must still be needed.
 
@@ -16,7 +16,7 @@ const { REPO_ROOT } = require('../lib/dev-modules');
 
 const SCANNED_DIRS = ['wasm', 'res'];
 const MODEL_PATTERN = /s90c/i;
-// The display name before plan WP5, also with another separator or none
+// The display name before 1.19.100, also with another separator or none
 const OLD_DISPLAY_NAME_PATTERN = /moonlight[\s_-]*s90c/i;
 
 // Each entry allows the lines of one file that match its pattern. Remove an entry once its reason is gone.
@@ -126,7 +126,7 @@ test('no file or folder of the app is named after the S90C', () => {
 });
 
 test('the earlier display name Moonlight S90C appears nowhere in the app', () => {
-  // The allow-list never covers it: the display name is 'Moonlight Plus' (plan WP5, decision D1)
+  // The allow-list never covers it: the display name is 'Moonlight Plus'
   assert.deepEqual(findLines(OLD_DISPLAY_NAME_PATTERN).map((found) => `${found.file}:${found.line}: ${found.text.trim()}`), []);
   assert.equal(ALLOW_LIST.some((entry) => entry.pattern.test('<name>Moonlight S90C</name>')), false);
   assert.equal(ALLOW_LIST.some((entry) => entry.pattern.test('  "Moonlight S90C": "Moonlight S90C",')), false);

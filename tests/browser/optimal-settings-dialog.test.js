@@ -1,11 +1,11 @@
 'use strict';
 
-// The 'Optimal settings for this TV' button and its dialog (plan WP3) on the settings screen:
+// The 'Optimal settings for this TV' button and its dialog on the settings screen:
 // - the dialog shows exactly what Apply then applies and shows (the tiles the resolution, frame rate, bitrate and codec,
 //   the text the other settings, without repeating the tiles), and its 'Detected:' line, which ends with 'tested model'
 //   for a tested profile, matches what the app detected, on TVs with and without a tested profile, HDR, a 4K or 8K
 //   panel, and over every connection; its buttons are Apply and Cancel, and the other warnings keep Close and Continue
-// - the bitrate advice over Wi-Fi stays within the decoder cap, where the bitrate warning starts (plan WP3, WP4 case 5)
+// - the bitrate advice over Wi-Fi stays within the decoder cap, where the bitrate warning starts
 // - the button is the first item of the basic settings, and the remote reaches it, opens the dialog and gets back to it
 // The values themselves are pinned in video-defaults.test.js; this file checks that the text and the settings agree.
 
@@ -132,7 +132,7 @@ describe('the dialog shows exactly what Apply applies', { concurrency: 3 }, () =
             'unlock all frame rates ' + (shown.unlockAllFps ? 'on' : 'off'),
           ].join(', '));
           assert.equal(listed.gameMode, shown.gameMode, 'the line of the ultra low latency mode names a mode that is on');
-          // A 4K or 8K TV whose higher frame rates stay locked is told how to unlock them for a 120 Hz panel (plan D7)
+          // A 4K or 8K TV whose higher frame rates stay locked is told how to unlock them for a 120 Hz panel, since the app can't detect the refresh rate of the panel
           assert.equal(listed.hint120Hz, !shown.unlockAllFps && detected.panel !== 'Full HD panel', dialog.text);
           // After the button, the bitrate follows the resolution and frame rate with the presets again (2.2.0)
           assert.equal(shown.autoAdjustBitrate, true);

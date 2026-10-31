@@ -2,6 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
+- [2.2.0](#220): pre-release, a tidier app with fixes and a smaller download
 - [2.1.0](#210): 2026-10-30, five languages and new tools in the Stream Menu
 - [2.0.0](#200): pre-release only, its changes come with 2.1.0
 - [1.19.101](#119101): 2026-10-29, a new look and two new menus
@@ -12,6 +13,35 @@ What changed in each version of Moonlight Plus, in short, newest first.
 **Which file?** `Moonlight-ForceGM.wgt` on Tizen 9 and newer, `Moonlight.wgt` on Tizen 5.5 to 8.
 
 **TV refuses an update?** If the author certificate doesn't match, uninstall the old app first; this loses its settings and pairing.
+
+## 2.2.0
+
+*Pre-release, in testing.* A tidier app: settings in the order of use, fixes for the Stream Menu and the start, and a smaller download.
+
+> **Install:** by hand over 2.1.0 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
+>
+> **Tested:** with simulated TVs, hosts and controllers only; the shorter waits and the new defaults still need a test on a TV.
+
+### Changed
+
+- Settings in 7 sections in the order of use, with short help texts and names that say what ON does
+- The bitrate presets are the recommended bitrates, and *Optimal settings* lets the bitrate follow them again
+- Screens open without the half-second wait, and controller buttons act after 50 ms in the menus
+- Rumble is on for new installs; questions that quit an app or delete a PC start on *No*
+- The PC menu lists only what works, and the hosts screen shows one state chip
+- *Restore Defaults* keeps the button mapping and the stick calibration
+- About 240 KB smaller download: unused files, styles and code are gone
+
+### Removed
+
+- The switches *Optimize bitrate presets* and *Continuous audio from the host*, whose audio is now always on
+
+### Fixed
+
+- One UP from *Resume* in the Stream Menu selected *Quit app on the PC*
+- The start of a stream told the PC stereo even with 5.1 or 7.1
+- The network scan at startup ran on other screens, and the update notice showed at every start, even in a game
+- One failed start of the Smart Hub service turned the Preview tiles off for good
 
 ## 2.1.0
 
@@ -172,4 +202,4 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 Moonlight Plus is based on Moonlight Tizen 1.19.0 by brightcraft, whose versions are on the [releases page of Moonlight Tizen](https://github.com/brightcraft/moonlight-tizen/releases).
 
-Every technical detail of every version is in the [changelog](../CHANGELOG.md), and the German release notes of 1.19.0-s90c.1 are [archived](profiles/S90C/RELEASE_NOTES_v1.19.0-s90c.1.md).
+Every technical detail of every version is in the [changelog](../CHANGELOG.md), and the German release notes, tuning plan and quick guide of 1.19.0-s90c.1 stay with the files of its [tag](https://github.com/Emperior90/moonlight-tizen-Plus/tree/v1.19.0-s90c.1/docs).

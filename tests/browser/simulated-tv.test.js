@@ -1,8 +1,8 @@
 'use strict';
 
 // Checks the test setup itself (the simulated TV and the stub of the WebAssembly module, see mocks/), and pins what the
-// UI derives directly from the TV: the System information text (which since plan WP3 also shows what the app detected:
-// panel, HDR, connection type, tested profile and the model year hint, and since plan WP6 the connected gamepads, none
+// UI derives directly from the TV: the System information text (which since 1.19.100 also shows what the app detected:
+// panel, HDR, connection type, tested profile and the model year hint, and the connected gamepads, none
 // here; see gamepad-controllers.test.js) and the resolutions marked as unsupported, also after a translation pass of
 // i18n.js.
 
@@ -149,13 +149,13 @@ function readSystemInfo(page) {
 }
 
 // The simulated TVs have no tizentvwasm and answer yes for every codec of the WASM player by default (see
-// runtime-checks.test.js for the other answers of plan WP8)
-test('System information shows the app, the model strings and what the app detected about the TV (plan WP3)', async () => {
+// runtime-checks.test.js for the other answers of the runtime checks)
+test('System information shows the app, the model strings and what the app detected about the TV', async () => {
   const expected = [
     {
       tv: { tv: 's90c', conn: 'ethernet' },
       lines: [
-        'App Version: Moonlight Plus v2.1.0',
+        'App Version: Moonlight Plus v2.2.0',
         'Platform Version: Tizen 9.0',
         'TV Model Series: 23_PONTUSM_OLED',
         'TV Model Name: QE55S90CAT',
@@ -176,7 +176,7 @@ test('System information shows the app, the model strings and what the app detec
     {
       tv: { tv: 'fhd', conn: 'wifi' },
       lines: [
-        'App Version: Moonlight Plus v2.1.0',
+        'App Version: Moonlight Plus v2.2.0',
         'Platform Version: Tizen 5.5',
         'TV Model Series: 20_KANTM2_FHD',
         'TV Model Name: UE43T5300AU',
@@ -197,7 +197,7 @@ test('System information shows the app, the model strings and what the app detec
     {
       tv: { tv: '8k', conn: 'unknown', modelCode: 'NOYEAR' },
       lines: [
-        'App Version: Moonlight Plus v2.1.0',
+        'App Version: Moonlight Plus v2.2.0',
         'Platform Version: Tizen 6.5',
         'TV Model Series: 22_PONTUSM_8K',
         'TV Model Name: QE65QN900BT',

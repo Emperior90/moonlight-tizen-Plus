@@ -1,9 +1,9 @@
 'use strict';
 
-// The optimal streaming settings for each TV (plan WP2) on the settings screen, beyond the matrix of
-// video-defaults.test.js: the bitrate of a fresh install follows the resolution and frame rate until the user picks one
-// (plan D9), the button and Restore Defaults both let a bitrate picked by hand follow again, the button locks the higher
-// frame rates on a TV without a tested profile without a stray notice, HDR follows what the TV reports (D8), an 8K TV,
+// The optimal streaming settings for each TV on the settings screen, beyond the matrix of
+// video-defaults.test.js: the bitrate of a fresh install follows the resolution and frame rate until the user picks
+// one, the button and Restore Defaults both let a bitrate picked by hand follow again, the button locks the higher
+// frame rates on a TV without a tested profile without a stray notice, HDR follows what the TV reports, an 8K TV,
 // a TV whose product APIs fail still starts, and both reset a stored game mode on Tizen 5.5, which doesn't support it.
 
 const { after, before, test } = require('node:test');
@@ -56,7 +56,7 @@ async function restoreDefaults(page) {
   await page.evaluate(() => $('#continueRestoreDefaults').trigger('click'));
 }
 
-test('lowering the resolution after a fresh install lowers the bitrate (plan D9)', async () => {
+test('lowering the resolution after a fresh install lowers the bitrate', async () => {
   const cases = [
     // The recommended bitrate of the new resolution: 25 % above the standard preset with a known connection (2.1.0 gave
     // the standard presets of 20, 10, 20 and 40 Mbps here)
@@ -202,7 +202,7 @@ test('the button locks the higher frame rates on a TV without a tested profile, 
   }
 });
 
-test('HDR is on by default when the TV reports it, whatever the panel (plan D8)', async () => {
+test('HDR is on by default when the TV reports it, whatever the panel', async () => {
   const cases = [
     { tv: { tv: 'uhd', hdr: 0 }, hdr: false },
     { tv: { tv: 'fhd', hdr: 1 }, hdr: true },
@@ -242,7 +242,7 @@ test('an 8K TV gets 4K with HDR at the 80 Mbps cap of TVs without a tested profi
   }
 });
 
-test('a TV whose product APIs fail still starts, with the defaults of a Full HD TV without HDR (plan WP2)', async () => {
+test('a TV whose product APIs fail still starts, with the defaults of a Full HD TV without HDR', async () => {
   const failApis = [
     'tizen.systeminfo.getCapability',
     'webapis.productinfo.getModel',
@@ -258,7 +258,7 @@ test('a TV whose product APIs fail still starts, with the defaults of a Full HD 
     assert.deepEqual([shown.resolution, shown.hdr, shown.bitrate, shown.unlockAllFps, shown.codec], ['1920:1080', false, '25', false, 'HEVC']);
     const systemInfo = await app.page.evaluate(() => document.getElementById('systemInfoBtn').innerHTML.replace(/<br\s*\/?>/g, '\n'));
     assert.equal(systemInfo, [
-      'App Version: Moonlight Plus v2.1.0',
+      'App Version: Moonlight Plus v2.2.0',
       'Platform Version: Tizen Unknown',
       'TV Model Series: Unknown',
       'TV Model Name: Unknown',

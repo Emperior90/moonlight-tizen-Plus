@@ -47,7 +47,7 @@
     wifiSignal: 0.78,
     forceGM: false,
     // The version of res/config.xml, which unit/app-identity.test.js keeps in step
-    appVersion: '2.1.0',
+    appVersion: '2.2.0',
     ip: '192.168.0.50',
     subnetMask: '255.255.255.0',
     failApis: '',

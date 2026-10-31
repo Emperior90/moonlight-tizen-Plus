@@ -1,10 +1,10 @@
 'use strict';
 
-// The warnings of the video settings on the settings screen (plan WP4), which come from the rules in
+// The warnings of the video settings on the settings screen, which come from the rules in
 // wasm/platform/tv_profile.js (tests/unit/video-warnings.test.js checks the rules themselves):
 // - a TV without a tested 120 Hz profile is told that many Samsung TVs have 60 Hz panels (below 4K), that 4K at 90 or
 //   120 FPS needs a level 5.2 decoder (an 8K TV gets the 60 Hz panel warning there), and that 4K at 144 FPS exceeds
-//   level 5.2; the S90C keeps its texts (plan section 3)
+//   level 5.2; the S90C keeps its texts
 // - each warning shows once per selection, a selection with another warning shows that one right away
 // - HDR switched on for a TV that doesn't report HDR warns, an HDR TV doesn't
 // - the bitrate warning starts at the decoder cap of the TV and names it; a preset stays within the cap of a TV without
@@ -81,7 +81,7 @@ function setBitrateByHand(page, bitrate) {
 }
 
 // Pick a low bitrate by hand, so that it stays when the resolution and frame rate change. Otherwise the bitrate of a
-// fresh install follows the presets (plan D9), which change the bitrate with every pick (and on the S90C, whose presets
+// fresh install follows the presets, which change the bitrate with every pick (and on the S90C, whose presets
 // go above its decoder cap, add the bitrate warning at 4K above 60 FPS).
 function keepBitrate(page) {
   return setBitrateByHand(page, 40);
@@ -140,7 +140,7 @@ test('a Full HD TV is told about 60 Hz panels above 60 FPS', async () => {
   }
 });
 
-test('the S90C keeps its warnings: none at 1080p, lower-end devices at 4K up to 120 FPS, its decoder above (plan section 3)', async () => {
+test('the S90C keeps its warnings: none at 1080p, lower-end devices at 4K up to 120 FPS, its decoder above', async () => {
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
   try {
     await keepBitrate(app.page);
@@ -204,7 +204,7 @@ test('the bitrate warning starts at the decoder cap of the TV and names it (case
 });
 
 test('a preset stays within the decoder cap of a TV without a tested profile, so it does not warn about the bitrate', async () => {
-  // After a fresh install the bitrate follows the presets (plan D9): the preset of 120 Mbps for 4K at 120 FPS is limited
+  // After a fresh install the bitrate follows the presets: the preset of 120 Mbps for 4K at 120 FPS is limited
   // to the decoder cap of 80 Mbps, the bitrate that the app recommends for this TV
   const app = await openApp(harness, { tv: { tv: 'uhd', conn: 'wifi' } });
   try {

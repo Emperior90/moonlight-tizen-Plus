@@ -1,11 +1,11 @@
 'use strict';
 
-// Tests of the runtime checks of wasm/platform/tv_profile.js (plan WP8), loaded as a Node module with the simulated
+// Tests of the runtime checks of wasm/platform/tv_profile.js, loaded as a Node module with the simulated
 // tizentvwasm and MediaSource of tests/browser/mocks/tv-mock.js:
 // - detectWasmPlayerFeatures(): whether the WASM player offers the Ultra Low Latency mode of the game mode, decided like
 //   the glue code of Samsung's Emscripten SDK in the built moonlight-wasm.js does, and 'unknown' whenever the TV doesn't
 //   say it clearly
-// - the game mode default and the S90C values with each answer (plan section 3)
+// - the game mode default and the S90C values with each answer
 // - probeVideoDecoders(): the answers of MediaSource.isTypeSupported() for the codec strings of wasm/wasmplayer.cpp, which
 //   count only when a codec that doesn't exist is rejected and H.264 is accepted, and the AV1 note that a clear 'no' gives
 // - that the codec strings and names are the same as in wasm/wasmplayer.cpp and wasm/video_track_rejection.hpp
@@ -231,7 +231,7 @@ describe('the game mode with the answer of the WASM player', () => {
     assert.equal(profile.isGameModeUnavailable(null), false);
   });
 
-  test('the S90C keeps its optimal settings with every answer, and the game mode stays off (plan section 3)', () => {
+  test('the S90C keeps its optimal settings with every answer, and the game mode stays off', () => {
     const caps = profile.detectTvCapabilities(Object.assign(tvMock.createTizenApis(tvMock.parseConfig('', { tv: 's90c' }), (callback) => callback()), { tizentvwasm: null, mediaSource: null }));
     const golden = {
       ethernet: { resolution: '3840:2160', frameRate: 60, videoCodec: 'HEVC', hdrMode: true, bitrate: 75, unlockAllFps: true, gameMode: false, framePacing: true, fullRange: false },

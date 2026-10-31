@@ -221,7 +221,7 @@ test('other keys do nothing', () => {
   remote.press('KEY_GREEN');
   assert.deepEqual(remote.recorder.operations, []);
   assert.deepEqual(remote.moduleCalls, []);
-  // The key handler no longer sets the unused flag isGamepadActive (removed in plan WP6), which would create a global
+  // The key handler no longer sets the unused flag isGamepadActive (removed in 1.19.100), which would create a global
   assert.equal(remote.platform.get('typeof isGamepadActive'), 'undefined');
 });
 

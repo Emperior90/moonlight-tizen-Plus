@@ -2,15 +2,15 @@
 
 // The video settings on three simulated TVs over the three connection types: what a fresh install shows and stores,
 // what the 'Optimal settings for this TV' button explains and applies, and what Restore Defaults applies to an install
-// with customized settings. All three come from deriveOptimalSettings() in wasm/platform/tv_profile.js (plan WP2), and
-// the dialog of the button names the model, what was detected and whether the model was tested (plan WP3).
+// with customized settings. All three come from deriveOptimalSettings() in wasm/platform/tv_profile.js, and
+// the dialog of the button names the model, what was detected and whether the model was tested.
 //
-// The S90C rows are the golden values of plan section 3 and must stay as they are. The other TVs get the values derived
-// from their capabilities since plan WP2: the bitrate for their panel and connection (D6), 'Unlock all frame rates' off
-// (D7) and HDR when the TV reports it (D8). On every TV, a fresh install, Restore Defaults and (since 2.2.0) the button
-// let the bitrate follow the resolution and frame rate (D9). The dialog of the button shows the resolution, frame rate,
+// The S90C rows are the golden S90C values and must stay as they are. The other TVs get the values derived
+// from their capabilities since 1.19.100: the bitrate for their panel and connection, 'Unlock all frame rates' off
+// and HDR when the TV reports it. On every TV, a fresh install, Restore Defaults and (since 2.2.0) the button
+// let the bitrate follow the resolution and frame rate. The dialog of the button shows the resolution, frame rate,
 // bitrate and codec as tiles and lists only the other settings. A fresh install stores the settings
-// schema with its unique ID, and an existing install gets a one-time snapshot instead (plan WP1, existing-install.test.js).
+// schema with its unique ID, and an existing install gets a one-time snapshot instead (existing-install.test.js).
 
 const { after, before, describe, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -24,7 +24,7 @@ const SETTINGS_LINE_LOCKED = 'Video frame pacing on, limited color range, unlock
 // Per simulated TV (tests/browser/mocks/tv-mock.js): the resolution, HDR, frame rates, game mode and bitrate per
 // connection it gets, and the dialog lines
 const TVS = {
-  // QE55S90CAT, 4K panel, HDR, Tizen 9.0: the golden values of plan section 3, through its tested profile
+  // QE55S90CAT, 4K panel, HDR, Tizen 9.0: the golden S90C values, through its tested profile
   s90c: {
     model: 'QE55S90CAT',
     resolution: '3840:2160',
@@ -62,7 +62,7 @@ const TVS = {
     forceGmHint: false,
     detected: '4K panel, HDR, Tizen 6.5',
     testedModel: false,
-    // The higher frame rates stay locked without a tested profile, and the dialog says how to unlock them (plan D7)
+    // The higher frame rates stay locked without a tested profile, and the dialog says how to unlock them
     hint120Hz: true,
     // The 80 Mbps over Wi-Fi already reach the decoder cap of 4K TVs without a tested profile
     wifiRaiseLimit: null,
@@ -243,7 +243,7 @@ for (const tvName of Object.keys(TVS)) {
           assert.deepEqual(await readVideoSettings(app.page), expectedVideoSettings(tv, connName, true));
           const stored = await waitForStorage(app.page, (values) => 'autoAdjustBitrate' in values && 'uniqueid' in values && 'cert' in values && 'settingsSchema' in values);
           // The defaults of a fresh install are worked out at every launch until the user changes them, and a later
-          // change of a default is covered by the settings schema (plan WP1)
+          // change of a default is covered by the settings schema
           await app.page.waitForTimeout(300);
           assert.deepEqual(Object.keys(await readStorage(app.page)).sort(), ['autoAdjustBitrate', 'cert', 'settingsSchema', 'uniqueid']);
           assert.equal(stored.settingsSchema, 3);
@@ -276,7 +276,7 @@ for (const tvName of Object.keys(TVS)) {
           assert.equal(dialog.open, true);
           assert.equal(dialog.continueShown, true);
           const text = dialog.text;
-          // What the settings are based on comes first, and a tested model says so at its end (plan WP3)
+          // What the settings are based on comes first, and a tested model says so at its end
           assert.ok(text.indexOf(`Detected: ${tv.detected}, ${conn.label}${tv.testedModel ? ', tested model' : ''}<br>`) === 0, text);
           assert.ok(text.indexOf('Tested model') < 0, text);
           assert.ok(text.indexOf('The following streaming settings will be applied:<br>') >= 0, text);
@@ -293,7 +293,7 @@ for (const tvName of Object.keys(TVS)) {
             assert.ok(text.indexOf(advice) >= 0, text);
           }
           assert.equal(text.indexOf('so install the ForceGM variant for the lowest latency') >= 0, tv.forceGmHint, text);
-          // Plan WP3: no note that the TV is not an S90C, and the text names no model at all
+          // No note that the TV is not an S90C, and the text names no model at all
           assert.ok(!/S90C/i.test(text), text);
 
           await app.page.evaluate(() => $('#continueWarning').trigger('click'));
@@ -333,7 +333,7 @@ for (const tvName of Object.keys(TVS)) {
 
           await app.page.evaluate(() => $('#restoreDefaultsBtn').trigger('click'));
           await app.page.evaluate(() => $('#continueRestoreDefaults').trigger('click'));
-          // Restore Defaults is like a fresh install: the bitrate follows the resolution and frame rate (plan D9)
+          // Restore Defaults is like a fresh install: the bitrate follows the resolution and frame rate
           const expectedStored = Object.assign(expectedStoredVideoSettings(tv, connName, true), DEFAULT_OTHER_SETTINGS);
           const stored = await waitForStorage(app.page, storedMatches(expectedStored));
           assert.deepEqual(pick(stored, Object.keys(expectedStored)), expectedStored);

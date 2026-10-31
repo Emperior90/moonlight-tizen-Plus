@@ -32,7 +32,7 @@ The app shows its texts in English, German, Spanish, French or Brazilian Portugu
 - **HTML** such as `<br>`, `<b>` and `<strong>` stays. Write characters as they are, never as `&amp;`: the texts of `data-i18n` elements are set as text, so a character reference would show as it is.
 - **Help texts** of the settings start with `- ` and the lines of the navigation guide with `— `. Keep them: the stylesheet hides the first character of a help text.
 - **Whole sentences:** a word is never put in front of another translated text. A line that names a value has a template of its own, and so does the same line without a value: *Starting the %1$s...* for the progress line of a stage of the connection, *Controllers: None* next to *Controller %1$s: …*, *Registered by Moonlight: None* next to *Registered by Moonlight: %1$s*. So each language builds its own sentence and agrees *none* with its noun (Spanish *ninguna* for *teclas*, French *aucune* for *manettes*, German *keine* in lower case after a colon). The single word *None* is only the value of its own, e.g. the target of a button in the button mapping.
-- **Key names stay as printed** on the remote, the keyboard and the gamepad: OK, RETURN, Play/Pause, CH+, SELECT, START, A, B, LB, RB, F1. Keys without a printed name get the word of the language (the arrow keys, the coloured keys).
+- **Key names stay as printed** on the remote, the keyboard and the gamepad: OK, RETURN, Play/Pause, CH+, SELECT, START, A, B, LB, RB, F1. Keys without a printed name get the word of the language (the arrow keys, the colored keys).
 - **Names of settings, menu entries and values** in a sentence are written as the translated UI shows them, e.g. the name of the *Unlock all frame rates* switch in the hint of the optimal settings dialog.
 - **Product names** stay: Moonlight Plus, Sunshine, GeForce Experience, GameStream, Wake-on-LAN, ForceGM, HEVC, AV1, HDR. A section of the English guide is named by its English heading.
 - **Length:** a translation may be longer than the English text, but chips, badges and menu entries have little room. Keep their words short and check the screens (the browser tests check the settings rows and the compact statistics line in every language).
@@ -81,7 +81,7 @@ The German texts address the user with the informal *du* and use the words of th
 | Wi-Fi | WLAN | Ethernet stays |
 | Support (button) | Hilfe | |
 | Starting (start screen) | Wird gestartet | a status above the title of the game; the progress line of a stage has a template of its own: *RTSP-Handshake wird gestartet …* |
-| remote keys | OK, RETURN, PLAY/PAUSE, CH+, CH-, VOL+, VOL-, MUTE | the arrows *OBEN*, *UNTEN*, *LINKS*, *RECHTS*, the colour keys *ROT* and *GELB* (*rote Taste*, *gelbe Taste* in a sentence) |
+| remote keys | OK, RETURN, PLAY/PAUSE, CH+, CH-, VOL+, VOL-, MUTE | the arrows *OBEN*, *UNTEN*, *LINKS*, *RECHTS*, the color keys *ROT* and *GELB* (*rote Taste*, *gelbe Taste* in a sentence) |
 | keyboard keys | ENTER, ESC, LEERTASTE, STRG + ALT + SHIFT | |
 | gamepad keys | A, B, X, Y, SELECT, START, LB, RB | *STEUERKREUZ*, *L-STICK*, *R-STICK*, *LINKE* and *RECHTE SCHULTERTASTE* |
 
@@ -122,7 +122,7 @@ The Spanish texts address the user with the informal *tú* (*Selecciona*, *Pulsa
 | hint | consejo | |
 | performance statistics | estadísticas de rendimiento | levels: *Desactivado*, *Compacto*, *Completo* |
 | Support (button) | Ayuda | |
-| remote keys | OK, RETURN, Play/Pause, CH+, CH-, VOL+, VOL-, MUTE | the arrows *ARRIBA*, *ABAJO*, *IZQUIERDA*, *DERECHA*, the colour keys *ROJO* and *AMARILLO* (*botón rojo* in a sentence) |
+| remote keys | OK, RETURN, Play/Pause, CH+, CH-, VOL+, VOL-, MUTE | the arrows *ARRIBA*, *ABAJO*, *IZQUIERDA*, *DERECHA*, the color keys *ROJO* and *AMARILLO* (*botón rojo* in a sentence) |
 | gamepad keys | A, B, X, Y, SELECT, START, LB, RB | *CRUCETA*, *STICK IZQUIERDO*, *STICK DERECHO* |
 
 A question opens with ¿ and an exclamation with ¡; quotes are « » without spaces (*«Mostrar las aplicaciones ocultas»*). Write *p. ej.*, decimal commas (*0,5 Mbps*) and a typographic ellipsis without a space (*Iniciando…*).
@@ -161,7 +161,7 @@ The French texts address the user with *vous*, as the menus of French TVs do (*S
 | hint | conseil | |
 | performance statistics | statistiques de performances | levels: *Désactivé*, *Compact*, *Complet* |
 | Support (button) | Aide | |
-| remote keys | OK, RETURN, Play/Pause, CH+, CH-, VOL+, VOL-, MUTE | the arrows *HAUT*, *BAS*, *GAUCHE*, *DROITE*, the colour keys *ROUGE* and *JAUNE* (*touche rouge* in a sentence) |
+| remote keys | OK, RETURN, Play/Pause, CH+, CH-, VOL+, VOL-, MUTE | the arrows *HAUT*, *BAS*, *GAUCHE*, *DROITE*, the color keys *ROUGE* and *JAUNE* (*touche rouge* in a sentence) |
 | gamepad keys | A, B, X, Y, SELECT, START, LB, RB | *CROIX*, *STICK GAUCHE*, *STICK DROIT* |
 
 Put a no-break space (U+00A0) before : ; ? ! and inside « » (*« Afficher les applications masquées »*), so that the sign never starts a line, and use the typographic apostrophe (*l’application*). Write *par exemple*, decimal commas (*0,5 Mbps*) and a typographic ellipsis without a space (*Démarrage…*).

@@ -88,3 +88,11 @@ test('CONTRIBUTING.md leaves translating to docs/TRANSLATING.md and names the te
   assert.ok(contributing.indexOf('`npm test --prefix tests`') >= 0);
   assert.doesNotMatch(contributing, /the Moonlight project!/);
 });
+
+test('one release notes file serves the pre-release and the promotion, and the S90C archive lives at its tag', () => {
+  // The two files repeated the same points, and the one of the pre-releases still named an older version
+  assert.ok(exists('docs/RELEASE_NOTES.md'));
+  assert.ok(!exists('docs/RELEASE_NOTES_DEV.md') && !exists('docs/RELEASE_NOTES_STABLE.md'));
+  // The German plan, quick guide and notes of v1.19.0-s90c.1 describe the interface of that release
+  assert.ok(!exists('docs/profiles'));
+});

@@ -1,55 +1,39 @@
 # Moonlight Plus guide
 
-This guide covers installing Moonlight Plus, setting it up for your Samsung TV and finding the best settings for it. It applies to every TV the app installs on, which means Samsung TVs with Tizen 5.5 or newer.
+This guide covers installing Moonlight Plus, setting it up for your Samsung TV and finding the best settings for it. It applies to every TV the app installs on, which means Samsung TVs with Tizen 5.5 or newer. Its sections follow the order in which you need them, from the installation to the troubleshooting.
 
 How to read it:
 
 - **Untested** means that the guide describes what the code does, but nobody has checked it on that kind of TV, host or controller yet.
-- Values that were tested on one model only say so. The only tested model so far is the Samsung S90C (55-inch OLED, 2023, Tizen 9.0). Its archived German tuning guide is in [profiles/S90C](profiles/S90C/S90C-Optimierungsplan.md).
+- Values that were tested on one model only say so. The only tested model so far is the Samsung S90C (55-inch OLED, 2023, Tizen 9.0). Its German tuning guide from the first release stays with the files of the tag [v1.19.0-s90c.1](https://github.com/Emperior90/moonlight-tizen-Plus/tree/v1.19.0-s90c.1/docs).
 - Controllers have their own page: [CONTROLLERS.md](CONTROLLERS.md).
 
 ## Contents
 
-1. [Requirements](#1-requirements)
-2. [TV classes](#2-tv-classes)
-3. [Installation](#3-installation)
-4. [Optimal settings for this TV](#4-optimal-settings-for-this-tv)
-5. [Finding your bitrate](#5-finding-your-bitrate)
-6. [System information](#6-system-information)
-7. [Performance statistics](#7-performance-statistics)
-8. [Host settings (Sunshine)](#8-host-settings-sunshine), with [Apollo and Vibepollo](#apollo-and-vibepollo)
-9. [ForceGM variant and game mode](#9-forcegm-variant-and-game-mode)
-10. [HDR](#10-hdr)
-11. [Audio](#11-audio), with [surround sound with a soundbar](#surround-sound-with-a-soundbar)
-12. [When Moonlight goes to the background](#12-when-moonlight-goes-to-the-background)
-13. [Known limits](#13-known-limits)
-14. [Troubleshooting](#14-troubleshooting)
-15. [Updating from the earlier release v1.19.0-s90c.1](#15-updating-from-the-earlier-release-v1190-s90c1)
-16. [Stream Menu and app menu](#16-stream-menu-and-app-menu)
-17. [The screens of the app](#17-the-screens-of-the-app)
-18. [Language](#18-language)
-19. [Input test and button mapping](#19-input-test-and-button-mapping)
+- [Requirements](#requirements)
+- [Installation](#installation), with [which file](#which-file) and [updates](#updates)
+- [The screens of the app](#the-screens-of-the-app), with [language](#language)
+- [Optimal settings for this TV](#optimal-settings-for-this-tv), with [TV classes](#tv-classes) and [recommended bitrates](#recommended-bitrates)
+- [Stream Menu and app menu](#stream-menu-and-app-menu)
+- [Finding your bitrate](#finding-your-bitrate)
+- [Host settings (Sunshine)](#host-settings-sunshine), with [Apollo and Vibepollo](#apollo-and-vibepollo)
+- [ForceGM variant and game mode](#forcegm-variant-and-game-mode)
+- [HDR](#hdr)
+- [Audio](#audio), with [surround sound with a soundbar](#surround-sound-with-a-soundbar)
+- [Performance statistics](#performance-statistics)
+- [System information and diagnostic log](#system-information-and-diagnostic-log)
+- [When Moonlight goes to the background](#when-moonlight-goes-to-the-background)
+- [Known limits](#known-limits)
+- [Troubleshooting](#troubleshooting)
 
-## 1. Requirements
+## Requirements
 
 - **TV:** a Samsung Smart TV with Tizen 5.5 or newer, which means model year 2020 or later. The package requires Tizen 5.5, so older TVs can't install it.
 - **Host:** a PC with [Sunshine](https://github.com/LizardByte/Sunshine) and a GPU with a hardware video encoder that Sunshine supports (NVIDIA NVENC, AMD AMF or Intel Quick Sync). HDR needs a GPU that can encode HEVC Main10 or AV1 Main10.
-- **Network:** connect the host PC by cable. The TV can use Ethernet or 5 GHz Wi-Fi. Most Samsung TVs have a 100 Mbps Ethernet port, so Wi-Fi can be the faster choice (see [Known limits](#13-known-limits)).
+- **Network:** connect the host PC by cable. The TV can use Ethernet or 5 GHz Wi-Fi. Most Samsung TVs have a 100 Mbps Ethernet port, so Wi-Fi can be the faster choice (see [Known limits](#known-limits)).
 - **Controller (optional):** see [CONTROLLERS.md](CONTROLLERS.md). The remote control works for the menus, and the color keys control the stream.
 
-## 2. TV classes
-
-The app asks the TV for its panel resolution (Full HD, 4K or 8K), HDR support, Tizen version, model name and network connection. It can't ask for the refresh rate of the panel, so a 4K TV with a 60 Hz panel and one with a 120 Hz panel get the same defaults. Panel refresh rates differ by screen size and region even within one model series, so check the specifications of your exact model.
-
-| TV class | What the app does |
-|---|---|
-| Full HD | Streams 1080p at 60 FPS by default. The resolution menu marks the resolutions above the panel as unsupported. |
-| 4K, 60 Hz panel | Streams 4K at 60 FPS by default. Frame rates above 60 FPS stay locked. If you unlock them, the app can't tell a 60 Hz panel from a 120 Hz one, so it shows the warnings of the next row: at 4K, 90 and 120 FPS need a Level 5.2 decoder and 144 FPS exceeds Level 5.2. The warning that many Samsung TVs have 60 Hz panels appears at lower resolutions above 60 FPS (up to 1440p, or 1800p at 90 FPS). |
-| 4K, 120 Hz panel | Same defaults as a 60 Hz panel. You can unlock 90, 120 and 144 FPS yourself (Settings → Basic Settings → *Unlock all frame rates*, right below the frame rate). 4K above 60 FPS needs an HEVC or AV1 Level 5.2 decoder, which most Samsung TVs with a 120 Hz panel have, and the app warns about that. 4K at 144 FPS exceeds Level 5.2, the highest level that the app asks the TV for, and gets its own warning. Untested on any 120 Hz TV except the S90C. |
-| 8K | The highest stream resolution is 4K, so an 8K TV gets the same defaults and bitrates as a 4K TV. Its decoder handles 8K at 60 FPS, beyond Level 5.2, so 4K at 90 or 120 FPS gets the warning that many Samsung TVs have 60 Hz panels instead of the Level 5.2 warning. 4K at 144 FPS still gets the warning that it exceeds Level 5.2. Untested. |
-| Tested profile (Samsung S90C) | The 4K values with a higher bitrate over Wi-Fi (100 Mbps), and the higher frame rates unlocked from the start, because they were tested on this model. |
-
-## 3. Installation
+## Installation
 
 ### Which file?
 
@@ -60,7 +44,7 @@ Every release has two files. They are the same app with the same package ID, so 
 | Tizen 9.0 or newer | `Moonlight-ForceGM.wgt` |
 | Tizen 5.5 to 8.0 | `Moonlight.wgt` |
 
-The ForceGM variant asks the TV for its Game Mode, because the *Ultra low latency mode* switch of the app can freeze the picture on Tizen 9.0 and newer (see [section 9](#9-forcegm-variant-and-game-mode)). The upstream Moonlight Tizen project calls the ForceGM variant experimental, and results vary by TV model and firmware.
+The ForceGM variant asks the TV for its Game Mode, because the *Ultra low latency mode* switch of the app can freeze the picture on Tizen 9.0 and newer (see [ForceGM variant and game mode](#forcegm-variant-and-game-mode)). The upstream Moonlight Tizen project calls the ForceGM variant experimental, and results vary by TV model and firmware.
 
 Not sure which Tizen version your TV has? Install `Moonlight.wgt`, then look at Settings → About → *System information* → *Platform Version*. On Tizen 9.0 or newer, install `Moonlight-ForceGM.wgt` instead.
 
@@ -87,7 +71,45 @@ Moonlight Plus has its own package ID. It installs next to the regular Moonlight
 
 Settings → About → *Check for updates* looks for a newer release of this fork. The app also checks once a day at startup and then shows a *New update* button in the header. A notice names a new version once, on the first start that finds it, and never during a stream; when the automatic check fails (e.g. without internet), it only writes that to the diagnostic log. Both show what changed, but they can't install the update: download the new file and install it the same way as before. A build of the same package installs over the current one and normally keeps the settings and the pairing. If the TV refuses the update because the author certificate doesn't match, uninstall the old app first, which loses its settings and pairing.
 
-## 4. Optimal settings for this TV
+The earlier release v1.19.0-s90c.1 (*Moonlight S90C* on the TV) checks the releases of upstream Moonlight Tizen, so it will never offer Moonlight Plus: an update that it announces is the regular Moonlight Tizen app, which installs as a separate app next to it. Install the latest Moonlight Plus once by hand instead, as described above; it installs over Moonlight S90C.
+
+## The screens of the app
+
+**Header.** On the left: the Back button (in the app list and the settings), the logo and the name of the screen; in the settings also the name of the open section, in its color, and in the app list the keys of the app menu. On the right: the stream profile of the settings (e.g. *4K · 60 FPS · HEVC HDR*), the network connection of the TV (Wi-Fi or Ethernet) and round buttons, which UP reaches from the top row:
+
+| Icon | Button | Where |
+|---|---|---|
+| Circular arrow | Rescan network: searches the local network for PCs again, the arrow turns while it searches | Hosts |
+| Gear | Settings | Hosts |
+| Question mark | Support: the guide as a QR code, and where to report problems | Hosts |
+| Round arrow with a clock | Restore Defaults | Settings |
+| Circle with a cross | Quit app on the PC: only shows while an app runs on the PC | App list |
+
+A *New update* button with a download arrow appears in the header when a newer release exists (see [Updates](#updates)). The questions before quitting the running app, deleting a PC or all PCs and *Restore Defaults* open with *No* selected, so an OK pressed by mistake only closes them.
+
+**Hosts.** The top of the screen shows the selected PC in large type: its address, its state as one chip, the same as on its card (*Running*, *Online*, *Unpaired* or *Offline*), one sentence on what OK does and the keys to press, next to a drawing of a PC that changes with the state. Below, each PC has a card with a colored tile (mint while a game runs, amber when not paired, gray when offline) and its most important state. The ⋯ button of a card opens its menu, which starts on its first entry: *Refresh apps* (for a PC that is online) or *Wake PC* (for one that is offline), *View Details*, *Delete PC* and *Close*. UP reaches it from the first row of cards, and CH+ or Play/Pause opens the menu from any row, as the hint *↑ Options* or *⋯ Options* says. When the focus is in the header or a menu, the top shows the last PC without the keys, or a summary of all PCs.
+
+**App list.** The top shows the selected app with its box art, and the colors of the box art light up the screen once the selection rests on the app. A white ring marks the selected tile. The app that runs on the PC has a mint ring and a *Running* badge, a favorite has an amber star in the top right corner of its tile and a *Favorite* chip at the top, and hidden apps, when shown, are dimmed with a *Hidden* badge (see [Stream Menu and app menu](#stream-menu-and-app-menu)). An app without box art shows its title on its tile. The box art of a new host loads two apps at a time, and never holds up the start, resume or quit of an app: starting a stream drops the box art that hasn't arrived yet, and it loads when you return to the app list.
+
+**Settings.** The sections are colored tiles on the left, with a line on what each holds: *Basic Settings* (the optimal settings, resolution, frame rate with *Unlock all frame rates* below it, bitrate), *Video Settings*, *Audio Settings*, *Input Settings*, *General* (language, order of the app list, input of the PC address, removing all PCs), *Advanced Settings* (with the block *Experimental* at its end: *Reference frame invalidation*, *HDR static metadata* and *Decrypt host audio*) and *About*. Each option is a row with its title and control at the top and its help text below. The color of the open section marks its tile, the selected row and the switches that are on.
+
+**Start of a stream.** The box art of the app, and next to it its title, the PC and the progress of the connection, centered on the screen.
+
+### Language
+
+The app shows the language of the TV when it has it: English, German, Spanish, French or Brazilian Portuguese. A TV set to another variant of one of these languages gets that language, e.g. German on Austrian and Swiss TVs, Spanish in Mexico and the rest of the Americas, French in Canada, Belgium and Switzerland, and Brazilian Portuguese in Portugal. Every other language gets English.
+
+To choose another one, open Settings → General → *Language*. The menu names each language in its own language (*English*, *Deutsch*, *Español*, *Français*, *Português (Brasil)*), so you find yours whatever language the app shows. The choice applies at once and is kept; *Auto* follows the TV again.
+
+- German addresses you with the informal *du*, Spanish with *tú* and French with *vous*. The names of the keys stay as printed on the remote (OK, RETURN, Play/Pause, CH+).
+- Only these five languages ship, since each one adds about 60 KB to the app.
+- A text that is wrong or still English: report it on the [issue tracker of this fork](https://github.com/Emperior90/moonlight-tizen-Plus/issues) with a photo. How the translations are kept complete: [TRANSLATING.md](TRANSLATING.md).
+
+### Input test and button mapping
+
+Settings → Input Settings → *Input test* shows every key of the remote and every button of a controller as the app receives it, and *Button mapping* changes the buttons of a controller in games and calibrates its sticks. [CONTROLLERS.md](CONTROLLERS.md) describes both: [Input test](CONTROLLERS.md#input-test), [Button mapping and stick calibration](CONTROLLERS.md#button-mapping-and-stick-calibration).
+
+## Optimal settings for this TV
 
 Settings → Basic Settings → *Optimal settings for this TV* → *Apply the optimal streaming settings for this TV* opens a dialog with:
 
@@ -97,7 +119,7 @@ Settings → Basic Settings → *Optimal settings for this TV* → *Apply the op
 - advice for the network connection: over Wi-Fi how far you can raise the bitrate, over Ethernet how to avoid packet loss on the 100 Mbps port of the TV
 - on Tizen 9.0 and newer, a pointer to the ForceGM variant, or a note that it is installed
 
-*Apply* applies the settings, *Cancel* keeps your current ones. The same values are the defaults of a fresh install and of *Restore Defaults* (the round arrow at the top right of the settings, see [the screens](#17-the-screens-of-the-app)).
+*Apply* applies the settings, *Cancel* keeps your current ones. The same values are the defaults of a fresh install and of *Restore Defaults* (the round arrow at the top right of the settings, see [the screens](#the-screens-of-the-app)).
 
 What the button applies:
 
@@ -107,10 +129,22 @@ What the button applies:
 - **HDR:** on when the TV reports HDR support. The stream is then HEVC Main10.
 - **Bitrate:** a value for the resolution, frame rate and network connection, see the table below.
 - **Unlock all frame rates:** off, except for a tested profile with a high refresh rate panel.
-- **Ultra low latency mode:** on for Tizen 6.0 to 8.0 and off on Tizen 9.0 and newer. On Tizen 5.5 it is off and disabled, unless the video player of the TV says that it offers the Ultra Low Latency mode: then it is off, but you can turn it on, and the dialog lists *Ultra low latency mode off*. On any version it is off and disabled when the video player doesn't offer the mode (see [section 9](#9-forcegm-variant-and-game-mode)).
+- **Ultra low latency mode:** on for Tizen 6.0 to 8.0 and off on Tizen 9.0 and newer. On Tizen 5.5 it is off and disabled, unless the video player of the TV says that it offers the Ultra Low Latency mode: then it is off, but you can turn it on, and the dialog lists *Ultra low latency mode off*. On any version it is off and disabled when the video player doesn't offer the mode (see [ForceGM variant and game mode](#forcegm-variant-and-game-mode)).
 - **Video frame pacing** on, **Full color range** off.
 
 After the button, a fresh install or *Restore Defaults*, the bitrate follows the resolution and frame rate: each change of them sets the recommended bitrate for the new resolution and frame rate, by the rules below. Once you move the bitrate slider yourself (or change the bitrate in the Stream Menu), the app keeps your bitrate when the resolution or frame rate changes, and a notice names the recommended one. The button lets the bitrate follow again; moonlight-qt keeps a bitrate picked by hand until you reset its settings.
+
+### TV classes
+
+The app asks the TV for its panel resolution (Full HD, 4K or 8K), HDR support, Tizen version, model name and network connection. It can't ask for the refresh rate of the panel, so a 4K TV with a 60 Hz panel and one with a 120 Hz panel get the same defaults. Panel refresh rates differ by screen size and region even within one model series, so check the specifications of your exact model.
+
+| TV class | What the app does |
+|---|---|
+| Full HD | Streams 1080p at 60 FPS by default. The resolution menu marks the resolutions above the panel as unsupported. |
+| 4K, 60 Hz panel | Streams 4K at 60 FPS by default. Frame rates above 60 FPS stay locked. If you unlock them, the app can't tell a 60 Hz panel from a 120 Hz one, so it shows the warnings of the next row: at 4K, 90 and 120 FPS need a Level 5.2 decoder and 144 FPS exceeds Level 5.2. The warning that many Samsung TVs have 60 Hz panels appears at lower resolutions above 60 FPS (up to 1440p, or 1800p at 90 FPS). |
+| 4K, 120 Hz panel | Same defaults as a 60 Hz panel. You can unlock 90, 120 and 144 FPS yourself (Settings → Basic Settings → *Unlock all frame rates*, right below the frame rate). 4K above 60 FPS needs an HEVC or AV1 Level 5.2 decoder, which most Samsung TVs with a 120 Hz panel have, and the app warns about that. 4K at 144 FPS exceeds Level 5.2, the highest level that the app asks the TV for, and gets its own warning. Untested on any 120 Hz TV except the S90C. |
+| 8K | The highest stream resolution is 4K, so an 8K TV gets the same defaults and bitrates as a 4K TV. Its decoder handles 8K at 60 FPS, beyond Level 5.2, so 4K at 90 or 120 FPS gets the warning that many Samsung TVs have 60 Hz panels instead of the Level 5.2 warning. 4K at 144 FPS still gets the warning that it exceeds Level 5.2. Untested. |
+| Tested profile (Samsung S90C) | The 4K values with a higher bitrate over Wi-Fi (100 Mbps), and the higher frame rates unlocked from the start, because they were tested on this model. |
 
 ### Recommended bitrates
 
@@ -121,7 +155,7 @@ The bitrate starts from the standard preset of the resolution and frame rate (20
 - **Connection not detected:** the preset, but at most 80 Mbps.
 - None of them goes above the decoder cap of the TV class, where the bitrate warning starts.
 
-When the bitrate follows the video settings, every other resolution and frame rate gets its bitrate by the same rules, e.g. 50 Mbps for 2560 x 1440 at 60 FPS over Wi-Fi. On the tested S90C over Wi-Fi, 4K at 90, 120 or 144 FPS gets 100 Mbps, its decoder cap; to go higher, raise the bitrate by hand as [Finding your bitrate](#5-finding-your-bitrate) describes.
+When the bitrate follows the video settings, every other resolution and frame rate gets its bitrate by the same rules, e.g. 50 Mbps for 2560 x 1440 at 60 FPS over Wi-Fi. On the tested S90C over Wi-Fi, 4K at 90, 120 or 144 FPS gets 100 Mbps, its decoder cap; to go higher, raise the bitrate by hand as [Finding your bitrate](#finding-your-bitrate) describes.
 
 This table shows what the button applies. A test checks it against the code of the app (`wasm/platform/tv_profile.js`).
 
@@ -139,7 +173,42 @@ This table shows what the button applies. A test checks it against the code of t
 - **Bitrate warning above** is the decoder cap of the TV class. Over Ethernet, a warning also appears above 80 Mbps, because of the 100 Mbps port.
 - Where the caps come from: 100 Mbps is what the S90C handled in its tests. The 80 Mbps for 4K and 8K TVs and the 50 Mbps for Full HD TVs follow summaries of Samsung's TV video specifications (HEVC at 60 FPS), which could not be checked against the specification pages themselves. Treat them as careful starting points, not as hard limits of your TV. The slider still goes up to 150 Mbps.
 
-## 5. Finding your bitrate
+## Stream Menu and app menu
+
+**Stream Menu.** During a stream, press **Play/Pause** on the remote, or hold **Select + Start** on a controller for 1 second, to open the Stream Menu on the right of the picture, inside the safe area of the screen. The stream keeps playing behind it, but the PC gets nothing from the remote, the keyboard or the controllers while it is open: they move through the menu (UP and DOWN or the D-pad, OK or A), and RETURN, Play/Pause or B close it and return to the game.
+
+| Entry | What it does |
+|---|---|
+| Resume | Returns to the game |
+| Performance statistics | Steps the [statistics](#performance-statistics) through *Off*, *Compact* and *Full*, like YELLOW. The menu stays open and shows the level. |
+| Mouse emulation | Only shows with a controller connected. Switches the [mouse emulation](CONTROLLERS.md#mouse-emulation) of the controllers on or off, also when the setting *Mouse emulation* is off (the setting only allows the hold of Start). |
+| Bitrate | Shows the bitrate of the stream. LEFT and RIGHT (or the D-pad) change it in 5 Mbps steps, from 5 Mbps up to the decoder cap of the TV (100 Mbps on the tested S90C profile, 80 Mbps on other 4K and 8K TVs, 50 Mbps on Full HD TVs). OK reconnects with the new bitrate: the stream ends without quitting the game, the start screen shows *Reconnecting with … Mbps* for a few seconds, and the game resumes. The new bitrate becomes the bitrate setting. This works with every host, since the bitrate goes to the host when a stream starts. |
+| Type text… | Opens a text field with the keyboard of the TV. Its *Done* key, or *Send to the PC*, types the text on the PC as Unicode, whatever the keyboard layout of the PC, e.g. for a login or a search; RETURN, the *Cancel* key of the keyboard or B return to the menu without sending anything. Up to 1024 bytes (about 1000 Latin letters) at once, without line breaks. The keys go only to the field while it is open, and the app never logs or keeps the text. The keyboard of the TV is used with the remote; a USB keyboard types into the field as well, with Enter to send. |
+| Windows key, Alt + Tab, Alt + F4, Esc, Alt + Enter | Presses the keys on the PC and releases them again in reverse order, so that no key stays held, and returns to the game. Alt + Enter switches most Windows games and emulators between fullscreen and a window. |
+| Disconnect | Ends the stream, like RED. The game keeps running on the PC. |
+| Quit app on the PC | Ends the stream and then quits the app on the PC, like the button of the same name in the header of the app list. Unsaved progress in the game is lost. |
+
+- The menu opens once the picture shows, not during "Starting…". RED and YELLOW keep working while it is open.
+- UP and DOWN stop at the first and the last entry; unlike the other menus, this one doesn't wrap around, so one UP too many from *Resume* never selects *Quit app on the PC*.
+- The buttons that are still held when the menu closes (e.g. A on *Resume*) reach the game only after you release them, and so does the key of the remote or keyboard that closed it (e.g. OK on *Resume*). Keyboard keys and mouse buttons that are held when the menu opens are released on the PC. [CONTROLLERS.md](CONTROLLERS.md#buttons-during-a-stream) describes the controller combo.
+- Untested on real TVs: whether every remote and firmware passes Play/Pause to the app (the combo and the color keys work without it), and the *Done* and *Cancel* keys of the keyboard of the TV in *Type text…*.
+
+**App menu.** In the app list, press **CH+** or **Play/Pause** on the remote, or **Select** on a controller, to open the menu of the selected app. The header of the app list names these keys, and the app that runs on the PC has a mint ring and a mint *Running* badge.
+
+| Entry | What it does |
+|---|---|
+| Resume or Start | *Resume* for the running app, *Start* for the others: the same as OK on the tile |
+| Quit app on the PC | Only for the running app: quits it on the PC after a confirmation, like the button of the same name in the header |
+| Add to favorites, Remove from favorites | Puts the app first in the app list and the Smart Hub tiles of this host, with an amber star on its tile, or takes it back |
+| Hide app, Show app again | Leaves the app out of the app list and the Smart Hub tiles of this host, or brings it back |
+| Show hidden apps (N), Hide hidden apps | Shows the hidden apps of the host dimmed, with a *Hidden* badge, until you choose *Hide hidden apps* or restart Moonlight |
+
+- The TV stores the hidden apps and the favorites of each host, by ID and title, so an app stays hidden or a favorite when Sunshine gives it a new ID. Deleting the host forgets them.
+- The running app always shows, also when it is hidden, so you can resume or quit it. When every app of a host is hidden, all of them show.
+
+**Order of the app list.** Settings → General → *Sort the list of apps* offers *A to Z* (the default), *Z to A*, *Recently played* (the last 20 apps you started on this host first, the latest first, then the others from A to Z) and *As on the PC* (the order in which the host lists them, e.g. the order set in Apollo). The favorites always come first, in the same order among themselves. The Smart Hub tiles follow the same order.
+
+## Finding your bitrate
 
 A higher bitrate gives a sharper picture in fast motion until the network or the decoder of the TV can't keep up. Find the highest bitrate that stays clean:
 
@@ -151,8 +220,8 @@ A higher bitrate gives a sharper picture in fast motion until the network or the
    - *Session recovery keyframes* stays at 0
    - *Rendering frame rate* stays at the chosen frame rate
    - the sound has no dropouts (with Web Audio: the *underruns* of the *Audio session* line stay at 0)
-5. If it passes, raise the bitrate by about 15 to 20 %. In the bitrate menu, UP and DOWN change it in 5 Mbps steps, LEFT and RIGHT in 0.5 Mbps steps; start a new stream for every step, since the bitrate only changes when a stream starts. Faster: *Bitrate* in the [Stream Menu](#16-stream-menu-and-app-menu) changes it in 5 Mbps steps and reconnects the stream with it, without quitting the game.
-6. Stop at the end of the ladder of your TV class (see the table), or at the first step that fails.
+5. If it passes, raise the bitrate by about 15 to 20 %. In the bitrate menu, UP and DOWN change it in 5 Mbps steps, LEFT and RIGHT in 0.5 Mbps steps; start a new stream for every step, since the bitrate only changes when a stream starts. Faster: *Bitrate* in the [Stream Menu](#stream-menu-and-app-menu) changes it in 5 Mbps steps and reconnects the stream with it, without quitting the game.
+6. Stop at the end of the ladder of your TV class (see [the table](#recommended-bitrates)), or at the first step that fails.
 7. Use the highest step that passed, or one step below it to keep some headroom.
 
 Examples:
@@ -160,43 +229,128 @@ Examples:
 - **Full HD TV over Wi-Fi:** 25 → 30 → 35 → 40 Mbps.
 - **4K TV over Wi-Fi without a tested profile:** the recommendation of 80 Mbps already is the cap. Higher bitrates are untested on these TVs, and the app warns above 80 Mbps. If you still try, use the same steps (80 → 95 → 110 Mbps) and go back as soon as *Session frames dropped by the TV* or *TV player rejections* appear.
 - **Over Ethernet:** the recommendation of 75 Mbps is close to what the 100 Mbps port of the TV can carry, and the app warns above 80 Mbps. Use 5 GHz Wi-Fi for higher bitrates.
-- **Samsung S90C over Wi-Fi:** starts at its cap of 100 Mbps. Its archived tuning guide describes a ladder of 100 → 120 → 135 → 150 Mbps for that model.
+- **Samsung S90C over Wi-Fi:** starts at its cap of 100 Mbps. The tuning plan of this model tests 100 → 120 → 135 → 150 Mbps, 15 to 20 minutes each in the same demanding game, and goes down in 10 Mbps steps (90, 80) if 100 already fails. It keeps the highest step that passed minus 15 Mbps, but not less than 100 Mbps once 100 passed: e.g. 120 Mbps when 135 passes and 150 doesn't.
 
-If a long session stutters after a while, note the time and the lines above: they show whether the host, the network or the TV is the cause (see [section 7](#7-performance-statistics)).
+If a long session stutters after a while, note the time and the lines above: they show whether the host, the network or the TV is the cause (see [Performance statistics](#performance-statistics)).
 
-## 6. System information
+## Host settings (Sunshine)
 
-Settings → About → *System information* shows what the app detected. A photo of this screen is the most useful part of a bug report. When its lines don't fit on the screen (e.g. with the report of the last session and several controllers), UP and DOWN scroll them while it is selected: take a photo of the top and one of the end.
+The values below are the defaults from the [Sunshine configuration documentation](https://github.com/LizardByte/Sunshine/blob/master/docs/configuration.md). Only an NVIDIA GPU (NVENC) was used with the tested S90C profile. The AMD and Intel notes are untested with this app.
 
-| Line | Meaning |
+**All encoders**
+
+- `fec_percentage` (default 20): the share of error correction data. Keep the default. Raise it if *Session frames dropped by network* rises or *Worst FEC block* often comes close to its limit. A lower value leaves more of the bitrate to the encoder, but only try it on a network that loses no packets.
+- `max_bitrate` (default 0): 0 uses the bitrate that the app requests.
+- `hevc_mode` and `av1_mode` (default 0): Sunshine offers HEVC and AV1 when its encoder supports them. When the host can't encode the selected codec or 10-bit video, the app falls back (HEVC instead of AV1, SDR instead of HDR) and shows a notice.
+- Set the host display to exactly 60 Hz (or 120 Hz for 120 FPS streams), not 59.94 Hz. *Host frame rate (30 s)* shows what the host delivers.
+- *Optimize game settings* (Settings → Advanced Settings) lets Sunshine switch the host display to the stream resolution when its display device configuration is on. With the default refresh rate option of Sunshine, the host refresh rate follows the selected frame rate anyway, and only modes that the host display offers can be applied.
+
+**NVIDIA (NVENC)**
+
+- `nvenc_preset` (default 1, the fastest): higher presets compress better at the cost of encoding time. The Sunshine documentation suggests changing it only when the network or the decoder limits the bitrate, which is the case with the decoder caps of a TV and its 100 Mbps Ethernet port. Try 4 and watch *Host processing latency*.
+- `nvenc_twopass` (default `quarter_res`), `nvenc_spatial_aq` (default off), `nvenc_vbv_increase` (default 0): keep them. A higher VBV increase allows larger single frames, which the Sunshine documentation says can cause packet loss. Keep it at 0 over Ethernet.
+- `nvenc_split_encode` (default `driver_decides`): splits each frame over several NVENC units, which the Sunshine documentation says "significantly reduces encoding latency with a marginal compression efficiency penalty". It needs a GPU with more than one NVENC unit.
+
+**AMD (AMF), untested**
+
+- Defaults: `amd_usage` = `ultralowlatency`, `amd_rc` = `vbr_latency`, `amd_quality` = `balanced`, `amd_preanalysis` off (it can raise quality but adds latency), `amd_vbaq` on.
+- `amd_quality` = `quality` trades encoding speed for quality, in the same way as a higher NVENC preset.
+
+**Intel (Quick Sync), untested**
+
+- Defaults: `qsv_preset` = `medium` (from `veryfast` to `veryslow`), `qsv_slow_hevc` off.
+- A slower preset trades encoding time for quality.
+
+### Apollo and Vibepollo
+
+Apollo and Vibepollo are hosts based on Sunshine that keep permissions for each paired device and add control tiles to the app list. Moonlight Plus pairs and streams with them like with Sunshine. This part is untested with a real Apollo or Vibepollo host: it describes what the app does with the answers that their source code gives.
+
+- **Permissions.** Apollo gives full permissions only to the first device paired with it, and a device paired later may only see the apps and watch streams. When the app list of the host shows a single tile *Permission Denied*, or the host answers a start with "Permission denied", Moonlight Plus starts nothing and shows *Permission needed* with what to allow. In the web UI of Apollo, open *PIN* → *Device Management* (in Vibepollo *Client Management*), select this TV and allow *List Apps*, *Launch Apps* and the input permissions it needs (*Controller Input*, *Keyboard Input*, *Mouse Input*). A TV that was paired without a device name shows as *Legacy Moonlight Client* there. Then open the host again.
+- **Control tiles.** While an app runs, Apollo with its input-only mode lists *Remote Input* and *Terminate* next to it. *Terminate* ends the running app on the host: Moonlight Plus starts it without asking to quit the running app first, and shows "… ended the running app." instead of the "Error 410: App terminated." of earlier versions. When Vibepollo asks to launch a tile or an app again within 60 seconds to confirm, the app shows that message of the host; press OK on the tile again to confirm.
+- **Order of the apps.** Apollo can put the apps in an order of your choice in its web UI. Choose *As on the PC* under Settings → General → *Sort the list of apps* to see them in that order (see [Stream Menu and app menu](#stream-menu-and-app-menu)).
+
+## ForceGM variant and game mode
+
+Two different things lower the latency of the TV:
+
+- **The Game Mode of the TV** turns off picture processing that adds latency. The ForceGM variant (`Moonlight-ForceGM.wgt`) asks the TV for it through its app metadata.
+- **The *Ultra low latency mode* switch of the app** (Settings → Video Settings; called *Game mode* before 2.2.0) only selects the latency mode of the video player of the TV: Ultra Low Latency when on, Low Latency when off.
+
+Recommendations:
+
+- **Tizen 9.0 and newer:** install the ForceGM variant and keep the *Ultra low latency mode* switch off. The switch can freeze the picture on these versions.
+- **Tizen 6.0 to 8.0:** `Moonlight.wgt` with the *Ultra low latency mode* switch on, which is the default.
+- **Tizen 5.5:** the switch is off and disabled, since the video player of Tizen 5.5 didn't offer the mode, unless the player says that it does.
+- **Any version:** when the video player of the TV says clearly that it doesn't offer the Ultra Low Latency mode, the switch stays off and disabled, and System information shows *Ultra Low Latency mode (Game mode): No*. The same applies to an older video player that has no list of its features: the video player code in the app never uses the mode there and falls back to the Low Latency mode, so System information shows *No* with the API level (0 or 1) that this code derives. This check was tested in simulations only, not on real TVs.
+
+## HDR
+
+- HDR is on by default when the TV reports HDR support. The stream is then HEVC Main10 (or AV1 Main10).
+- HDR must also be on for the host display (e.g. a virtual display), in Windows or through the display device settings of Sunshine. Otherwise the stream is 10-bit SDR, which the *Video stream* line shows.
+- The game must support HDR and have it enabled.
+- H.264 has no HDR. If the host can't encode 10-bit video with the selected codec, the stream runs without HDR and the app shows a notice.
+- If you switch HDR on for a TV that doesn't report HDR support, the app warns that the picture may look washed out or the stream may fail to start.
+- *Full color range* (Settings → Advanced Settings): keep it off, so that the stream uses the limited range, the standard for video. Full range loses detail in dark and bright areas on a TV that doesn't show full range video properly.
+- *HDR static metadata* (Settings → Advanced Settings → *Experimental*, off by default) passes the HDR metadata of the host display to the TV with every HEVC keyframe, so that the tone mapping of the TV matches the host. Turn it off again if HDR streams fail to start or look wrong.
+
+## Audio
+
+Settings → Audio Settings → *Audio backend*:
+
+- **TV media player (EMSS)** (default) plays the sound through the media player of the TV, which also passes 5.1 on to a soundbar. Its switch *Limit audio delay* (called *Audio synchronization* before 2.2.0, off by default) skips sound when more than 100 ms of it waits to be played, so that no delay builds up.
+- **Browser (Web Audio)** is the alternative if you hear crackling or stuttering with EMSS. Its *Audio jitter buffer* (25 to 500 ms, 100 ms by default) absorbs network jitter, at the cost of a bit more audio delay.
+  - **Audio clock sync** (experimental, off by default) plays the sound up to 0.05 % faster or slower, which is inaudible, so that the audio delay stays at the jitter buffer. Without it, the clocks of the host and the TV drift apart: the delay grows to 1.5 times the buffer, then 5 ms of sound are skipped every few minutes, or there is a gap as long as the buffer when it runs empty.
+  - With *Audio clock sync* on, the *Audio session* line of the performance statistics suggests a buffer size after 10 minutes. Use it as the jitter buffer.
+  - If the sound drops out (*underruns* rise), raise the jitter buffer by 25 ms.
+- **Disabled** turns the sound of the TV off.
+
+*Audio configuration* offers Stereo, 5.1 and 7.1 surround (experimental). For 5.1 through a soundbar, see [Surround sound with a soundbar](#surround-sound-with-a-soundbar). The start of a stream also tells the host the chosen configuration, which Sunshine passes to the prep commands of an app as `SUNSHINE_CLIENT_AUDIO_CONFIGURATION` (e.g. *5.1*); before 2.2.0 it always said *2.0* there.
+
+The app always asks the host to keep sending audio during silence. Without that, Sunshine on Windows sends no audio at all while the PC is silent, and the audio player of the TV and the link to a soundbar run dry. It needs Sunshine v2026.516.143833 or newer; older hosts and other host software ignore it. Up to 2.1.0 this was the switch *Continuous audio from the host*; an install that had switched it off asks for it as well from 2.2.0 on.
+
+### Surround sound with a soundbar
+
+Moonlight Plus can play the 5.1 sound of the PC through a soundbar or an AV receiver. Whether all six channels arrive one by one depends on the connection and on the settings of the TV and the soundbar. Untested: nobody has confirmed discrete 5.1 from the app on a TV yet, also not on the S90C. The check below tells you what your setup gets.
+
+**What the connection carries**
+
+| Connection to the soundbar | What it carries |
 |---|---|
-| App Version | Name and version of the app. *Moonlight Plus-ForceGM* is the ForceGM variant. A pre-release adds *(pre-&lt;commit&gt;)*, the commit it was built from. So does a full release that was promoted from a tested pre-release, because it keeps the files of the pre-release, e.g. *Moonlight Plus v1.19.100 (pre-1a2b3c4)*. |
-| Platform Version | Tizen version of the TV |
-| TV Model Series, TV Model Name, TV Model Group | Model strings that the TV reports. The model group is followed by the model year that it suggests, e.g. *23_PONTUSM (model year 2023)*: only a hint, which never decides a setting. |
-| Panel | Full HD, 4K or 8K |
-| HDR Support | Whether the TV reports HDR support |
-| Network Connection Type | Ethernet, Wi-Fi, or Unknown |
-| Tested Profile | The tested model profile that matches the TV (S90C), or None |
-| Ultra Low Latency mode (Game mode) | Whether the video player of the TV offers the mode that the *Ultra low latency mode* switch asks for: Yes, No or Unknown |
-| WASM player API levels | API levels of the video player of the TV. For an older video player without a list of its features, the level (0 or 1) that the video player code in the app derives from it. |
-| Video decoders (MediaSource check) | What the browser of the TV answers for H.264, HEVC, HEVC Main10, AV1 and AV1 Main10. The answers only count when the browser also rejects a made-up codec and accepts H.264; otherwise the line says Unknown. |
-| Video decoders at level 5.2 (4K above 60 FPS) | The same check at level 5.2, which 4K streams above 60 FPS use |
-| Controller N | Each connected controller: name, standard or non-standard layout, buttons, axes, rumble support and the controller type sent to the PC. When the setting *Controller type sent to the PC* overrides the detection, the detected type follows, e.g. *PlayStation (setting, detected: Xbox)* (see [CONTROLLERS.md](CONTROLLERS.md)). |
-| Last session | The totals of the last stream since the app started, after an empty line: its length, codec, resolution, frame rate and bitrate; the frames lost on the network; the frames the TV dropped, the resets of the video pipeline and the keyframes the host sent to recover; the losses that error correction (FEC) repaired or couldn't; the WASM heap at its end. Then 1 to 3 hints in plain language, e.g. *Many frames were lost on the network: use a cable or lower the bitrate.*, or *No problems found in this session.* The report is kept in memory only, so it is gone after a restart. |
+| HDMI eARC | Multichannel PCM up to 5.1 channels, on Samsung TVs from 2021 on (AU7000 and higher), according to [Samsung's support page on eARC](https://www.samsung.com/sg/support/tv-audio-video/what-is-earc-and-how-to-set-on-samsung-smart-tv/). 7.1 PCM is not supported. Samsung asks for an HDMI cable that supports HEAC or HEC. |
+| HDMI ARC, optical | Stereo PCM only. 5.1 over these needs a Dolby bitstream, which the app can't send (see [below](#why-there-is-no-dolby-passthrough-yet)). Choose Stereo. |
 
-When the decoder check counts and says No for AV1, the codec menu labels AV1 "may not be supported by this TV". It stays selectable, because the check was only tested in simulations, not on real TVs.
+The PC sends the sound as Opus. With 5.1, the app decodes it to 6-channel PCM for the media player of the TV, and the TV passes it on to the soundbar.
 
-### Diagnostic log
+**Settings**
 
-Settings → About → *Diagnostic log* shows the log of the app for this session and the one before, oldest first: the lines of the app and the lines of its streaming engine, by their time. A session starts with the app and with each stream (a start once more of the same stream stays in its session). UP and DOWN scroll, OK or RETURN close it.
+1. **Moonlight Plus:** Settings → Audio Settings → *Audio configuration*: *5.1 Surround Sound*, and *Audio backend*: *TV media player (EMSS)* (the default). Web Audio plays through the output of the browser, which the app leaves at two channels, so it mixes 5.1 down to stereo. Don't choose 7.1, since Samsung TVs pass at most 5.1 channels of PCM over eARC.
+2. **TV:** Settings → All Settings → Sound → *Sound Output*: the soundbar over HDMI eARC. Then Sound → *Expert Settings*: *HDMI-eARC Mode* on *Auto* and *Digital Output Audio Format* on *Auto*, so that the TV picks a format that the soundbar supports. The menu names come from Samsung's support pages and differ by model and year; they were not checked on a TV.
+3. **Soundbar:** the sound mode *Standard*, not *Surround* or *Adaptive Sound*. Those modes spread stereo over all speakers, so you can't hear whether the channels arrive on their own.
+4. **PC:** Sunshine plays the sound of the PC into the virtual *Steam Streaming Speakers* and sets them to the channel layout that the stream asks for. Its setting `install_steam_audio_drivers` (on by default) installs them when Steam is installed (see the [Sunshine configuration documentation](https://github.com/LizardByte/Sunshine/blob/master/docs/configuration.md)).
 
-- The log is kept only in the memory of the TV, at most 600 lines per session. It is never written to a file or sent anywhere; it leaves the TV only if you take a photo of it.
-- The PIN, the encryption keys of the stream (the remote input keys of the protocol), the unique ID of the TV, the private key of its pairing certificate and the RTSP address of a stream are hidden (*&lt;hidden&gt;*).
-- If Moonlight ended during a stream the last time (a crash, a freeze that you ended, or the TV was switched off), the next start says so once. The log of that session is gone, since it was in memory only, but the notice tells you that it happened; describe what you saw in the report.
+**Check each channel**
 
-## 7. Performance statistics
+1. Start a stream. The *Audio stream* line of the full [performance statistics](#performance-statistics) should say *Opus 5.1 surround (6 channels)*. If it says *Stereo*, the host only offers stereo.
+2. On the PC, open the sound control panel (Windows 11: Settings → System → Sound → *More sound settings*), select *Steam Streaming Speakers* on the *Playback* tab, then *Configure* → *5.1 Surround* → *Test*. Windows plays a sound from each speaker in turn; a click on a speaker in the picture plays only that one.
+3. Listen at the soundbar:
+   - Each sound comes from its own speaker (front left, center, front right, the two rear speakers, the subwoofer): discrete 5.1 works.
+   - The rear sounds come from the front, or each sound comes from everywhere: the TV mixes the sound down to stereo, and the soundbar spreads it again. Check the settings above.
+   - The display of the soundbar often shows only *PCM*, which doesn't tell stereo from 5.1. Trust your ears.
 
-Choose the level in Settings → Advanced Settings → *Performance statistics*: *Off*, *Compact* or *Full*. In the stream, the YELLOW key steps *Off* → *Compact* → *Full* → *Off*, and so do the controller combo Select + LB + RB + X, Ctrl + Alt + Shift + S on a keyboard and *Performance statistics* in the [Stream Menu](#16-stream-menu-and-app-menu). The setting keeps the last level for the next stream.
+#### Why there is no Dolby passthrough yet
+
+Over ARC or optical, 5.1 needs a compressed Dolby Digital (AC-3) or Dolby Digital Plus (E-AC-3) stream that the TV passes on to the soundbar. The app doesn't offer it yet:
+
+- The host would have to encode it. Sunshine doesn't; the pull request for it ([LizardByte/Sunshine #5917](https://github.com/LizardByte/Sunshine/pull/5917)) was still open in October 2026. Some other host programs encode it, mostly in test builds and with two protocols that don't fit each other.
+- A Dolby packet carries 32 ms of sound instead of the 5 ms of Opus, so the sound arrives at least 27 ms later, and a lost packet leaves a gap that isn't covered up.
+- Whether the media player of a Samsung TV takes a Dolby track during a stream, also with the *Ultra low latency mode* switch on, is untested.
+- Over eARC, 5.1 PCM already gives discrete channels without the extra delay.
+
+The fork [moonlight-tizen-ac3](https://github.com/fidoboy/moonlight-tizen-ac3) by fidoboy is a separate app that adds Dolby together with a test build of Sunshine. Its [troubleshooting guide](https://github.com/fidoboy/moonlight-tizen-ac3/blob/master/docs/Troubleshooting-Guide.md) gives the same order: Stereo first, then 5.1 once the TV and the soundbar or receiver support it, and no 7.1 for Dolby.
+
+## Performance statistics
+
+Choose the level in Settings → Advanced Settings → *Performance statistics*: *Off*, *Compact* or *Full*. In the stream, the YELLOW key steps *Off* → *Compact* → *Full* → *Off*, and so do the controller combo Select + LB + RB + X, Ctrl + Alt + Shift + S on a keyboard and *Performance statistics* in the [Stream Menu](#stream-menu-and-app-menu). The setting keeps the last level for the next stream.
 
 **Compact** shows one line at the top left of the picture, or in the corner chosen in Settings → Advanced Settings → *Statistics position* (top left, top right, bottom left or bottom right, for both levels; at the top right the connection warnings move to the top left), e.g.:
 
@@ -204,7 +358,7 @@ Choose the level in Settings → Advanced Settings → *Performance statistics*:
 
 That is the stream as set up, the frames handed to the video player of the TV per second, the bitrate that arrives, the round-trip time to the host, the share of frames lost on the network in the last two seconds, and the *Average frame wait time* plus the *Average frame pacing delay* of the full statistics. A figure that isn't known yet is left out.
 
-**Full** shows every line below. Some lines only appear when they have something to say. Above them, a slim graph shows the last 60 seconds: one bar per second for the round-trip time to the host, green below 5 ms, yellow from 5 ms, orange from 10 ms and red from 20 ms (grey while it isn't known), on a scale of 0–25 ms that grows with the highest value, and a red mark above every second in which frames were lost on the network. A gap means that no frames arrived in that second. The graph starts again when the level changes.
+**Full** shows every line below. Some lines only appear when they have something to say. Above them, a slim graph shows the last 60 seconds: one bar per second for the round-trip time to the host, green below 5 ms, yellow from 5 ms, orange from 10 ms and red from 20 ms (gray while it isn't known), on a scale of 0–25 ms that grows with the highest value, and a red mark above every second in which frames were lost on the network. A gap means that no frames arrived in that second. The graph starts again when the level changes.
 
 **Stream and host**
 
@@ -247,137 +401,52 @@ That is the stream as set up, the frames handed to the video player of the TV pe
 |---|---|
 | WASM heap top | Memory of the streaming engine against its fixed size. A steady climb over hours points to a memory leak; please report it. |
 | Network connection | Ethernet (with the reminder of the 100 Mbps port), or Wi-Fi with the signal strength in percent when the TV reports it, refreshed every 5 seconds |
-| Audio stream | The audio that the host sends: codec, channel layout and packet duration as negotiated (e.g. *Opus 5.1 surround (6 channels), 5 ms packets*) and its data rate. If you chose 5.1 or 7.1 and it shows *Stereo*, the host only offers stereo. For 5.1 on a soundbar, see [section 11](#surround-sound-with-a-soundbar). |
+| Audio stream | The audio that the host sends: codec, channel layout and packet duration as negotiated (e.g. *Opus 5.1 surround (6 channels), 5 ms packets*) and its data rate. If you chose 5.1 or 7.1 and it shows *Stereo*, the host only offers stereo. For 5.1 on a soundbar, see [Surround sound with a soundbar](#surround-sound-with-a-soundbar). |
 | Session audio packets lost by network | Audio packets that the network lost and the error correction couldn't repair, which the TV covers up with concealed sound. A steady rise means packet loss on the network. Errors of the audio decoder and rejections of the audio player of the TV show in a further line once there are any. |
-| Audio buffer, Audio session | Only with the Web Audio backend: jitter buffer, schedule lead, browser latency, underruns, skipped and lost audio frames, the correction of *Audio clock sync* and a suggested buffer size (see [section 11](#11-audio)). While the audio output of the browser isn't running, a single line *Audio (Web Audio)* shows its state instead. |
-| Moonlight hidden during the stream | How often the app was hidden during the stream and how often the TV closed its video (see [section 12](#12-when-moonlight-goes-to-the-background)) |
+| Audio buffer, Audio session | Only with the Web Audio backend: jitter buffer, schedule lead, browser latency, underruns, skipped and lost audio frames, the correction of *Audio clock sync* and a suggested buffer size (see [Audio](#audio)). While the audio output of the browser isn't running, a single line *Audio (Web Audio)* shows its state instead. |
+| Moonlight hidden during the stream | How often the app was hidden during the stream and how often the TV closed its video (see [When Moonlight goes to the background](#when-moonlight-goes-to-the-background)) |
 
 The warning "Slow connection to PC. Reduce your bitrate!" only appears for frames lost on the network, not for frames that the TV dropped itself.
 
-## 8. Host settings (Sunshine)
+## System information and diagnostic log
 
-The values below are the defaults from the [Sunshine configuration documentation](https://github.com/LizardByte/Sunshine/blob/master/docs/configuration.md). Only an NVIDIA GPU (NVENC) was used with the tested S90C profile. The AMD and Intel notes are untested with this app.
+Settings → About → *System information* shows what the app detected. A photo of this screen is the most useful part of a bug report. When its lines don't fit on the screen (e.g. with the report of the last session and several controllers), UP and DOWN scroll them while it is selected: take a photo of the top and one of the end.
 
-**All encoders**
-
-- `fec_percentage` (default 20): the share of error correction data. Keep the default. Raise it if *Session frames dropped by network* rises or *Worst FEC block* often comes close to its limit. A lower value leaves more of the bitrate to the encoder, but only try it on a network that loses no packets.
-- `max_bitrate` (default 0): 0 uses the bitrate that the app requests.
-- `hevc_mode` and `av1_mode` (default 0): Sunshine offers HEVC and AV1 when its encoder supports them. When the host can't encode the selected codec or 10-bit video, the app falls back (HEVC instead of AV1, SDR instead of HDR) and shows a notice.
-- Set the host display to exactly 60 Hz (or 120 Hz for 120 FPS streams), not 59.94 Hz. *Host frame rate (30 s)* shows what the host delivers.
-- *Optimize game settings* (Settings → Advanced Settings) lets Sunshine switch the host display to the stream resolution when its display device configuration is on. With the default refresh rate option of Sunshine, the host refresh rate follows the selected frame rate anyway, and only modes that the host display offers can be applied.
-
-**NVIDIA (NVENC)**
-
-- `nvenc_preset` (default 1, the fastest): higher presets compress better at the cost of encoding time. The Sunshine documentation suggests changing it only when the network or the decoder limits the bitrate, which is the case with the decoder caps of a TV and its 100 Mbps Ethernet port. Try 4 and watch *Host processing latency*.
-- `nvenc_twopass` (default `quarter_res`), `nvenc_spatial_aq` (default off), `nvenc_vbv_increase` (default 0): keep them. A higher VBV increase allows larger single frames, which the Sunshine documentation says can cause packet loss. Keep it at 0 over Ethernet.
-- `nvenc_split_encode` (default `driver_decides`): splits each frame over several NVENC units, which the Sunshine documentation says "significantly reduces encoding latency with a marginal compression efficiency penalty". It needs a GPU with more than one NVENC unit.
-
-**AMD (AMF), untested**
-
-- Defaults: `amd_usage` = `ultralowlatency`, `amd_rc` = `vbr_latency`, `amd_quality` = `balanced`, `amd_preanalysis` off (it can raise quality but adds latency), `amd_vbaq` on.
-- `amd_quality` = `quality` trades encoding speed for quality, in the same way as a higher NVENC preset.
-
-**Intel (Quick Sync), untested**
-
-- Defaults: `qsv_preset` = `medium` (from `veryfast` to `veryslow`), `qsv_slow_hevc` off.
-- A slower preset trades encoding time for quality.
-
-### Apollo and Vibepollo
-
-Apollo and Vibepollo are hosts based on Sunshine that keep permissions for each paired device and add control tiles to the app list. Moonlight Plus pairs and streams with them like with Sunshine. This part is untested with a real Apollo or Vibepollo host: it describes what the app does with the answers that their source code gives.
-
-- **Permissions.** Apollo gives full permissions only to the first device paired with it, and a device paired later may only see the apps and watch streams. When the app list of the host shows a single tile *Permission Denied*, or the host answers a start with "Permission denied", Moonlight Plus starts nothing and shows *Permission needed* with what to allow. In the web UI of Apollo, open *PIN* → *Device Management* (in Vibepollo *Client Management*), select this TV and allow *List Apps*, *Launch Apps* and the input permissions it needs (*Controller Input*, *Keyboard Input*, *Mouse Input*). A TV that was paired without a device name shows as *Legacy Moonlight Client* there. Then open the host again.
-- **Control tiles.** While an app runs, Apollo with its input-only mode lists *Remote Input* and *Terminate* next to it. *Terminate* ends the running app on the host: Moonlight Plus starts it without asking to quit the running app first, and shows "… ended the running app." instead of the "Error 410: App terminated." of earlier versions. When Vibepollo asks to launch a tile or an app again within 60 seconds to confirm, the app shows that message of the host; press OK on the tile again to confirm.
-- **Order of the apps.** Apollo can put the apps in an order of your choice in its web UI. Choose *As on the PC* under Settings → General → *Sort the list of apps* to see them in that order (see [section 16](#16-stream-menu-and-app-menu)).
-
-## 9. ForceGM variant and game mode
-
-Two different things lower the latency of the TV:
-
-- **The Game Mode of the TV** turns off picture processing that adds latency. The ForceGM variant (`Moonlight-ForceGM.wgt`) asks the TV for it through its app metadata.
-- **The *Ultra low latency mode* switch of the app** (Settings → Video Settings; called *Game mode* before 2.2.0) only selects the latency mode of the video player of the TV: Ultra Low Latency when on, Low Latency when off.
-
-Recommendations:
-
-- **Tizen 9.0 and newer:** install the ForceGM variant and keep the *Ultra low latency mode* switch off. The switch can freeze the picture on these versions.
-- **Tizen 6.0 to 8.0:** `Moonlight.wgt` with the *Ultra low latency mode* switch on, which is the default.
-- **Tizen 5.5:** the switch is off and disabled, since the video player of Tizen 5.5 didn't offer the mode, unless the player says that it does.
-- **Any version:** when the video player of the TV says clearly that it doesn't offer the Ultra Low Latency mode, the switch stays off and disabled, and System information shows *Ultra Low Latency mode (Game mode): No*. The same applies to an older video player that has no list of its features: the video player code in the app never uses the mode there and falls back to the Low Latency mode, so System information shows *No* with the API level (0 or 1) that this code derives. This check was tested in simulations only, not on real TVs.
-
-## 10. HDR
-
-- HDR is on by default when the TV reports HDR support. The stream is then HEVC Main10 (or AV1 Main10).
-- HDR must also be on for the host display (e.g. a virtual display), in Windows or through the display device settings of Sunshine. Otherwise the stream is 10-bit SDR, which the *Video stream* line shows.
-- The game must support HDR and have it enabled.
-- H.264 has no HDR. If the host can't encode 10-bit video with the selected codec, the stream runs without HDR and the app shows a notice.
-- If you switch HDR on for a TV that doesn't report HDR support, the app warns that the picture may look washed out or the stream may fail to start.
-- *Full color range* (Settings → Advanced Settings): keep it off, so that the stream uses the limited range, the standard for video. Full range loses detail in dark and bright areas on a TV that doesn't show full range video properly.
-- *HDR static metadata* (Settings → Advanced Settings → *Experimental*, off by default) passes the HDR metadata of the host display to the TV with every HEVC keyframe, so that the tone mapping of the TV matches the host. Turn it off again if HDR streams fail to start or look wrong.
-
-## 11. Audio
-
-Settings → Audio Settings → *Audio backend*:
-
-- **TV media player (EMSS)** (default) plays the sound through the media player of the TV, which also passes 5.1 on to a soundbar. Its switch *Limit audio delay* (called *Audio synchronization* before 2.2.0, off by default) skips sound when more than 100 ms of it waits to be played, so that no delay builds up.
-- **Browser (Web Audio)** is the alternative if you hear crackling or stuttering with EMSS. Its *Audio jitter buffer* (25 to 500 ms, 100 ms by default) absorbs network jitter, at the cost of a bit more audio delay.
-  - **Audio clock sync** (experimental, off by default) plays the sound up to 0.05 % faster or slower, which is inaudible, so that the audio delay stays at the jitter buffer. Without it, the clocks of the host and the TV drift apart: the delay grows to 1.5 times the buffer, then 5 ms of sound are skipped every few minutes, or there is a gap as long as the buffer when it runs empty.
-  - With *Audio clock sync* on, the *Audio session* line of the performance statistics suggests a buffer size after 10 minutes. Use it as the jitter buffer.
-  - If the sound drops out (*underruns* rise), raise the jitter buffer by 25 ms.
-- **Disabled** turns the sound of the TV off.
-
-*Audio configuration* offers Stereo, 5.1 and 7.1 surround (experimental). For 5.1 through a soundbar, see [Surround sound with a soundbar](#surround-sound-with-a-soundbar). The start of a stream also tells the host the chosen configuration, which Sunshine passes to the prep commands of an app as `SUNSHINE_CLIENT_AUDIO_CONFIGURATION` (e.g. *5.1*); before 2.2.0 it always said *2.0* there.
-
-The app always asks the host to keep sending audio during silence. Without that, Sunshine on Windows sends no audio at all while the PC is silent, and the audio player of the TV and the link to a soundbar run dry. It needs Sunshine v2026.516.143833 or newer; older hosts and other host software ignore it. Up to 2.1.0 this was the switch *Continuous audio from the host*; an install that had switched it off asks for it as well from 2.2.0 on.
-
-### Surround sound with a soundbar
-
-Moonlight Plus can play the 5.1 sound of the PC through a soundbar or an AV receiver. Whether all six channels arrive one by one depends on the connection and on the settings of the TV and the soundbar. Untested: nobody has confirmed discrete 5.1 from the app on a TV yet, also not on the S90C. The check below tells you what your setup gets.
-
-**What the connection carries**
-
-| Connection to the soundbar | What it carries |
+| Line | Meaning |
 |---|---|
-| HDMI eARC | Multichannel PCM up to 5.1 channels, on Samsung TVs from 2021 on (AU7000 and higher), according to [Samsung's support page on eARC](https://www.samsung.com/sg/support/tv-audio-video/what-is-earc-and-how-to-set-on-samsung-smart-tv/). 7.1 PCM is not supported. Samsung asks for an HDMI cable that supports HEAC or HEC. |
-| HDMI ARC, optical | Stereo PCM only. 5.1 over these needs a Dolby bitstream, which the app can't send (see [below](#why-there-is-no-dolby-passthrough-yet)). Choose Stereo. |
+| App Version | Name and version of the app. *Moonlight Plus-ForceGM* is the ForceGM variant. A pre-release adds *(pre-&lt;commit&gt;)*, the commit it was built from. So does a full release that was promoted from a tested pre-release, because it keeps the files of the pre-release, e.g. *Moonlight Plus v1.19.100 (pre-1a2b3c4)*. |
+| Platform Version | Tizen version of the TV |
+| TV Model Series, TV Model Name, TV Model Group | Model strings that the TV reports. The model group is followed by the model year that it suggests, e.g. *23_PONTUSM (model year 2023)*: only a hint, which never decides a setting. |
+| Panel | Full HD, 4K or 8K |
+| HDR Support | Whether the TV reports HDR support |
+| Network Connection Type | Ethernet, Wi-Fi, or Unknown |
+| Tested Profile | The tested model profile that matches the TV (S90C), or None |
+| Ultra Low Latency mode (Game mode) | Whether the video player of the TV offers the mode that the *Ultra low latency mode* switch asks for: Yes, No or Unknown |
+| WASM player API levels | API levels of the video player of the TV. For an older video player without a list of its features, the level (0 or 1) that the video player code in the app derives from it. |
+| Video decoders (MediaSource check) | What the browser of the TV answers for H.264, HEVC, HEVC Main10, AV1 and AV1 Main10. The answers only count when the browser also rejects a made-up codec and accepts H.264; otherwise the line says Unknown. |
+| Video decoders at level 5.2 (4K above 60 FPS) | The same check at level 5.2, which 4K streams above 60 FPS use |
+| Controller N | Each connected controller: name, standard or non-standard layout, buttons, axes, rumble support and the controller type sent to the PC. When the setting *Controller type sent to the PC* overrides the detection, the detected type follows, e.g. *PlayStation (setting, detected: Xbox)* (see [CONTROLLERS.md](CONTROLLERS.md)). |
+| Last session | The totals of the last stream since the app started, after an empty line: its length, codec, resolution, frame rate and bitrate; the frames lost on the network; the frames the TV dropped, the resets of the video pipeline and the keyframes the host sent to recover; the losses that error correction (FEC) repaired or couldn't; the WASM heap at its end. Then 1 to 3 hints in plain language, e.g. *Many frames were lost on the network: use a cable or lower the bitrate.*, or *No problems found in this session.* The report is kept in memory only, so it is gone after a restart. |
 
-The PC sends the sound as Opus. With 5.1, the app decodes it to 6-channel PCM for the media player of the TV, and the TV passes it on to the soundbar.
+When the decoder check counts and says No for AV1, the codec menu labels AV1 "may not be supported by this TV". It stays selectable, because the check was only tested in simulations, not on real TVs.
 
-**Settings**
+### Diagnostic log
 
-1. **Moonlight Plus:** Settings → Audio Settings → *Audio configuration*: *5.1 Surround Sound*, and *Audio backend*: *TV media player (EMSS)* (the default). Web Audio plays through the output of the browser, which the app leaves at two channels, so it mixes 5.1 down to stereo. Don't choose 7.1, since Samsung TVs pass at most 5.1 channels of PCM over eARC.
-2. **TV:** Settings → All Settings → Sound → *Sound Output*: the soundbar over HDMI eARC. Then Sound → *Expert Settings*: *HDMI-eARC Mode* on *Auto* and *Digital Output Audio Format* on *Auto*, so that the TV picks a format that the soundbar supports. The menu names come from Samsung's support pages and differ by model and year; they were not checked on a TV.
-3. **Soundbar:** the sound mode *Standard*, not *Surround* or *Adaptive Sound*. Those modes spread stereo over all speakers, so you can't hear whether the channels arrive on their own.
-4. **PC:** Sunshine plays the sound of the PC into the virtual *Steam Streaming Speakers* and sets them to the channel layout that the stream asks for. Its setting `install_steam_audio_drivers` (on by default) installs them when Steam is installed (see the [Sunshine configuration documentation](https://github.com/LizardByte/Sunshine/blob/master/docs/configuration.md)).
+Settings → About → *Diagnostic log* shows the log of the app for this session and the one before, oldest first: the lines of the app and the lines of its streaming engine, by their time. A session starts with the app and with each stream (a start once more of the same stream stays in its session). UP and DOWN scroll, OK or RETURN close it.
 
-**Check each channel**
+- The log is kept only in the memory of the TV, at most 600 lines per session. It is never written to a file or sent anywhere; it leaves the TV only if you take a photo of it.
+- The PIN, the encryption keys of the stream (the remote input keys of the protocol), the unique ID of the TV, the private key of its pairing certificate and the RTSP address of a stream are hidden (*&lt;hidden&gt;*).
+- If Moonlight ended during a stream the last time (a crash, a freeze that you ended, or the TV was switched off), the next start says so once. The log of that session is gone, since it was in memory only, but the notice tells you that it happened; describe what you saw in the report.
 
-1. Start a stream. The *Audio stream* line of the full [performance statistics](#7-performance-statistics) should say *Opus 5.1 surround (6 channels)*. If it says *Stereo*, the host only offers stereo.
-2. On the PC, open the sound control panel (Windows 11: Settings → System → Sound → *More sound settings*), select *Steam Streaming Speakers* on the *Playback* tab, then *Configure* → *5.1 Surround* → *Test*. Windows plays a sound from each speaker in turn; a click on a speaker in the picture plays only that one.
-3. Listen at the soundbar:
-   - Each sound comes from its own speaker (front left, center, front right, the two rear speakers, the subwoofer): discrete 5.1 works.
-   - The rear sounds come from the front, or each sound comes from everywhere: the TV mixes the sound down to stereo, and the soundbar spreads it again. Check the settings above.
-   - The display of the soundbar often shows only *PCM*, which doesn't tell stereo from 5.1. Trust your ears.
-
-#### Why there is no Dolby passthrough yet
-
-Over ARC or optical, 5.1 needs a compressed Dolby Digital (AC-3) or Dolby Digital Plus (E-AC-3) stream that the TV passes on to the soundbar. The app doesn't offer it yet:
-
-- The host would have to encode it. Sunshine doesn't; the pull request for it ([LizardByte/Sunshine #5917](https://github.com/LizardByte/Sunshine/pull/5917)) was still open in October 2026. Some other host programs encode it, mostly in test builds and with two protocols that don't fit each other.
-- A Dolby packet carries 32 ms of sound instead of the 5 ms of Opus, so the sound arrives at least 27 ms later, and a lost packet leaves a gap that isn't covered up.
-- Whether the media player of a Samsung TV takes a Dolby track during a stream, also with the *Ultra low latency mode* switch on, is untested.
-- Over eARC, 5.1 PCM already gives discrete channels without the extra delay.
-
-The fork [moonlight-tizen-ac3](https://github.com/fidoboy/moonlight-tizen-ac3) by fidoboy is a separate app that adds Dolby together with a test build of Sunshine. Its [troubleshooting guide](https://github.com/fidoboy/moonlight-tizen-ac3/blob/master/docs/Troubleshooting-Guide.md) gives the same order: Stereo first, then 5.1 once the TV and the soundbar or receiver support it, and no 7.1 for Dolby.
-
-## 12. When Moonlight goes to the background
+## When Moonlight goes to the background
 
 - If Moonlight stays in the background for more than 1 minute (home screen, another app), the stream ends. It ends at once when the TV takes the video away from the app, or when the connection is still being set up.
 - Overlays of the TV such as the quick settings and the volume should leave the stream running. The line *Moonlight hidden during the stream* of the performance statistics counts how often the app was hidden.
 - The game keeps running on the PC. Open Moonlight Plus and select the game again to resume it. A notice says so.
 - The screensaver of the TV stays off while you stream.
-- The RED key ends the stream. During "Starting…", it cancels the start. On a remote without color keys, the 123 key usually shows them on screen (as on the remote of the S90C). The [Stream Menu](#16-stream-menu-and-app-menu) (Play/Pause) ends the stream as well, with *Disconnect*.
+- The RED key ends the stream. During "Starting…", it cancels the start. On a remote without color keys, the 123 key usually shows them on screen (as on the remote of the S90C). The [Stream Menu](#stream-menu-and-app-menu) (Play/Pause) ends the stream as well, with *Disconnect*.
 
-## 13. Known limits
+## Known limits
 
 - **Ethernet port:** most Samsung TVs have a 100 Mbps Ethernet port. The bitrate presets stop at 75 Mbps over Ethernet, and the app warns above 80 Mbps. To avoid packet loss from the traffic bursts of the much faster host PC, set the network adapter of the host to 100 Mbps full duplex or enable flow control on your switch. For higher bitrates, use 5 GHz Wi-Fi.
 - **60 Hz panels:** many Samsung TVs have 60 Hz panels, and Tizen apps often show only about 60 FPS. Frame rates above 60 FPS then cost bitrate without looking smoother. 90 FPS divides neither a 60 Hz nor a 120 Hz output evenly.
@@ -388,7 +457,7 @@ The fork [moonlight-tizen-ac3](https://github.com/fidoboy/moonlight-tizen-ac3) b
 - **Controllers:** no touchpad surface, motion sensors, battery level or lights; see [CONTROLLERS.md](CONTROLLERS.md).
 - **Verification:** the checks of the game mode and of the video decoders, the controller type setting and the warnings for other TV classes were tested with simulated TVs and controllers only. Reports from real TVs are welcome.
 
-## 14. Troubleshooting
+## Troubleshooting
 
 The app ends a failed stream with a message instead of a frozen or black picture.
 
@@ -405,7 +474,7 @@ The app ends a failed stream with a message instead of a frozen or black picture
 | "The TV was unable to start the streaming with the selected video settings." (-200) | The same error without a rejected format, or the video player kept rejecting the stream for 3 seconds before the first frame. Lower the resolution or frame rate, or change the codec. |
 | "The video player of the TV stopped with an error during the stream." (-201) | The video player of the TV failed, or kept rejecting the stream for 3 seconds, during the stream. Start the stream again. If it keeps happening, lower the bitrate, resolution or frame rate. |
 | "A part of the streaming engine stopped unexpectedly." | The streaming engine crashed. Moonlight restarts after you close the message, and you can resume the game. Please report it with System information. |
-| "The stream was ended because Moonlight went to the background." | See [section 12](#12-when-moonlight-goes-to-the-background). Select the game to resume it. |
+| "The stream was ended because Moonlight went to the background." | See [When Moonlight goes to the background](#when-moonlight-goes-to-the-background). Select the game to resume it. |
 | "Stop the current stream first (RED button)." | A Smart Hub tile was opened during a stream. |
 | "The host PC can't encode the selected codec, so the stream uses HEVC instead." | The host has no encoder for the selected codec (e.g. AV1). |
 | "… has a non-standard button layout …" | See [CONTROLLERS.md](CONTROLLERS.md). |
@@ -415,92 +484,14 @@ The app ends a failed stream with a message instead of a frozen or black picture
 
 Other problems:
 
-- **Play/Pause doesn't open the Stream Menu:** some TVs may not pass the key to apps (untested). Hold Select + Start on a controller for 1 second instead; RED and YELLOW keep working. Settings → Input Settings → *Input test* shows whether the key reaches the app and whether Moonlight registered it ([CONTROLLERS.md](CONTROLLERS.md#9-input-test)).
-- **A button of a controller does the wrong thing in games:** change it in Settings → Input Settings → *Button mapping*; a worn stick that drifts or doesn't reach the edge can be calibrated there ([CONTROLLERS.md](CONTROLLERS.md#8-button-mapping-and-stick-calibration)).
-- **An app is missing from the app list:** it may be hidden. Open the menu of any app (CH+ or Play/Pause) and choose *Show hidden apps* (see [section 16](#16-stream-menu-and-app-menu)).
+- **Play/Pause doesn't open the Stream Menu:** some TVs may not pass the key to apps (untested). Hold Select + Start on a controller for 1 second instead; RED and YELLOW keep working. Settings → Input Settings → *Input test* shows whether the key reaches the app and whether Moonlight registered it ([CONTROLLERS.md](CONTROLLERS.md#input-test)).
+- **A button of a controller does the wrong thing in games:** change it in Settings → Input Settings → *Button mapping*; a worn stick that drifts or doesn't reach the edge can be calibrated there ([CONTROLLERS.md](CONTROLLERS.md#button-mapping-and-stick-calibration)).
+- **An app is missing from the app list:** it may be hidden. Open the menu of any app (CH+ or Play/Pause) and choose *Show hidden apps* (see [Stream Menu and app menu](#stream-menu-and-app-menu)).
 - **The PC isn't in the list, or it got a new IP address:** press UP in the host list and select *Rescan network* (the circular arrow, the first round button of the header) to search the local network again. The app searches for hosts on its own at startup, without a notice, while the host list shows; if you open a PC, the settings or a stream before the first check of the known PCs ended, there is no search at that start.
 - **The picture freezes on Tizen 9.0 or newer:** turn the *Ultra low latency mode* switch off, and use the ForceGM variant for the Game Mode of the TV.
-- **Colors look washed out:** HDR is on in the app but off on the host display, or the TV doesn't support HDR (see [section 10](#10-hdr)).
+- **Colors look washed out:** HDR is on in the app but off on the host display, or the TV doesn't support HDR (see [HDR](#hdr)).
 - **Only stereo from a soundbar or receiver:** see [Surround sound with a soundbar](#surround-sound-with-a-soundbar).
 - **Crackling sound with EMSS:** lower the bitrate by one step, or switch to Web Audio.
-- **Stutter after some time:** look at the session totals of the performance statistics at that moment (see [section 7](#7-performance-statistics)).
+- **Stutter after some time:** look at the session totals of the performance statistics at that moment (see [Performance statistics](#performance-statistics)).
 
 Still stuck? Open an issue on the [issue tracker of this fork](https://github.com/Emperior90/moonlight-tizen-Plus/issues) with a photo of System information (with the report of the last session) and, if it helps, of the end of the [diagnostic log](#diagnostic-log). Please don't report problems with Moonlight Plus to the upstream Moonlight Tizen project.
-
-## 15. Updating from the earlier release v1.19.0-s90c.1
-
-The earlier release of this fork, v1.19.0-s90c.1 (shown on the TV as *Moonlight S90C*), checked the releases of upstream Moonlight Tizen for updates, not those of this fork. It will never offer Moonlight Plus. An update that it announces later is a release of the regular Moonlight Tizen app, which installs as a separate app next to it, so don't install that to get Moonlight Plus. Install the latest Moonlight Plus once by hand, as described in [Installation](#3-installation). It has the same package ID, so it installs over the earlier release and normally keeps its settings and pairing. From 1.19.100 on, *Check for updates* looks at the releases of this fork.
-
-## 16. Stream Menu and app menu
-
-**Stream Menu.** During a stream, press **Play/Pause** on the remote, or hold **Select + Start** on a controller for 1 second, to open the Stream Menu on the right of the picture, inside the safe area of the screen. The stream keeps playing behind it, but the PC gets nothing from the remote, the keyboard or the controllers while it is open: they move through the menu (UP and DOWN or the D-pad, OK or A), and RETURN, Play/Pause or B close it and return to the game.
-
-| Entry | What it does |
-|---|---|
-| Resume | Returns to the game |
-| Performance statistics | Steps the [statistics](#7-performance-statistics) through *Off*, *Compact* and *Full*, like YELLOW. The menu stays open and shows the level. |
-| Mouse emulation | Only shows with a controller connected. Switches the [mouse emulation](CONTROLLERS.md#7-mouse-emulation) of the controllers on or off, also when the setting *Mouse emulation* is off (the setting only allows the hold of Start). |
-| Bitrate | Shows the bitrate of the stream. LEFT and RIGHT (or the D-pad) change it in 5 Mbps steps, from 5 Mbps up to the decoder cap of the TV (100 Mbps on the tested S90C profile, 80 Mbps on other 4K and 8K TVs, 50 Mbps on Full HD TVs). OK reconnects with the new bitrate: the stream ends without quitting the game, the start screen shows *Reconnecting with … Mbps* for a few seconds, and the game resumes. The new bitrate becomes the bitrate setting. This works with every host, since the bitrate goes to the host when a stream starts. |
-| Type text… | Opens a text field with the keyboard of the TV. Its *Done* key, or *Send to the PC*, types the text on the PC as Unicode, whatever the keyboard layout of the PC, e.g. for a login or a search; RETURN, the *Cancel* key of the keyboard or B return to the menu without sending anything. Up to 1024 bytes (about 1000 Latin letters) at once, without line breaks. The keys go only to the field while it is open, and the app never logs or keeps the text. The keyboard of the TV is used with the remote; a USB keyboard types into the field as well, with Enter to send. |
-| Windows key, Alt + Tab, Alt + F4, Esc, Alt + Enter | Presses the keys on the PC and releases them again in reverse order, so that no key stays held, and returns to the game. Alt + Enter switches most Windows games and emulators between fullscreen and a window. |
-| Disconnect | Ends the stream, like RED. The game keeps running on the PC. |
-| Quit app on the PC | Ends the stream and then quits the app on the PC, like the button of the same name in the header of the app list. Unsaved progress in the game is lost. |
-
-- The menu opens once the picture shows, not during "Starting…". RED and YELLOW keep working while it is open.
-- UP and DOWN stop at the first and the last entry; unlike the other menus, this one doesn't wrap around, so one UP too many from *Resume* never selects *Quit app on the PC*.
-- The buttons that are still held when the menu closes (e.g. A on *Resume*) reach the game only after you release them, and so does the key of the remote or keyboard that closed it (e.g. OK on *Resume*). Keyboard keys and mouse buttons that are held when the menu opens are released on the PC. [CONTROLLERS.md](CONTROLLERS.md#4-buttons-during-a-stream) describes the controller combo.
-- Untested on real TVs: whether every remote and firmware passes Play/Pause to the app (the combo and the color keys work without it), and the *Done* and *Cancel* keys of the keyboard of the TV in *Type text…*.
-
-**App menu.** In the app list, press **CH+** or **Play/Pause** on the remote, or **Select** on a controller, to open the menu of the selected app. The header of the app list names these keys, and the app that runs on the PC has a mint ring and a mint *Running* badge.
-
-| Entry | What it does |
-|---|---|
-| Resume or Start | *Resume* for the running app, *Start* for the others: the same as OK on the tile |
-| Quit app on the PC | Only for the running app: quits it on the PC after a confirmation, like the button of the same name in the header |
-| Add to favorites, Remove from favorites | Puts the app first in the app list and the Smart Hub tiles of this host, with an amber star on its tile, or takes it back |
-| Hide app, Show app again | Leaves the app out of the app list and the Smart Hub tiles of this host, or brings it back |
-| Show hidden apps (N), Hide hidden apps | Shows the hidden apps of the host dimmed, with a *Hidden* badge, until you choose *Hide hidden apps* or restart Moonlight |
-
-- The TV stores the hidden apps and the favorites of each host, by ID and title, so an app stays hidden or a favorite when Sunshine gives it a new ID. Deleting the host forgets them.
-- The running app always shows, also when it is hidden, so you can resume or quit it. When every app of a host is hidden, all of them show.
-
-**Order of the app list.** Settings → General → *Sort the list of apps* offers *A to Z* (the default), *Z to A*, *Recently played* (the last 20 apps you started on this host first, the latest first, then the others from A to Z) and *As on the PC* (the order in which the host lists them, e.g. the order set in Apollo). The favorites always come first, in the same order among themselves. The Smart Hub tiles follow the same order.
-
-## 17. The screens of the app
-
-**Header.** On the left: the Back button (in the app list and the settings), the logo and the name of the screen; in the settings also the name of the open section, in its color, and in the app list the keys of the app menu. On the right: the stream profile of the settings (e.g. *4K · 60 FPS · HEVC HDR*), the network connection of the TV (Wi-Fi or Ethernet) and round buttons, which UP reaches from the top row:
-
-| Icon | Button | Where |
-|---|---|---|
-| Circular arrow | Rescan network: searches the local network for PCs again, the arrow turns while it searches | Hosts |
-| Gear | Settings | Hosts |
-| Question mark | Support: the guide as a QR code, and where to report problems | Hosts |
-| Round arrow with a clock | Restore Defaults | Settings |
-| Circle with a cross | Quit app on the PC: only shows while an app runs on the PC | App list |
-
-A *New update* button with a download arrow appears in the header when a newer release exists (see [Updates](#updates)). The questions before quitting the running app, deleting a PC or all PCs and *Restore Defaults* open with *No* selected, so an OK pressed by mistake only closes them.
-
-**Hosts.** The top of the screen shows the selected PC in large type: its address, its state as one chip, the same as on its card (*Running*, *Online*, *Unpaired* or *Offline*), one sentence on what OK does and the keys to press, next to a drawing of a PC that changes with the state. Below, each PC has a card with a colored tile (mint while a game runs, amber when not paired, gray when offline) and its most important state. The ⋯ button of a card opens its menu, which starts on its first entry: *Refresh apps* (for a PC that is online) or *Wake PC* (for one that is offline), *View Details*, *Delete PC* and *Close*. UP reaches it from the first row of cards, and CH+ or Play/Pause opens the menu from any row, as the hint *↑ Options* or *⋯ Options* says. When the focus is in the header or a menu, the top shows the last PC without the keys, or a summary of all PCs.
-
-**App list.** The top shows the selected app with its box art, and the colors of the box art light up the screen once the selection rests on the app. A white ring marks the selected tile. The app that runs on the PC has a mint ring and a *Running* badge, a favorite has an amber star in the top right corner of its tile and a *Favorite* chip at the top, and hidden apps, when shown, are dimmed with a *Hidden* badge (see [section 16](#16-stream-menu-and-app-menu)). An app without box art shows its title on its tile. The box art of a new host loads two apps at a time, and never holds up the start, resume or quit of an app: starting a stream drops the box art that hasn't arrived yet, and it loads when you return to the app list.
-
-**Settings.** The sections are colored tiles on the left, with a line on what each holds: *Basic Settings* (the optimal settings, resolution, frame rate with *Unlock all frame rates* below it, bitrate), *Video Settings*, *Audio Settings*, *Input Settings*, *General* (language, order of the app list, input of the PC address, removing all PCs), *Advanced Settings* (with the block *Experimental* at its end: *Reference frame invalidation*, *HDR static metadata* and *Decrypt host audio*) and *About*. Each option is a row with its title and control at the top and its help text below. The color of the open section marks its tile, the selected row and the switches that are on.
-
-**Start of a stream.** The box art of the app, and next to it its title, the PC and the progress of the connection, centred on the screen.
-
-## 18. Language
-
-The app shows the language of the TV when it has it: English, German, Spanish, French or Brazilian Portuguese. A TV set to another variant of one of these languages gets that language, e.g. German on Austrian and Swiss TVs, Spanish in Mexico and the rest of the Americas, French in Canada, Belgium and Switzerland, and Brazilian Portuguese in Portugal. Every other language gets English.
-
-To choose another one, open Settings → General → *Language*. The menu names each language in its own language (*English*, *Deutsch*, *Español*, *Français*, *Português (Brasil)*), so you find yours whatever language the app shows. The choice applies at once and is kept; *Auto* follows the TV again.
-
-- German addresses you with the informal *du*, Spanish with *tú* and French with *vous*. The names of the keys stay as printed on the remote (OK, RETURN, Play/Pause, CH+).
-- Only these five languages ship, since each one adds about 60 KB to the app.
-- A text that is wrong or still English: report it on the [issue tracker of this fork](https://github.com/Emperior90/moonlight-tizen-Plus/issues) with a photo. How the translations are kept complete: [TRANSLATING.md](TRANSLATING.md).
-
-## 19. Input test and button mapping
-
-Settings → Input Settings has two tools for the remote and the controllers. [CONTROLLERS.md](CONTROLLERS.md) describes them in full.
-
-- *Input test* shows every key of the remote or a keyboard with its name, key code and how long it was held, each connected controller as a live drawing with its buttons, triggers and sticks, and the media keys of the TV that Moonlight registered or leaves to the TV. A key that doesn't show is one the TV doesn't pass to the app, e.g. Play/Pause on some remotes. RETURN shows the key first and then leaves the test; on a controller, hold B for 2 seconds. Details: [Input test](CONTROLLERS.md#9-input-test).
-- *Button mapping* lets each of the 16 buttons of a controller press another one in games, for all controllers or for one, and calibrates the centre and range of worn sticks, without a dead zone of its own. The combos of the Stream Menu and the stop use the physical buttons, so a mapping can't take them away. It replaces the switches *Flip A/B face buttons* and *Flip X/Y face buttons*; a switch that was on is kept as the same swap. Details: [Button mapping and stick calibration](CONTROLLERS.md#8-button-mapping-and-stick-calibration).

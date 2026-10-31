@@ -1,11 +1,11 @@
 'use strict';
 
-// Tests of wasm/platform/tv_profile.js, loaded as a Node module (plan WP1 and WP2):
+// Tests of wasm/platform/tv_profile.js, loaded as a Node module:
 // - detectTvCapabilities() with the simulated TV, and with Tizen and Samsung APIs that fail or are missing (the checks of
 //   the WASM player and the video decoders that it includes are tested in runtime-checks.test.js)
 // - recommendedBitrate() and deriveOptimalSettings() over FHD / UHD / 8K panels x HDR yes / no x Tizen 5.5 to 9.0 x
 //   Ethernet / Wi-Fi / unknown connection, checked against expectations written out here, not computed by the same rules
-// - the golden S90C values of plan section 3, and that no result for a Full HD TV is above 50 Mbps
+// - the golden S90C values, which must stay as they are, and that no result for a Full HD TV is above 50 Mbps
 // - the frozen defaults of settings schema 1 and 2 and the one-time snapshots for existing installs
 // - that index.html loads the file before index.js and that the build copies it into the widget
 
@@ -63,8 +63,8 @@ function genericTv(panel, hdr, tizen, conn) {
   return { tv: 'uhd', panel, hdr, tizen, conn: conn || 'wifi' };
 }
 
-// Expected recommended bitrate in Mbps at 60 FPS of the default resolution, per panel and connection (plan WP2 and
-// section 3: a generic UHD TV at 4K60 gets 75 / 80 / 80, a Full HD TV at 1080p60 25 / 25 / 20)
+// Expected recommended bitrate in Mbps at 60 FPS of the default resolution, per panel and connection (a
+// generic UHD TV at 4K60 gets 75 / 80 / 80, a Full HD TV at 1080p60 25 / 25 / 20)
 const EXPECTED_DEFAULT_BITRATE = {
   fhd: { ethernet: 25, wifi: 25, unknown: 20 },
   '4k': { ethernet: 75, wifi: 80, unknown: 80 },
@@ -194,7 +194,7 @@ describe('the tested profiles', () => {
 });
 
 describe('recommendedBitrate()', () => {
-  test('gives the values of plan section 3', () => {
+  test('gives the golden S90C values', () => {
     const s90c = detect({ tv: 's90c' });
     const uhd = detect({ tv: 'uhd' });
     const fhd = detect({ tv: 'fhd' });
@@ -206,7 +206,7 @@ describe('recommendedBitrate()', () => {
     assert.deepEqual(at('2560:1440', 60, uhd), [50, 50, 40], 'UHD TV at 1440p60');
   });
 
-  test('follows the formula of plan WP2 for every resolution, frame rate and connection', () => {
+  test('follows the formula of the recommended bitrate for every resolution, frame rate and connection', () => {
     for (const tv of ['s90c', 'uhd', 'fhd', '8k']) {
       const caps = detect({ tv });
       const cap = tv === 's90c' ? 100 : (tv === 'fhd' ? 50 : 80);
@@ -239,7 +239,7 @@ describe('recommendedBitrate()', () => {
     }
   });
 
-  test('no result for a Full HD TV is above 50 Mbps, whatever is selected (plan WP2)', () => {
+  test('no result for a Full HD TV is above 50 Mbps, whatever is selected', () => {
     let checked = 0;
     for (const hdr of [true, false]) {
       for (const tizen of TIZEN_VERSIONS) {
@@ -336,7 +336,7 @@ describe('the bitrate presets', () => {
   });
 });
 
-describe('deriveOptimalSettings() over FHD / UHD / 8K x HDR x Tizen 5.5 to 9.0 x connection (plan WP2)', () => {
+describe('deriveOptimalSettings() over FHD / UHD / 8K x HDR x Tizen 5.5 to 9.0 x connection', () => {
   for (const panel of PANELS) {
     for (const hdr of [true, false]) {
       for (const tizen of TIZEN_VERSIONS) {
@@ -371,7 +371,7 @@ describe('deriveOptimalSettings() over FHD / UHD / 8K x HDR x Tizen 5.5 to 9.0 x
   });
 });
 
-describe('the golden S90C values (plan section 3)', () => {
+describe('the golden S90C values', () => {
   const GOLDEN_BITRATE = { ethernet: 75, wifi: 100, unknown: 80 };
 
   for (const conn of CONNECTIONS) {
@@ -401,7 +401,7 @@ describe('the golden S90C values (plan section 3)', () => {
   });
 });
 
-describe('the frozen defaults of settings schema 1 (plan WP1)', () => {
+describe('the frozen defaults of settings schema 1', () => {
   test('ignore the resolution and the TV for the bitrate: 75 / 100 / 80 Mbps, with all frame rates unlocked', () => {
     assert.ok(Object.isFrozen(profile.LEGACY_DEFAULT_BITRATES));
     for (const tv of ['s90c', 'uhd', 'fhd', '8k']) {
@@ -462,7 +462,7 @@ describe('followsBitratePresets()', () => {
   });
 });
 
-describe('legacySettingsSnapshot() (plan WP1)', () => {
+describe('legacySettingsSnapshot(): the one-time snapshot of an existing install', () => {
   test('stores every unset video setting of an existing S90C install as the previous build showed it', () => {
     assert.deepEqual(profile.legacySettingsSnapshot({ uniqueid: 'x' }, detect({ tv: 's90c' }), 'wifi'), {
       resolution: '3840:2160', unlockAllFps: true, frameRate: 60, bitrate: '100', videoCodec: 'HEVC', hdrMode: true, framePacing: true,
@@ -470,7 +470,7 @@ describe('legacySettingsSnapshot() (plan WP1)', () => {
     });
   });
 
-  test('leaves the game mode out on Tizen 5.5, where a stored value would enable its switch (plan K2)', () => {
+  test('leaves the game mode out on Tizen 5.5, where a stored value would enable its switch', () => {
     const snapshot = profile.legacySettingsSnapshot({}, detect({ tv: 'fhd' }), 'ethernet');
     assert.equal('gameMode' in snapshot, false);
     assert.deepEqual(snapshot, {
@@ -491,7 +491,7 @@ describe('legacySettingsSnapshot() (plan WP1)', () => {
     assert.deepEqual(profile.legacySettingsSnapshot({ hdrMode: false, frameRate: 0 }, detect({ tv: 's90c' }), 'wifi').hdrMode, undefined);
   });
 
-  test('keeps a stored 120 FPS reachable by storing the unlocked frame rates (the trap of plan K1)', () => {
+  test('keeps a stored 120 FPS reachable by storing the unlocked frame rates', () => {
     const snapshot = profile.legacySettingsSnapshot({ frameRate: 120 }, detect({ tv: 'uhd' }), 'wifi');
     assert.equal(snapshot.unlockAllFps, true);
     assert.equal('frameRate' in snapshot, false);

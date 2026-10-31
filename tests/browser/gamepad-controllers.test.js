@@ -1,6 +1,6 @@
 'use strict';
 
-// Simulated controllers in the real page (plan WP6): a controller with the standard layout and controllers that report
+// Simulated controllers in the real page: a controller with the standard layout and controllers that report
 // a non-standard one (an 8BitDo in D-input mode, a DualShock 4 with the raw layout of its driver). The page logs what a
 // controller reports as separate fields, shows a notice once per controller id when its layout is not the standard one,
 // lists the connected controllers in System information (with the controller type that the stream announces), and the

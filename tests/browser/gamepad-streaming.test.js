@@ -1,6 +1,6 @@
 'use strict';
 
-// The gamepad settings and the rumble of a stream in the real page (plan WP7): the setting "Controller type sent to the
+// The gamepad settings and the rumble of a stream in the real page: the setting "Controller type sent to the
 // PC" (Auto by default, chosen with the remote in the input settings, stored, translated and sent with the start
 // request, which the WebAssembly module announces to the host), and the rumble that the host sends during a stream on
 // simulated controllers: played, stopped at the end of the stream, and one notice for a controller that can't rumble.

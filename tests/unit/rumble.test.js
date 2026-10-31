@@ -4,7 +4,7 @@
 // message 'controllerRumble: <controller>,<weak>,<strong>', played by Rumble in wasm/platform/gamepad.js), on a
 // simulated vibration actuator and a simulated clock. Chromium ends a vibration effect after 5 seconds at most and the
 // host doesn't send an unchanged rumble again, so a rumble that stays on is played again every 4 seconds until the host
-// sends 0, the stream ends or the gamepad disconnects (plan WP7).
+// sends 0, the stream ends or the gamepad disconnects.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
