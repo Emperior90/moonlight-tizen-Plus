@@ -161,7 +161,9 @@ jobs:
           } > release_notes.md
           cat release_notes.md
       # Creates the pre-release with both widget files and the notes prepared above. The tag goes on the commit of this run
-      # (--target), which the files were built from; without it, GitHub would create the tag on the default branch.
+      # (--target), which the files were built from; without it, GitHub would create the tag on the default branch. Push no
+      # change of a workflow file to the branch while this runs: GitHub then refuses (403) to let the workflow token create
+      # a tag on the older commit, whose workflow files differ from the branch.
       - name: Create GitHub pre-release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
