@@ -1,6 +1,6 @@
 'use strict';
 
-// The gamepad settings and the rumble of a stream in the real page (plan WP7): the setting "Controller type sent to the
+// The gamepad settings and the rumble of a stream in the real page: the setting "Controller type sent to the
 // PC" (Auto by default, chosen with the remote in the input settings, stored, translated and sent with the start
 // request, which the WebAssembly module announces to the host), and the rumble that the host sends during a stream on
 // simulated controllers: played, stopped at the end of the stream, and one notice for a controller that can't rumble.
@@ -234,7 +234,7 @@ test('rumble during a stream is played, stopped at the end of the stream, and a 
     await page.evaluate(() => handleMessage('controllerRumble: 1,0.5,0.5'));
     await page.evaluate(() => handleMessage('controllerRumble: 1,0,0'));
     const notices = (await page.evaluate(() => window.__snackbarMessages.slice())).filter((message) => message.indexOf('rumble') >= 0);
-    assert.deepEqual(notices, ['Gamepad 1 (Generic USB Joystick) does not support rumble on this TV.']);
+    assert.deepEqual(notices, ['Controller 1 (Generic USB Joystick) does not support rumble on this TV.']);
 
     // A controller that disconnects during a rumble stops its replay without an error
     await page.evaluate(() => handleMessage('controllerRumble: 0,1,1'));

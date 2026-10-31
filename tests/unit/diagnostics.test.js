@@ -247,7 +247,7 @@ test('the lines of the report in System information', () => {
     'FEC repairs: 900 blocks, 6 failed',
     'WASM heap at the end: 62 of 128 MB (+1 MB in this session)',
     'Hint: Many frames were lost on the network: use a cable or lower the bitrate.',
-    'Hint: The PC often sent whole frames again after a loss: turn on Reference frame invalidation in the Video Settings.',
+    'Hint: The PC often sent whole frames again after a loss: turn on Reference frame invalidation in the Advanced Settings.',
   ]);
   const noVideo = readReports().filter((entry) => entry.name === 'no-video')[0];
   const lines = plain(describe(app.platform.get('parseSessionReport')(noVideo.message.slice(18)), {}));

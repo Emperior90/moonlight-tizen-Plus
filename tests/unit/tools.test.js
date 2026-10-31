@@ -171,9 +171,32 @@ test('the link check reports missing files, images and headings', () => {
   });
 });
 
+test('the link check follows links to the default branch of this fork into the repository, with their headings', () => {
+  assert.equal(markdownLinks.localTarget('https://github.com/Emperior90/moonlight-tizen-Plus/blob/HEAD/docs/GUIDE.md#troubleshooting'), '/docs/GUIDE.md#troubleshooting');
+  assert.equal(markdownLinks.localTarget('https://github.com/Emperior90/moonlight-tizen-Plus/tree/HEAD/docs'), '/docs');
+  // A tag, a branch or the issue tracker is not a file of the default branch
+  ['https://github.com/Emperior90/moonlight-tizen-Plus/tree/v1.19.0-s90c.1/docs', 'https://github.com/Emperior90/moonlight-tizen-Plus/issues',
+    'https://github.com/brightcraft/moonlight-tizen/blob/HEAD/docs/GUIDE.md'].forEach((target) => {
+    assert.equal(markdownLinks.localTarget(target), target);
+  });
+  const problems = checkMarkdown({
+    'form.yml': [
+      'value: |',
+      '  See the [guide](https://github.com/Emperior90/moonlight-tizen-Plus/blob/HEAD/docs/GUIDE.md#no-such-heading).',
+      '  And the [controllers](https://github.com/Emperior90/moonlight-tizen-Plus/blob/HEAD/docs/CONTROLLERS.md).',
+      '  And a [missing page](https://github.com/Emperior90/moonlight-tizen-Plus/blob/HEAD/docs/MISSING.md).',
+    ].join('\n'),
+  });
+  assert.equal(problems.length, 2, problems.join('\n'));
+  assert.ok(problems[0].indexOf('line 2: \'https://github.com/Emperior90/moonlight-tizen-Plus/blob/HEAD/docs/GUIDE.md#no-such-heading\' names the heading #no-such-heading') === 0, problems[0]);
+  assert.ok(problems[1].indexOf('line 4:') === 0 && problems[1].indexOf('docs/MISSING.md, which doesn\'t exist') > 0, problems[1]);
+});
+
 test('the documents of the repository have no broken local links', () => {
   const files = markdownLinks.defaultFiles();
-  assert.ok(files.some((file) => file.endsWith(path.join('docs', 'GUIDE.md'))), 'docs/GUIDE.md is checked');
+  ['docs/GUIDE.md', '.github/ISSUE_TEMPLATE/bug.yml', '.github/CONTRIBUTING.md', 'tests/README.md', 'SECURITY.md'].forEach((name) => {
+    assert.ok(files.some((file) => file.endsWith(path.join(...name.split('/')))), name + ' is checked');
+  });
   files.forEach((file) => {
     assert.deepEqual(markdownLinks.checkFile(file), [], file);
   });

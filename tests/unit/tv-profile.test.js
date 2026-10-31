@@ -1,12 +1,12 @@
 'use strict';
 
-// Tests of wasm/platform/tv_profile.js, loaded as a Node module (plan WP1 and WP2):
+// Tests of wasm/platform/tv_profile.js, loaded as a Node module:
 // - detectTvCapabilities() with the simulated TV, and with Tizen and Samsung APIs that fail or are missing (the checks of
 //   the WASM player and the video decoders that it includes are tested in runtime-checks.test.js)
 // - recommendedBitrate() and deriveOptimalSettings() over FHD / UHD / 8K panels x HDR yes / no x Tizen 5.5 to 9.0 x
 //   Ethernet / Wi-Fi / unknown connection, checked against expectations written out here, not computed by the same rules
-// - the golden S90C values of plan section 3, and that no result for a Full HD TV is above 50 Mbps
-// - the frozen defaults of settings schema 1 and the one-time snapshot for existing installs
+// - the golden S90C values, which must stay as they are, and that no result for a Full HD TV is above 50 Mbps
+// - the frozen defaults of settings schema 1 and 2 and the one-time snapshots for existing installs
 // - that index.html loads the file before index.js and that the build copies it into the widget
 
 const { describe, test } = require('node:test');
@@ -63,8 +63,8 @@ function genericTv(panel, hdr, tizen, conn) {
   return { tv: 'uhd', panel, hdr, tizen, conn: conn || 'wifi' };
 }
 
-// Expected recommended bitrate in Mbps at 60 FPS of the default resolution, per panel and connection (plan WP2 and
-// section 3: a generic UHD TV at 4K60 gets 75 / 80 / 80, a Full HD TV at 1080p60 25 / 25 / 20)
+// Expected recommended bitrate in Mbps at 60 FPS of the default resolution, per panel and connection (a
+// generic UHD TV at 4K60 gets 75 / 80 / 80, a Full HD TV at 1080p60 25 / 25 / 20)
 const EXPECTED_DEFAULT_BITRATE = {
   fhd: { ethernet: 25, wifi: 25, unknown: 20 },
   '4k': { ethernet: 75, wifi: 80, unknown: 80 },
@@ -194,7 +194,7 @@ describe('the tested profiles', () => {
 });
 
 describe('recommendedBitrate()', () => {
-  test('gives the values of plan section 3', () => {
+  test('gives the golden S90C values', () => {
     const s90c = detect({ tv: 's90c' });
     const uhd = detect({ tv: 'uhd' });
     const fhd = detect({ tv: 'fhd' });
@@ -206,7 +206,7 @@ describe('recommendedBitrate()', () => {
     assert.deepEqual(at('2560:1440', 60, uhd), [50, 50, 40], 'UHD TV at 1440p60');
   });
 
-  test('follows the formula of plan WP2 for every resolution, frame rate and connection', () => {
+  test('follows the formula of the recommended bitrate for every resolution, frame rate and connection', () => {
     for (const tv of ['s90c', 'uhd', 'fhd', '8k']) {
       const caps = detect({ tv });
       const cap = tv === 's90c' ? 100 : (tv === 'fhd' ? 50 : 80);
@@ -239,7 +239,7 @@ describe('recommendedBitrate()', () => {
     }
   });
 
-  test('no result for a Full HD TV is above 50 Mbps, whatever is selected (plan WP2)', () => {
+  test('no result for a Full HD TV is above 50 Mbps, whatever is selected', () => {
     let checked = 0;
     for (const hdr of [true, false]) {
       for (const tizen of TIZEN_VERSIONS) {
@@ -269,68 +269,74 @@ describe('recommendedBitrate()', () => {
   });
 });
 
-describe('the limit and the values of the bitrate presets', () => {
-  test('a TV without a tested profile limits a preset to the decoder cap and the recommendation for its connection', () => {
-    const limits = (caps) => CONNECTIONS.map((conn) => profile.presetBitrateLimit(conn, caps));
-    assert.deepEqual(limits(detect({ tv: 'uhd' })), [{ mbps: 75, reason: 'ethernet' }, { mbps: 80, reason: 'recommended' }, { mbps: 80, reason: 'recommended' }]);
-    assert.deepEqual(limits(detect({ tv: '8k' })), [{ mbps: 75, reason: 'ethernet' }, { mbps: 80, reason: 'recommended' }, { mbps: 80, reason: 'recommended' }]);
-    assert.deepEqual(limits(detect({ tv: 'fhd' })), [{ mbps: 50, reason: 'recommended' }, { mbps: 50, reason: 'recommended' }, { mbps: 50, reason: 'recommended' }]);
-    // The tested S90C keeps the standard presets above its decoder cap, limited over Ethernet only (as before)
-    assert.deepEqual(limits(detect({ tv: 's90c' })), [{ mbps: 75, reason: 'ethernet' }, null, null]);
+describe('the bitrate presets', () => {
+  test('give the recommended bitrate of every resolution and frame rate, as the bitrate slider holds it', () => {
+    for (const tv of ['s90c', 'uhd', 'fhd', '8k']) {
+      const caps = detect({ tv });
+      for (const res of RESOLUTIONS) {
+        for (const fps of FRAME_RATES) {
+          for (const conn of CONNECTIONS) {
+            const recommended = profile.recommendedBitrate(res, fps, conn, caps);
+            assert.equal(profile.presetBitrate(res, fps, conn, caps), profile.sliderBitrate(recommended), [tv, res, fps, conn].join(' '));
+          }
+        }
+      }
+    }
+    assert.deepEqual([0.01, 4.492, 4.75, 35.936, 149.9, 300].map(profile.sliderBitrate), [0.5, 4.5, 5, 36, 150, 150]);
   });
 
-  test('no preset goes above the highest recommended bitrate of a TV without a tested profile', () => {
-    for (const tv of ['uhd', 'fhd', '8k']) {
+  test('at the resolution and frame rate of the optimal settings, the preset is their bitrate', () => {
+    for (const tv of ['s90c', 'uhd', 'fhd', '8k']) {
       const caps = detect({ tv });
       for (const conn of CONNECTIONS) {
-        const highestRecommended = Math.max.apply(null, RESOLUTIONS.map((res) => Math.max.apply(null,
-          FRAME_RATES.map((fps) => profile.recommendedBitrate(res, fps, conn, caps)))));
-        assert.equal(profile.presetBitrateLimit(conn, caps).mbps, highestRecommended, tv + ' ' + conn);
-        for (const res of RESOLUTIONS) {
-          for (const fps of FRAME_RATES) {
-            for (const codec of ['H264', 'HEVC', 'AV1']) {
-              for (const hdr of [false, true]) {
-                const presets = profile.presetBitrates(res, fps, codec, hdr, conn, caps);
-                const label = [tv, conn, res, fps, codec, hdr].join(' ');
-                assert.ok(presets.standard <= highestRecommended && presets.optimized <= highestRecommended, label + ': ' + JSON.stringify(presets));
-              }
-            }
-          }
+        const optimal = profile.deriveOptimalSettings(caps, conn);
+        assert.equal(profile.presetBitrate(optimal.resolution, optimal.frameRate, conn, caps), optimal.bitrate, tv + ' ' + conn);
+      }
+    }
+  });
+
+  test('a trip to another resolution and back gives the same bitrate again (the 1440p trip of the review)', () => {
+    const s90c = detect({ tv: 's90c' });
+    // The standard presets of 2.1.0 gave 40 Mbps at 1440p and then 80 instead of 100 Mbps back at 4K on Wi-Fi
+    assert.equal(profile.presetBitrate('3840:2160', '60', 'wifi', s90c), 100);
+    assert.equal(profile.presetBitrate('2560:1440', '60', 'wifi', s90c), 50);
+    assert.equal(profile.presetBitrate('3840:2160', '60', 'wifi', s90c), 100);
+  });
+
+  test('stay within 75 Mbps over Ethernet, 80 Mbps for an unknown connection and the decoder cap of every TV', () => {
+    const at = (res, fps, caps) => CONNECTIONS.map((conn) => profile.presetBitrate(res, fps, conn, caps));
+    // The S90C at 4K above 60 FPS: its decoder cap of 100 Mbps over Wi-Fi, which the standard presets of 2.1.0 went past
+    // (120 Mbps at 120 FPS, 140 Mbps at 144 FPS)
+    for (const fps of ['90', '120', '144']) {
+      assert.deepEqual(at('3840:2160', fps, detect({ tv: 's90c' })), [75, 100, 80], 'S90C at 4K and ' + fps + ' FPS');
+    }
+    assert.deepEqual(at('3840:2160', '120', detect({ tv: 'uhd' })), [75, 80, 80], '4K TV at 4K and 120 FPS');
+    assert.deepEqual(at('1920:1080', '60', detect({ tv: 'fhd' })), [25, 25, 20], 'Full HD TV at 1080p and 60 FPS');
+    assert.deepEqual(at('1920:1080', '30', detect({ tv: 'fhd' })), [13, 13, 10], 'Full HD TV at 1080p and 30 FPS');
+    for (const tv of ['s90c', 'uhd', 'fhd', '8k']) {
+      const caps = detect({ tv });
+      for (const res of RESOLUTIONS) {
+        for (const fps of FRAME_RATES) {
+          const [ethernet, wifi, unknown] = at(res, fps, caps);
+          const label = [tv, res, fps].join(' ');
+          assert.ok(ethernet <= 75 && unknown <= 80, label);
+          assert.ok(Math.max(ethernet, wifi, unknown) <= profile.getDecoderCapMbps(caps), label);
+          // So no preset sets a bitrate that the bitrate warning warns about
+          CONNECTIONS.forEach((conn, index) => assert.equal(profile.bitrateWarningKey([ethernet, wifi, unknown][index], conn, caps), null, label + ' ' + conn));
         }
       }
     }
   });
 
-  test('gives the presets that the bitrate slider gets, limited for the TV and its connection', () => {
-    const uhd = detect({ tv: 'uhd' });
-    const s90c = detect({ tv: 's90c' });
-    const fhd = detect({ tv: 'fhd' });
-    // 4K at 60 FPS, HEVC with HDR: the standard preset of 80 Mbps, limited to 75 Mbps over Ethernet
-    assert.deepEqual(profile.presetBitrates('3840:2160', '60', 'HEVC', true, 'wifi', uhd), { standard: 80, optimized: 45 });
-    assert.deepEqual(profile.presetBitrates('3840:2160', '60', 'HEVC', true, 'ethernet', uhd), { standard: 75, optimized: 45 });
-    // 4K at 120 FPS: limited to the decoder cap of 80 Mbps on a TV without a tested profile, kept on the S90C
-    assert.deepEqual(profile.presetBitrates('3840:2160', '120', 'HEVC', true, 'wifi', uhd), { standard: 80, optimized: 80 });
-    assert.deepEqual(profile.presetBitrates('3840:2160', '120', 'HEVC', true, 'unknown', uhd), { standard: 80, optimized: 80 });
-    assert.deepEqual(profile.presetBitrates('3840:2160', '120', 'HEVC', true, 'wifi', s90c), { standard: 120, optimized: 90 });
-    assert.deepEqual(profile.presetBitrates('3840:2160', '144', 'H264', false, 'wifi', s90c), { standard: 140, optimized: 143.5 });
-    // A Full HD TV at 1080p: rounded to the 0.5 Mbps steps of the slider
-    assert.deepEqual(profile.presetBitrates('1920:1080', '30', 'HEVC', false, 'wifi', fhd), { standard: 10, optimized: 4.5 });
-    assert.deepEqual(profile.presetBitrates('1920:1080', '60', 'AV1', false, 'wifi', fhd), { standard: 20, optimized: 6 });
-    // A frame rate without a standard preset leaves the bitrate as it is
-    assert.equal(profile.presetBitrates('3840:2160', '75', 'HEVC', false, 'wifi', uhd).standard, null);
-  });
-
-  test('the optimized preset follows the formula of the optimized bitrate presets, and the slider rounds it', () => {
-    assert.equal(profile.getOptimizedPresetBitrate('3840:2160', '60', 'HEVC', true), Math.round(3840 * 2160 * 60 / 6630.5 * 0.6) / 1000);
-    assert.equal(profile.getOptimizedPresetBitrate('3840:2160', 60, 'HEVC', false), Math.round(3840 * 2160 * 60 / 8309 * 0.6) / 1000);
-    assert.equal(profile.getOptimizedPresetBitrate('1920:1080', '60', 'H264', false), Math.round(1920 * 1080 * 60 / 8309) / 1000);
-    assert.equal(profile.getOptimizedPresetBitrate('1920:1080', '60', 'AV1', true), Math.round(1920 * 1080 * 60 / 6630.5 * 0.4) / 1000);
-    assert.equal(profile.getOptimizedPresetBitrate('1:1', '30', 'AV1', false), 0.01, 'a result that rounds to 0 gives 10 kbps');
-    assert.deepEqual([0.01, 4.492, 4.75, 35.936, 149.9, 300].map(profile.sliderBitrate), [0.5, 4.5, 5, 36, 150, 150]);
+  test('the switch \'Optimize bitrate presets\' and its formula are gone', () => {
+    for (const name of ['presetBitrateLimit', 'presetBitrates', 'getOptimizedPresetBitrate']) {
+      assert.equal(profile[name], undefined, name);
+    }
+    assert.equal(Object.prototype.hasOwnProperty.call(profile.deriveOptimalSettings(detect({ tv: 's90c' }), 'wifi'), 'optimizeBitrate'), false);
   });
 });
 
-describe('deriveOptimalSettings() over FHD / UHD / 8K x HDR x Tizen 5.5 to 9.0 x connection (plan WP2)', () => {
+describe('deriveOptimalSettings() over FHD / UHD / 8K x HDR x Tizen 5.5 to 9.0 x connection', () => {
   for (const panel of PANELS) {
     for (const hdr of [true, false]) {
       for (const tizen of TIZEN_VERSIONS) {
@@ -350,7 +356,6 @@ describe('deriveOptimalSettings() over FHD / UHD / 8K x HDR x Tizen 5.5 to 9.0 x
               gameMode: EXPECTED_GAME_MODE[tizen],
               framePacing: true,
               fullRange: false,
-              optimizeBitrate: false,
             }, conn);
           }
         });
@@ -361,12 +366,12 @@ describe('deriveOptimalSettings() over FHD / UHD / 8K x HDR x Tizen 5.5 to 9.0 x
   test('without any capabilities, the defaults of a Full HD TV', () => {
     assert.deepEqual(profile.deriveOptimalSettings(null, undefined), {
       resolution: '1920:1080', frameRate: 60, videoCodec: 'HEVC', hdrMode: false, bitrate: 20, unlockAllFps: false, gameMode: true,
-      framePacing: true, fullRange: false, optimizeBitrate: false,
+      framePacing: true, fullRange: false,
     });
   });
 });
 
-describe('the golden S90C values (plan section 3)', () => {
+describe('the golden S90C values', () => {
   const GOLDEN_BITRATE = { ethernet: 75, wifi: 100, unknown: 80 };
 
   for (const conn of CONNECTIONS) {
@@ -382,7 +387,6 @@ describe('the golden S90C values (plan section 3)', () => {
         gameMode: false,
         framePacing: true,
         fullRange: false,
-        optimizeBitrate: false,
       });
     });
   }
@@ -397,7 +401,7 @@ describe('the golden S90C values (plan section 3)', () => {
   });
 });
 
-describe('the frozen defaults of settings schema 1 (plan WP1)', () => {
+describe('the frozen defaults of settings schema 1', () => {
   test('ignore the resolution and the TV for the bitrate: 75 / 100 / 80 Mbps, with all frame rates unlocked', () => {
     assert.ok(Object.isFrozen(profile.LEGACY_DEFAULT_BITRATES));
     for (const tv of ['s90c', 'uhd', 'fhd', '8k']) {
@@ -458,7 +462,7 @@ describe('followsBitratePresets()', () => {
   });
 });
 
-describe('legacySettingsSnapshot() (plan WP1)', () => {
+describe('legacySettingsSnapshot(): the one-time snapshot of an existing install', () => {
   test('stores every unset video setting of an existing S90C install as the previous build showed it', () => {
     assert.deepEqual(profile.legacySettingsSnapshot({ uniqueid: 'x' }, detect({ tv: 's90c' }), 'wifi'), {
       resolution: '3840:2160', unlockAllFps: true, frameRate: 60, bitrate: '100', videoCodec: 'HEVC', hdrMode: true, framePacing: true,
@@ -466,7 +470,7 @@ describe('legacySettingsSnapshot() (plan WP1)', () => {
     });
   });
 
-  test('leaves the game mode out on Tizen 5.5, where a stored value would enable its switch (plan K2)', () => {
+  test('leaves the game mode out on Tizen 5.5, where a stored value would enable its switch', () => {
     const snapshot = profile.legacySettingsSnapshot({}, detect({ tv: 'fhd' }), 'ethernet');
     assert.equal('gameMode' in snapshot, false);
     assert.deepEqual(snapshot, {
@@ -487,7 +491,7 @@ describe('legacySettingsSnapshot() (plan WP1)', () => {
     assert.deepEqual(profile.legacySettingsSnapshot({ hdrMode: false, frameRate: 0 }, detect({ tv: 's90c' }), 'wifi').hdrMode, undefined);
   });
 
-  test('keeps a stored 120 FPS reachable by storing the unlocked frame rates (the trap of plan K1)', () => {
+  test('keeps a stored 120 FPS reachable by storing the unlocked frame rates', () => {
     const snapshot = profile.legacySettingsSnapshot({ frameRate: 120 }, detect({ tv: 'uhd' }), 'wifi');
     assert.equal(snapshot.unlockAllFps, true);
     assert.equal('frameRate' in snapshot, false);
@@ -525,9 +529,38 @@ describe('legacySettingsSnapshot() (plan WP1)', () => {
     assert.ok(Object.isFrozen(profile.LEGACY_SNAPSHOT_KEYS));
   });
 
-  test('the settings schema is version 2', () => {
-    assert.equal(profile.SETTINGS_SCHEMA_VERSION, 2);
+  test('the settings schema is version 3', () => {
+    assert.equal(profile.SETTINGS_SCHEMA_VERSION, 3);
     assert.equal(profile.SETTINGS_SCHEMA_KEY, 'settingsSchema');
+  });
+});
+
+describe('the frozen defaults of settings schema 2 and the snapshot of settings schema 3', () => {
+  test('the rumble was off, and the snapshot stores that only when it is unset', () => {
+    assert.deepEqual(profile.SCHEMA_2_DEFAULTS, { rumbleFeedback: false });
+    assert.ok(Object.isFrozen(profile.SCHEMA_2_DEFAULTS));
+    assert.deepEqual(profile.schema2Snapshot({ uniqueid: 'x', settingsSchema: 2 }), { rumbleFeedback: false });
+    assert.deepEqual(profile.schema2Snapshot({ rumbleFeedback: null }), { rumbleFeedback: false });
+    assert.deepEqual(profile.schema2Snapshot(null), { rumbleFeedback: false });
+    // A stored value is never replaced
+    assert.deepEqual(profile.schema2Snapshot({ rumbleFeedback: true }), {});
+    assert.deepEqual(profile.schema2Snapshot({ rumbleFeedback: false }), {});
+  });
+
+  test('the removed switches of the continuous audio and the optimized bitrate presets are dropped', () => {
+    assert.deepEqual(profile.SCHEMA_3_REMOVED_KEYS, ['continuousAudio', 'optimizeBitrate']);
+    assert.ok(Object.isFrozen(profile.SCHEMA_3_REMOVED_KEYS));
+  });
+
+  test('an install that had the optimized bitrate presets on keeps the bitrate following the video settings', () => {
+    // Its presets always followed the video settings; without a stored state of the presets, that state is stored
+    assert.deepEqual(profile.schema3Replacements({ optimizeBitrate: true }), { autoAdjustBitrate: true });
+    assert.deepEqual(profile.schema3Replacements({ optimizeBitrate: true, autoAdjustBitrate: null }), { autoAdjustBitrate: true });
+    // A stored state is never replaced, and the switch that was off changes nothing
+    assert.deepEqual(profile.schema3Replacements({ optimizeBitrate: true, autoAdjustBitrate: false }), {});
+    assert.deepEqual(profile.schema3Replacements({ optimizeBitrate: false }), {});
+    assert.deepEqual(profile.schema3Replacements({}), {});
+    assert.deepEqual(profile.schema3Replacements(null), {});
   });
 });
 

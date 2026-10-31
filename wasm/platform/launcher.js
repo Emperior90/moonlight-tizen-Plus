@@ -80,21 +80,21 @@ const Launcher = (function() {
     return host.currentGame && host.currentGame != 0 ? 'running' : 'online';
   }
 
-  // All chips of a host for the hero, or the one that matters most for its card
-  function hostChips(host, state, compact) {
-    const chips = [];
-    if (state === 'running') {
-      chips.push(chip('running', t('RUNNING'), 'play'));
+  // The one state chip of a host, the same on its card and in the hero: running (which means online and paired as well),
+  // online, not paired or offline, and none before the first poll
+  function hostChip(state) {
+    switch (state) {
+      case 'running':
+        return chip('running', t('Running'), 'play');
+      case 'online':
+        return chip('online', t('ONLINE'));
+      case 'locked':
+        return chip('locked', t('UNPAIRED'), 'lock');
+      case 'offline':
+        return chip('offline', t('OFFLINE'));
+      default:
+        return '';
     }
-    if (state === 'offline') {
-      chips.push(chip('offline', t('OFFLINE')));
-    } else if (state === 'locked' && compact) {
-      chips.push(chip('locked', t('UNPAIRED'), 'lock'));
-    } else if (state !== 'unknown') {
-      chips.push(chip('online', t('ONLINE')));
-      chips.push(host.paired ? chip('paired', t('PAIRED'), 'link') : chip('locked', t('UNPAIRED'), 'lock'));
-    }
-    return (compact ? chips.slice(0, 1) : chips).join('');
   }
 
   function hostCards() {
@@ -203,12 +203,12 @@ const Launcher = (function() {
   function showHost(card) {
     const host = hostFromCard(card);
     if (!host) {
-      // The Add Host card, the whole screen while no host is saved
+      // The Add PC card, the whole screen while no host is saved
       setHero('host', 'add', {
         overline: t('Moonlight Plus'),
-        title: hostCards().length === 0 ? t('Find your gaming PC') : t('Add Host'),
-        text: t('Moonlight finds PCs that run Sunshine or GeForce Experience on your network. You can also add one by its address.'),
-        hints: keyHint(t('OK'), null, t('Add Host')),
+        title: hostCards().length === 0 ? t('Find your gaming PC') : t('Add PC'),
+        text: t('Moonlight finds PCs that run Sunshine (or another GameStream host) on your network. You can also add one by its address.'),
+        hints: keyHint(t('OK'), null, t('Add PC')),
       });
       return;
     }
@@ -235,7 +235,7 @@ const Launcher = (function() {
     setHero('host', state, {
       overline: host.address || '',
       title: host.hostname,
-      chips: hostChips(host, state, false),
+      chips: hostChip(state),
       text: texts[state],
       hints: hints,
     });
@@ -301,9 +301,9 @@ const Launcher = (function() {
     setHero('app', running ? 'running' : 'idle', {
       overline: overline,
       title: card.getAttribute('aria-label') || '',
-      chips: (running ? chip('running', t('RUNNING'), 'play') : '') + (favorite ? chip('favorite', t('Favorite'), 'star') : '') +
+      chips: (running ? chip('running', t('Running'), 'play') : '') + (favorite ? chip('favorite', t('Favorite'), 'star') : '') +
         (hidden ? chip('hidden', t('Hidden'), 'eye-off') : ''),
-      hints: keyHint(t('OK'), null, running ? t('Resume') : t('Play')),
+      hints: keyHint(t('OK'), null, running ? t('Resume') : t('Start')),
       art: artOf(card),
     });
   }
@@ -333,7 +333,7 @@ const Launcher = (function() {
     if (view === 'apps') {
       showApp(card && card.parentElement.id === 'game-grid' ? card : null);
     } else if (view === 'hosts') {
-      // The Add Host card only while it has the focus, as its text reads like the empty state
+      // The Add PC card only while it has the focus, as its text reads like the empty state
       if (card && card.parentElement.id === 'host-grid' && !(isAway && card.id === 'addHostContainer')) {
         showHost(card);
       } else {
@@ -488,7 +488,7 @@ const Launcher = (function() {
       card.setAttribute('data-state', state);
       const chips = card.querySelector('.host-chips');
       if (chips) {
-        chips.innerHTML = hostChips(host, state, true);
+        chips.innerHTML = hostChip(state);
       }
       if (currentView() === 'hosts') {
         render();

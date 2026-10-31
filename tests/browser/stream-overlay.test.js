@@ -106,17 +106,26 @@ test('the overlay labels go through the translation', async () => {
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
   try {
     await showFullStats(app.page);
-    await app.page.evaluate(() => handleMessage('StatMsg: Incoming bitrate from network: 92.10 Mbps\nConfigured bitrate: 100.0 Mbps\nHost frame rate (30 s): 59.94 FPS\n'));
+    await app.page.evaluate(() => handleMessage('StatMsg: Bitrate: 92.10 Mbps received, 100.0 Mbps configured\nHost frame rate (30 s): 59.94 FPS\n'));
     const stats = await overlayText(app.page);
-    assert.ok(stats.indexOf('Configured bitrate: 100.0 Mbps') >= 0 && stats.indexOf('Host frame rate (30 s): 59.94 FPS') >= 0, stats);
+    assert.ok(stats.indexOf('Bitrate: 92.10 Mbps received, 100.0 Mbps configured') >= 0 && stats.indexOf('Host frame rate (30 s): 59.94 FPS') >= 0, stats);
     const labels = await translatedLabels(app.page, [
-      'Configured bitrate: 1', 'Host frame rate (30 s): 2', 'Session frames dropped by the TV: 1', 'Session FEC recoveries: 1',
-      'Worst FEC block: 1', 'UDP receive buffer: 1', 'TV player rejections: buffer full 1 (1 recovered)', 'WASM heap top: 40 of 128 MB (+2 MB this stream)',
+      'Bitrate: 92.10 Mbps received, 100.0 Mbps configured', 'Host frame rate (30 s): 2', 'Session frames dropped by the TV: 1', 'Session FEC recoveries: 1',
+      'Worst FEC block: 1', 'TV player rejections: buffer full 1 (1 recovered)', 'WASM heap top: 40 of 128 MB (+2 MB this stream)',
     ].join('\n'));
-    ['Configured bitrate:', 'Host frame rate (30 s):', 'Session frames dropped by the TV:', 'Session FEC recoveries:', 'Worst FEC block:',
-      'UDP receive buffer:', 'TV player rejections:', 'WASM heap top:'].forEach((label) => {
+    ['Bitrate: %1$s Mbps received, %2$s Mbps configured', 'Host frame rate (30 s):', 'Session frames dropped by the TV:', 'Session FEC recoveries:',
+      'Worst FEC block:', 'TV player rejections:', 'WASM heap top:'].forEach((label) => {
       assert.ok(labels.indexOf('T[' + label + ']') >= 0, label + ' in ' + labels);
     });
+    // One line for the bitrate, with both figures in the language of the app
+    assert.equal(await app.page.evaluate(() => {
+      const original = window.t;
+      window.t = (key, ...values) => key === 'Bitrate: %1$s Mbps received, %2$s Mbps configured'
+        ? 'Bitrate: ' + values[0] + ' Mbps empfangen, ' + values[1] + ' Mbps eingestellt' : key;
+      const result = replaceKnownStatsLabels('Bitrate: 61.40 Mbps received, 100.0 Mbps configured\nWorst FEC block: 2 of 4 parity packets used');
+      window.t = original;
+      return result;
+    }), 'Bitrate: 61.40 Mbps empfangen, 100.0 Mbps eingestellt\nWorst FEC block: 2 of 4 parity packets used');
   } finally {
     await app.context.close();
   }
@@ -279,19 +288,22 @@ test('audio clock sync is offered only with the Web Audio backend, off by defaul
   }
 });
 
-test('the corrected help texts of SOPS, the optimized presets, the game mode and HDR', async () => {
+test('the corrected help texts of SOPS, the ultra low latency mode and HDR keep their point in about one sentence', async () => {
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
   try {
     const texts = await app.page.evaluate(() => ({
-      sops: $('#optimizeGamesMenu').prev().text(),
-      presets: $('#optimizeBitrateMenu').prev().text(),
-      gameMode: $('#gameModeMenu').prev().text(),
-      hdr: $('#videoHdrMenu').prev().text(),
+      sops: $('#optimizeGamesMenu').prev().text().trim(),
+      presets: $('#optimizeBitrateMenu').length,
+      gameMode: $('#gameModeMenu').prev().text().trim(),
+      hdr: $('#videoHdrMenu').prev().text().trim(),
     }));
-    assert.ok(texts.sops.indexOf('Lets Sunshine switch the host display') >= 0, texts.sops);
-    assert.ok(texts.presets.indexOf('about 45 Mbps') >= 0, texts.presets);
-    assert.ok(texts.gameMode.indexOf('Tizen 9') >= 0, texts.gameMode);
-    assert.ok(texts.hdr.indexOf('10-bit SDR') >= 0, texts.hdr);
+    assert.ok(texts.sops.indexOf('Lets Sunshine switch the display of the PC') >= 0, texts.sops);
+    // The optimized presets are gone (2.2.0)
+    assert.equal(texts.presets, 0);
+    assert.ok(texts.gameMode.indexOf('On Tizen 9 and newer it can freeze the picture') >= 0, texts.gameMode);
+    assert.ok(texts.hdr.indexOf('HDR must be on for the display of the PC as well, otherwise the stream is 10-bit SDR') >= 0, texts.hdr);
+    // Read from 3 m away: each of them, which had 51 to 66 words, has about one sentence now
+    [texts.sops, texts.gameMode, texts.hdr].forEach((text) => assert.ok(text.split(/\s+/).length <= 33, text));
   } finally {
     await app.context.close();
   }

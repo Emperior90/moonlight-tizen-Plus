@@ -1,6 +1,6 @@
 'use strict';
 
-// Pins the message of a stream that ends with error -200 after the TV rejected its video track (plan WP8):
+// Pins the message of a stream that ends with error -200 after the TV rejected its video track:
 // handleMessage() in wasm/platform/messages.js keeps the video format of the 'VideoTrackRejected: ' message that
 // wasm/wasmplayer.cpp sends (the formats of tests/fixtures/video-track-rejections.tsv, whose writing side
 // tests/native/video_track_rejection_test.cpp checks), and the stream termination that follows names the codec,
@@ -90,7 +90,7 @@ test('H.264 within 1080p is not told to choose a resolution up to 1080p, which i
   }
 });
 
-test('the example of the plan: AV1 Main10 at 4K60', () => {
+test('an AV1 Main10 stream at 4K60', () => {
   const { notices, handleMessage } = loadMessages();
   handleMessage('VideoTrackRejected: AV1 Main10,3840,2160,60');
   handleMessage('streamTerminated: -200');

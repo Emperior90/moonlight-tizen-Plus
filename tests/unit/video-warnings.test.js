@@ -1,6 +1,6 @@
 'use strict';
 
-// Tests of the warning rules of wasm/platform/tv_profile.js (plan WP4), which turn the video settings and the detected
+// Tests of the warning rules of wasm/platform/tv_profile.js, which turn the video settings and the detected
 // capabilities of a TV into a message key (VIDEO_WARNINGS), and of showVideoWarning() in index.js, which shows the text
 // of each key:
 // 1. above 60 FPS at any resolution without a tested 120 Hz profile: many Samsung TVs have 60 Hz panels
@@ -11,8 +11,8 @@
 // 5. the bitrate warning starts at the decoder cap of the TV instead of a fixed 100 Mbps (the S90C keeps 100 Mbps)
 // 6. the Ethernet warning names the 100 Mbps port that Samsung TVs usually have, above 80 Mbps as before
 // 7. the H.264 warning above 1080p stays as it is
-// The expectations are written out here. The S90C rows are also compared with a copy of the rules before WP4, so that
-// every resolution and frame rate of the menus keeps the warning it had (plan section 3).
+// The expectations are written out here. The S90C rows are also compared with a copy of the rules before 1.19.100, so that
+// every resolution and frame rate of the menus keeps the warning it had.
 
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -40,7 +40,7 @@ const FHD = capsOf({ tv: 'fhd' });
 const UHD_8K = capsOf({ tv: '8k' });
 const GENERIC_TVS = { uhd: UHD, fhd: FHD, '8k': UHD_8K };
 
-// The resolution and frame rate warning before plan WP4, for the comparison with the S90C: above 1080p and 60 FPS, the
+// The resolution and frame rate warning before 1.19.100, for the comparison with the S90C: above 1080p and 60 FPS, the
 // decoder text at 4K above 120 FPS and the text for lower-end devices otherwise
 function resolutionFramerateWarningBeforeWp4(res, fps) {
   const width = parseInt(res.split(':')[0], 10);
@@ -51,7 +51,7 @@ function resolutionFramerateWarningBeforeWp4(res, fps) {
   return null;
 }
 
-// The bitrate warning before plan WP4: above 80 Mbps over Ethernet, otherwise above 100 Mbps
+// The bitrate warning before 1.19.100: above 80 Mbps over Ethernet, otherwise above 100 Mbps
 function bitrateWarningBeforeWp4(bitrate, conn) {
   if (conn === 'ethernet' && bitrate > 80) {
     return W.ETHERNET_BITRATE;
@@ -129,7 +129,7 @@ describe('resolution and frame rate warnings', () => {
     assert.equal(profile.resolutionFramerateWarningKey('4096:2176', 121, S90C), W.EXCEEDS_TESTED_DECODER);
   });
 
-  test('the S90C keeps the warning of every resolution and frame rate of the menus (plan section 3)', () => {
+  test('the S90C keeps the warning of every resolution and frame rate of the menus', () => {
     for (const res of RESOLUTIONS) {
       for (const fps of FRAME_RATES) {
         assert.equal(profile.resolutionFramerateWarningKey(res, fps, S90C), resolutionFramerateWarningBeforeWp4(res, fps), res + '@' + fps);
@@ -177,7 +177,7 @@ describe('HDR warning (case 4)', () => {
 });
 
 describe('bitrate warnings (cases 5 and 6)', () => {
-  test('the S90C keeps its warnings for every bitrate of the slider and every connection (plan section 3)', () => {
+  test('the S90C keeps its warnings for every bitrate of the slider and every connection', () => {
     for (const conn of CONNECTIONS) {
       for (const bitrate of SLIDER_BITRATES) {
         assert.equal(profile.bitrateWarningKey(bitrate, conn, S90C), bitrateWarningBeforeWp4(bitrate, conn), conn + ' ' + bitrate);
@@ -225,7 +225,7 @@ describe('H.264 warning (case 7)', () => {
   });
 });
 
-describe('bitrate advice of the optimal settings dialog (plan WP3)', () => {
+describe('bitrate advice of the optimal settings dialog', () => {
   test('twice the preset of the resolution and frame rate, at most 150 Mbps and the decoder cap', () => {
     assert.equal(profile.bitrateRaiseLimit('3840:2160', 60, S90C), 100);
     assert.equal(profile.bitrateRaiseLimit('3840:2160', 60, UHD), 80);
@@ -277,7 +277,7 @@ describe('the texts of the message keys (showVideoWarning() in index.js)', () =>
     assert.equal(result.warnings.length, 1);
   });
 
-  test('the S90C keeps the texts of its warnings (plan section 3)', () => {
+  test('the S90C keeps the texts of its warnings', () => {
     assert.deepEqual(shownFor({ tv: 's90c' }, W.EXCEEDS_TESTED_DECODER).shown,
       [['Warning: The video decoder of the TV supports 4K up to 120 FPS, so higher frame rates at 4K may stutter or fail to start!']]);
     assert.deepEqual(shownFor({ tv: 's90c' }, W.HIGH_RESOLUTION_FPS).shown,

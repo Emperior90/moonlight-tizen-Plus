@@ -1,11 +1,10 @@
 'use strict';
 
 // Pins the identifiers that let an update install over the current build with its settings and pairing kept, and
-// that let it run next to the regular Moonlight app (plan decision D2 and the last rows of the S90C invariants in plan
-// section 3): the package, app and service IDs, the Smart Hub preview port and the preview file prefix. These must not
+// that let it run next to the regular Moonlight app (the last rows of the S90C invariants): the package, app and service IDs, the Smart Hub preview port and the preview file prefix. These must not
 // change.
 //
-// Also checks the branding of plan WP5 (decisions D1 and D4): the display name 'Moonlight Plus' in res/config.xml and
+// Also checks the branding as Moonlight Plus: the display name 'Moonlight Plus' in res/config.xml and
 // in the header of the app, a description that says it is an unofficial Moonlight fork, a numeric version, the icon
 // size and format, and that the simulated TV of the tests reports the name and version of res/config.xml.
 
@@ -90,9 +89,9 @@ test('config.xml has a numeric x.y.z version that Tizen accepts', () => {
   const version = xmlAttribute(read('res/config.xml'), 'widget', 'version');
   const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
   assert.ok(match, 'version ' + version + ' is not x.y.z');
-  // The limits believed to apply to Tizen widget versions (plan A10): x and y up to 255, z up to 65535
+  // The limits believed to apply to Tizen widget versions: x and y up to 255, z up to 65535
   assert.ok(Number(match[1]) <= 255 && Number(match[2]) <= 255 && Number(match[3]) <= 65535, version);
-  assert.equal(version, '2.1.0');
+  assert.equal(version, '2.2.0');
 });
 
 test('the header of the app shows the display name of config.xml, translated through its own locale key', () => {
@@ -127,7 +126,7 @@ test('the simulated TV of the tests reports the IDs, name and version of config.
   assert.equal(appInfo.version, xmlAttribute(xml, 'widget', 'version'));
 });
 
-// The support path of the fork (plan gap A8 and decision D11): the Support dialog and the help texts of the app lead to
+// The support path of the fork: the Support dialog and the help texts of the app lead to
 // the guide and the issue tracker of Moonlight Plus, not to the wiki of upstream Moonlight Tizen
 const FORK_GUIDE_URL = 'https://github.com/Emperior90/moonlight-tizen-Plus/blob/HEAD/docs/GUIDE.md';
 

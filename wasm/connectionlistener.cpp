@@ -87,17 +87,6 @@ void MoonlightInstance::ClConnectionTerminated(int errorCode) {
   emscripten_sync_run_in_main_runtime_thread(EM_FUNC_SIG_VI, onConnectionStopped, errorCode);
 }
 
-void MoonlightInstance::ClDisplayMessage(const char* message) {
-  if (g_Instance && g_Instance->m_ConnectionCancelled) {
-    return;
-  }
-  PostToJs(std::string("DialogMsg: ") + std::string(message));
-}
-
-void MoonlightInstance::ClDisplayTransientMessage(const char* message) {
-  PostToJs(std::string("TransientMsg: ") + std::string(message));
-}
-
 void onConnectionStarted() {
   g_Instance->OnConnectionStarted(0);
 }

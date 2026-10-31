@@ -2,11 +2,13 @@
 
 ## Supported Versions
 
-Security vulnerabilities may be reported for any publicly released version. Reports will be evaluated based on the affected version, severity, reproducibility, and the current maintenance status of the project.
+Security vulnerabilities may be reported for any publicly released version of Moonlight Plus. Reports will be evaluated based on the affected version, severity, reproducibility, and the current maintenance status of the project.
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability, please report it privately through [GitHub's private vulnerability reporting](https://github.com/brightcraft/moonlight-tizen/security/advisories/new).
+If you discover a security vulnerability in Moonlight Plus, please report it privately through GitHub's private vulnerability reporting of this fork: open the **Security** tab of the [repository](https://github.com/Emperior90/moonlight-tizen-Plus) and choose **Report a vulnerability** ([direct link](https://github.com/Emperior90/moonlight-tizen-Plus/security/advisories/new)). The report stays private between you and the maintainer.
+
+A vulnerability of the regular Moonlight Tizen app belongs to the [Moonlight Tizen project](https://github.com/brightcraft/moonlight-tizen), not to this fork.
 
 Please do not disclose the vulnerability publicly before it has been investigated and addressed.
 

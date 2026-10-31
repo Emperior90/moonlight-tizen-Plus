@@ -540,22 +540,13 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
 
   // Store the parameters from the start message
   m_Host = host;
-  m_HttpPort = httpPort;
   m_AppVersion = appversion;
   m_GfeVersion = gfeversion;
   m_RtspUrl = rtspurl;
   m_ServerCodecModeSupport = serverCodecModeSupport;
   m_FramePacingEnabled = framePacing;
-  m_OptimizeGamesEnabled = optimizeGames;
-  m_RumbleFeedbackEnabled = rumbleFeedback;
-  m_MouseEmulationEnabled = mouseEmulation;
   m_AudioSyncEnabled = audioSync;
   m_AudioJitterMs = audioJitterMs;
-  m_PlayHostAudioEnabled = playHostAudio;
-  m_DecryptHostAudioEnabled = decryptHostAudio;
-  m_HdrModeEnabled = hdrMode;
-  m_FullRangeEnabled = fullRange;
-  m_GameModeEnabled = gameMode;
   m_DisableWarningsEnabled = disableWarnings;
   m_PerformanceStatsLevel = ClampPerformanceStatsLevel(performanceStats);
   m_RefFrameInvalidationEnabled = refFrameInvalidation;
@@ -706,11 +697,6 @@ void MoonlightInstance::WakeOnLan_private(int callbackId, std::string macAddress
   }
 
   PostPromiseMessage(callbackId, "resolve", "Magic packet sent successfully to MAC address: " + macAddress);
-}
-
-bool MoonlightInstance::Init(uint32_t argc, const char* argn[], const char* argv[]) {
-  g_Instance = this;
-  return true;
 }
 
 int main(int argc, char** argv) {

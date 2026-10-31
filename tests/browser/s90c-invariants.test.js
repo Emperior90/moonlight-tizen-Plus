@@ -1,9 +1,9 @@
 'use strict';
 
-// Golden tests for the S90C invariants of plan section 3 that the settings matrix (video-defaults.test.js) doesn't
+// Golden tests for the S90C invariants (what the S90C keeps, whatever the other TVs get) that the settings matrix (video-defaults.test.js) doesn't
 // cover: the warnings that must still appear on the S90C, the ForceGM detection in the dialog, and that the applied
-// settings are what the next start loads. The S90C has to behave exactly like this after every later work package.
-// Section 3 allows a more general wording of the warnings: since plan WP4 the Ethernet warning names the 100 Mbps port
+// settings are what the next start loads. The S90C has to behave exactly like this after every later change. Only
+// the wording of the warnings may be more general: since 1.19.100 the Ethernet warning names the 100 Mbps port
 // that Samsung TVs usually have, still above 80 Mbps, and the 4K warning above 120 FPS keeps its text on the S90C.
 
 const { after, before, test } = require('node:test');
@@ -66,7 +66,7 @@ test('S90C: 4K above 120 FPS warns about the decoder', async () => {
   try {
     await app.page.evaluate(() => saveFramerate.call($('.videoFramerateMenu li[data-value="120"]')[0]));
     assert.equal(count(app, DECODER_4K_WARNING), 0, 'no decoder warning at 4K 120 FPS');
-    // Since plan WP4 a selection with another warning shows it right away, without waiting for a selection without one
+    // Since 1.19.100 a selection with another warning shows it right away, without waiting for a selection without one
     await app.page.evaluate(() => saveFramerate.call($('.videoFramerateMenu li[data-value="144"]')[0]));
     assert.equal(count(app, DECODER_4K_WARNING), 1);
     assert.deepEqual(app.errors, []);
@@ -108,14 +108,14 @@ test('S90C: the applied settings are what the next start loads', async () => {
     try {
       await app.page.evaluate(() => $('#optimalSettingsBtn').trigger('click'));
       await app.page.evaluate(() => $('#continueWarning').trigger('click'));
-      await waitForStorage(app.page, (values) => values.resolution === '3840:2160' && 'bitrate' in values && values.autoAdjustBitrate === false && 'gameMode' in values);
+      await waitForStorage(app.page, (values) => values.resolution === '3840:2160' && 'bitrate' in values && values.autoAdjustBitrate === true && 'gameMode' in values);
       const applied = await readVideoSettings(app.page);
       await reloadApp(app);
       assert.deepEqual(await readVideoSettings(app.page), applied, conn);
       assert.deepEqual(
         [applied.resolution, applied.frameRate, applied.codec, applied.hdr, applied.bitrate, applied.unlockAllFps, applied.gameMode,
-          applied.framePacing, applied.fullRange, applied.optimizeBitrate, applied.autoAdjustBitrate],
-        ['3840:2160', '60', 'HEVC', true, { ethernet: '75', wifi: '100', unknown: '80' }[conn], true, false, true, false, false, false],
+          applied.framePacing, applied.fullRange, applied.autoAdjustBitrate],
+        ['3840:2160', '60', 'HEVC', true, { ethernet: '75', wifi: '100', unknown: '80' }[conn], true, false, true, false, true],
         conn);
       assert.deepEqual(app.errors, []);
     } finally {

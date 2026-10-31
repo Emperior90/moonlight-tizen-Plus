@@ -4,14 +4,14 @@
 // message 'controllerRumble: <controller>,<weak>,<strong>', played by Rumble in wasm/platform/gamepad.js), on a
 // simulated vibration actuator and a simulated clock. Chromium ends a vibration effect after 5 seconds at most and the
 // host doesn't send an unchanged rumble again, so a rumble that stays on is played again every 4 seconds until the host
-// sends 0, the stream ends or the gamepad disconnects (plan WP7).
+// sends 0, the stream ends or the gamepad disconnects.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadPlatformScripts } = require('./helpers/platform-loader');
 
 const XBOX_ID = 'Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)';
-const NOTICE = 'Gamepad 0 (Xbox Wireless Controller) does not support rumble on this TV.';
+const NOTICE = 'Controller 0 (Xbox Wireless Controller) does not support rumble on this TV.';
 
 // Fake timers for the context, advanced by hand. Timers due at the same time run in the order they were created.
 function createFakeTimers() {

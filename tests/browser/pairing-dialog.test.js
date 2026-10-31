@@ -59,7 +59,7 @@ test('a wrong PIN is reported as such, and the log names the host without the PI
     const pin = await app.page.evaluate(() => window.__pin);
     assert.match(pin, /^\d{4}$/);
     const dialog = await failPairing(app, '-7');
-    assert.equal(dialog.text, 'Error: The PIN entered on OFFICE was wrong.Please, try pairing with the host again and enter the new PIN.');
+    assert.equal(dialog.text, 'Error: The PIN entered on OFFICE was wrong.Please, try pairing with the PC again and enter the new PIN.');
     assert.equal(dialog.button, 'Close');
     assert.ok(app.logs.some((line) => line.indexOf('Sending pairing request to OFFICE') >= 0));
     assert.deepEqual(app.logs.filter((line) => line.indexOf('Sending pairing request') >= 0 && line.indexOf(pin) >= 0), []);
@@ -74,7 +74,7 @@ test('another pairing failure keeps the general message', async () => {
   try {
     await openPairingDialog(app);
     const dialog = await failPairing(app, '-1');
-    assert.equal(dialog.text, 'Error: Failed to pair with OFFICE.Please, try pairing with the host again.');
+    assert.equal(dialog.text, 'Error: Failed to pair with OFFICE.Please, try pairing with the PC again.');
     assert.equal(dialog.button, 'Close');
     assert.deepEqual(app.errors, []);
   } finally {

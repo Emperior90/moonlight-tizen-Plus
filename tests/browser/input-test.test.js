@@ -185,12 +185,12 @@ test('each controller is drawn live, a hold of B leaves, and the controllers are
     })));
     assert.deepEqual(drawn, [
       {
-        title: 'Gamepad 0: Xbox Wireless Controller', meta: 'standard layout · 17 buttons, 4 axes', on: ['4', '0'], rightTrigger: '32',
+        title: 'Controller 0: Xbox Wireless Controller', meta: 'standard layout · 17 buttons, 4 axes', on: ['4', '0'], rightTrigger: '32',
         leftStick: ['98.0', '88.0'], buttons: 'Buttons: A, LB, RT', axes: 'Axes: 1.00  -0.50  0.00  0.00   LT 0.00  RT 0.50',
       },
       {
         // A controller with another layout names its buttons by their index
-        title: 'Gamepad 2: Generic USB Joystick', meta: 'non-standard layout · 17 buttons, 4 axes', on: ['5'], rightTrigger: '0',
+        title: 'Controller 2: Generic USB Joystick', meta: 'non-standard layout · 17 buttons, 4 axes', on: ['5'], rightTrigger: '0',
         leftStick: ['86.0', '94.0'], buttons: 'Buttons: 5', axes: 'Axes: 0.00  0.00  0.00  0.00',
       },
     ]);

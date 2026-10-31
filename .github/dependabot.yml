@@ -1,11 +1,8 @@
 version: 2
 updates:
+  # The actions of the workflows. The test tools in tests/package.json stay pinned on purpose: a newer Playwright brings
+  # another Chromium, whose text metrics can break the layout tests.
   - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-
-  - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "weekly"

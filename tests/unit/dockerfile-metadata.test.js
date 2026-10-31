@@ -1,11 +1,11 @@
 'use strict';
 
-// Runs the step of the Dockerfile that injects the build metadata into wasm/platform/index.js (plan WP5), on a copy of
+// Runs the step of the Dockerfile that injects the build metadata into wasm/platform/index.js, on a copy of
 // the file in a temporary folder, and checks the app it produces:
 // - a release or development build fails with a clear message when REPO_OWNER or REPO_NAME is missing or invalid,
 //   instead of building an app that checks the upstream repository for updates;
 // - a complete build replaces the placeholders, and the in-app update check of the built app reads the releases of
-//   the repository it was built from. Before WP5 the build also replaced the placeholder in the fallback comparison
+//   the repository it was built from. Before 1.19.100 the build also replaced the placeholder in the fallback comparison
 //   of fetchLatestRelease(), so every build of this fork checked the upstream repository.
 //
 // The step is taken from the Dockerfile itself, joined like Docker joins a RUN instruction (comment lines inside it

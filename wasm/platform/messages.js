@@ -137,8 +137,9 @@ function replaceKnownStatsLabels(text) {
     .replace(/Incoming frame rate from network:/g, t('Incoming frame rate from network:'))
     .replace(/Decoding frame rate:/g, t('Decoding frame rate:'))
     .replace(/Rendering frame rate:/g, t('Rendering frame rate:'))
-    .replace(/Incoming bitrate from network:/g, t('Incoming bitrate from network:'))
-    .replace(/Configured bitrate:/g, t('Configured bitrate:'))
+    .replace(/Bitrate: ([\d.]+) Mbps received, ([\d.]+) Mbps configured/g, function(match, received, configured) {
+      return t('Bitrate: %1$s Mbps received, %2$s Mbps configured', received, configured);
+    })
     .replace(/Host frame rate \(30 s\):/g, t('Host frame rate (30 s):'))
     .replace(/Host processing latency min\/max\/average:/g, t('Host processing latency min/max/average:'))
     .replace(/Frames dropped by your network connection:/g, t('Frames dropped by your network connection:'))
@@ -155,7 +156,6 @@ function replaceKnownStatsLabels(text) {
     .replace(/Session recovery keyframes:/g, t('Session recovery keyframes:'))
     .replace(/Session FEC recoveries:/g, t('Session FEC recoveries:'))
     .replace(/Worst FEC block:/g, t('Worst FEC block:'))
-    .replace(/UDP receive buffer:/g, t('UDP receive buffer:'))
     .replace(/TV player rejections:/g, t('TV player rejections:'))
     .replace(/WASM heap top:/g, t('WASM heap top:'))
     .replace(/Slow connection to PC\.\nReduce your bitrate!/g, t('Slow connection to PC.\nReduce your bitrate!'));
@@ -705,7 +705,7 @@ var handlePromiseMessage = function(callbackId, type, msg) {
  * leaveStreamView - Leaves the stream view and returns to the app list, after a stream ended or its start was cancelled
  *
  * @param  {Object} host The host of the stream
- * @param  {boolean} quitApp Whether to quit the app on the host first ('Disconnect and quit the app on the PC' of the
+ * @param  {boolean} quitApp Whether to quit the app on the host first ('Quit app on the PC' of the
  *     Stream Menu)
  * @return {void}
  */
@@ -860,7 +860,8 @@ function showStreamTerminationMessage(errorCode, videoTrackRejection, blockedPor
       snackbarLogLong('The video player of the TV stopped with an error during the stream. Start the stream again; if it keeps happening, try a lower bitrate, resolution or frame rate.');
       break;
     default:
-      snackbarLogLong('Connection terminated');
+      // Name the error code, which a report of the problem needs
+      snackbarLogLong('The connection to the PC was lost (error %1$s).', errorCode);
       break;
   }
 }
@@ -869,9 +870,9 @@ function showStreamTerminationMessage(errorCode, videoTrackRejection, blockedPor
 // the connection named for it, if any
 function showNoVideoMessage(blockedPorts) {
   if (blockedPorts) {
-    snackbarLogLong('No video received from host. Check that the firewall of the host PC and your router don\'t block these ports: %1$s', keepPortsTogether(blockedPorts));
+    snackbarLogLong('No video received from the PC. Check that the firewall of the host PC and your router don\'t block these ports: %1$s', keepPortsTogether(blockedPorts));
   } else {
-    snackbarLogLong('No video received from host. Check the host PC\'s firewall and port forwarding rules.');
+    snackbarLogLong('No video received from the PC. Check the host PC\'s firewall and port forwarding rules.');
   }
 }
 
@@ -897,7 +898,7 @@ function dispatchMessage(msg) {
     quitAppAfterStream = false;
     streamMouseEmulationActive = false;
     // Each step on its own (runGuarded()), so that an error in one of them can't leave the app in the stream view.
-    // The Stream Menu belongs to the stream, and 'Disconnect and quit the app on the PC' to this end of it (menus.js)
+    // The Stream Menu belongs to the stream, and 'Quit app on the PC' to this end of it (menus.js)
     runGuarded('closeStreamMenu', function() { closeStreamMenu(false); });
     // The bitrate entry of the Stream Menu ended the stream to resume it with a new bitrate: the launch screen shows
     // until it reconnects (resumeStreamAfterBitrateChange() in index.js)
@@ -941,9 +942,6 @@ function dispatchMessage(msg) {
   } else if (msg.indexOf('ProgressMsg: ') === 0) {
     // Show progress message under loading spinner
     $('#loadingSpinnerMessage').text(translateBackendMessage(msg.replace('ProgressMsg: ', '')));
-  } else if (msg.indexOf('TransientMsg: ') === 0) {
-    // Show transient message as notification
-    snackbarLogLong(translateBackendMessage(msg.replace('TransientMsg: ', '')));
   } else if (msg.indexOf('CodecFallbackMsg: ') === 0) {
     // Tell the user that the host could only provide a fallback for the selected codec or HDR mode
     switch (msg.replace('CodecFallbackMsg: ', '')) {
@@ -1042,19 +1040,24 @@ function dispatchMessage(msg) {
     console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Playing rumble on gamepad ' + gamepadIdx + ' with weak magnitude ' + weakMagnitude + ' and strong magnitude ' + strongMagnitude + '...');
     Rumble.play(gamepadIdx, weakMagnitude, strongMagnitude);
   } else if (msg.indexOf('mouseEmulationOn') === 0) {
-    // Show mouse emulation enable status as a notification, and in the Stream Menu
+    // Show the new state of the mouse emulation in the Stream Menu while it's open, whose entry shows On and Off, or
+    // else as a notice (e.g. after holding Start)
     streamMouseEmulationActive = true;
     if (isStreamMenuOpen) {
+      console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Mouse emulation is activated (shown in the Stream Menu).');
       updateStreamMenu();
+    } else {
+      snackbarLogLong('Mouse emulation is activated');
     }
-    snackbarLogLong('Mouse emulation is activated');
   } else if (msg.indexOf('mouseEmulationOff') === 0) {
-    // Show mouse emulation disable status as notification, and in the Stream Menu
+    // Likewise for the mouse emulation that was switched off
     streamMouseEmulationActive = false;
     if (isStreamMenuOpen) {
+      console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Mouse emulation is deactivated (shown in the Stream Menu).');
       updateStreamMenu();
+    } else {
+      snackbarLogLong('Mouse emulation is deactivated');
     }
-    snackbarLogLong('Mouse emulation is deactivated');
   } else if (msg.indexOf('SessionReportMsg: ') === 0) {
     // The totals of the stream that ended, for the report of the last session in System information (index.js)
     keepSessionReport(msg.replace('SessionReportMsg: ', ''));

@@ -21,7 +21,8 @@ const { REPO_ROOT, tryRequire } = require('../lib/dev-modules');
 const ECMA_VERSION = 2018;
 
 // The scripts that run on the TV: the platform scripts, the shared helpers, the Smart Hub service, Samsung's
-// platform.js and the mDNS browser. The minified vendor libraries (jQuery, Material Design Lite) are left out.
+// platform.js and the subnet scan (mdns-browser/main.js). The minified vendor libraries (jQuery, Material Design Lite)
+// are left out.
 const TARGETS = [
   { dir: 'wasm/platform', pattern: /\.js$/ },
   { file: 'wasm/static/js/utils.js' },

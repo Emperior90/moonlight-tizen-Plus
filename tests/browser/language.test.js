@@ -2,11 +2,11 @@
 
 // The languages in the real page: the language of the TV (tizen.systeminfo LOCALE of the simulated TV) picks the
 // language of the app (a German TV in Austria or Switzerland gets German, a Spanish TV in Mexico Spanish, a French TV in
-// Canada French), and the language menu of the UI Settings lists Auto and every language by its own name, reached and
+// Canada French), and the language menu of the General settings lists Auto and every language by its own name, reached and
 // chosen with the remote and with a gamepad. Picking a language translates the page at once and stores it; Auto follows
 // the TV again. Every data-i18n text of the page is a key of the locale files (the browser decodes &amp; in the
 // attribute) and shows translated in every language, System information names the connection in the language of the
-// app, and the tooltips of the header buttons (also Quit Running App and the button of a new update) take one line
+// app, and the tooltips of the header buttons (also Quit app on the PC and the button of a new update) take one line
 // inside the safe area of the screen under their button in every language, also with text 10 % wider than this machine
 // draws it (tests/browser/text-stress.js). The rules of wasm/platform/i18n.js itself are in
 // tests/unit/i18n-locales.test.js, the German texts in tests/unit/german-texts.test.js, the Spanish and French texts in
@@ -41,12 +41,14 @@ const languageButton = (page) => page.evaluate(() => {
   return [button.getAttribute('data-value'), button.textContent.trim(), button.getAttribute('lang')];
 });
 
-// Settings, DOWN to the UI Settings, OK: the focus goes to the language field
+// Settings, DOWN to General (the fifth section), OK: the focus goes to the language field
 async function openLanguageField(page) {
   await page.evaluate(() => $('#settingsBtn').trigger('click'));
   await page.waitForFunction(() => $('#settings-list').is(':visible') && !$('#wasmSpinner').is(':visible'));
   await page.waitForTimeout(100);
-  await page.keyboard.press('ArrowDown');
+  for (let i = 0; i < 4; i++) {
+    await page.keyboard.press('ArrowDown');
+  }
   await page.keyboard.press('Enter');
   await waitForFocus(page, 'selectLanguage');
 }
@@ -161,7 +163,10 @@ test('a gamepad reaches the language menu and picks a language with the D-pad an
     await page.evaluate(() => $('#settingsBtn').trigger('click'));
     await page.waitForFunction(() => $('#settings-list').is(':visible') && !$('#wasmSpinner').is(':visible'));
     await page.waitForTimeout(100);
-    await button(DPAD_DOWN);
+    // The D-pad down to General, the fifth section
+    for (let i = 0; i < 4; i++) {
+      await button(DPAD_DOWN);
+    }
     await button(A);
     await waitForFocus(page, 'selectLanguage');
     await button(A);
@@ -234,11 +239,14 @@ test('every data-i18n text of the page is a key of the locale files, so that eve
   // The browser decodes character references in attribute values, e.g. data-i18n="press &amp; hold" reads 'press & hold'
   const languages = fs.readdirSync(path.join(REPO_ROOT, 'wasm/static/locales')).filter((name) => name.endsWith('.json'))
     .map((name) => name.replace(/\.json$/, '')).filter((name) => name !== 'en-US');
+  // The list of the source texts stays in the repository, but not in the widget (CMakeLists.txt)
+  const englishKeys = Object.keys(JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'wasm/static/locales/en-US.json'), 'utf8')));
   for (const language of languages) {
     const app = await openApp(harness, { tv: TV, stored: { languagePreference: language } });
     try {
-      const result = await app.page.evaluate(async (code) => {
-        const english = await fetch('static/locales/en-US.json').then((response) => response.json());
+      const result = await app.page.evaluate(async ({ code, keys }) => {
+        const english = {};
+        keys.forEach((key) => { english[key] = key; });
         const translated = await fetch('static/locales/' + code + '.json').then((response) => response.json());
         const missing = [];
         const untranslated = [];
@@ -252,8 +260,40 @@ test('every data-i18n text of the page is a key of the locale files, so that eve
           }
         });
         return { lang: document.documentElement.getAttribute('lang'), missing, untranslated };
-      }, language);
+      }, { code: language, keys: englishKeys });
       assert.deepEqual(result, { lang: language, missing: [], untranslated: [] });
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
+test('English needs no locale file and a translated language loads only its own, since the widget has no en-US.json', async () => {
+  // Every fetch of the page, recorded from before the first script of the app
+  const recordFetches = () => {
+    window.__fetchedUrls = [];
+    const originalFetch = window.fetch;
+    window.fetch = function(resource) {
+      window.__fetchedUrls.push(String(resource && resource.url ? resource.url : resource));
+      return originalFetch.apply(this, arguments);
+    };
+  };
+  const cases = [['en_US', 'en-US', 'Settings', []], ['de_DE', 'de-DE', 'Einstellungen', ['static/locales/de-DE.json']]];
+  for (const [locale, expectedLang, settingsText, expectedFetches] of cases) {
+    const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi', locale }, initScripts: [recordFetches] });
+    try {
+      assert.equal(await lang(app.page), expectedLang);
+      assert.equal(await app.page.evaluate(() => i18n.t('Settings')), settingsText);
+      // A text without a translation shows its key, with its values filled in
+      assert.equal(await app.page.evaluate(() => i18n.t('No such text %1$s', 'X')), 'No such text X');
+      // English after a switch from German, and back: still no request for en-US.json
+      await app.page.evaluate(() => i18n.setLanguage('en-US'));
+      assert.equal(await lang(app.page), 'en-US');
+      assert.equal(await app.page.evaluate(() => i18n.t('Settings')), 'Settings');
+      const localeFetches = await app.page.evaluate(() => window.__fetchedUrls.filter((url) => url.indexOf('locales/') >= 0));
+      assert.deepEqual(localeFetches, expectedFetches, locale);
+      assert.ok(!app.logs.some((line) => /Failed to load locale/.test(line)), app.logs.join('\n'));
       assert.deepEqual(app.errors, []);
     } finally {
       await app.context.close();
@@ -315,7 +355,7 @@ test('the tooltips of the header buttons take one line inside the safe area of t
       // The hosts screen with the button of a new update
       await app.page.evaluate(() => updateAppButton('9.0.0'));
       await check(app.page, ['updateAppBtn', 'rescanNetworkBtn', 'settingsBtn', 'supportBtn'], language + ' hosts');
-      // The apps of a host whose app runs: Quit Running App, the rightmost button with the longest tooltips
+      // The apps of a host whose app runs: Quit app on the PC, the rightmost button, which shows only while an app runs
       await app.page.evaluate(async () => {
         const host = {
           paired: true, online: true, serverUid: 'HOST1', hostname: 'GAMING-PC', address: '10.0.0.2', httpPort: 47989, currentGame: 13,

@@ -22,7 +22,7 @@ after(async () => {
   }
 });
 
-const PORTS_MESSAGE = 'No video received from host. Check that the firewall of the host PC and your router don\'t block these ports: ' +
+const PORTS_MESSAGE = 'No video received from the PC. Check that the firewall of the host PC and your router don\'t block these ports: ' +
   'UDP 47998, UDP 48000';
 
 // Open the app with a simulated host that answers the launch and resume requests at once, starts app 7 with its

@@ -2,7 +2,7 @@
 
 // Checks the in-app update check, checkVersionUpdate() in wasm/platform/index.js, which compares the version of the
 // installed app (the plain x.y.z of res/config.xml) with the tag of the latest GitHub release (without its leading
-// 'v'). Since plan WP5 it compares the numeric x.y.z first and then the number at the end of a suffix, so that a
+// 'v'). Since 1.19.100 it compares the numeric x.y.z first and then the number at the end of a suffix, so that a
 // release of this fork such as v1.19.100 is announced, and a missing or malformed version is never an update.
 
 const test = require('node:test');
@@ -16,7 +16,7 @@ const platform = loadPlatformScripts(INDEX_SCRIPTS);
 const checkVersionUpdate = platform.get('checkVersionUpdate');
 const parseAppVersion = platform.get('parseAppVersion');
 
-test('the cases of plan WP5', () => {
+test('the versions of this fork and of upstream, also with a suffix', () => {
   // The first release of this fork is announced to an installed upstream 1.19.0 build or a build of this fork before it
   assert.equal(checkVersionUpdate('1.19.0', '1.19.100'), true);
   assert.equal(checkVersionUpdate('1.19.100', '1.19.100'), false);
@@ -77,7 +77,7 @@ test('a fourth part in the installed version is ignored once the release is high
   assert.equal(checkVersionUpdate('1.19.0.1', '1.19.0'), false);
 });
 
-test('a newer x.y.z release with a suffix is an update, the same x.y.z with a suffix alone is not (plan C5)', () => {
+test('a newer x.y.z release with a suffix is an update, the same x.y.z with a suffix alone is not', () => {
   assert.equal(checkVersionUpdate('1.19.0', '1.19.1-s90c.1'), true);
   assert.equal(checkVersionUpdate('1.19.0', '1.19.0-s90c.2'), false);
   assert.equal(checkVersionUpdate('1.19.100', '1.19.0-s90c.2'), false);

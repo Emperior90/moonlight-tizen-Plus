@@ -11,8 +11,6 @@
     "3840 x 2160 (4K)",
     "60 FPS",
     "30 FPS",
-    "EMSS",
-    "Web Audio",
     "Stereo",
     "H.264",
     "HEVC",
@@ -27,12 +25,8 @@
     "RETURN",
     "ESC",
     "B",
-    "F9",
-    "F10",
-    "F8",
     "PLAY/PAUSE",
     "F11",
-    "F12",
     "START",
     "F1",
     "SELECT + START + LB + RB",
@@ -66,6 +60,9 @@
     "Controller",
     "%1$s min %2$s s",
     "%1$s s",
-    "Guide"
+    "Guide",
+    "Browser (Web Audio)",
+    "PCs",
+    "Controller %1$s: %2$s"
   ]
 }

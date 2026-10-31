@@ -389,7 +389,7 @@ test('running is mint on the hosts screen too: the chips of the hero and the car
   }
 });
 
-test('the host menu is a list like the app menu: an icon per entry, Delete PC in red and Close as the last entry', async () => {
+test('the host menu is a list like the app menu: an icon per entry, only the entries that can run, Delete PC in red after them and Close as the last entry', async () => {
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
   try {
     await installHosts(app.page);
@@ -405,26 +405,44 @@ test('the host menu is a list like the app menu: an icon per entry, Delete PC in
           button.querySelector('use').getAttribute('xlink:href'), button.textContent, getComputedStyle(button).textAlign]),
         deleteColour: [getComputedStyle(document.getElementById('deleteHost-GAMING-PC')).color,
           getComputedStyle(document.querySelector('#deleteHost-GAMING-PC .overlay-menu-icon')).color],
-        disabled: getComputedStyle(document.getElementById('wakeHost-GAMING-PC')).opacity,
+        disabled: dialog.querySelectorAll('button:disabled').length,
         focused: document.activeElement.id,
         focus: [getComputedStyle(document.activeElement).backgroundColor, getComputedStyle(document.activeElement).color],
       };
     });
     assert.deepEqual(menu, {
       likeAppMenu: true, title: 'GAMING-PC',
-      entries: [['refreshApps-GAMING-PC', '#i-refresh', 'Refresh apps', 'left'], ['wakeHost-GAMING-PC', '#i-power', 'Wake PC', 'left'],
-        ['deleteHost-GAMING-PC', '#i-trash', 'Delete PC', 'left'], ['viewDetails-GAMING-PC', '#i-info', 'View Details', 'left'],
-        ['closeHostMenu', '#i-close', 'Close', 'left']],
-      deleteColour: ['rgb(255, 141, 161)', 'rgb(255, 92, 122)'], disabled: '0.45',
+      // An online host can't be woken, so Wake PC isn't there, and nothing shows disabled
+      entries: [['refreshApps-GAMING-PC', '#i-refresh', 'Refresh apps', 'left'], ['viewDetails-GAMING-PC', '#i-info', 'View Details', 'left'],
+        ['deleteHost-GAMING-PC', '#i-trash', 'Delete PC', 'left'], ['closeHostMenu', '#i-close', 'Close', 'left']],
+      deleteColour: ['rgb(255, 141, 161)', 'rgb(255, 92, 122)'], disabled: 0,
       focused: 'refreshApps-GAMING-PC', focus: ['rgb(255, 255, 255)', 'rgb(10, 13, 26)'],
     });
-    // DOWN moves through the entries and RETURN closes the menu (Views.HostMenuDialog)
+    // DOWN moves through the entries that show, and Close closes the menu (Views.HostMenuDialog)
+    assert.deepEqual(await app.page.evaluate(() => Views.HostMenuDialog.view.func()),
+      ['refreshApps-GAMING-PC', 'viewDetails-GAMING-PC', 'deleteHost-GAMING-PC', 'closeHostMenu']);
     await app.page.keyboard.press('ArrowDown');
     await app.page.keyboard.press('ArrowDown');
     await app.page.waitForTimeout(200);
     assert.equal(await app.page.evaluate(() => document.activeElement.id), 'deleteHost-GAMING-PC');
     await app.page.evaluate(() => document.getElementById('closeHostMenu').click());
     assert.equal(await app.page.evaluate(() => document.getElementById('hostMenuDialog-A')), null);
+
+    // The menu of an offline host offers Wake PC instead of Refresh apps, and opens on its first entry, whatever was
+    // selected in the menu before
+    await app.page.evaluate(() => hostMenuDialog(Object.assign({}, hosts.A, { hostname: 'GAMING-PC', online: false })));
+    await app.page.waitForTimeout(300);
+    const offline = await app.page.evaluate(() => ({
+      entries: Array.prototype.map.call(document.querySelectorAll('#hostMenuDialog-A button'), (button) => button.id),
+      disabled: document.querySelectorAll('#hostMenuDialog-A button:disabled').length,
+      view: Views.HostMenuDialog.view.func(),
+      focused: document.activeElement.id,
+    }));
+    assert.deepEqual(offline, {
+      entries: ['wakeHost-GAMING-PC', 'viewDetails-GAMING-PC', 'deleteHost-GAMING-PC', 'closeHostMenu'], disabled: 0,
+      view: ['wakeHost-GAMING-PC', 'viewDetails-GAMING-PC', 'deleteHost-GAMING-PC', 'closeHostMenu'], focused: 'wakeHost-GAMING-PC',
+    });
+    await app.page.evaluate(() => document.getElementById('closeHostMenu').click());
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

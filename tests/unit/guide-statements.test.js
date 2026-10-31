@@ -2,17 +2,18 @@
 
 // Checks statements of the documents that describe what the code does, against the code, so that a change of the rules
 // fails here until the documents follow (the table of recommended bitrates has its own test, guide-bitrate-table.test.js):
-// - the warnings that the TV classes of docs/GUIDE.md section 2 get above 60 FPS at 4K (resolutionFramerateWarningKey())
+// - the warnings that the TV classes of docs/GUIDE.md get above 60 FPS at 4K (resolutionFramerateWarningKey())
 // - the game mode on Tizen 5.5 with a WASM player that offers the Ultra Low Latency mode, and the switch that stays
 //   disabled on a TV whose WASM player doesn't offer it (getGameModeDefault())
-// - the limit of the bitrate presets on TVs without a tested profile (presetBitrateLimit())
+// - the bitrate presets, which give the recommended bitrate of every resolution and frame rate (presetBitrate())
 // - the controller type that System information shows when the setting overrides the detection
 // - the Start of a hold that switches the mouse emulation on, which the game sees (wasm/gamepad.cpp)
+// - the buttons in the menus of docs/CONTROLLERS.md that the navigation guide of wasm/index.html leaves out
 // - the version suffix of a release promoted from a pre-release, and what the earlier release v1.19.0-s90c.1 offers
 // - the audio path that the section on surround sound with a soundbar describes: the 5.1 entry of the audio
 //   configuration, the 6-channel PCM track that only the EMSS backend adds, the two channels of the Web Audio output and
 //   the Audio stream line that the check reads
-// The release notes of a release (docs/RELEASE_NOTES_STABLE.md) only give the essentials, so the statements that they
+// The release notes of a release (docs/RELEASE_NOTES.md) only give the essentials, so the statements that they
 // carried until 1.19.100 are checked in the guide and the patch notes (docs/PATCH_NOTES.md), where they are now.
 
 const test = require('node:test');
@@ -66,7 +67,7 @@ test('the TV classes of the guide name the warnings that 4K above 60 FPS gets on
   assert.match(row8k, /4K at 90 or 120 FPS gets the warning that many Samsung TVs have 60 Hz panels instead of the Level 5.2 warning/);
   assert.match(row8k, /4K at 144 FPS still gets the warning that it exceeds Level 5.2/);
   // No document calls level 5.2 the highest level of all Samsung TVs any more
-  for (const file of ['docs/GUIDE.md', 'docs/RELEASE_NOTES_STABLE.md', 'docs/PATCH_NOTES.md', 'CHANGELOG.md', 'wasm/platform/tv_profile.js']) {
+  for (const file of ['docs/GUIDE.md', 'docs/RELEASE_NOTES.md', 'docs/PATCH_NOTES.md', 'CHANGELOG.md', 'wasm/platform/tv_profile.js']) {
     assert.doesNotMatch(read(file), /highest (decoder )?level of Samsung TVs|Level 5\.2 on every Samsung TV/i, file);
   }
 });
@@ -74,7 +75,8 @@ test('the TV classes of the guide name the warnings that 4K above 60 FPS gets on
 test('the guide gives the game mode of Tizen 5.5 with the exception for a WASM player that offers the mode', () => {
   assert.equal(profile.getGameModeDefault('5.5', 'yes'), false, 'off, but the switch can be turned on');
   assert.equal(profile.getGameModeDefault('5.5', 'unknown'), null, 'off and disabled');
-  const gameModeItem = GUIDE.split('\n').find((line) => line.indexOf('- **Game mode:**') === 0);
+  // The setting is called Ultra low latency mode since 2.2.0 (the stored key is still gameMode)
+  const gameModeItem = GUIDE.split('\n').find((line) => line.indexOf('- **Ultra low latency mode:**') === 0);
   assert.match(gameModeItem, /On Tizen 5\.5 it is off and disabled, unless the video player of the TV says that it offers the Ultra Low Latency mode/);
   // The patch notes of 1.19.100: a disabled switch on every TV whose WASM player says that it lacks the mode
   for (const version of ['5.5', '6.0', '6.5', '7.0', '8.0', '9.0']) {
@@ -84,23 +86,36 @@ test('the guide gives the game mode of Tizen 5.5 with the exception for a WASM p
   assert.match(read('docs/PATCH_NOTES.md'), /a disabled \*Game mode\* switch where the TV can't use it/);
 });
 
-test('the guide names the limit of the bitrate presets on TVs without a tested profile', () => {
-  assert.deepEqual(profile.presetBitrateLimit('unknown', capsOf({ tv: 'uhd' })), { mbps: profile.UNKNOWN_CONNECTION_MAX_BITRATE, reason: 'recommended' });
-  assert.match(GUIDE, /On a TV without a tested profile they are also limited to the highest bitrate that the app recommends for it, which is the decoder cap of the TV class, or 80 Mbps when the connection isn't detected\./);
-  assert.equal(profile.UNKNOWN_CONNECTION_MAX_BITRATE, 80);
+test('the guide names the bitrates of the presets at other resolutions and frame rates as the code gives them', () => {
+  const uhd = capsOf({ tv: 'uhd' });
+  const s90c = capsOf({ tv: 's90c' });
+  assert.equal(profile.presetBitrate('2560:1440', 60, 'wifi', uhd), 50);
+  assert.match(GUIDE, /every other resolution and frame rate gets its bitrate by the same rules, e\.g\. 50 Mbps for 2560 x 1440 at 60 FPS over Wi-Fi\./);
+  for (const fps of [90, 120, 144]) {
+    assert.equal(profile.presetBitrate('3840:2160', fps, 'wifi', s90c), 100, 'S90C at 4K and ' + fps + ' FPS');
+  }
+  assert.equal(profile.getDecoderCapMbps(s90c), 100);
+  assert.match(GUIDE, /On the tested S90C over Wi-Fi, 4K at 90, 120 or 144 FPS gets 100 Mbps, its decoder cap;/);
+  // The presets are the bitrates that the optimal settings button applies for the same resolution and frame rate
+  for (const conn of ['ethernet', 'wifi', 'unknown']) {
+    const optimal = profile.deriveOptimalSettings(s90c, conn);
+    assert.equal(profile.presetBitrate(optimal.resolution, optimal.frameRate, conn, s90c), optimal.bitrate, conn);
+  }
+  assert.match(GUIDE, /Once you move the bitrate slider yourself \(or change the bitrate in the Stream Menu\), the app keeps your bitrate/);
 });
 
 test('the documents describe the controller type of System information and the Start of the mouse emulation as the code does', () => {
   const locale = JSON.parse(read('wasm/static/locales/en-US.json'));
   assert.ok(Object.prototype.hasOwnProperty.call(locale, '%1$s (setting, detected: %2$s)'));
-  assert.ok(tableRow('Gamepad N')[1].indexOf('*PlayStation (setting, detected: Xbox)*') >= 0);
+  assert.ok(Object.prototype.hasOwnProperty.call(locale, 'Controller %1$s: %2$s (%3$s, %4$s buttons, %5$s axes, rumble: %6$s, type: %7$s)'));
+  assert.ok(tableRow('Controller N')[1].indexOf('*PlayStation (setting, detected: Xbox)*') >= 0);
   const controllers = read('docs/CONTROLLERS.md');
   assert.match(controllers, /System information shows the type sent to the PC for each controller\. When the setting overrides the detection, it names the detected type as well/);
   assert.doesNotMatch(controllers, /System information shows the type that Auto detects/);
   // Only the hold that switches the mouse emulation off keeps Start from the game (mouseEmulationHold[].toggled in
   // wasm/gamepad.cpp); the hold that switches it on sends Start until the switch
   assert.match(read('wasm/gamepad.cpp'), /mouseEmulationHold\[gamepadID\]\.toggled/);
-  assert.match(controllers, /When a hold switches mouse mode off, the game doesn't get that Start\. When a hold switches it on, the game sees Start held until the switch/);
+  assert.match(controllers, /When a hold switches mouse emulation off, the game doesn't get that Start\. When a hold switches it on, the game sees Start held until the switch/);
   assert.doesNotMatch(controllers, /The game doesn't get the Start of the hold that switched it\./);
 });
 
@@ -109,22 +124,25 @@ test('the documents explain the version of a promoted release and what the earli
   for (const file of ['README.md', 'docs/GUIDE.md', 'docs/PATCH_NOTES.md']) {
     assert.match(read(file), /announces (later )?is (a release of )?the regular Moonlight Tizen app/, file);
   }
-  const archive = read('docs/profiles/S90C/RELEASE_NOTES_v1.19.0-s90c.1.md');
-  assert.match(archive.split('\n').slice(0, 4).join('\n'), /\*\*Correction:\*\* the note under \*Hinweise\* that the update check/);
+  // The German notes of v1.19.0-s90c.1 stay at its tag, whose note on the update check the guide corrects: that release
+  // will never offer Moonlight Plus
+  assert.match(GUIDE, /The earlier release v1\.19\.0-s90c\.1 \(\*Moonlight S90C\* on the TV\) checks the releases of upstream Moonlight Tizen, so it will never offer Moonlight Plus/);
   // Tizen Studio always needs a Samsung account for the Samsung certificate, Apps2Samsung only on Tizen 7.0 and newer
   assert.match(GUIDE, /Apps2Samsung asks for a Samsung account on Tizen 7\.0 and newer\. Tizen Studio always needs one/);
 });
 
 test('the section on surround sound with a soundbar describes the audio path of the app as the code does', () => {
   const start = GUIDE.indexOf('### Surround sound with a soundbar');
-  assert.ok(start > GUIDE.indexOf('## 11. Audio') && start < GUIDE.indexOf('## 12. '), 'a part of section 11');
-  const section = GUIDE.slice(start, GUIDE.indexOf('## 12. '));
+  const audioSection = GUIDE.indexOf('\n## Audio\n');
+  const nextSection = GUIDE.indexOf('\n## ', audioSection + 1);
+  assert.ok(audioSection > 0 && start > audioSection && start < nextSection, 'a part of the section Audio');
+  const section = GUIDE.slice(start, nextSection);
   // The entry of the audio configuration that the section names, and EMSS as the default backend
   const html = read('wasm/index.html');
   assert.match(html, /data-value="51Surround" data-i18n="5\.1 Surround Sound"/);
-  assert.match(html, /id="selectAudioBackend"[^>]*data-value="EMSS"/);
+  assert.match(html, /id="selectAudioBackend"[^>]*data-value="EMSS" data-i18n="TV media player \(EMSS\)"/);
   assert.match(read('wasm/platform/index.js'), /const defaultAudioBackend = 'EMSS';/);
-  assert.match(section, /\*Audio configuration\*: \*5\.1 Surround Sound\*, and \*Audio backend\*: \*EMSS\* \(the default\)/);
+  assert.match(section, /\*Audio configuration\*: \*5\.1 Surround Sound\*, and \*Audio backend\*: \*TV media player \(EMSS\)\* \(the default\)/);
   // Only the EMSS backend gives the media player of the TV an audio track: PCM with the 5.1 layout for 6 channels
   const player = read('wasm/wasmplayer.cpp');
   assert.match(player, /if \(g_Instance->m_AudioBackend == AudioBackend::Emss\) \{[\s\S]*?case 6:\s*channelLayout = samsung::wasm::ChannelLayout::k5_1;[\s\S]*?"audio\/webm; codecs=\\"pcm\\""/);
@@ -145,4 +163,93 @@ test('the section on surround sound with a soundbar describes the audio path of 
   assert.match(section, /Untested: nobody has confirmed discrete 5\.1 from the app on a TV yet/);
   assert.ok(section.indexOf('](https://www.samsung.com/sg/support/tv-audio-video/what-is-earc-and-how-to-set-on-samsung-smart-tv/)') > 0);
   assert.ok(section.indexOf('](https://github.com/fidoboy/moonlight-tizen-ac3/blob/master/docs/Troubleshooting-Guide.md)') > 0);
+});
+
+// The headings of level 2 of a Markdown document, without the contents list
+const level2Headings = (text) => text.split('\n').filter((line) => /^## /.test(line)).map((line) => line.slice(3).trim()).filter((heading) => heading !== 'Contents');
+
+test('the guide and the controller page have headings without numbers, in the order of use, each in the contents list', () => {
+  // Numbers in the headings changed every link to a heading whenever a section was added or moved
+  assert.deepEqual(level2Headings(GUIDE), ['Requirements', 'Installation', 'The screens of the app', 'Optimal settings for this TV',
+    'Stream Menu and app menu', 'Finding your bitrate', 'Host settings (Sunshine)', 'ForceGM variant and game mode', 'HDR', 'Audio',
+    'Performance statistics', 'System information and diagnostic log', 'When Moonlight goes to the background', 'Known limits',
+    'Troubleshooting']);
+  for (const file of ['docs/GUIDE.md', 'docs/CONTROLLERS.md']) {
+    const text = read(file);
+    text.split('\n').filter((line) => /^#{2,4} /.test(line)).forEach((line) => {
+      assert.doesNotMatch(line, /^#+ \d+\.?\s/, file + ': ' + line);
+    });
+    // The contents list links each section in its order (the guide adds some subsections on the same line)
+    const contents = text.slice(text.indexOf('## Contents'), text.indexOf('\n## ', text.indexOf('## Contents') + 1));
+    const listed = contents.split('\n').filter((line) => /^- \[/.test(line)).map((line) => /^- \[([^\]]+)\]/.exec(line)[1]);
+    assert.deepEqual(listed, level2Headings(text), file);
+  }
+});
+
+test('the sections of the guide that the app names by their heading exist', () => {
+  // e.g. "see <b>ForceGM variant and game mode</b> in the guide of Moonlight Plus" (wasm/platform/index.js)
+  const named = [];
+  for (const file of ['wasm/platform/index.js', 'wasm/index.html']) {
+    const pattern = /<b>([^<]+)<\/b> in the guide/g;
+    let match;
+    while ((match = pattern.exec(read(file))) !== null) {
+      named.push(match[1]);
+    }
+  }
+  assert.ok(named.indexOf('ForceGM variant and game mode') >= 0, named.join(', '));
+  const headings = GUIDE.split('\n').filter((line) => /^#{2,4} /.test(line)).map((line) => line.replace(/^#+ /, '').trim());
+  named.forEach((name) => assert.ok(headings.indexOf(name) >= 0, 'the guide has the heading ' + name));
+});
+
+test('the guide gives the tested bitrate steps of the S90C itself and links the documents of v1.19.0-s90c.1 at their tag', () => {
+  const bitrate = GUIDE.slice(GUIDE.indexOf('\n## Finding your bitrate\n'), GUIDE.indexOf('\n## ', GUIDE.indexOf('\n## Finding your bitrate\n') + 1));
+  assert.match(bitrate, /\*\*Samsung S90C over Wi-Fi:\*\* starts at its cap of 100 Mbps\. The tuning plan of this model tests 100 → 120 → 135 → 150 Mbps/);
+  // The archive of the German documents left the branch; the tag keeps them
+  assert.ok(!fs.existsSync(path.join(REPO_ROOT, 'docs', 'profiles')));
+  const tagLink = 'https://github.com/Emperior90/moonlight-tizen-Plus/tree/v1.19.0-s90c.1/docs';
+  for (const file of ['docs/GUIDE.md', 'README.md', 'docs/PATCH_NOTES.md']) {
+    assert.ok(read(file).indexOf('](' + tagLink + ')') >= 0, file + ' links the tag v1.19.0-s90c.1');
+  }
+});
+
+test('the controller page names the menu buttons that the navigation guide leaves out', () => {
+  const controllers = read('docs/CONTROLLERS.md');
+  const start = controllers.indexOf('\n## Buttons in the menus\n');
+  const section = controllers.slice(start, controllers.indexOf('\n## ', start + 1));
+  // The buttons of the table by their Xbox names (before a slash or a bracket), e.g. "Select / View (Share, Create)"
+  const buttons = section.split('\n').filter((line) => /^\| /.test(line) && !/^\| (Button|---)/.test(line))
+    .map((line) => line.split('|')[1].trim().split(' / ')[0].replace(/ \(.*\)$/, ''));
+  assert.deepEqual(buttons, ['A', 'B', 'D-pad, left stick', 'Select', 'Start']);
+  // The controller keys of the navigation guide (wasm/index.html), each line of a button as its own key
+  const guideKeys = [];
+  const pattern = /class="navGuideGamepadText" data-i18n="([^"]+)"/g;
+  let match;
+  while ((match = pattern.exec(read('wasm/index.html'))) !== null) {
+    guideKeys.push(match[1]);
+  }
+  const KEYS = { 'A': ['A'], 'B': ['B'], 'D-pad, left stick': ['D-PAD UP', 'L-STICK UP'], 'Select': ['SELECT'], 'Start': ['START'] };
+  const missing = buttons.filter((button) => KEYS[button].some((key) => guideKeys.indexOf(key) < 0));
+  // Start (CH- on the remote) only sets the focus, and the guide has no line for it since 2.2.0
+  assert.deepEqual(missing, ['Start']);
+  const sentence = section.split('\n').find((line) => line.indexOf('- The in-app *Navigation guide* (Settings → About) lists') === 0);
+  assert.ok(sentence, 'the controller page refers to the navigation guide');
+  assert.match(sentence, new RegExp('lists the same buttons except ' + missing.join(' and ') + ','));
+});
+
+test('the README and the guide name the PC list, its chip and its Add PC card as the English UI does', () => {
+  // The title of the first screen and its card for a new PC (wasm/platform/index.js, wasm/index.html)
+  assert.match(read('wasm/platform/index.js'), /\$\('#header-title'\)\.attr\('data-i18n', 'PCs'\)/);
+  assert.match(read('wasm/index.html'), /<span class="host-text" data-i18n="Add PC">Add PC<\/span>/);
+  const readme = read('README.md');
+  const hostsShot = readme.split('\n').find((line) => line.indexOf('](docs/images/hosts.jpg)') > 0);
+  assert.ok(hostsShot, 'the README shows docs/images/hosts.jpg');
+  assert.match(hostsShot, /titled PCs/);
+  assert.match(hostsShot, /with one Running chip/);
+  assert.match(hostsShot, /next to the Add PC card/);
+  // Names of 2.1.0 that the screens no longer show: the screen Hosts, the card Add Host, three chips of a PC, and the
+  // gamepad in the header of the app list
+  for (const [file, text] of [['README.md', readme], ['docs/GUIDE.md', GUIDE]]) {
+    assert.doesNotMatch(text, /Add Host|Hosts screen|host list\b|\*\*Hosts\.\*\*|\| Hosts \||Running, Online and Paired|Select on a gamepad/, file);
+  }
+  assert.match(GUIDE, /\*\*PC list\.\*\* The first screen, titled \*PCs\*\./);
 });

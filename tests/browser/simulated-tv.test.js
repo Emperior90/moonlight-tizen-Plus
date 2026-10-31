@@ -1,8 +1,8 @@
 'use strict';
 
 // Checks the test setup itself (the simulated TV and the stub of the WebAssembly module, see mocks/), and pins what the
-// UI derives directly from the TV: the System information text (which since plan WP3 also shows what the app detected:
-// panel, HDR, connection type, tested profile and the model year hint, and since plan WP6 the connected gamepads, none
+// UI derives directly from the TV: the System information text (which since 1.19.100 also shows what the app detected:
+// panel, HDR, connection type, tested profile and the model year hint, and the connected gamepads, none
 // here; see gamepad-controllers.test.js) and the resolutions marked as unsupported, also after a translation pass of
 // i18n.js.
 
@@ -149,18 +149,17 @@ function readSystemInfo(page) {
 }
 
 // The simulated TVs have no tizentvwasm and answer yes for every codec of the WASM player by default (see
-// runtime-checks.test.js for the other answers of plan WP8)
-test('System information shows the app, the model strings and what the app detected about the TV (plan WP3)', async () => {
+// runtime-checks.test.js for the other answers of the runtime checks)
+test('System information shows the app, the model strings and what the app detected about the TV', async () => {
   const expected = [
     {
       tv: { tv: 's90c', conn: 'ethernet' },
       lines: [
-        'App Version: Moonlight Plus v2.1.0',
+        'App Version: Moonlight Plus v2.2.0',
         'Platform Version: Tizen 9.0',
         'TV Model Series: 23_PONTUSM_OLED',
         'TV Model Name: QE55S90CAT',
-        'TV Model Group: 23_PONTUSM',
-        'Model Year (from the model group): 2023',
+        'TV Model Group: 23_PONTUSM (model year 2023)',
         'Panel: 4K',
         'HDR Support: Yes',
         'Network Connection Type: Ethernet',
@@ -169,7 +168,7 @@ test('System information shows the app, the model strings and what the app detec
         'WASM player API levels: Unknown',
         'Video decoders (MediaSource check): H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
         'Video decoders at level 5.2 (4K above 60 FPS): HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
-        'Gamepads: None',
+        'Controllers: None',
         '',
         'Last session: None yet',
       ],
@@ -177,12 +176,11 @@ test('System information shows the app, the model strings and what the app detec
     {
       tv: { tv: 'fhd', conn: 'wifi' },
       lines: [
-        'App Version: Moonlight Plus v2.1.0',
+        'App Version: Moonlight Plus v2.2.0',
         'Platform Version: Tizen 5.5',
         'TV Model Series: 20_KANTM2_FHD',
         'TV Model Name: UE43T5300AU',
-        'TV Model Group: 20_KANTM2',
-        'Model Year (from the model group): 2020',
+        'TV Model Group: 20_KANTM2 (model year 2020)',
         'Panel: Full HD',
         'HDR Support: No',
         'Network Connection Type: Wi-Fi',
@@ -191,7 +189,7 @@ test('System information shows the app, the model strings and what the app detec
         'WASM player API levels: Unknown',
         'Video decoders (MediaSource check): H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
         'Video decoders at level 5.2 (4K above 60 FPS): HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
-        'Gamepads: None',
+        'Controllers: None',
         '',
         'Last session: None yet',
       ],
@@ -199,12 +197,11 @@ test('System information shows the app, the model strings and what the app detec
     {
       tv: { tv: '8k', conn: 'unknown', modelCode: 'NOYEAR' },
       lines: [
-        'App Version: Moonlight Plus v2.1.0',
+        'App Version: Moonlight Plus v2.2.0',
         'Platform Version: Tizen 6.5',
         'TV Model Series: 22_PONTUSM_8K',
         'TV Model Name: QE65QN900BT',
         'TV Model Group: NOYEAR',
-        'Model Year (from the model group): Unknown',
         'Panel: 8K',
         'HDR Support: Yes',
         'Network Connection Type: Unknown',
@@ -213,7 +210,7 @@ test('System information shows the app, the model strings and what the app detec
         'WASM player API levels: Unknown',
         'Video decoders (MediaSource check): H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
         'Video decoders at level 5.2 (4K above 60 FPS): HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
-        'Gamepads: None',
+        'Controllers: None',
         '',
         'Last session: None yet',
       ],

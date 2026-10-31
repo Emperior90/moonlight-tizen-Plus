@@ -34,13 +34,13 @@ This Code of Conduct applies both within project spaces and in public spaces whe
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported by contacting the project team at info@moonlight-stream.org. The project team will review and investigate all complaints, and will respond in a way that it deems appropriate to the circumstances. The project team is obligated to maintain confidentiality with regard to the reporter of an incident. Further details of specific enforcement policies may be posted separately.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported privately to the maintainer of Moonlight Plus, the GitHub user [Emperior90](https://github.com/Emperior90), through GitHub: the private report form under the **Security** tab of the [repository](https://github.com/Emperior90/moonlight-tizen-Plus) (**Report a vulnerability**) stays private between you and the maintainer and takes conduct reports too. Please don't report such behavior on the public issue tracker. The maintainer will review and investigate all complaints, and will respond in a way that they deem appropriate to the circumstances. The maintainer is obligated to maintain confidentiality with regard to the reporter of an incident. Further details of specific enforcement policies may be posted separately.
 
 Project maintainers who do not follow or enforce the Code of Conduct in good faith may face temporary or permanent repercussions as determined by other members of the project's leadership.
 
 ## Attribution
 
-This Code of Conduct is adapted from the [Contributor Covenant][homepage], version 1.4, available at [http://contributor-covenant.org/version/1/4][version]
+This Code of Conduct is adapted from the [Contributor Covenant][homepage], version 1.4, with the reporting contact of Moonlight Plus, available at [http://contributor-covenant.org/version/1/4][version]
 
 [homepage]: http://contributor-covenant.org
 [version]: http://contributor-covenant.org/version/1/4/
