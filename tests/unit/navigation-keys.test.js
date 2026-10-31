@@ -126,6 +126,18 @@ test('both Enter keys accept and prevent the native click', () => {
   assert.deepEqual(recorder.operations, ['accept', 'accept']);
 });
 
+test('the auto-repeat of a held OK is ignored, so it can\'t also press the item of the view that the first press opened', () => {
+  const { recorder, press } = loadRemoteController();
+  // The views change at once (e.g. a host opens its apps), so a repeat would start the selected app
+  assert.equal(press('KEY_ENTER'), true);
+  assert.equal(press('KEY_ENTER', { repeat: true }), true, 'still no native click');
+  assert.equal(press('KEY_REMOTE_ENTER', { repeat: true }), true);
+  assert.deepEqual(recorder.operations, ['accept']);
+  // The next press accepts again
+  press('KEY_ENTER');
+  assert.deepEqual(recorder.operations, ['accept', 'accept']);
+});
+
 test('Return goes back, CH+ presses and CH- switches', () => {
   const { recorder, press } = loadRemoteController();
   press('KEY_RETURN');

@@ -4,8 +4,10 @@
 // gamepad reach it from the host grid, it runs the subnet scan of static/js/mdns-browser/main.js again with the polling
 // of the known hosts paused, runs only once at a time, and resumes the polling only while the hosts are shown, with one
 // poll loop per host also when it was pressed during the scan or the first polls at startup. It also checks that the
-// header still presses Settings after a return from the settings, now that the button comes first. The scan is
-// replaced by one that the test finishes by hand; the calls of the polling are recorded.
+// header still presses Settings after a return from the settings, now that the button comes first. The scan of the
+// start (discoverHostsAtStartup()) runs only while the hosts are shown and no stream starts, says so only in the log,
+// and resumes the polling only while the hosts are shown. The scan is replaced by one that the test finishes by hand;
+// the calls of the polling are recorded.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -144,7 +146,7 @@ test('a gamepad reaches the button with the D-pad and starts a scan with A', asy
       send(12, false);
       send(0, true);
       send(0, false);
-      // A presses after the navigation delay of 150 ms
+      // A presses after the delay of the buttons (50 ms)
       await new Promise((resolve) => setTimeout(resolve, 300));
     });
     assert.deepEqual((await state(app.page)).events, ['stop polling', 'scan']);
@@ -299,6 +301,105 @@ test('Rescan network during the first polls at startup leaves one poll loop per 
     });
     const result = await pollsAfterScan(app.page);
     assert.deepEqual(result.polls, { HOST1: 1, HOST2: 1 });
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+// Run the discovery of the start (discoverHostsAtStartup()) with the simulated hosts and the scan of simulateHosts(),
+// and record the snackbar messages and whether each scan started while the hosts were shown
+const recordStartupScan = (page) => page.evaluate(() => {
+  window.__messages = [];
+  document.querySelector('#snackbar').MaterialSnackbar.showSnackbar = (data) => window.__messages.push(data.message);
+  window.__scans = [];
+  const scan = startSubnetScanner;
+  startSubnetScanner = () => {
+    window.__scans.push($('#host-grid').is(':visible'));
+    return scan();
+  };
+  isSubnetScanFinished = false;
+});
+
+test('the scan of the start runs quietly while the hosts are shown, and resumes their polling there', async () => {
+  const app = await openWithScan();
+  try {
+    await simulateHosts(app.page, 20);
+    await recordStartupScan(app.page);
+    await app.page.evaluate(async () => {
+      discoverHostsAtStartup();
+      while (!window.__finishScan) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    });
+    const result = await pollsAfterScan(app.page);
+    assert.deepEqual(result.polls, { HOST1: 1, HOST2: 1 });
+    const seen = await app.page.evaluate(() => ({ scans: window.__scans, messages: window.__messages, finished: isSubnetScanFinished }));
+    // Nobody asked for this scan, so only the log says that it runs
+    assert.deepEqual(seen, { scans: [true], messages: [], finished: true });
+    assert.ok(app.logs.some((line) => line.indexOf('Scanning the local network to discover new hosts...') >= 0));
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a scan of the start that ends while the settings are shown leaves the polling stopped', async () => {
+  const app = await openWithScan();
+  try {
+    await simulateHosts(app.page, 20);
+    await recordStartupScan(app.page);
+    await app.page.evaluate(async () => {
+      discoverHostsAtStartup();
+      while (!window.__finishScan) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      $('#settingsBtn').trigger('click');
+    });
+    await app.page.waitForFunction(() => $('#settings-list').is(':visible'));
+    const result = await pollsAfterScan(app.page);
+    // The settings stopped the polling, and the end of the scan doesn't start it again there
+    assert.deepEqual(result.polls, { HOST1: 0, HOST2: 0 });
+    assert.deepEqual(await app.page.evaluate(() => Object.keys(activePolls)), []);
+    assert.equal(await app.page.evaluate(() => isSubnetScanFinished), true);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('the start doesn\'t scan once the hosts were left before their first polls ended', async () => {
+  const app = await openWithScan();
+  try {
+    // The first poll of an offline host takes long, and the user opens the settings meanwhile
+    await simulateHosts(app.page, 600);
+    await recordStartupScan(app.page);
+    await app.page.evaluate(async () => {
+      const discovery = discoverHostsAtStartup();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      $('#settingsBtn').trigger('click');
+      // A scan that started anyway would wait for the test to finish it
+      await Promise.race([discovery, new Promise((resolve) => setTimeout(resolve, 2000))]);
+    });
+    const seen = await app.page.evaluate(() => ({
+      scans: window.__scans, messages: window.__messages, finished: isSubnetScanFinished, polls: Object.keys(activePolls),
+    }));
+    // No scan in the settings, no notice, no polling there; a Smart Hub deep link that waits for the end of the scan
+    // goes on (isSubnetScanFinished)
+    assert.deepEqual(seen, { scans: [], messages: [], finished: true, polls: [] });
+    assert.ok(app.logs.some((line) => line.indexOf('Not scanning the local network at this start, since the hosts are no longer shown.') >= 0));
+
+    // The same during the start of a stream
+    await app.page.evaluate(() => $('#goBackBtn').trigger('click'));
+    await app.page.waitForFunction(() => $('#host-grid').is(':visible'));
+    await recordStartupScan(app.page);
+    await app.page.evaluate(async () => {
+      const discovery = discoverHostsAtStartup();
+      isInGame = true;
+      await Promise.race([discovery, new Promise((resolve) => setTimeout(resolve, 2000))]);
+      isInGame = false;
+    });
+    assert.deepEqual(await app.page.evaluate(() => [window.__scans, isSubnetScanFinished]), [[], true]);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

@@ -11,7 +11,7 @@ const assert = require('node:assert/strict');
 const { openApp, startHarness } = require('./harness');
 
 const OPERATIONS = ['up', 'down', 'left', 'right', 'accept', 'back', 'press', 'switch'];
-// delayedNavigation() runs the accept, back, press and switch operations 150 ms later (NAVIGATION_DELAY)
+// delayedNavigation() runs the accept, back, press and switch operations 50 ms later (BUTTON_NAVIGATION_DELAY)
 const AFTER_DELAY_MS = 250;
 const XBOX_ID = 'Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)';
 const EIGHTBITDO_ID = '8BitDo SN30 Pro (Vendor: 2dc8 Product: 6001)';

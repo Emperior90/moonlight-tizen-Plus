@@ -89,7 +89,7 @@ function wasmCalls(page) {
 test('a certificate that can\'t be read is not replaced, and the app asks for a restart', async () => {
   const app = await openApp(harness, {
     tv: { tv: 's90c', conn: 'wifi' },
-    stored: Object.assign({ settingsSchema: 2 }, EXISTING_INSTALL),
+    stored: Object.assign({ settingsSchema: 3 }, EXISTING_INSTALL),
     initScripts: [failingReads({ cert: 'abort' })],
     readySignals: ['Auto adjust bitrate state', 'Loading system information...', 'Failed to read the stored certificate'],
   });
@@ -97,7 +97,7 @@ test('a certificate that can\'t be read is not replaced, and the app asks for a 
     await app.page.waitForTimeout(300);
     // No new certificate and no HTTP start with one: the pairing with every host stays as it is
     assert.deepEqual(await wasmCalls(app.page), []);
-    assert.deepEqual(pick(await readStorage(app.page), ['uniqueid', 'cert', 'settingsSchema']), Object.assign({ settingsSchema: 2 }, EXISTING_INSTALL));
+    assert.deepEqual(pick(await readStorage(app.page), ['uniqueid', 'cert', 'settingsSchema']), Object.assign({ settingsSchema: 3 }, EXISTING_INSTALL));
     assert.equal(await app.page.evaluate(() => $('#wasmSpinnerMessage').text()), 'Unable to read the stored pairing data. Please restart Moonlight.');
     assert.equal(await app.page.evaluate(() => $('#wasmSpinner').is(':visible')), true, 'the app stays on the loading screen');
     assert.deepEqual(app.errors, []);
@@ -132,7 +132,7 @@ test('a unique ID that can\'t be read is not replaced, and the install is not ta
 });
 
 test('a setting that can\'t be read shows its default for this start, and the following settings still load', async () => {
-  const stored = Object.assign({ settingsSchema: 2, framePacing: false, fullRange: true, performanceStats: true }, EXISTING_INSTALL);
+  const stored = Object.assign({ settingsSchema: 3, framePacing: false, fullRange: true, performanceStats: true }, EXISTING_INSTALL);
   const app = await openApp(harness, {
     tv: { tv: 's90c', conn: 'wifi' },
     stored,
@@ -159,7 +159,7 @@ test('a bitrate preset state that can\'t be read keeps the bitrate and stores no
   // The stored 80 Mbps are the 4K preset over Wi-Fi, so a decision made without the stored state would store that the
   // presets follow the video settings, in place of the stored false
   const stored = Object.assign({
-    settingsSchema: 2, autoAdjustBitrate: false, bitrate: '80', resolution: '3840:2160', frameRate: 60,
+    settingsSchema: 3, autoAdjustBitrate: false, bitrate: '80', resolution: '3840:2160', frameRate: 60,
   }, EXISTING_INSTALL);
   const app = await openApp(harness, {
     tv: { tv: 's90c', conn: 'wifi' },
@@ -181,7 +181,7 @@ test('a bitrate preset state that can\'t be read keeps the bitrate and stores no
 test('the stored values are read as before when IndexedDB works', async () => {
   // The same install without read errors: the bitrate preset state is loaded as stored, and nothing is rewritten
   const stored = Object.assign({
-    settingsSchema: 2, autoAdjustBitrate: false, bitrate: '80', resolution: '3840:2160', frameRate: 60, hdrMode: false,
+    settingsSchema: 3, autoAdjustBitrate: false, bitrate: '80', resolution: '3840:2160', frameRate: 60, hdrMode: false,
   }, EXISTING_INSTALL);
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, stored });
   try {

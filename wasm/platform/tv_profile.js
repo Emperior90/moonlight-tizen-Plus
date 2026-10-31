@@ -20,8 +20,10 @@
 // install where the user never touched that setting. Version 2 stores the defaults of version 1 once for existing
 // installs (legacySettingsSnapshot()), and a fresh install starts at version 2 with the defaults derived for its TV.
 // When a later build changes the default of a stored setting again, it raises the version and freezes the defaults of
-// the previous version the same way.
-const SETTINGS_SCHEMA_VERSION = 2;
+// the previous version the same way. Version 3 turned the rumble on by default, so it stores the earlier default (off)
+// once for an existing install that never switched it (schema2Snapshot()), and it drops the stored value of the switch
+// 'Continuous audio from the host', which is gone since the host always keeps sending audio (SCHEMA_3_REMOVED_KEYS).
+const SETTINGS_SCHEMA_VERSION = 3;
 const SETTINGS_SCHEMA_KEY = 'settingsSchema';
 
 const RECOMMENDED_ETHERNET_BITRATE = 75; // Highest recommended bitrate in Mbps over the 100 Mbps Ethernet port of Samsung TVs, leaving headroom for FEC, network overhead and larger frames
@@ -72,6 +74,15 @@ const LEGACY_DEFAULT_BITRATES = Object.freeze({ ethernet: 75, wifi: 100, unknown
 // order in which loadStoredSettings() in index.js loads them
 const LEGACY_SNAPSHOT_KEYS = Object.freeze(['resolution', 'unlockAllFps', 'frameRate', 'bitrate', 'videoCodec', 'hdrMode',
   'framePacing', 'fullRange', 'gameMode', 'optimizeBitrate', 'autoAdjustBitrate']);
+
+// Frozen copy of the defaults of settings schema 2 that settings schema 3 changed: the rumble was off until the user
+// switched it on. Never change these values: they describe what existing installs showed before the snapshot of
+// settings schema 3, not what new installs should get.
+const SCHEMA_2_DEFAULTS = Object.freeze({ rumbleFeedback: false });
+
+// The stored keys of the settings that settings schema 3 removed: the switch 'Continuous audio from the host' of an
+// A/B test, since the launch and resume requests always ask for audio during silence now
+const SCHEMA_3_REMOVED_KEYS = Object.freeze(['continuousAudio']);
 
 // Call a Tizen or Samsung API and return its result, or the fallback value if the call throws (e.g. a missing API
 // object, a missing privilege or an unusual firmware) or returns nothing
@@ -775,6 +786,20 @@ function legacySettingsSnapshot(stored, caps, connectionType) {
   return snapshot;
 }
 
+// Return the settings that the one-time snapshot of settings schema 3 stores for an existing install of settings schema
+// 2 or older: the default of settings schema 2 (SCHEMA_2_DEFAULTS) for every setting whose default changed and that is
+// still unset, so that the install shows what it showed before. Stored values are never replaced.
+function schema2Snapshot(stored) {
+  const values = stored || {};
+  const snapshot = {};
+  Object.keys(SCHEMA_2_DEFAULTS).forEach(function(key) {
+    if (values[key] == null) {
+      snapshot[key] = SCHEMA_2_DEFAULTS[key];
+    }
+  });
+  return snapshot;
+}
+
 // Export the functions and constants for the unit tests in Node, where this file is loaded as a module
 if (typeof module === 'object' && module && module.exports) {
   module.exports = {
@@ -830,5 +855,8 @@ if (typeof module === 'object' && module && module.exports) {
     legacyDefaults: legacyDefaults,
     followsBitratePresets: followsBitratePresets,
     legacySettingsSnapshot: legacySettingsSnapshot,
+    SCHEMA_2_DEFAULTS: SCHEMA_2_DEFAULTS,
+    SCHEMA_3_REMOVED_KEYS: SCHEMA_3_REMOVED_KEYS,
+    schema2Snapshot: schema2Snapshot,
   };
 }

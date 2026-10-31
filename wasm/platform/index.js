@@ -18,6 +18,7 @@ var hosts = {}; // Hosts is an associative array of NvHTTP objects, keyed by ser
 var isHostOpening = false; // Prevents concurrent hostChosen executions, initial value is false
 var isHostsLoaded = false; // Indicates if IndexedDB has finished loading hosts
 var isSubnetScanFinished = false; // Indicates if the initial subnet scan has completed
+var isStartupUiShown = false; // Whether restoreUiAfterWasmLoad() showed the hosts after the start, initial value is false
 var activePolls = {}; // Hosts currently being polled. An associated array of polling IDs, keyed by server UID
 var pollGenerations = {}; // Number of the latest start of the polling of each host, keyed by server UID
 var appGridGeneration = 0; // Number of the latest build of the app grid (showApps()), whose box art downloads are the only ones still wanted
@@ -73,11 +74,24 @@ var _isSmartHubSupported = false; // Flag indicating if Smart Hub Preview is sup
 const REPEAT_DELAY = 350; // Repeat delay set to 350ms (milliseconds)
 const REPEAT_INTERVAL = 100; // Repeat interval set to 100ms (milliseconds)
 const ACTION_THRESHOLD = 0.5; // Threshold for initial navigation set to 0.5
-const NAVIGATION_DELAY = 150; // Navigation delay set to 150ms (milliseconds)
+const NAVIGATION_DELAY = 150; // Delay in ms of a move of the left stick in the menus, so that a diagonal stick movement doesn't make two steps
+const BUTTON_NAVIGATION_DELAY = 50; // Delay in ms of A, B, Select and Start of a gamepad in the menus, close to the keys of the remote, which act at once
 const UPDATE_TIMESTAMP = 'lastUpdateCheck'; // Use the update check timestamp key to determine the last update check
 const UPDATE_VERSION = 'latestUpdateVersion'; // // Use the update version key to cache the latest version found
+const UPDATE_NOTICE_VERSION = 'updateNoticeVersion'; // Key of the newer version that the update notice was shown for, so that it shows once per version
 const UPDATE_INTERVAL = 24 * 60 * 60 * 1000; // Automatic check for updates interval is set to 24 hours
 const CODEC_MODES_REFRESH_TIMEOUT_MS = 1500; // Longest wait in ms for the codec modes of the host after a launch or resume request
+const SCAN_ABORT_PAUSE_MS = 300; // Pause in ms before the request of an app list right after it stopped a scan of the network, whose requests the TV is still dropping
+// The surroundAudioInfo of the launch and resume requests for each audio configuration: the channel mask << 16 | the
+// channel count, as MAKE_AUDIO_CONFIGURATION() of moonlight-common-c builds them (Limelight.h) and moonlight-qt sends
+// them. Sunshine hands it to the prep commands of an app (SUNSHINE_CLIENT_AUDIO_CONFIGURATION).
+const SURROUND_AUDIO_INFO = Object.freeze({ 'Stereo': 0x030002, '51Surround': 0x3F0006, '71Surround': 0x63F0008 });
+
+// The surroundAudioInfo of the launch and resume requests for an audio configuration of the settings, stereo for an
+// unknown one, which the module streams in stereo as well (wasm/main.cpp)
+function getSurroundAudioInfo(audioConfig) {
+  return Object.prototype.hasOwnProperty.call(SURROUND_AUDIO_INFO, audioConfig) ? SURROUND_AUDIO_INFO[audioConfig] : SURROUND_AUDIO_INFO.Stereo;
+}
 
 // Called by the common.js module
 function attachListeners() {
@@ -150,7 +164,6 @@ function attachListeners() {
   $('#audioClockSyncSwitch').on('click', saveAudioClockSync);
   $('#jitterSlider').on('input', saveAudioJitter);
   $('#playHostAudioSwitch').on('click', savePlayHostAudio);
-  $('#continuousAudioSwitch').on('click', saveContinuousAudio);
   $('#decryptHostAudioSwitch').on('click', saveDecryptHostAudio);
   $('.videoCodecMenu li').on('click', saveVideoCodec);
   $('#hdrModeSwitch').on('click', saveHdrMode);
@@ -201,8 +214,8 @@ function attachListeners() {
 
 // Map the gamepad input of the menus, which gamepad.js reports as 'gamepadinputchanged' events, to Navigation operations
 // (W3C standard layout, see wasm/gamepad.cpp). A accepts, B goes back, Select presses and Start switches like CH+ and
-// CH- of the remote, each after the navigation delay. The D-pad moves right away and the left stick past the action
-// threshold after the navigation delay, and both repeat while held. A release, or a stick back below the threshold, only
+// CH- of the remote, each after the short delay of the buttons. The D-pad moves right away and the left stick past the
+// action threshold after the longer navigation delay, and both repeat while held. A release, or a stick back below the threshold, only
 // stops the repeat that the same input started, so a jittering resting stick or another released button no longer
 // cancels a held D-pad. An action button still ends a repeat, since its operation runs on the focused item.
 function handleGamepadMenuInput(e) {
@@ -229,7 +242,7 @@ function handleGamepadMenuInput(e) {
       // Handle button press
       if (pressed) {
         if (buttonMapping[index]) {
-          delayedNavigation(buttonMapping[index]);
+          delayedNavigation(buttonMapping[index], BUTTON_NAVIGATION_DELAY);
           // Clear repeat action and timeout for non-navigation buttons
           stopRepeatAction();
         } else if (dPadMapping[index]) {
@@ -258,7 +271,7 @@ function handleGamepadMenuInput(e) {
       gamepadAxisDirections[source] = direction;
       if (direction !== 0) {
         const operation = axisMapping[index][direction < 0 ? 0 : 1];
-        delayedNavigation(operation);
+        delayedNavigation(operation, NAVIGATION_DELAY);
         // Set repeat action and timeout to the mapped axis
         startRepeatAction(operation, source);
       } else if (repeatSource === source) {
@@ -350,12 +363,12 @@ function repeatActionHandler() {
   }
 }
 
-// Delays navigation-related callback execution after a specified delay
-function delayedNavigation(callback) {
+// Run a navigation operation of a gamepad after the given delay in ms, replacing the one that still waits
+function delayedNavigation(callback, delay) {
   // Clear any existing navigation timeout
   clearTimeout(navigationTimeout);
   // Set a new navigation timeout with the provided callback and delay
-  navigationTimeout = setTimeout(callback, NAVIGATION_DELAY);
+  navigationTimeout = setTimeout(callback, delay);
 }
 
 // Updates the host status indicator based on the host's online and paired status
@@ -617,47 +630,32 @@ function showHostsMode() {
   startPollingHosts();
 }
 
-// Show the Hosts grid
+// Show the Hosts grid, right away: the hosts are already in the grid, so there is nothing to wait for
 function showHosts() {
-  // Stop navigation before showing the loading screen
+  // Stop navigation while the views change
   Navigation.stop();
 
-  // Hide the main header and content before showing a loading screen
+  // Hide the other views and show the main header of the hosts
   $('#main-header').children().hide();
   $('#settings-list, #game-grid').hide();
+  $('#wasmSpinner').hide();
+  $('#main-header').children().show();
 
-  // Show a spinner while the host list loads
-  if (typeof setUiView === 'function') {
-    setUiView('loading');
-  }
-  $('#wasmSpinner').css('display', 'inline-block');
-  $('#wasmSpinnerLogo').hide();
-  $('#wasmSpinnerMessage').text(t('Loading Hosts...'));
+  // Navigate to the Hosts view
+  showHostsMode();
 
-  setTimeout(() => {
-    // Hide the spinner after successfully retrieving the host list
-    $('#wasmSpinner').hide();
-
-    // Show the main header after the loading screen is complete
-    $('#main-header').children().show();
-
-    // Navigate to the Hosts view
-    showHostsMode();
-  }, 500);
-
-  setTimeout(() => {
-    var lastOpenedHost = localStorage.getItem('lastOpenedHost');
-    if (lastOpenedHost && window.Views && Views.Hosts && Views.Hosts.view) {
-      var children = Views.Hosts.view.func();
-      for (var i = 0; i < children.length; i++) {
-        if (children[i].id === 'host-' + lastOpenedHost) {
-          Views.Hosts.view.index = i;
-          break;
-        }
+  // Select the host that was opened last
+  var lastOpenedHost = localStorage.getItem('lastOpenedHost');
+  if (lastOpenedHost && window.Views && Views.Hosts && Views.Hosts.view) {
+    var children = Views.Hosts.view.func();
+    for (var i = 0; i < children.length; i++) {
+      if (children[i].id === 'host-' + lastOpenedHost) {
+        Views.Hosts.view.index = i;
+        break;
       }
     }
-    Navigation.switch();
-  }, 500);
+  }
+  Navigation.switch();
 }
 
 function restoreUiAfterWasmLoad() {
@@ -672,6 +670,7 @@ function restoreUiAfterWasmLoad() {
   // Navigate to the Hosts view
   Navigation.push(Views.Hosts);
   showHostsMode();
+  isStartupUiShown = true;
   // Say once that the app ended during the last stream the last time (diagnostics.js)
   reportUnfinishedStream();
   // Set focus to current item and/or scroll to the current host row
@@ -1655,6 +1654,13 @@ function updateMacAddress(host) {
   });
 }
 
+// Push the view of a dialog that confirms an action that can't be undone (quit the running app, delete hosts, restore
+// the default settings) with the focus on No, its second button, so that an OK pressed by mistake doesn't confirm it
+function pushConfirmationView(view) {
+  view.view.index = 1;
+  Navigation.push(view);
+}
+
 // Show the Host Menu dialog with host button options
 function hostMenuDialog(host) {
   // Create an overlay for the dialog and append it to the body
@@ -1686,13 +1692,15 @@ function hostMenuDialog(host) {
       .append($('<span>', { class: 'overlay-menu-label', text: text }));
   };
 
-  // Define the options for the menu with the corresponding attributes
+  // The entries of the menu, in their order. An entry that can't run for the state of the host (Refresh apps of a host
+  // that is offline, Wake PC of one that is online) is left out instead of showing disabled, so the focus never lands
+  // on it, and the red Delete PC comes after the harmless entries.
   var hostMenuDialogOptions = [
     {
       id: 'refreshApps-' + host.hostname,
       icon: 'refresh',
       text: t('Refresh apps'),
-      disabled: !host.online,
+      shown: !!host.online,
       action: function() {
         // Refresh the list of apps for the target host
         snackbarLogLong('Refreshing the list of %1$s applications...', host.hostname);
@@ -1704,7 +1712,7 @@ function hostMenuDialog(host) {
       id: 'wakeHost-' + host.hostname,
       icon: 'power',
       text: t('Wake PC'),
-      disabled: host.online,
+      shown: !host.online,
       action: function() {
         // Check if MAC is randomized
         if (isRandomMacAddress(host.macAddress)) {
@@ -1717,31 +1725,34 @@ function hostMenuDialog(host) {
       }
     },
     {
-      id: 'deleteHost-' + host.hostname,
-      icon: 'trash',
-      // Destructive, in red
-      class: 'is-danger',
-      text: t('Delete PC'),
-      action: function() {
-        // Remove the selected host from the list
-        setTimeout(() => deleteHostDialog(host), 100);
-      }
-    },
-    {
       id: 'viewDetails-' + host.hostname,
       icon: 'info',
       text: t('View Details'),
+      shown: true,
       action: function() {
         // View details of the selected host
         setTimeout(() => hostDetailsDialog(host), 100);
       }
     },
-  ];
+    {
+      id: 'deleteHost-' + host.hostname,
+      icon: 'trash',
+      // Destructive, in red
+      class: 'is-danger',
+      text: t('Delete PC'),
+      shown: true,
+      action: function() {
+        // Remove the selected host from the list
+        setTimeout(() => deleteHostDialog(host), 100);
+      }
+    },
+  ].filter(function(menuOption) {
+    return menuOption.shown;
+  });
 
   // Loop through each option to create a button in the dialog
   hostMenuDialogOptions.forEach(function(menuOption) {
-    var hostMenuDialogOption = hostMenuItem(menuOption.id, menuOption.icon, menuOption.text, menuOption.class)
-      .prop('disabled', menuOption.disabled || false);
+    var hostMenuDialogOption = hostMenuItem(menuOption.id, menuOption.icon, menuOption.text, menuOption.class);
     // Trigger the action if the Option button is pressed
     hostMenuDialogOption.off('click');
     hostMenuDialogOption.click(function() {
@@ -1775,10 +1786,15 @@ function hostMenuDialog(host) {
     dialogPolyfill.registerDialog(hostMenuDialog[0]);
   }
 
-  // Show the dialog and push the view
+  // Show the dialog and push the view, which moves through the entries that show and opens on the first one, whatever
+  // was selected the last time
   $(hostMenuDialogOverlay).css('display', 'flex');
   hostMenuDialog[0].showModal();
   isDialogOpen = true;
+  Views.HostMenuDialog.entries = hostMenuDialogOptions.map(function(menuOption) {
+    return menuOption.id;
+  }).concat('closeHostMenu');
+  Views.HostMenuDialog.view.index = 0;
   Navigation.push(Views.HostMenuDialog, host.hostname);
   setTimeout(() => Navigation.switch(), 5);
 }
@@ -1797,7 +1813,7 @@ function deleteHostDialog(host) {
   deleteHostOverlay.style.display = 'flex';
   deleteHostDialog.showModal();
   isDialogOpen = true;
-  Navigation.push(Views.DeleteHostDialog);
+  pushConfirmationView(Views.DeleteHostDialog);
 
   // Cancel the operation if the Cancel button is pressed
   $('#cancelDeleteHost').off('click');
@@ -1861,7 +1877,7 @@ function deleteAllHostsDialog() {
     deleteHostOverlay.style.display = 'flex';
     deleteHostDialog.showModal();
     isDialogOpen = true;
-    Navigation.push(Views.DeleteHostDialog);
+    pushConfirmationView(Views.DeleteHostDialog);
   
     // Cancel the operation if the Cancel button is pressed
     $('#cancelDeleteHost').off('click');
@@ -1965,7 +1981,7 @@ function hostDetailsDialog(host) {
   var closeHostDetailsDialog = $('<button>', {
     type: 'button',
     id: 'closeHostDetails',
-    class: 'mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect',
+    class: 'mdl-button mdl-js-button mdl-button--raised mdl-button--colored',
     'data-i18n': 'Close',
     text: t('Close')
   });
@@ -2053,39 +2069,25 @@ function showSettingsMode() {
   }
 }
 
-// Show the Settings list
+// Show the Settings list, right away: the settings are loaded at startup, so there is nothing to wait for
 function showSettings() {
-  // Stop navigation before showing the loading screen
+  // Stop navigation while the views change
   Navigation.stop();
 
-  // Hide the main header and content before showing a loading screen
+  // Hide the other views and show the main header of the settings
   $('#main-header').children().hide();
   $('#host-grid, #game-grid').hide();
+  $('#wasmSpinner').hide();
+  $('#main-header').children().show();
 
-  // Show a spinner while the setting list loads
-  if (typeof setUiView === 'function') {
-    setUiView('loading');
-  }
-  $('#wasmSpinner').css('display', 'inline-block');
-  $('#wasmSpinnerLogo').hide();
-  $('#wasmSpinnerMessage').text(t('Loading Settings...'));
+  // Show the settings list section
+  $('#settings-list').removeClass('hide-container');
+  $('#settings-list').css('display', 'flex');
+  $('#settings-list').show();
 
-  setTimeout(() => {
-    // Hide the spinner after successfully retrieving the setting list
-    $('#wasmSpinner').hide();
-
-    // Show the main header after the loading screen is complete
-    $('#main-header').children().show();
-
-    // Show the settings list section
-    $('#settings-list').removeClass('hide-container');
-    $('#settings-list').css('display', 'flex');
-    $('#settings-list').show();
-
-    // Navigate to the Settings view
-    Navigation.push(Views.Settings);
-    showSettingsMode();
-  }, 500);
+  // Navigate to the Settings view
+  Navigation.push(Views.Settings);
+  showSettingsMode();
 }
 
 // Reset the current settings view by clearing the selection and hiding the right pane
@@ -2415,7 +2417,7 @@ function updateAppButton(latestVersion) {
   var updateAppBtn = $('<button>', {
     type: 'button',
     id: 'updateAppBtn',
-    class: 'mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect',
+    class: 'mdl-button mdl-js-button mdl-button--raised mdl-button--colored',
     'aria-label': 'Update App'
   });
   // Create the badge icon dynamically
@@ -2537,6 +2539,24 @@ function checkForAppUpdates() {
   });
 }
 
+// Show the notice of a newer version only on the first start that sees it, and never during a stream, where it would
+// cover the game (e.g. after a start from a Smart Hub tile). A notice that a stream left out isn't counted as shown, so
+// a later start shows it. The Update button in the header of the hosts stays as the hint until the app is updated.
+function showUpdateNoticeOnce(latestVersion) {
+  getData(UPDATE_NOTICE_VERSION, function(result) {
+    if (result[UPDATE_NOTICE_VERSION] === latestVersion) {
+      console.log('%c[index.js, showUpdateNoticeOnce]', 'color: green;', 'The notice of version ' + latestVersion + ' was shown at an earlier start.');
+      return;
+    }
+    if (isInGame) {
+      console.log('%c[index.js, showUpdateNoticeOnce]', 'color: green;', 'Not showing the notice of version ' + latestVersion + ' during a stream.');
+      return;
+    }
+    snackbarLogLong('Version %1$s is now available! Check out the latest features & improvements.', latestVersion);
+    storeData(UPDATE_NOTICE_VERSION, latestVersion, null);
+  });
+}
+
 // Automatically perform a scheduled app update check at startup if the interval condition is met and notify the user
 function checkForAppUpdatesAtStartup() {
   // Fetch the current timestamp and stored version info
@@ -2555,8 +2575,8 @@ function checkForAppUpdatesAtStartup() {
         setTimeout(() => {
           // Check if a new version update is available
           if (checkVersionUpdate(appInfo.version, latestVersion)) {
-            // Show snackbar message with new version to inform user to update the app
-            snackbarLogLong('Version %1$s is now available! Check out the latest features & improvements.', latestVersion);
+            // Tell the user about the new version, once
+            showUpdateNoticeOnce(latestVersion);
             // Create and display the Update App button with tooltip and additional layout spacer
             updateAppButton(latestVersion);
           }
@@ -2564,8 +2584,9 @@ function checkForAppUpdatesAtStartup() {
         // Save the fetched version as the last known update version
         storeData(UPDATE_VERSION, latestVersion);
       }).catch(error => {
+        // Only logged: the user didn't ask for this check and can't do anything about it (e.g. no internet). The check
+        // runs again after the interval, and Check for Updates in the settings says why it fails.
         console.error('%c[index.js, checkForAppUpdatesAtStartup]', 'color: green;', 'Error: Failed to fetch the release data!', error);
-        snackbarLogLong('Cannot automatically check for updates at this time!');
       });
       // Save the current time as the last update check timestamp
       storeData(UPDATE_TIMESTAMP, currentTime);
@@ -2585,8 +2606,8 @@ function checkForAppUpdatesAtStartup() {
         // Check if the cached version is newer than the current app version
         if (cachedVersion !== undefined && checkVersionUpdate(appInfo.version, cachedVersion)) {
           setTimeout(() => {
-            // Show snackbar message with cached version to inform user to update the app
-            snackbarLogLong('Version %1$s is now available! Check out the latest features & improvements.', cachedVersion);
+            // Tell the user about the cached version, unless an earlier start did
+            showUpdateNoticeOnce(cachedVersion);
             // Create and display the cached Update App button with tooltip and additional layout spacer
             updateAppButton(cachedVersion);
           }, 100);
@@ -2606,7 +2627,7 @@ function restoreDefaultsDialog() {
   restoreDefaultsDialogOverlay.style.display = 'flex';
   restoreDefaultsDialog.showModal();
   isDialogOpen = true;
-  Navigation.push(Views.RestoreDefaultsDialog);
+  pushConfirmationView(Views.RestoreDefaultsDialog);
 
   // Cancel the operation if the Cancel button is pressed
   $('#cancelRestoreDefaults').off('click');
@@ -3023,7 +3044,9 @@ function showApps(host) {
 
     // Stop navigation before showing the loading screen
     Navigation.stop();
-    if (typeof window.abortSubnetScan === 'function') window.abortSubnetScan();
+    // A scan of the network that runs is stopped, and the request of the app list waits a moment for the TV to drop
+    // its requests (SCAN_ABORT_PAUSE_MS); otherwise it starts right away
+    var abortedScan = typeof window.abortSubnetScan === 'function' && window.abortSubnetScan() === true;
 
     // Hide the main header before showing a loading screen
     $('#main-header').children().hide();
@@ -3046,6 +3069,7 @@ function showApps(host) {
       return gridGeneration !== appGridGeneration;
     };
 
+    // The spinner shows while the app list loads, which a list in the cache of the host does at once
     setTimeout(() => {
       host.getAppList().then(function(appList) {
         // Hide the spinner after the host has successfully retrieved the app list
@@ -3299,7 +3323,7 @@ function showApps(host) {
         showAppsMode();
         reject(failedAppList);
       });
-    }, 500);
+    }, abortedScan ? SCAN_ABORT_PAUSE_MS : 0);
   });
 }
 
@@ -3322,7 +3346,7 @@ function quitAppDialog() {
       quitAppOverlay.style.display = 'flex';
       quitAppDialog.showModal();
       isDialogOpen = true;
-      Navigation.push(Views.QuitAppDialog);
+      pushConfirmationView(Views.QuitAppDialog);
 
       // Cancel the operation if the Cancel button is pressed
       $('#cancelQuitApp').off('click');
@@ -3603,7 +3627,7 @@ function startGame(host, appID, restartKind) {
           quitAppOverlay.style.display = 'flex';
           quitAppDialog.showModal();
           isDialogOpen = true;
-          Navigation.push(Views.QuitAppDialog);
+          pushConfirmationView(Views.QuitAppDialog);
 
           // Cancel the operation if the Cancel button is pressed
           $('#cancelQuitApp').off('click');
@@ -3670,7 +3694,9 @@ function startGame(host, appID, restartKind) {
       const audioSync = $('#audioSyncSwitch').parent().hasClass('is-checked') ? 1 : 0;
       const audioJitter = parseInt($('#jitterSlider').val());
       const playHostAudio = $('#playHostAudioSwitch').parent().hasClass('is-checked') ? 1 : 0;
-      const continuousAudio = $('#continuousAudioSwitch').parent().hasClass('is-checked') ? 1 : 0;
+      // The host always keeps sending audio during silence (continuousAudio=1 of the launch and resume requests in
+      // utils.js); the switch of earlier versions for an A/B test is gone
+      const continuousAudio = 1;
       const decryptHostAudio = $('#decryptHostAudioSwitch').parent().hasClass('is-checked') ? 1 : 0;
       var videoCodec = $('#selectCodec').data('value').toString();
       const hdrMode = $('#hdrModeSwitch').parent().hasClass('is-checked') ? 1 : 0;
@@ -3749,7 +3775,7 @@ function startGame(host, appID, restartKind) {
           rikey, rikeyid, // Remote input key and key ID
           hdrMode, // Auto HDR video streaming
           playHostAudio, // Play audio on host and client device
-          0x030002, // Surround channel mask << 16 | Surround channel count
+          getSurroundAudioInfo(audioConfig), // Surround channel mask << 16 | Surround channel count
           gamepadMask, // Connect gamepad mask
           continuousAudio // Audio packets also during silence
         ).then(function(launchResult) {
@@ -3816,7 +3842,7 @@ function startGame(host, appID, restartKind) {
         rikey, rikeyid, // Remote input key and key ID
         hdrMode, // Auto HDR video streaming
         playHostAudio, // Play audio on host and client device
-        0x030002, // Surround channel mask << 16 | Surround channel count
+        getSurroundAudioInfo(audioConfig), // Surround channel mask << 16 | Surround channel count
         gamepadMask, // Connect gamepad mask
         continuousAudio // Audio packets also during silence
       ).then(function(launchResult) {
@@ -4852,14 +4878,6 @@ function savePlayHostAudio() {
   }, 100);
 }
 
-function saveContinuousAudio() {
-  setTimeout(() => {
-    const chosenContinuousAudio = $('#continuousAudioSwitch').parent().hasClass('is-checked');
-    console.log('%c[index.js, saveContinuousAudio]', 'color: green;', 'Saving continuous audio state: ' + chosenContinuousAudio);
-    storeData('continuousAudio', chosenContinuousAudio, null);
-  }, 100);
-}
-
 function saveDecryptHostAudio() {
   setTimeout(() => {
     const chosenDecryptHostAudio = $('#decryptHostAudioSwitch').parent().hasClass('is-checked');
@@ -5426,16 +5444,16 @@ function restoreDefaultsSettingsValues() {
   document.querySelector('#optimizeGamesBtn').MaterialSwitch.off();
   storeData('optimizeGames', defaultOptimizeGames, null);
 
-  const defaultRumbleFeedback = false;
-  document.querySelector('#rumbleFeedbackBtn').MaterialSwitch.off();
+  const defaultRumbleFeedback = true;
+  document.querySelector('#rumbleFeedbackBtn').MaterialSwitch.on();
   storeData('rumbleFeedback', defaultRumbleFeedback, null);
 
   const defaultMouseEmulation = false;
   document.querySelector('#mouseEmulationBtn').MaterialSwitch.off();
   storeData('mouseEmulation', defaultMouseEmulation, null);
 
-  // Every button presses itself again, and no stick is calibrated (button_mapping.js)
-  saveButtonMappings(emptyButtonMappings());
+  // The button mapping and the stick calibration of the controllers stay, like the hosts and the language: they belong
+  // to the controllers, and the mapping has its own reset (ButtonMappingMenu in button_mapping.js)
 
   const defaultControllerType = 'Auto';
   $('#selectControllerType').text(t('Auto')).attr('data-value', defaultControllerType).data('value', defaultControllerType);
@@ -5467,10 +5485,6 @@ function restoreDefaultsSettingsValues() {
   const defaultPlayHostAudio = false;
   document.querySelector('#playHostAudioBtn').MaterialSwitch.off();
   storeData('playHostAudio', defaultPlayHostAudio, null);
-
-  const defaultContinuousAudio = true;
-  document.querySelector('#continuousAudioBtn').MaterialSwitch.on();
-  storeData('continuousAudio', defaultContinuousAudio, null);
 
   const defaultDecryptHostAudio = false;
   document.querySelector('#decryptHostAudioBtn').MaterialSwitch.off();
@@ -5717,8 +5731,7 @@ function loadSystemInfo() {
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Platform Version: Tizen ' + (platformVer ? platformVer : 'Unknown'));
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'TV Model Series: ' + (modelSeries ? modelSeries : 'Unknown'));
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'TV Model Name: ' + (modelName ? modelName : 'Unknown'));
-    console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'TV Model Group: ' + (modelGroup ? modelGroup : 'Unknown'));
-    console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Model Year (from the model group): ' + (modelYearHint ? modelYearHint : 'Unknown'));
+    console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'TV Model Group: ' + (modelGroup ? modelGroup : 'Unknown') + (modelYearHint ? ' (model year ' + modelYearHint + ')' : ''));
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Panel: ' + panelText);
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'HDR Support: ' + (isHdrCapable ? 'Yes' : 'No'));
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Network Connection Type: ' + (connectionText ? connectionText : 'Unknown'));
@@ -5727,15 +5740,15 @@ function loadSystemInfo() {
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Video Decoders (MediaSource check): ' + videoDecoderProbe.reason + ', answers ' + JSON.stringify(videoDecoderProbe.answers));
     console.log('%c[index.js, loadSystemInfo]', 'color: green;', 'Gamepads: ' + (connectedGamepads.length === 0 ? 'None' : connectedGamepads.map((info) => info.index + ' (' + Controller.formatGamepadInfo(info) + ')').join(', ')) +
       ' (controller type setting: ' + controllerTypeSetting + ')');
-    // Insert the system information into the placeholder. The model year is only a hint from the model group, since
-    // Samsung sells the models of one year for longer, so it never decides a setting.
+    // Insert the system information into the placeholder. The model year after the model group is only a hint from the
+    // model group, since Samsung sells the models of one year for longer, so it never decides a setting.
     systemInfoPlaceholder.innerText =
       t('App Version: %1$s v%2$s', appInfo.name + (isForceGMVariant ? '-ForceGM' : ''), buildVer) + '\n' +
       t('Platform Version: Tizen %1$s', platformVer ? platformVer : t('Unknown')) + '\n' +
       t('TV Model Series: %1$s', modelSeries ? modelSeries : t('Unknown')) + '\n' +
       t('TV Model Name: %1$s', modelName ? modelName : t('Unknown')) + '\n' +
-      t('TV Model Group: %1$s', modelGroup ? modelGroup : t('Unknown')) + '\n' +
-      t('Model Year (from the model group): %1$s', modelYearHint ? modelYearHint : t('Unknown')) + '\n' +
+      (modelGroup && modelYearHint ? t('TV Model Group: %1$s (model year %2$s)', modelGroup, modelYearHint) :
+        t('TV Model Group: %1$s', modelGroup ? modelGroup : t('Unknown'))) + '\n' +
       t('Panel: %1$s', panelText) + '\n' +
       t('HDR Support: %1$s', isHdrCapable ? t('Yes') : t('No')) + '\n' +
       t('Network Connection Type: %1$s', connectionText ? t(connectionText) : t('Unknown')) + '\n' +
@@ -5769,26 +5782,42 @@ function loadUserDataCb() {
 // shows exactly what it showed before. A fresh install only stores the schema version and gets the defaults derived
 // for its TV. The unique ID of a fresh install is stored together with the schema version (loadHTTPCertsCb()), and both
 // are read here in one transaction, so a fresh install is never mistaken for an existing one, whichever runs first.
+// An existing install of settings schema 2 or older also stores the defaults of settings schema 2 that settings schema 3
+// changed (schema2Snapshot()), and drops the stored values of the settings that settings schema 3 removed, which are
+// logged first, so that the diagnostic log still says what was set.
 function migrateSettingsSchema(callbackFunction) {
-  getMultipleData(['uniqueid', SETTINGS_SCHEMA_KEY].concat(LEGACY_SNAPSHOT_KEYS), function(storedValues) {
+  const keys = ['uniqueid', SETTINGS_SCHEMA_KEY].concat(LEGACY_SNAPSHOT_KEYS, Object.keys(SCHEMA_2_DEFAULTS), SCHEMA_3_REMOVED_KEYS);
+  getMultipleData(keys, function(storedValues) {
     if (storedValues === null) {
       // Leave everything as it is when the settings can't be read, and try again at the next start
       console.warn('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Warning: Failed to read the stored settings, so the settings schema stays as it is.');
       callbackFunction();
       return;
     }
-    if (storedValues[SETTINGS_SCHEMA_KEY] != null) {
-      console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Settings schema: ' + storedValues[SETTINGS_SCHEMA_KEY]);
+    const storedSchema = storedValues[SETTINGS_SCHEMA_KEY];
+    if (storedSchema != null && storedSchema >= SETTINGS_SCHEMA_VERSION) {
+      console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Settings schema: ' + storedSchema);
       callbackFunction();
       return;
     }
 
     let migratedValues = {};
-    if (storedValues.uniqueid != null) {
-      migratedValues = legacySettingsSnapshot(storedValues, tvCapabilities, getActiveConnectionType());
-      console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Existing install without a settings schema, storing the previous defaults of the unset video settings: ' + JSON.stringify(migratedValues));
-    } else {
+    if (storedSchema == null && storedValues.uniqueid == null) {
       console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Fresh install, using the optimal streaming settings for this TV as the defaults.');
+    } else {
+      if (storedSchema == null) {
+        migratedValues = legacySettingsSnapshot(storedValues, tvCapabilities, getActiveConnectionType());
+        console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Existing install without a settings schema, storing the previous defaults of the unset video settings: ' + JSON.stringify(migratedValues));
+      }
+      const schema2Values = schema2Snapshot(storedValues);
+      console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Existing install of settings schema ' + (storedSchema == null ? 1 : storedSchema) + ', storing the defaults of settings schema 2 that changed: ' + JSON.stringify(schema2Values));
+      Object.assign(migratedValues, schema2Values);
+      SCHEMA_3_REMOVED_KEYS.forEach(function(key) {
+        if (storedValues[key] != null) {
+          console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Removing the stored value of a setting that no longer exists: ' + key + ' = ' + JSON.stringify(storedValues[key]));
+          removeData(key, null);
+        }
+      });
     }
     migratedValues[SETTINGS_SCHEMA_KEY] = SETTINGS_SCHEMA_VERSION;
     storeMultipleData(migratedValues, null);
@@ -5912,7 +5941,8 @@ function loadStoredSettings() {
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored rumbleFeedback preferences.');
   getData('rumbleFeedback', function(previousValue) {
     if (previousValue.rumbleFeedback == null) {
-      document.querySelector('#rumbleFeedbackBtn').MaterialSwitch.off(); // Set the default state
+      // On by default since settings schema 3; an install of an earlier version stored its earlier default (off)
+      document.querySelector('#rumbleFeedbackBtn').MaterialSwitch.on();
     } else if (previousValue.rumbleFeedback == false) {
       document.querySelector('#rumbleFeedbackBtn').MaterialSwitch.off();
     } else {
@@ -6028,16 +6058,6 @@ function loadStoredSettings() {
       document.querySelector('#playHostAudioBtn').MaterialSwitch.off();
     } else {
       document.querySelector('#playHostAudioBtn').MaterialSwitch.on();
-    }
-  });
-
-  // On unless turned off: the host keeps sending audio during silence (continuousAudio of the launch request)
-  console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored continuousAudio preferences.');
-  getData('continuousAudio', function(previousValue) {
-    if (previousValue.continuousAudio == false) {
-      document.querySelector('#continuousAudioBtn').MaterialSwitch.off();
-    } else {
-      document.querySelector('#continuousAudioBtn').MaterialSwitch.on(); // Also the default state
     }
   });
 
@@ -6314,27 +6334,43 @@ function loadHTTPCertsCb() {
   });
 }
 
+// Whether the scan of the start may run and the polling of the hosts may resume after it: only while the hosts are
+// shown, or are about to be shown because the app is still starting (restoreUiAfterWasmLoad()), and no stream starts or
+// runs. The apps and the settings stop the polling, since it slows down the box art (showAppsMode()), and a scan of 254
+// addresses during the start of a stream would choke the network stack of the TV.
+function areHostsShownAtStartup() {
+  return !isInGame && (!isStartupUiShown || $('#host-grid').is(':visible'));
+}
+
 // Poll the known hosts and then scan the local network for new ones, once the stored hosts are loaded at startup.
-// Returns a promise that resolves once the scan is done and the polling resumed.
+// Returns a promise that resolves once the scan is done and the polling resumed. When the user left the hosts before
+// the first polls ended (e.g. for the settings, or a Smart Hub tile opened a host), there is no scan at this start:
+// Rescan network in the header of the hosts finds a new PC or a new address later. The scan of the start only logs
+// that it runs, since nobody asked for it; the button shows its notices.
 function discoverHostsAtStartup() {
   // Immediately start polling known hosts so they are ready for Smart Hub or instant clicks.
   // We wait for all known hosts to finish their initial ping before launching the subnet scanner
   // to guarantee that the 254 scanner requests don't choke the network stack and cause known hosts to timeout.
   return startPollingHosts().then(() => {
-    if (typeof startSubnetScanner === 'function') {
-      snackbarLog('Scanning the local network to discover new hosts...');
-      // Stop background polling while sweeping the subnet to prevent network exhaustion
-      stopPollingHosts();
-      return startSubnetScanner().then(() => {
-        isSubnetScanFinished = true;
-        startPollingHosts();
-      }).catch(() => {
-        isSubnetScanFinished = true;
-        startPollingHosts();
-      });
-    } else {
+    if (typeof startSubnetScanner !== 'function' || !areHostsShownAtStartup()) {
+      if (typeof startSubnetScanner === 'function') {
+        console.log('%c[index.js, discoverHostsAtStartup]', 'color: green;', 'Not scanning the local network at this start, since the hosts are no longer shown.');
+      }
       isSubnetScanFinished = true;
+      return;
     }
+    console.log('%c[index.js, discoverHostsAtStartup]', 'color: green;', 'Scanning the local network to discover new hosts...');
+    // Stop background polling while sweeping the subnet to prevent network exhaustion
+    stopPollingHosts();
+    const resumePolling = () => {
+      isSubnetScanFinished = true;
+      console.log('%c[index.js, discoverHostsAtStartup]', 'color: green;', 'Finished scanning the local network.');
+      // Opening a host or the settings meanwhile stopped the polling, which stays stopped there
+      if (areHostsShownAtStartup()) {
+        startPollingHosts();
+      }
+    };
+    return startSubnetScanner().then(resumePolling, resumePolling);
   });
 }
 
@@ -6636,6 +6672,9 @@ function updatePreviewData() {
   }
 }
 
+// Find out once whether the Smart Hub service of the app (res/service) can show the Preview tiles, and keep its answer
+// in localStorage. Only a real answer of the service is kept: a launch of the service that fails or throws can be
+// passing (e.g. right after the install), so the next start asks again instead of turning the tiles off for good.
 function probeSmartHubSupport() {
   return new Promise(function(resolve) {
     // Check localStorage cache first
@@ -6680,17 +6719,21 @@ function probeSmartHubSupport() {
         serviceId, function() {
           console.log('%c[index.js, probeSmartHubSupport]', 'color: green;', 'Probe sent to service.');
         }, function(err) {
-          // Service launch failed — assume not supported
-          console.warn('%c[index.js, probeSmartHubSupport]', 'color: green;', 'Probe failed: ' + err.message);
+          // Service launch failed: no tiles at this start, and the next start asks again
+          console.warn('%c[index.js, probeSmartHubSupport]', 'color: green;', 'Probe failed, asking again at the next start: ' + err.message);
           _isSmartHubSupported = false;
-          localStorage.setItem('smartHubSupported', 'false');
+          try {
+            probePort.removeMessagePortListener(probeListener);
+          } catch(e) {
+            console.error('%c[index.js, probeSmartHubSupport]', 'color: green;', 'Error removing Smart Hub probe listener: ' + e.message);
+          }
           resolve();
         }
       );
     } catch (e) {
-      console.warn('%c[index.js, probeSmartHubSupport]', 'color: green;', 'Error probing Smart Hub support: ' + e.message);
+      // No tiles at this start, and the next start asks again
+      console.warn('%c[index.js, probeSmartHubSupport]', 'color: green;', 'Error probing Smart Hub support, asking again at the next start: ' + e.message);
       _isSmartHubSupported = false;
-      localStorage.setItem('smartHubSupported', 'false');
       resolve();
     }
   });

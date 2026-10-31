@@ -78,12 +78,15 @@ function findNvService(ipString) {
 window.subnetScanAbortCtrl = null;
 window.subnetScanPromise = null;
 
+// Stop the scan that runs, if any. Returns whether a scan was running.
 window.abortSubnetScan = function() {
+  var wasRunning = !!window.subnetScanPromise;
   if (window.subnetScanAbortCtrl) {
     console.log('%c[main.js]', 'color: orange;', 'User initiated action: Aborting background subnet scan to free network stack.');
     window.subnetScanAbortCtrl.abort();
     window.subnetScanAbortCtrl = null;
   }
+  return wasRunning;
 };
 
 function startSubnetScanner() {

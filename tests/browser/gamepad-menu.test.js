@@ -11,7 +11,8 @@ const assert = require('node:assert/strict');
 const { openApp, startHarness } = require('./harness');
 
 const OPERATIONS = ['up', 'down', 'left', 'right', 'accept', 'back', 'press', 'switch'];
-// delayedNavigation() runs the accept, back and stick moves 150 ms later (NAVIGATION_DELAY)
+// delayedNavigation() runs accept and back 50 ms later (BUTTON_NAVIGATION_DELAY) and the stick moves 150 ms later
+// (NAVIGATION_DELAY)
 const AFTER_DELAY_MS = 250;
 
 let harness;
@@ -286,11 +287,11 @@ test('the menu polling reports pad input, pauses while streaming and does not re
       });
     }
     assert.deepEqual(await page.evaluate(() => window.__listenerCount), { gamepadconnected: 2, gamepaddisconnected: 2 });
-    // A single 5 ms interval gives at most about 250 calls per second
+    // A single 16 ms interval gives at most about 63 calls per second, and two of them would give twice as many
     const before = await page.evaluate(() => window.__getGamepadsCalls);
     await page.waitForTimeout(1000);
     const perSecond = (await page.evaluate(() => window.__getGamepadsCalls)) - before;
-    assert.ok(perSecond > 50 && perSecond <= 260, 'getGamepads() calls per second: ' + perSecond);
+    assert.ok(perSecond > 30 && perSecond <= 70, 'getGamepads() calls per second: ' + perSecond);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

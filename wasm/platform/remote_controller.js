@@ -36,6 +36,11 @@ function remoteControllerHandler(e) {
     case tvKey.KEY_ENTER:
     case tvKey.KEY_REMOTE_ENTER:
       e.preventDefault(); // Prevent native asynchronous click
+      // Ignore the auto-repeat of a held key: the views change at once, so an OK held a little too long would otherwise
+      // also press the item of the next view, e.g. start the app that is selected after opening a host
+      if (e.repeat) {
+        break;
+      }
       // Select the current item
       Navigation.accept();
       break;

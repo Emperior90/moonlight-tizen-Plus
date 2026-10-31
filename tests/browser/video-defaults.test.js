@@ -124,7 +124,7 @@ const CUSTOMIZED_SETTINGS = {
   ipAddressFieldMode: false,
   sortAppsList: 'recent',
   optimizeGames: true,
-  rumbleFeedback: true,
+  rumbleFeedback: false,
   mouseEmulation: true,
   controllerMappings: {
     version: 1,
@@ -144,7 +144,6 @@ const CUSTOMIZED_SETTINGS = {
   audioJitter: '50',
   audioClockSync: true,
   playHostAudio: true,
-  continuousAudio: false,
   decryptHostAudio: true,
   refFrameInvalidation: true,
   hdrMetadata: true,
@@ -158,10 +157,11 @@ const DEFAULT_OTHER_SETTINGS = {
   ipAddressFieldMode: true,
   sortAppsList: 'az',
   optimizeGames: false,
-  rumbleFeedback: false,
+  // On since settings schema 3
+  rumbleFeedback: true,
   mouseEmulation: false,
-  // Every button presses itself again, and no stick is calibrated
-  controllerMappings: { version: 1, controllers: {} },
+  // The button mapping and the stick calibration belong to the controllers and stay, like the hosts and the language
+  controllerMappings: CUSTOMIZED_SETTINGS.controllerMappings,
   controllerType: 'Auto',
   audioBackend: 'EMSS',
   audioConfig: 'Stereo',
@@ -169,8 +169,6 @@ const DEFAULT_OTHER_SETTINGS = {
   audioJitter: '100',
   audioClockSync: false,
   playHostAudio: false,
-  // On by default, so that the host keeps sending audio during silence
-  continuousAudio: true,
   decryptHostAudio: false,
   refFrameInvalidation: false,
   hdrMetadata: false,
@@ -253,9 +251,14 @@ for (const tvName of Object.keys(TVS)) {
           // change of a default is covered by the settings schema (plan WP1)
           await app.page.waitForTimeout(300);
           assert.deepEqual(Object.keys(await readStorage(app.page)).sort(), ['autoAdjustBitrate', 'cert', 'settingsSchema', 'uniqueid']);
-          assert.equal(stored.settingsSchema, 2);
+          assert.equal(stored.settingsSchema, 3);
           // Plan D9: the bitrate of a fresh install follows the resolution and frame rate until the user picks one
           assert.equal(stored.autoAdjustBitrate, true);
+          // The other settings show their defaults without being stored, e.g. the rumble on (settings schema 3)
+          const other = await readOtherSettings(app.page);
+          assert.deepEqual(Object.assign({}, other, { controllerMappings: null }),
+            Object.assign({}, DEFAULT_OTHER_SETTINGS, { controllerMappings: null }));
+          assert.deepEqual(other.controllerMappings, { version: 1, controllers: {} });
           assert.deepEqual(app.errors, []);
         } finally {
           await app.context.close();

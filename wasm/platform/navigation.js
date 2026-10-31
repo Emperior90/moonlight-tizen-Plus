@@ -793,10 +793,9 @@ const Views = {
     },
   },
   HostMenuDialog: {
-    view: new ListView(() => {
-      const actions = ['refreshApps', 'wakeHost', 'deleteHost', 'viewDetails', 'closeHostMenu'];
-      return actions.map(action => action === 'closeHostMenu' ? action : action + '-' + Views.HostMenuDialog.hostname);
-    }),
+    // The ids of the entries that the open host menu shows, which hostMenuDialog() in index.js sets as it opens it
+    entries: [],
+    view: new ListView(() => Views.HostMenuDialog.entries),
     up: function() {
       this.view.prevOption();
       focusElement(this.view.current());
@@ -1325,7 +1324,6 @@ const Views = {
       isAudioOutputDisabled() ? null : isWebAudioBackendSelected() ? 'selectAudioJitter' : 'audioSyncBtn',
       isAudioOutputDisabled() || !isWebAudioBackendSelected() ? null : 'audioClockSyncBtn',
       'playHostAudioBtn',
-      'continuousAudioBtn',
       isAudioOutputDisabled() ? null : 'decryptHostAudioBtn'
     ].filter(Boolean)),
     up: function() {
@@ -2085,14 +2083,16 @@ const Views = {
   },
   StreamMenu: {
     // The entries of the Stream Menu that show (menus.js). Back closes it and resumes the stream, LEFT and RIGHT change
-    // the bitrate of the bitrate entry.
+    // the bitrate of the bitrate entry. UP and DOWN stop at the first and the last entry instead of wrapping around like
+    // the other menus: the menu opens on Resume, and the last entry quits the app on the PC without a question, so one
+    // UP too many must not select it.
     view: new ListView(() => getOverlayMenuItems('streamMenu')),
     up: function() {
-      this.view.prevOption();
+      this.view.prev();
       focusElement(this.view.current());
     },
     down: function() {
-      this.view.nextOption();
+      this.view.next();
       focusElement(this.view.current());
     },
     left: function() {

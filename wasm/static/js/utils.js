@@ -1105,8 +1105,9 @@ NvHTTP.prototype = {
 
   // With continuousAudio, the host keeps sending audio packets during silence (Sunshine since v2026.516.143833 with
   // fbcf2116, which leaves them out otherwise; other hosts ignore the parameter), so that the audio player of the TV
-  // and the link to a soundbar don't run dry, and the audio statistics count only real losses. moonlight-tv (1cd208b)
-  // sends it with every launch as well. Without it the request is the one of earlier versions.
+  // and the link to a soundbar don't run dry, and the audio statistics count only real losses. The start of a stream
+  // always passes it (startGame() in index.js), as moonlight-tv (1cd208b) does with every launch. Without it the
+  // request is the one of versions before 1.19.102.
   launchApp: function(appId, mode, sops, rikey, rikeyid, enableHdr, localAudio, surroundAudioInfo, gamepadMask, continuousAudio) {
     return sendMessage('openUrl', [
       this._baseUrlHttps + '/launch?' + this._buildUidStr() + '&appid=' + appId + '&mode=' + mode +

@@ -43,9 +43,10 @@ The menus use the button positions (Xbox names first, PlayStation names in brack
 | A (Cross) | Select the current item, like SELECT on the remote |
 | B (Circle) | Back, like RETURN on the remote |
 | D-pad, left stick | Move. Holding them repeats the move after 350 ms, then every 100 ms. Small stick movements are ignored. |
-| Select / View (Share, Create) | Like CH+ on the remote: switch the mode of the host address field, and open the menu of the host PC or of the selected app ([app menu](GUIDE.md#16-stream-menu-and-app-menu)) |
+| Select / View (Share, Create) | Like CH+ on the remote: open the menu of the host PC or of the selected app ([app menu](GUIDE.md#16-stream-menu-and-app-menu)) |
 | Start / Menu (Options) | Like CH- on the remote: set the focus on the current item |
 
+- A, B, Select and Start act 50 ms after the press, close to the keys of the remote. A move of the left stick acts after 150 ms, so that a diagonal movement doesn't make two steps.
 - The in-app *Navigation guide* (Settings → About) lists the same buttons, with the remote and keyboard keys next to them.
 - The [button mapping](#8-button-mapping-and-stick-calibration) only applies during a stream. In the menus, the bottom button always selects, also on Nintendo controllers, whose labels differ.
 - Buttons that are still held when a stream ends (e.g. the stop combo) don't trigger anything in the menus.
@@ -105,7 +106,7 @@ The stream only sees the first 63 characters of the id, so a controller with a v
 
 ## 6. Rumble
 
-Settings → Input Settings → *Rumble feedback* (off by default).
+Settings → Input Settings → *Rumble feedback*: on for a new install and after Restore Defaults since 2.2.0. An install updated from an earlier version keeps what it had (off unless you switched it on).
 
 - When it's on, a controller that connects plays a short rumble, so you can feel that rumble works.
 - During a stream, the controller plays the rumble that the game sends. The TV ends every rumble effect after 5 seconds, so the app plays it again every 4 seconds until the game stops it.
@@ -119,7 +120,7 @@ Settings → Input Settings → *Rumble feedback* (off by default).
 Settings → Input Settings → *Mouse emulation* (off by default) lets a controller act as the mouse of the PC by holding Start.
 
 - During a stream, hold Start for 1 second to switch mouse mode on or off. A notice says "Mouse emulation is activated" or "deactivated".
-- The *Mouse emulation* entry of the [Stream Menu](GUIDE.md#16-stream-menu-and-app-menu) switches it as well, also with the setting off.
+- The *Mouse emulation* entry of the [Stream Menu](GUIDE.md#16-stream-menu-and-app-menu) switches it as well, also with the setting off. The entry shows *On* or *Off*, so no notice covers the game then.
 - It switches once per hold, so holding Start longer doesn't switch it back. A hold of Start together with Select, LB or RB, which belong to the button combos, never switches it.
 - When a hold switches mouse mode off, the game doesn't get that Start. When a hold switches it on, the game sees Start held until the switch (from 0.1 seconds after the press, see the Stream Menu combo above, to 1 second), and then the controller released, so a game may open its pause menu.
 
@@ -147,7 +148,7 @@ Settings → Input Settings → *Button mapping*. Each of the 16 buttons of the 
 - The mapping applies from the next stream. The menus of the app always use the buttons as printed.
 - The [button combos](#4-buttons-during-a-stream) (Stream Menu, stop, statistics) and the hold of Start for the mouse emulation run on the physical buttons before the mapping, so they work whatever the mapping. A button mapped to Start doesn't make a Stream Menu combo with Select.
 - A trigger mapped to a button presses it as far as the TV counts the trigger pressed, and a button mapped to a trigger pulls it all the way. The Guide button and button 17 keep their meaning.
-- Restore Defaults resets the mapping and every calibration.
+- Restore Defaults keeps the mapping and every calibration, like the hosts and the language: they belong to the controllers. *Reset this controller* resets them.
 - The earlier switches *Flip A/B face buttons* and *Flip X/Y face buttons* became the mapping of *All controllers*: an install that had them on keeps A/B or X/Y swapped.
 
 **Stick calibration.** For worn or cheap sticks that rest off-centre or don't reach the edge, choose the connected controller and *Calibrate the sticks*:

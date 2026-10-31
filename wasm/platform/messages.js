@@ -1042,19 +1042,24 @@ function dispatchMessage(msg) {
     console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Playing rumble on gamepad ' + gamepadIdx + ' with weak magnitude ' + weakMagnitude + ' and strong magnitude ' + strongMagnitude + '...');
     Rumble.play(gamepadIdx, weakMagnitude, strongMagnitude);
   } else if (msg.indexOf('mouseEmulationOn') === 0) {
-    // Show mouse emulation enable status as a notification, and in the Stream Menu
+    // Show the new state of the mouse emulation in the Stream Menu while it's open, whose entry shows On and Off, or
+    // else as a notice (e.g. after holding Start)
     streamMouseEmulationActive = true;
     if (isStreamMenuOpen) {
+      console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Mouse emulation is activated (shown in the Stream Menu).');
       updateStreamMenu();
+    } else {
+      snackbarLogLong('Mouse emulation is activated');
     }
-    snackbarLogLong('Mouse emulation is activated');
   } else if (msg.indexOf('mouseEmulationOff') === 0) {
-    // Show mouse emulation disable status as notification, and in the Stream Menu
+    // Likewise for the mouse emulation that was switched off
     streamMouseEmulationActive = false;
     if (isStreamMenuOpen) {
+      console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Mouse emulation is deactivated (shown in the Stream Menu).');
       updateStreamMenu();
+    } else {
+      snackbarLogLong('Mouse emulation is deactivated');
     }
-    snackbarLogLong('Mouse emulation is deactivated');
   } else if (msg.indexOf('SessionReportMsg: ') === 0) {
     // The totals of the stream that ended, for the report of the last session in System information (index.js)
     keepSessionReport(msg.replace('SessionReportMsg: ', ''));

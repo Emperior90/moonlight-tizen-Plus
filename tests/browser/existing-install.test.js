@@ -8,6 +8,10 @@
 //
 // The values of an existing install below are what the previous build showed on these TVs (the "current behaviour"
 // pinned before WP1), and must not change.
+//
+// Settings schema 3 turned the rumble on by default: an existing install of settings schema 2 or older that never
+// switched it stores the earlier default (off) once, and the stored value of the removed switch 'Continuous audio from
+// the host' is dropped (tests/browser/continuous-audio.test.js).
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -89,9 +93,12 @@ async function checkSnapshot(tvOptions, legacy) {
   const app = await openExisting(tvOptions);
   try {
     assert.deepEqual(await shownSettings(app.page), legacy.shown, 'first start');
-    const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 2);
+    const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 3);
     assert.deepEqual(pick(stored, VIDEO_KEYS), legacy.stored);
     assert.equal(stored.uniqueid, EXISTING_INSTALL.uniqueid);
+    // The rumble stays off as before (settings schema 3)
+    assert.equal(stored.rumbleFeedback, false);
+    assert.equal(await app.page.evaluate(() => document.getElementById('rumbleFeedbackSwitch').checked), false);
     assert.ok(app.logs.some((line) => line.indexOf('Existing install without a settings schema') >= 0));
     await app.page.waitForTimeout(300);
     const afterFirstStart = await readStorage(app.page);
@@ -129,7 +136,7 @@ test('a stored 120 FPS stays selected after the unlock default turned off (the t
       assert.equal(shown.unlockAllFps, true, tv);
       assert.equal(shown.frameRate, '120', tv);
       assert.deepEqual(shown.frameRateOptions, ['30', '60', '90', '120', '144'], tv);
-      const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 2);
+      const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 3);
       assert.deepEqual([stored.unlockAllFps, stored.frameRate], [true, 120], tv);
     } finally {
       await app.context.close();
@@ -140,7 +147,7 @@ test('a stored 120 FPS stays selected after the unlock default turned off (the t
 test('a partly customized existing install keeps its stored values, and only the unset ones are filled in', async () => {
   const app = await openExisting({ tv: 's90c', conn: 'ethernet' }, { videoCodec: 'H264', bitrate: '42', fullRange: true });
   try {
-    const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 2);
+    const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 3);
     assert.deepEqual(pick(stored, VIDEO_KEYS), {
       resolution: '3840:2160', unlockAllFps: true, frameRate: 60, bitrate: '42', videoCodec: 'H264',
       // HDR stays off for the stored H.264 codec, as the previous build showed it
@@ -169,7 +176,7 @@ test('the stored video settings of an existing install are loaded as stored', as
     await app.page.waitForTimeout(300);
     const values = await readStorage(app.page);
     assert.deepEqual(pick(values, VIDEO_KEYS), stored);
-    assert.equal(values.settingsSchema, 2);
+    assert.equal(values.settingsSchema, 3);
   } finally {
     await app.context.close();
   }
@@ -194,7 +201,7 @@ test('an update from a build without the preset state decides once whether the s
   for (const entry of cases) {
     const app = await openExisting({ tv: entry.tv || 's90c', conn: entry.conn }, entry.stored);
     try {
-      const stored = await waitForStorage(app.page, (values) => 'autoAdjustBitrate' in values && values.settingsSchema === 2);
+      const stored = await waitForStorage(app.page, (values) => 'autoAdjustBitrate' in values && values.settingsSchema === 3);
       assert.equal(stored.autoAdjustBitrate, entry.follows, JSON.stringify(entry));
       assert.equal(await app.page.evaluate(() => autoAdjustBitrate), entry.follows, JSON.stringify(entry));
     } finally {
@@ -205,7 +212,7 @@ test('an update from a build without the preset state decides once whether the s
 
 test('an install that started with this build gets the new defaults and no snapshot', async () => {
   // A fresh install stores its unique ID together with the settings schema (loadHTTPCertsCb)
-  const app = await openExisting({ tv: 'uhd', conn: 'wifi' }, { settingsSchema: 2 });
+  const app = await openExisting({ tv: 'uhd', conn: 'wifi' }, { settingsSchema: 3 });
   try {
     const shown = await readVideoSettings(app.page);
     assert.deepEqual([shown.resolution, shown.bitrate, shown.unlockAllFps, shown.frameRateOptions, shown.autoAdjustBitrate],
@@ -258,11 +265,55 @@ test('a fresh install is never taken for an existing one, whether the unique ID 
       await app.page.waitForTimeout(300);
       const stored = await readStorage(app.page);
       assert.deepEqual(Object.keys(stored).sort(), ['autoAdjustBitrate', 'cert', 'settingsSchema', 'uniqueid'], variant.name);
-      assert.equal(stored.settingsSchema, 2, variant.name);
+      assert.equal(stored.settingsSchema, 3, variant.name);
       assert.ok(!app.logs.some((line) => line.indexOf('Existing install without a settings schema') >= 0), variant.name);
       assert.deepEqual(app.errors, [], variant.name);
     } finally {
       await app.context.close();
     }
+  }
+});
+
+test('an install of settings schema 2 keeps the rumble off that it showed, and a stored rumble stays as it is', async () => {
+  const rumble = (page) => page.evaluate(() => document.getElementById('rumbleFeedbackSwitch').checked);
+  // Never switched: the earlier default is stored once
+  let app = await openExisting({ tv: 's90c', conn: 'wifi' }, { settingsSchema: 2, framePacing: false });
+  try {
+    const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 3);
+    assert.equal(stored.rumbleFeedback, false);
+    assert.equal(await rumble(app.page), false);
+    // Nothing else changes
+    assert.equal(stored.framePacing, false);
+    assert.ok(app.logs.some((line) => line.indexOf('Existing install of settings schema 2, storing the defaults of settings schema 2 that changed: {"rumbleFeedback":false}') >= 0));
+    await reloadApp(app);
+    assert.equal(await rumble(app.page), false);
+    assert.equal(app.logs.filter((line) => line.indexOf('Existing install of settings schema 2') >= 0).length, 1, 'once');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+  // Switched on or off by the user: kept
+  for (const value of [true, false]) {
+    app = await openExisting({ tv: 's90c', conn: 'wifi' }, { settingsSchema: 2, rumbleFeedback: value });
+    try {
+      const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 3);
+      assert.equal(stored.rumbleFeedback, value);
+      assert.equal(await rumble(app.page), value);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
+test('a fresh install has the rumble on without storing it', async () => {
+  const app = await openApp(harness, { tv: { tv: 'uhd', conn: 'wifi' } });
+  try {
+    await waitForStorage(app.page, (values) => values.settingsSchema === 3);
+    assert.equal(await app.page.evaluate(() => document.getElementById('rumbleFeedbackSwitch').checked), true);
+    await app.page.waitForTimeout(300);
+    assert.equal('rumbleFeedback' in (await readStorage(app.page)), false);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
   }
 });

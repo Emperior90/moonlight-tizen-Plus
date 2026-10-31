@@ -136,7 +136,7 @@ test('Restore Defaults and the button turn a stored game mode off on Tizen 5.5, 
   for (const entry of [{ storedGameMode: true, apply: restoreDefaults }, { storedGameMode: false, apply: applyButton }]) {
     const app = await openApp(harness, {
       tv: { tv: 'fhd', conn: 'wifi' },
-      stored: { uniqueid: '0123456789abcdef', cert: { cert: 'TEST-CERT', privateKey: 'TEST-KEY' }, settingsSchema: 2, gameMode: entry.storedGameMode },
+      stored: { uniqueid: '0123456789abcdef', cert: { cert: 'TEST-CERT', privateKey: 'TEST-KEY' }, settingsSchema: 3, gameMode: entry.storedGameMode },
     });
     try {
       // An existing install keeps its stored game mode, and the switch stays enabled so that it can be turned off
@@ -162,7 +162,7 @@ test('the button locks the higher frame rates on a TV without a tested profile, 
   const app = await openApp(harness, {
     tv: { tv: 'uhd', conn: 'wifi' },
     stored: {
-      uniqueid: '0123456789abcdef', cert: { cert: 'TEST-CERT', privateKey: 'TEST-KEY' }, settingsSchema: 2,
+      uniqueid: '0123456789abcdef', cert: { cert: 'TEST-CERT', privateKey: 'TEST-KEY' }, settingsSchema: 3,
       unlockAllFps: true, frameRate: 120, bitrate: '55', autoAdjustBitrate: false,
     },
   });
@@ -242,7 +242,6 @@ test('a TV whose product APIs fail still starts, with the defaults of a Full HD 
       'TV Model Series: Unknown',
       'TV Model Name: Unknown',
       'TV Model Group: Unknown',
-      'Model Year (from the model group): Unknown',
       'Panel: Full HD',
       'HDR Support: No',
       'Network Connection Type: Wi-Fi',
@@ -269,7 +268,7 @@ test('a TV whose product APIs fail still starts, with the defaults of a Full HD 
     await restoreDefaults(app.page);
     const stored = await waitForStorage(app.page, (values) => values.resolution === '1920:1080' && values.bitrate === '25');
     assert.deepEqual([stored.hdrMode, stored.unlockAllFps], [false, false]);
-    assert.equal((await readStorage(app.page)).settingsSchema, 2);
+    assert.equal((await readStorage(app.page)).settingsSchema, 3);
   } finally {
     await app.context.close();
   }

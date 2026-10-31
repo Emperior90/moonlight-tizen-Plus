@@ -1,8 +1,8 @@
 'use strict';
 
 // Pins how a gamepad drives the menus: handleGamepadMenuInput() of wasm/platform/index.js maps the
-// 'gamepadinputchanged' events of gamepad.js to Navigation operations, with the navigation delay and the auto-repeat of a
-// held D-pad or stick (plan WP6). It runs here with a simulated clock (timers, an animation frame every 16 ms and
+// 'gamepadinputchanged' events of gamepad.js to Navigation operations, with the delays of the buttons and of the stick
+// and the auto-repeat of a held D-pad or stick. It runs here with a simulated clock (timers, an animation frame every 16 ms and
 // Date.now()), so the moves of a held input can be counted exactly; tests/browser/gamepad-menu.test.js checks the
 // mapping in the real page.
 
@@ -117,9 +117,32 @@ const press = (index) => ({ type: 'button', index, pressed: true });
 const release = (index) => ({ type: 'button', index, pressed: false });
 const axis = (index, value) => ({ type: 'axis', index, value });
 
-test('A accepts, B goes back, Select presses and Start switches, each after the navigation delay', () => {
+test('the buttons act after 50 ms, close to the remote, and the left stick after 150 ms against double steps', () => {
   const menus = loadMenus();
-  const delay = menus.platform.get('NAVIGATION_DELAY');
+  assert.equal(menus.platform.get('BUTTON_NAVIGATION_DELAY'), 50);
+  assert.equal(menus.platform.get('NAVIGATION_DELAY'), 150);
+  // A accepts 50 ms after the press
+  menus.send([press(0)]);
+  menus.clock.advance(49);
+  assert.deepEqual(menus.operations, []);
+  menus.clock.advance(1);
+  assert.deepEqual(menus.operations, ['accept']);
+  menus.send([release(0)]);
+  // The left stick moves 150 ms after it crossed the threshold
+  menus.send([axis(1, 0.9)]);
+  menus.clock.advance(149);
+  assert.deepEqual(menus.operations, ['accept']);
+  menus.clock.advance(1);
+  assert.deepEqual(menus.operations, ['accept', 'down']);
+  menus.send([axis(1, 0)]);
+  menus.clock.advance(1000);
+  assert.deepEqual(menus.operations, ['accept', 'down']);
+  assert.deepEqual(menus.errors(), []);
+});
+
+test('A accepts, B goes back, Select presses and Start switches, each after the delay of the buttons', () => {
+  const menus = loadMenus();
+  const delay = menus.platform.get('BUTTON_NAVIGATION_DELAY');
   [0, 1, 8, 9].forEach((button) => {
     menus.send([press(button)]);
     menus.clock.advance(delay - 1);

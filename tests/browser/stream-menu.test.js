@@ -17,8 +17,8 @@ const { openApp, startHarness } = require('./harness');
 const { forEachTextWidth } = require('./text-stress');
 
 const XBOX_ID = 'Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)';
-// delayedNavigation() runs the gamepad buttons of the menus 150 ms later (NAVIGATION_DELAY), and the gamepads are
-// polled every 5 ms
+// delayedNavigation() runs the gamepad buttons of the menus 50 ms later (BUTTON_NAVIGATION_DELAY), and the gamepads are
+// polled every 16 ms
 const AFTER_DELAY_MS = 250;
 
 let harness;
@@ -141,6 +141,7 @@ const keyEvent = (page, type, keyCode, key, repeat) => page.evaluate(({ eventTyp
 const PLAY_PAUSE = [10252, 'MediaPlayPause'];
 const RETURN = [10009, 'XF86Back'];
 const DOWN = [40, 'ArrowDown'];
+const UP = [38, 'ArrowUp'];
 const ENTER = [13, 'Enter'];
 
 // What the page shows of the Stream Menu
@@ -221,6 +222,46 @@ test('Play/Pause opens the Stream Menu over the stream, the remote moves in it, 
       return { whileOpen, afterClose: seen.slice() };
     });
     assert.deepEqual(mouse, { whileOpen: [], afterClose: ['mousedown', 'mouseup'] });
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('UP and DOWN stop at the ends of the Stream Menu, so one UP from Resume never selects the entry that quits the app', async () => {
+  const app = await openStreaming({ gamepad: true });
+  try {
+    await remoteKey(app.page, ...PLAY_PAUSE);
+    const entries = (await menuState(app.page)).entries;
+    assert.equal(entries[0], 'streamMenuResume');
+    assert.equal(entries[entries.length - 1], 'streamMenuQuit');
+    // UP on the first entry stays there, with the remote and with the D-pad of a gamepad
+    await remoteKey(app.page, ...UP);
+    assert.equal((await menuState(app.page)).focused, 'streamMenuResume');
+    await app.page.evaluate(() => {
+      window.__setButton(0, 12, true);
+    });
+    await app.page.waitForTimeout(100);
+    await app.page.evaluate(() => {
+      window.__setButton(0, 12, false);
+    });
+    await app.page.waitForTimeout(100);
+    assert.deepEqual(await app.page.evaluate(() => [document.activeElement.id, Views.StreamMenu.view.current().id]),
+      ['streamMenuResume', 'streamMenuResume']);
+    // OK there resumes the stream: nothing quits the app on the PC
+    await remoteKey(app.page, ...ENTER);
+    assert.equal((await menuState(app.page)).open, false);
+    assert.deepEqual(await app.page.evaluate(() => window.__hostCalls.filter((call) => call === 'quit')), []);
+    assert.ok(!(await moduleCalls(app.page)).includes('stopStream'));
+
+    // DOWN on the last entry stays there as well
+    await remoteKey(app.page, ...PLAY_PAUSE);
+    for (let i = 0; i < entries.length + 2; i++) {
+      await remoteKey(app.page, ...DOWN);
+    }
+    assert.equal((await menuState(app.page)).focused, 'streamMenuQuit');
+    await remoteKey(app.page, ...UP);
+    assert.equal((await menuState(app.page)).focused, 'streamMenuDisconnect');
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
@@ -411,6 +452,7 @@ test('the gamepad combo opens the Stream Menu, the gamepad moves in it without t
 test('the mouse emulation entry asks the module and shows its answer, the key entries release every key and resume', async () => {
   const app = await openStreaming({ gamepad: true });
   try {
+    const mouseNotices = () => app.page.evaluate(() => window.__snackbarMessages.filter((message) => message.indexOf('Mouse emulation') === 0));
     await remoteKey(app.page, ...PLAY_PAUSE);
     assert.equal(await app.page.evaluate(() => $('#streamMenuMouseValue').text()), 'Off');
     await app.page.evaluate(() => $('#streamMenuMouse').click());
@@ -418,6 +460,19 @@ test('the mouse emulation entry asks the module and shows its answer, the key en
     await app.page.evaluate(() => handleMessage('mouseEmulationOn'));
     assert.equal(await app.page.evaluate(() => $('#streamMenuMouseValue').text()), 'On');
     assert.equal((await menuState(app.page)).open, true);
+    // The entry shows the new state, so no notice covers the game for 5 seconds after the menu closes
+    assert.deepEqual(await mouseNotices(), []);
+    assert.ok(app.logs.some((line) => line.indexOf('Mouse emulation is activated (shown in the Stream Menu).') >= 0));
+    // Without the menu (holding Start) the notice says it
+    await app.page.evaluate(() => {
+      closeStreamMenu(true);
+      handleMessage('mouseEmulationOff');
+    });
+    assert.deepEqual(await mouseNotices(), ['Mouse emulation is deactivated']);
+    await app.page.evaluate(() => handleMessage('mouseEmulationOn'));
+    assert.deepEqual(await mouseNotices(), ['Mouse emulation is deactivated', 'Mouse emulation is activated']);
+    await remoteKey(app.page, ...PLAY_PAUSE);
+    await app.page.evaluate(() => window.__wasmCalls.splice(0));
 
     // Alt + Tab: Alt down, Tab down, Tab up, Alt up, with the Alt flag only while Alt is held; then back to the stream
     await app.page.evaluate(() => window.__wasmCalls.splice(0));

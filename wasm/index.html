@@ -57,7 +57,7 @@
   <div class="mdl-layout mdl-js-layout">
     <header id="main-header" class="mdl-layout__header">
       <div class="mdl-layout__header-row">
-        <button type="button" id="goBackBtn" class="mdl-button mdl-js-button mdl-button--icon mdl-js-ripple-effect" role="link" aria-label="Go back">
+        <button type="button" id="goBackBtn" class="mdl-button mdl-js-button mdl-button--icon" role="link" aria-label="Go back">
           <svg class="navigation-button-icons icon" aria-hidden="true"><use xlink:href="#i-back"/></svg>
         </button>
         <div id="goBackTooltip" class="mdl-tooltip" for="goBackBtn" data-i18n="Back">Back</div>
@@ -75,23 +75,23 @@
         <div id="header-status" class="status-chip header-status" aria-hidden="true"></div>
         <!-- Navigation bar -->
         <nav class="mdl-navigation">
-          <button type="button" id="rescanNetworkBtn" class="mdl-button mdl-js-button mdl-button--icon mdl-js-ripple-effect" aria-label="Rescan network">
+          <button type="button" id="rescanNetworkBtn" class="mdl-button mdl-js-button mdl-button--icon" aria-label="Rescan network">
             <svg class="navigation-button-icons icon" aria-hidden="true"><use xlink:href="#i-refresh"/></svg>
           </button>
           <div id="rescanNetworkTooltip" class="mdl-tooltip" for="rescanNetworkBtn" data-i18n="Rescan network">Rescan network</div>
-          <button type="button" id="settingsBtn" class="mdl-button mdl-js-button mdl-button--icon mdl-js-ripple-effect" role="link" aria-label="Settings">
+          <button type="button" id="settingsBtn" class="mdl-button mdl-js-button mdl-button--icon" role="link" aria-label="Settings">
             <svg class="navigation-button-icons icon" aria-hidden="true"><use xlink:href="#i-gear"/></svg>
           </button>
           <div id="settingsTooltip" class="mdl-tooltip" for="settingsBtn" data-i18n="Settings">Settings</div>
-          <button type="button" id="supportBtn" class="mdl-button mdl-js-button mdl-button--icon mdl-js-ripple-effect" aria-label="Support">
+          <button type="button" id="supportBtn" class="mdl-button mdl-js-button mdl-button--icon" aria-label="Support">
             <svg class="navigation-button-icons icon" aria-hidden="true"><use xlink:href="#i-help"/></svg>
           </button>
           <div id="supportTooltip" class="mdl-tooltip" for="supportBtn" data-i18n="Support">Support</div>
-          <button type="button" id="restoreDefaultsBtn" class="mdl-button mdl-js-button mdl-button--icon mdl-js-ripple-effect" aria-label="Restore Defaults">
+          <button type="button" id="restoreDefaultsBtn" class="mdl-button mdl-js-button mdl-button--icon" aria-label="Restore Defaults">
             <svg class="navigation-button-icons icon" aria-hidden="true"><use xlink:href="#i-restore"/></svg>
           </button>
           <div id="restoreDefaultsTooltip" class="mdl-tooltip" for="restoreDefaultsBtn" data-i18n="Restore Defaults">Restore Defaults</div>
-          <button type="button" id="quitRunningAppBtn" class="mdl-button mdl-js-button mdl-button--icon mdl-js-ripple-effect" aria-label="Quit Running App">
+          <button type="button" id="quitRunningAppBtn" class="mdl-button mdl-js-button mdl-button--icon" aria-label="Quit Running App">
             <svg class="navigation-button-icons icon" aria-hidden="true"><use xlink:href="#i-quit"/></svg>
           </button>
           <div id="quitRunningAppTooltip" class="mdl-tooltip" for="quitRunningAppBtn" data-i18n="Quit Running App">Quit Running App</div>
@@ -223,7 +223,7 @@
                 - Applies the best image quality this TV supports (its highest resolution up to 4K, HEVC, and HDR if the TV supports it) with a bitrate that matches its network connection.
               </span>
               <div id="optimalSettingsMenu">
-                <button type="button" id="optimalSettingsBtn" class="mdl-button mdl-js-button mdl-js-ripple-effect" aria-label="Apply the optimal settings for this TV">
+                <button type="button" id="optimalSettingsBtn" class="mdl-button mdl-js-button" aria-label="Apply the optimal settings for this TV">
                   <span data-i18n="Apply the optimal streaming settings for this TV">
                     Apply the optimal streaming settings for this TV
                   </span>
@@ -237,9 +237,9 @@
                 - Increase to improve image clarity or decrease for better performance on lower-end devices and slower networks.
               </span>
               <div id="videoResolutionMenu">
-                <button type="button" id="selectResolution" class="mdl-button mdl-js-button mdl-js-ripple-effect" data-value="1280:720" data-i18n="1280 x 720 (720p)">1280 x 720 (720p)</button>
+                <button type="button" id="selectResolution" class="mdl-button mdl-js-button" data-value="1280:720" data-i18n="1280 x 720 (720p)">1280 x 720 (720p)</button>
               </div>
-              <ul class="videoResolutionMenu mdl-menu mdl-menu--bottom-left mdl-js-menu mdl-js-ripple-effect" for="selectResolution">
+              <ul class="videoResolutionMenu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectResolution">
                 <li class="mdl-menu__item" data-value="854:480" data-i18n="854 x 480 (480p)">854 x 480 (480p)</li>
                 <li class="mdl-menu__item" data-value="1280:720" data-i18n="1280 x 720 (720p)">1280 x 720 (720p)</li>
                 <li class="mdl-menu__item" data-value="1920:1080" data-i18n="1920 x 1080 (1080p)">1920 x 1080 (1080p)</li>
@@ -254,9 +254,9 @@
                 - Increase for smoother video stream or decrease for better performance on lower-end devices.
               </span>
               <div id="videoFramerateMenu">
-                <button type="button" id="selectFramerate" class="mdl-button mdl-js-button mdl-js-ripple-effect" data-value="60" data-i18n="60 FPS">60 FPS</button>
+                <button type="button" id="selectFramerate" class="mdl-button mdl-js-button" data-value="60" data-i18n="60 FPS">60 FPS</button>
               </div>
-              <ul class="videoFramerateMenu mdl-menu mdl-menu--bottom-left mdl-js-menu mdl-js-ripple-effect" for="selectFramerate">
+              <ul class="videoFramerateMenu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectFramerate">
                 <li class="mdl-menu__item" data-value="30" data-i18n="30 FPS">30 FPS</li>
                 <li class="mdl-menu__item" data-value="60" data-i18n="60 FPS">60 FPS</li>
               </ul>
@@ -267,9 +267,9 @@
                 - Increase for better image quality or decrease to improve performance on slower connections.
               </span>
               <div id="videoBitrateMenu">
-                <button type="button" id="selectBitrate" class="mdl-button mdl-js-button mdl-js-ripple-effect">10 Mbps</button>
+                <button type="button" id="selectBitrate" class="mdl-button mdl-js-button">10 Mbps</button>
               </div>
-              <div class="videoBitrateMenu mdl-menu mdl-menu--bottom-left mdl-js-menu mdl-js-ripple-effect" for="selectBitrate">
+              <div class="videoBitrateMenu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectBitrate">
                 <span id="bitrateLowestValue">0.5</span>
                 <input type="range" id="bitrateSlider" class="mdl-slider mdl-js-slider" min="0.5" max="150" step="0.5" value="10">
                 <span id="bitrateHighestValue">150</span>
@@ -281,7 +281,7 @@
                 - This can help reduce micro-stutter by delaying frames that arrive too early while streaming.
               </span>
               <div id="videoFramePacingMenu">
-                <label id="framePacingBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="framePacingSwitch">
+                <label id="framePacingBtn" class="mdl-switch mdl-js-switch" for="framePacingSwitch">
                   <input type="checkbox" id="framePacingSwitch" class="mdl-switch__input">
                   <span class="mdl-switch__label" data-i18n="Allow frame pacing to balance video latency and smoothness">
                     Allow frame pacing to balance video latency and smoothness
@@ -297,9 +297,9 @@
                 - Choose Auto to match your TV locale, or manually select your desired language from the list.
               </span>
               <div id="languageMenu">
-                <button type="button" id="selectLanguage" class="mdl-button mdl-js-button mdl-js-ripple-effect" data-value="auto">Auto</button>
+                <button type="button" id="selectLanguage" class="mdl-button mdl-js-button" data-value="auto">Auto</button>
               </div>
-              <ul class="languageMenu mdl-menu mdl-menu--bottom-left mdl-js-menu mdl-js-ripple-effect" for="selectLanguage"></ul>
+              <ul class="languageMenu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectLanguage"></ul>
             </div>
             <div class="setting-option">
               <label data-i18n="Host address field mode">Host address field mode</label>
@@ -307,7 +307,7 @@
                 - Recommended for devices that have issues with the TV keyboard when entering the host address.
               </span>
               <div id="ipAddressFieldModeMenu">
-                <label id="ipAddressFieldModeBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="ipAddressFieldModeSwitch">
+                <label id="ipAddressFieldModeBtn" class="mdl-switch mdl-js-switch" for="ipAddressFieldModeSwitch">
                   <input type="checkbox" id="ipAddressFieldModeSwitch" class="mdl-switch__input" onchange="handleIpAddressFieldMode()">
                   <span class="mdl-switch__label" data-i18n="Change the host address input to numeric (IPv4) mode">
                     Change the host address input to numeric (IPv4) mode
@@ -323,9 +323,9 @@
                 - The order of the apps of a host: by title, the recently played first, or as the host lists them (e.g. the order set in Apollo). Favorites always come first.
               </span>
               <div id="sortAppsListMenu">
-                <button type="button" id="selectSortAppsList" class="mdl-button mdl-js-button mdl-js-ripple-effect" data-value="az" data-i18n="A to Z">A to Z</button>
+                <button type="button" id="selectSortAppsList" class="mdl-button mdl-js-button" data-value="az" data-i18n="A to Z">A to Z</button>
               </div>
-              <ul class="sortAppsListMenu mdl-menu mdl-menu--bottom-left mdl-js-menu mdl-js-ripple-effect" for="selectSortAppsList">
+              <ul class="sortAppsListMenu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectSortAppsList">
                 <li class="mdl-menu__item" data-value="az" data-i18n="A to Z">A to Z</li>
                 <li class="mdl-menu__item" data-value="za" data-i18n="Z to A">Z to A</li>
                 <li class="mdl-menu__item" data-value="recent" data-i18n="Recently played">Recently played</li>
@@ -338,7 +338,7 @@
                 - Lets Sunshine switch the host display to the client resolution when its display device configuration is enabled. With the default 'automatic' refresh rate option of Sunshine the host refresh rate follows the selected frame rate even when this is off, and only modes the host display offers can be applied (e.g. a 4K 120 FPS stream needs a display with 3840 x 2160 at 120 Hz).
               </span>
               <div id="optimizeGamesMenu">
-                <label id="optimizeGamesBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="optimizeGamesSwitch">
+                <label id="optimizeGamesBtn" class="mdl-switch mdl-js-switch" for="optimizeGamesSwitch">
                   <input type="checkbox" id="optimizeGamesSwitch" class="mdl-switch__input">
                   <span class="mdl-switch__label" data-i18n="Allow the host to modify game settings for optimal streaming">
                     Allow the host to modify game settings for optimal streaming
@@ -350,7 +350,7 @@
               <label data-i18n="Remove all hosts">Remove all hosts</label>
               <span class="mdl-list__item-text-body"></span>
               <div id="removeAllHostsMenu">
-                <button type="button" id="removeAllHostsBtn" class="mdl-button mdl-js-button mdl-js-ripple-effect" aria-label="Remove All Hosts">
+                <button type="button" id="removeAllHostsBtn" class="mdl-button mdl-js-button" aria-label="Remove All Hosts">
                   <span data-i18n="Remove all currently saved hosts from the list">
                     Remove all currently saved hosts from the list
                   </span>
@@ -364,7 +364,7 @@
               <label data-i18n="Rumble feedback">Rumble feedback</label>
               <span class="mdl-list__item-text-body"></span>
               <div id="rumbleFeedbackMenu">
-                <label id="rumbleFeedbackBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="rumbleFeedbackSwitch">
+                <label id="rumbleFeedbackBtn" class="mdl-switch mdl-js-switch" for="rumbleFeedbackSwitch">
                   <input type="checkbox" id="rumbleFeedbackSwitch" class="mdl-switch__input">
                   <span class="mdl-switch__label" data-i18n="Allow gamepad rumble feedback support while streaming">
                     Allow gamepad rumble feedback support while streaming
@@ -376,7 +376,7 @@
               <label data-i18n="Mouse emulation">Mouse emulation</label>
               <span class="mdl-list__item-text-body"></span>
               <div id="mouseEmulationMenu">
-                <label id="mouseEmulationBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="mouseEmulationSwitch">
+                <label id="mouseEmulationBtn" class="mdl-switch mdl-js-switch" for="mouseEmulationSwitch">
                   <input type="checkbox" id="mouseEmulationSwitch" class="mdl-switch__input">
                   <span class="mdl-switch__label" data-i18n="Allow gamepad to switch to mouse mode when holding the Start button">
                     Allow gamepad to switch to mouse mode when holding the Start button
@@ -390,7 +390,7 @@
                 - Choose the button that each button of a controller presses in games, for all controllers or for one, and calibrate worn sticks. The menus keep the usual buttons.
               </span>
               <div id="buttonMappingMenu">
-                <button type="button" id="buttonMappingBtn" class="mdl-button mdl-js-button mdl-js-ripple-effect" aria-label="Button mapping">
+                <button type="button" id="buttonMappingBtn" class="mdl-button mdl-js-button" aria-label="Button mapping">
                   <span data-i18n="Change the buttons of the controllers">
                     Change the buttons of the controllers
                   </span>
@@ -404,7 +404,7 @@
                 - Shows every key of the remote and every button, trigger and stick of the controllers as the TV reports them.
               </span>
               <div id="inputTestMenu">
-                <button type="button" id="inputTestBtn" class="mdl-button mdl-js-button mdl-js-ripple-effect" aria-label="Input test">
+                <button type="button" id="inputTestBtn" class="mdl-button mdl-js-button" aria-label="Input test">
                   <span data-i18n="Test the remote and the controllers">
                     Test the remote and the controllers
                   </span>
@@ -418,9 +418,9 @@
                 - Auto picks the type from the name of each gamepad. Choose PlayStation to get PlayStation button prompts and the touchpad button in games, if the host supports it.
               </span>
               <div id="controllerTypeMenu">
-                <button type="button" id="selectControllerType" class="mdl-button mdl-js-button mdl-js-ripple-effect" data-value="Auto" data-i18n="Auto">Auto</button>
+                <button type="button" id="selectControllerType" class="mdl-button mdl-js-button" data-value="Auto" data-i18n="Auto">Auto</button>
               </div>
-              <ul class="controllerTypeMenu mdl-menu mdl-menu--bottom-left mdl-js-menu mdl-js-ripple-effect" for="selectControllerType">
+              <ul class="controllerTypeMenu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectControllerType">
                 <li class="mdl-menu__item" data-value="Auto" data-i18n="Auto">Auto</li>
                 <li class="mdl-menu__item" data-value="Xbox">Xbox</li>
                 <li class="mdl-menu__item" data-value="PlayStation">PlayStation</li>
@@ -435,9 +435,9 @@
                 - Choose EMSS for the original implementation or Web Audio if you hear crackling or stuttering while streaming.
               </span>
               <div id="audioBackendMenu">
-                <button type="button" id="selectAudioBackend" class="mdl-button mdl-js-button mdl-js-ripple-effect" data-value="EMSS" data-i18n="EMSS">EMSS</button>
+                <button type="button" id="selectAudioBackend" class="mdl-button mdl-js-button" data-value="EMSS" data-i18n="EMSS">EMSS</button>
               </div>
-              <ul class="audioBackendMenu mdl-menu mdl-menu--bottom-left mdl-js-menu mdl-js-ripple-effect" for="selectAudioBackend">
+              <ul class="audioBackendMenu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectAudioBackend">
                 <li class="mdl-menu__item" data-value="EMSS" data-i18n="EMSS">EMSS</li>
                 <li class="mdl-menu__item" data-value="WebAudio" data-i18n="Web Audio">Web Audio</li>
                 <li class="mdl-menu__item" data-value="Disabled" data-i18n="Disabled">Disabled</li>
@@ -451,9 +451,9 @@
                 - Choose 5.1 or 7.1 surround sound for home-theater systems or use Stereo for general audio compatibility.
               </span>
               <div id="audioConfigMenu">
-                <button type="button" id="selectAudio" class="mdl-button mdl-js-button mdl-js-ripple-effect" data-value="Stereo" data-i18n="Stereo">Stereo</button>
+                <button type="button" id="selectAudio" class="mdl-button mdl-js-button" data-value="Stereo" data-i18n="Stereo">Stereo</button>
               </div>
-              <ul class="audioConfigMenu mdl-menu mdl-menu mdl-menu--bottom-left mdl-js-menu mdl-js-ripple-effect" for="selectAudio">
+              <ul class="audioConfigMenu mdl-menu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectAudio">
                 <li class="mdl-menu__item" data-value="Stereo" data-i18n="Stereo">Stereo</li>
                 <li class="mdl-menu__item" data-value="51Surround" data-i18n="5.1 Surround Sound">5.1 Surround Sound</li>
                 <li class="mdl-menu__item" data-value="71Surround" data-i18n="7.1 Surround Sound">7.1 Surround Sound</li>
@@ -465,7 +465,7 @@
                 - This can help reduce delays by keeping audio in sync for a consistent sound while streaming.
               </span>
               <div id="audioSyncMenu">
-                <label id="audioSyncBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="audioSyncSwitch">
+                <label id="audioSyncBtn" class="mdl-switch mdl-js-switch" for="audioSyncSwitch">
                   <input type="checkbox" id="audioSyncSwitch" class="mdl-switch__input">
                   <span class="mdl-switch__label" data-i18n="Allow audio synchronization support for optimal sound output">
                     Allow audio synchronization support for optimal sound output
@@ -479,9 +479,9 @@
                 - Increase to keep the sound smooth over an unstable network or decrease to lower the audio delay. With Audio clock sync on, the performance statistics suggest a size after 10 minutes.
               </span>
               <div id="audioJitterMenu">
-                <button type="button" id="selectAudioJitter" class="mdl-button mdl-js-button mdl-js-ripple-effect">100 ms</button>
+                <button type="button" id="selectAudioJitter" class="mdl-button mdl-js-button">100 ms</button>
               </div>
-              <div class="audioJitterMenu mdl-menu mdl-menu--bottom-left mdl-js-menu mdl-js-ripple-effect" for="selectAudioJitter">
+              <div class="audioJitterMenu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectAudioJitter">
                 <span id="jitterLowestValue">25</span>
                 <input type="range" id="jitterSlider" class="mdl-slider mdl-js-slider" min="25" max="500" step="25" value="100">
                 <span id="jitterHighestValue">500</span>
@@ -495,7 +495,7 @@
                 - Keeps the audio delay at the jitter buffer by playing the sound up to 0.05 % faster or slower, which is inaudible. Without it, the drift between the clocks of the host and the TV lets the delay grow to 1.5x the buffer and then skips 5 ms of sound every few minutes, or leaves a gap as long as the buffer once it runs empty. The suggested buffer in the performance statistics needs it.
               </span>
               <div id="audioClockSyncMenu">
-                <label id="audioClockSyncBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="audioClockSyncSwitch">
+                <label id="audioClockSyncBtn" class="mdl-switch mdl-js-switch" for="audioClockSyncSwitch">
                   <input type="checkbox" id="audioClockSyncSwitch" class="mdl-switch__input">
                   <span class="mdl-switch__label" data-i18n="Keep the audio in step with the clock of the TV">
                     Keep the audio in step with the clock of the TV
@@ -507,24 +507,10 @@
               <label data-i18n="Play audio on host">Play audio on host</label>
               <span class="mdl-list__item-text-body"></span>
               <div id="playHostAudioMenu">
-                <label id="playHostAudioBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="playHostAudioSwitch">
+                <label id="playHostAudioBtn" class="mdl-switch mdl-js-switch" for="playHostAudioSwitch">
                   <input type="checkbox" id="playHostAudioSwitch" class="mdl-switch__input">
                   <span class="mdl-switch__label" data-i18n="Allow playing audio from the computer and this device">
                     Allow playing audio from the computer and this device
-                  </span>
-                </label>
-              </div>
-            </div>
-            <div id="continuousAudioOption" class="setting-option">
-              <label data-i18n="Continuous audio from the host">Continuous audio from the host</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Keeps the host sending audio during silence, so that the audio player of the TV and the link to a soundbar don't run dry. Needs a recent Sunshine; older hosts ignore it.">
-                - Keeps the host sending audio during silence, so that the audio player of the TV and the link to a soundbar don't run dry. Needs a recent Sunshine; older hosts ignore it.
-              </span>
-              <div id="continuousAudioMenu">
-                <label id="continuousAudioBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="continuousAudioSwitch">
-                  <input type="checkbox" id="continuousAudioSwitch" class="mdl-switch__input">
-                  <span class="mdl-switch__label" data-i18n="Ask the host to send audio also during silence">
-                    Ask the host to send audio also during silence
                   </span>
                 </label>
               </div>
@@ -538,7 +524,7 @@
                 - This is only necessary for Wolf and Punktfunk-style hosts that encrypt GameStream audio without advertising it.
               </span>
               <div id="decryptHostAudioMenu">
-                <label id="decryptHostAudioBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="decryptHostAudioSwitch">
+                <label id="decryptHostAudioBtn" class="mdl-switch mdl-js-switch" for="decryptHostAudioSwitch">
                   <input type="checkbox" id="decryptHostAudioSwitch" class="mdl-switch__input">
                   <span class="mdl-switch__label" data-i18n="Allow decrypting AES-CBC audio from Wolf and Punktfunk-style hosts">
                     Allow decrypting AES-CBC audio from Wolf and Punktfunk-style hosts
@@ -554,9 +540,9 @@
                 - Increase for better video compression and quality or decrease to improve performance on lower-end devices.
               </span>
               <div id="videoCodecMenu">
-                <button type="button" id="selectCodec" class="mdl-button mdl-js-button mdl-js-ripple-effect" data-value="H264" data-i18n="H.264">H.264</button>
+                <button type="button" id="selectCodec" class="mdl-button mdl-js-button" data-value="H264" data-i18n="H.264">H.264</button>
               </div>
-              <ul class="videoCodecMenu mdl-menu mdl-menu mdl-menu--bottom-left mdl-js-menu mdl-js-ripple-effect" for="selectCodec">
+              <ul class="videoCodecMenu mdl-menu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectCodec">
                 <li id="h264" class="mdl-menu__item" data-value="H264" data-i18n="H.264">H.264</li>
                 <li id="hevc" class="mdl-menu__item" data-value="HEVC" data-i18n="HEVC">HEVC</li>
                 <li id="av1" class="mdl-menu__item" data-value="AV1" data-i18n="AV1">AV1</li>
@@ -568,7 +554,7 @@
                 - HDR requires an HDR10-capable device, a GPU that can encode HEVC Main 10, and HDR10-enabled game. HDR must also be on for the host display (e.g. a virtual display), in Windows or through Sunshine's display device settings. Otherwise the stream is 10-bit SDR, shown as 10-bit SDR in the performance statistics.
               </span>
               <div id="videoHdrMenu">
-                <label id="hdrModeBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="hdrModeSwitch">
+                <label id="hdrModeBtn" class="mdl-switch mdl-js-switch" for="hdrModeSwitch">
                   <input type="checkbox" id="hdrModeSwitch" class="mdl-switch__input">
                   <span class="mdl-switch__label" data-i18n="Allow high dynamic range for vibrant colors and enhanced contrast">
                     Allow high dynamic range for vibrant colors and enhanced contrast
@@ -582,7 +568,7 @@
                 - This will cause loss of detail in light and dark areas if your device doesn't properly display full range video content.
               </span>
               <div id="colorRangeMenu">
-                <label id="fullRangeBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="fullRangeSwitch">
+                <label id="fullRangeBtn" class="mdl-switch mdl-js-switch" for="fullRangeSwitch">
                   <input type="checkbox" id="fullRangeSwitch" class="mdl-switch__input">
                   <span class="mdl-switch__label" data-i18n="Allow full color range for more detail in dark and bright areas of content">
                     Allow full color range for more detail in dark and bright areas of content
@@ -596,7 +582,7 @@
                 - Enable for ultra low latency with game mode or disable for low latency with post-processing video enhancements. On Tizen 9 and newer keep it off with either app variant, as it can freeze the picture there. This switch only selects the decoder latency mode (Ultra Low or Low); the ForceGM variant asks the TV for its Game Mode instead.
               </span>
               <div id="gameModeMenu">
-                <label id="gameModeBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="gameModeSwitch">
+                <label id="gameModeBtn" class="mdl-switch mdl-js-switch" for="gameModeSwitch">
                   <input type="checkbox" id="gameModeSwitch" class="mdl-switch__input">
                   <span class="mdl-switch__label" data-i18n="Allow game mode for optimal latency and performance while streaming">
                     Allow game mode for optimal latency and performance while streaming
@@ -612,7 +598,7 @@
                 - Recovers from packet loss without a full keyframe, which avoids traffic spikes and blurry frames. Disable it if artifacts remain after a frame drop.
               </span>
               <div id="refFrameInvalidationMenu">
-                <label id="refFrameInvalidationBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="refFrameInvalidationSwitch">
+                <label id="refFrameInvalidationBtn" class="mdl-switch mdl-js-switch" for="refFrameInvalidationSwitch">
                   <input type="checkbox" id="refFrameInvalidationSwitch" class="mdl-switch__input">
                   <span class="mdl-switch__label" data-i18n="Allow the host to recover lost frames with reference frame invalidation (HEVC and AV1)">
                     Allow the host to recover lost frames with reference frame invalidation (HEVC and AV1)
@@ -628,7 +614,7 @@
                 - Passes the HDR metadata of the host display (peak brightness, color primaries) to the TV with every HEVC keyframe, so its HDR tone mapping matches the host. Disable it if HDR streams fail to start or look wrong.
               </span>
               <div id="hdrMetadataMenu">
-                <label id="hdrMetadataBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="hdrMetadataSwitch">
+                <label id="hdrMetadataBtn" class="mdl-switch mdl-js-switch" for="hdrMetadataSwitch">
                   <input type="checkbox" id="hdrMetadataSwitch" class="mdl-switch__input">
                   <span class="mdl-switch__label" data-i18n="Send the HDR metadata of the host to the TV (HEVC)">
                     Send the HDR metadata of the host to the TV (HEVC)
@@ -646,7 +632,7 @@
                 - Higher FPS can reduce latency on high-end devices, but may cause lag or instability on unsupported devices.
               </span>
               <div id="unlockAllFpsMenu">
-                <label id="unlockAllFpsBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="unlockAllFpsSwitch">
+                <label id="unlockAllFpsBtn" class="mdl-switch mdl-js-switch" for="unlockAllFpsSwitch">
                   <input type="checkbox" id="unlockAllFpsSwitch" class="mdl-switch__input" onchange="handleUnlockAllFps()">
                   <span class="mdl-switch__label" data-i18n="Unlock all possible frame rate options for this device">
                     Unlock all possible frame rate options for this device
@@ -660,7 +646,7 @@
                 - Calculates a low bitrate from the resolution, frame rate, codec and HDR settings, e.g. about 45 Mbps for 4K at 60 FPS with HEVC HDR. For the best image quality keep it off and set the bitrate by hand.
               </span>
               <div id="optimizeBitrateMenu">
-                <label id="optimizeBitrateBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="optimizeBitrateSwitch">
+                <label id="optimizeBitrateBtn" class="mdl-switch mdl-js-switch" for="optimizeBitrateSwitch">
                   <input type="checkbox" id="optimizeBitrateSwitch" class="mdl-switch__input">
                   <span class="mdl-switch__label" data-i18n="Optimize bitrate to balance stream quality, performance, and bandwidth usage">
                     Optimize bitrate to balance stream quality, performance, and bandwidth usage
@@ -672,7 +658,7 @@
               <label data-i18n="Connection warnings">Connection warnings</label>
               <span class="mdl-list__item-text-body"></span>
               <div id="connectionWarningsMenu">
-                <label id="disableWarningsBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="disableWarningsSwitch">
+                <label id="disableWarningsBtn" class="mdl-switch mdl-js-switch" for="disableWarningsSwitch">
                   <input type="checkbox" id="disableWarningsSwitch" class="mdl-switch__input">
                   <span class="mdl-switch__label" data-i18n="Disable on-screen connection warning messages while streaming">
                     Disable on-screen connection warning messages while streaming
@@ -686,9 +672,9 @@
                 - Compact shows one line with the main figures over the stream, Full every figure. While streaming, the YELLOW key and the Stream Menu switch between Off, Compact and Full.
               </span>
               <div id="performanceStatsMenu">
-                <button type="button" id="selectPerformanceStats" class="mdl-button mdl-js-button mdl-js-ripple-effect" data-value="0" data-i18n="Off">Off</button>
+                <button type="button" id="selectPerformanceStats" class="mdl-button mdl-js-button" data-value="0" data-i18n="Off">Off</button>
               </div>
-              <ul class="performanceStatsMenu mdl-menu mdl-menu--bottom-left mdl-js-menu mdl-js-ripple-effect" for="selectPerformanceStats">
+              <ul class="performanceStatsMenu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectPerformanceStats">
                 <li class="mdl-menu__item" data-value="0" data-i18n="Off">Off</li>
                 <li class="mdl-menu__item" data-value="1" data-i18n="Compact">Compact</li>
                 <li class="mdl-menu__item" data-value="2" data-i18n="Full">Full</li>
@@ -700,9 +686,9 @@
                 - The corner of the screen where the performance statistics show during a stream, compact or full.
               </span>
               <div id="statsPositionMenu">
-                <button type="button" id="selectStatsPosition" class="mdl-button mdl-js-button mdl-js-ripple-effect" data-value="top-left" data-i18n="Top left">Top left</button>
+                <button type="button" id="selectStatsPosition" class="mdl-button mdl-js-button" data-value="top-left" data-i18n="Top left">Top left</button>
               </div>
-              <ul class="statsPositionMenu mdl-menu mdl-menu--bottom-left mdl-js-menu mdl-js-ripple-effect" for="selectStatsPosition">
+              <ul class="statsPositionMenu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectStatsPosition">
                 <li class="mdl-menu__item" data-value="top-left" data-i18n="Top left">Top left</li>
                 <li class="mdl-menu__item" data-value="top-right" data-i18n="Top right">Top right</li>
                 <li class="mdl-menu__item" data-value="bottom-left" data-i18n="Bottom left">Bottom left</li>
@@ -715,7 +701,7 @@
               <label data-i18n="System information">System information</label>
               <span class="mdl-list__item-text-body"></span>
               <div id="systemInfoMenu">
-                <button type="button" id="systemInfoBtn" class="mdl-button mdl-js-button mdl-js-ripple-effect" aria-label="System Information">Loading system information...</button>
+                <button type="button" id="systemInfoBtn" class="mdl-button mdl-js-button" aria-label="System Information">Loading system information...</button>
               </div>
             </div>
             <div class="setting-option">
@@ -724,7 +710,7 @@
                 - The log of this session and the one before, kept only in the memory of the TV, for a report of a problem.
               </span>
               <div id="diagnosticLogMenu">
-                <button type="button" id="diagnosticLogBtn" class="mdl-button mdl-js-button mdl-js-ripple-effect" aria-label="Diagnostic log">
+                <button type="button" id="diagnosticLogBtn" class="mdl-button mdl-js-button" aria-label="Diagnostic log">
                   <span data-i18n="Show the diagnostic log">
                     Show the diagnostic log
                   </span>
@@ -738,7 +724,7 @@
                 - Useful for users who need guidance or help navigating the app.
               </span>
               <div id="navigationGuideMenu">
-                <button type="button" id="navigationGuideBtn" class="mdl-button mdl-js-button mdl-js-ripple-effect" aria-label="Navigation Guide">
+                <button type="button" id="navigationGuideBtn" class="mdl-button mdl-js-button" aria-label="Navigation Guide">
                   <span data-i18n="Discover navigation controls for all input devices">
                     Discover navigation controls for all input devices
                   </span>
@@ -752,7 +738,7 @@
                 - Find out if a new application update is available.
               </span>
               <div id="checkForUpdatesMenu">
-                <button type="button" id="checkUpdatesBtn" class="mdl-button mdl-js-button mdl-js-ripple-effect" aria-label="Check for Updates">
+                <button type="button" id="checkUpdatesBtn" class="mdl-button mdl-js-button" aria-label="Check for Updates">
                   <span data-i18n="Check for new Moonlight updates">
                     Check for new Moonlight updates
                   </span>
@@ -766,7 +752,7 @@
                 - If you encounter issues, here you can restart the app to resolve them.
               </span>
               <div id="restartAppMenu">
-                <button type="button" id="restartAppBtn" class="mdl-button mdl-js-button mdl-js-ripple-effect" aria-label="Restart Application">
+                <button type="button" id="restartAppBtn" class="mdl-button mdl-js-button" aria-label="Restart Application">
                   <span data-i18n="Restart the Moonlight app quickly">
                     Restart the Moonlight app quickly
                   </span>
@@ -844,8 +830,8 @@
         </div>
       </div>
       <div class="mdl-dialog__actions">
-        <button type="button" id="cancelAddHost" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect" data-i18n="Cancel">Cancel</button>
-        <button type="button" id="continueAddHost" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect" data-i18n="Continue">Continue</button>
+        <button type="button" id="cancelAddHost" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored" data-i18n="Cancel">Cancel</button>
+        <button type="button" id="continueAddHost" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored" data-i18n="Continue">Continue</button>
       </div>
     </dialog>
   </div>
@@ -862,7 +848,7 @@
         </p>
       </div>
       <div class="mdl-dialog__actions">
-        <button type="button" id="cancelPairing" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect" data-i18n="Cancel">Cancel</button>
+        <button type="button" id="cancelPairing" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored" data-i18n="Cancel">Cancel</button>
       </div>
     </dialog>
   </div>
@@ -873,7 +859,7 @@
       <div class="mdl-dialog__content">
         <p id="autoWolDialogText"></p>
         <div id="autoWolCheckboxContainer">
-          <label id="autoWolCheckboxBtn" class="mdl-switch mdl-js-switch mdl-js-ripple-effect" for="autoWolCheckboxSwitch">
+          <label id="autoWolCheckboxBtn" class="mdl-switch mdl-js-switch" for="autoWolCheckboxSwitch">
             <input type="checkbox" id="autoWolCheckboxSwitch" class="mdl-switch__input">
             <span class="mdl-switch__label" data-i18n="Always wake this PC automatically">
               Always wake this PC automatically
@@ -882,7 +868,7 @@
         </div>
       </div>
       <div class="mdl-dialog__actions">
-        <button type="button" id="cancelAutoWol" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect" data-i18n="Cancel">Cancel</button>
+        <button type="button" id="cancelAutoWol" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored" data-i18n="Cancel">Cancel</button>
       </div>
     </dialog>
   </div>
@@ -896,8 +882,8 @@
         </p>
       </div>
       <div class="mdl-dialog__actions">
-        <button type="button" id="cancelDeleteHost" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect" data-i18n="No">No</button>
-        <button type="button" id="continueDeleteHost" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect" data-i18n="Yes">Yes</button>
+        <button type="button" id="cancelDeleteHost" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored" data-i18n="No">No</button>
+        <button type="button" id="continueDeleteHost" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored" data-i18n="Yes">Yes</button>
       </div>
     </dialog>
   </div>
@@ -911,8 +897,8 @@
         </p>
       </div>
       <div class="mdl-dialog__actions">
-        <button type="button" id="cancelRestoreDefaults" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect" data-i18n="No">No</button>
-        <button type="button" id="continueRestoreDefaults" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect" data-i18n="Yes">Yes</button>
+        <button type="button" id="cancelRestoreDefaults" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored" data-i18n="No">No</button>
+        <button type="button" id="continueRestoreDefaults" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored" data-i18n="Yes">Yes</button>
       </div>
     </dialog>
   </div>
@@ -926,8 +912,8 @@
         </p>
       </div>
       <div class="mdl-dialog__actions">
-        <button type="button" id="cancelQuitApp" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect" data-i18n="No">No</button>
-        <button type="button" id="continueQuitApp" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect" data-i18n="Yes">Yes</button>
+        <button type="button" id="cancelQuitApp" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored" data-i18n="No">No</button>
+        <button type="button" id="continueQuitApp" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored" data-i18n="Yes">Yes</button>
       </div>
     </dialog>
   </div>
@@ -947,7 +933,7 @@
         </p>
       </div>
       <div class="mdl-dialog__actions">
-        <button type="button" id="closeAppSupport" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect" data-i18n="Close">Close</button>
+        <button type="button" id="closeAppSupport" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored" data-i18n="Close">Close</button>
       </div>
     </dialog>
   </div>
@@ -1020,7 +1006,7 @@
           </li>
           <li class="navGuideDialogControls">
             <span class="navGuideRemoteText" data-i18n="CHANNEL UP">CHANNEL UP</span> / <span class="navGuideRemoteText" data-i18n="PLAY/PAUSE">PLAY/PAUSE</span> / <span class="navGuideKeyboardText" data-i18n="F11">F11</span> / <span class="navGuideGamepadText" data-i18n="SELECT">SELECT</span>
-            <span data-i18n="— Switch the mode of the IP address field, and open the menu of a host PC or an app.">— Switch the mode of the IP address field, and open the menu of a host PC or an app.</span>
+            <span data-i18n="— Open the menu of a host PC or an app.">— Open the menu of a host PC or an app.</span>
           </li>
           <li class="navGuideDialogControls">
             <span class="navGuideRemoteText" data-i18n="CHANNEL DOWN">CHANNEL DOWN</span> / <span class="navGuideKeyboardText" data-i18n="F12">F12</span> / <span class="navGuideGamepadText" data-i18n="START">START</span>
@@ -1041,7 +1027,7 @@
         </ul>
       </div>
       <div class="mdl-dialog__actions">
-        <button type="button" id="closeNavGuide" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect" data-i18n="Close">Close</button>
+        <button type="button" id="closeNavGuide" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored" data-i18n="Close">Close</button>
       </div>
     </dialog>
   </div>
@@ -1053,7 +1039,7 @@
         <div id="diagnosticLogText" class="log-text"></div>
       </div>
       <div class="mdl-dialog__actions">
-        <button type="button" id="closeDiagnosticLog" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect" data-i18n="Close">Close</button>
+        <button type="button" id="closeDiagnosticLog" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored" data-i18n="Close">Close</button>
       </div>
     </dialog>
   </div>
@@ -1091,8 +1077,8 @@
         </p>
       </div>
       <div class="mdl-dialog__actions">
-        <button type="button" id="closeWarning" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect" data-i18n="Close">Close</button>
-        <button type="button" id="continueWarning" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect" data-i18n="Continue">Continue</button>
+        <button type="button" id="closeWarning" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored" data-i18n="Close">Close</button>
+        <button type="button" id="continueWarning" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored" data-i18n="Continue">Continue</button>
       </div>
     </dialog>
   </div>
@@ -1104,7 +1090,7 @@
         <p id="updateAppDialogText"></p>
       </div>
       <div class="mdl-dialog__actions">
-        <button type="button" id="closeUpdateApp" autofocus class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect" data-i18n="Close">Close</button>
+        <button type="button" id="closeUpdateApp" autofocus class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored" data-i18n="Close">Close</button>
       </div>
     </dialog>
   </div>
@@ -1118,8 +1104,8 @@
         </p>
       </div>
       <div class="mdl-dialog__actions">
-        <button type="button" id="cancelRestartApp" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect" data-i18n="Cancel">Cancel</button>
-        <button type="button" id="continueRestartApp" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect" data-i18n="Restart">Restart</button>
+        <button type="button" id="cancelRestartApp" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored" data-i18n="Cancel">Cancel</button>
+        <button type="button" id="continueRestartApp" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored" data-i18n="Restart">Restart</button>
       </div>
     </dialog>
   </div>
@@ -1133,8 +1119,8 @@
         </p>
       </div>
       <div class="mdl-dialog__actions">
-        <button type="button" id="cancelExitApp" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect" data-i18n="Cancel">Cancel</button>
-        <button type="button" id="continueExitApp" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored mdl-js-ripple-effect" data-i18n="Exit">Exit</button>
+        <button type="button" id="cancelExitApp" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored" data-i18n="Cancel">Cancel</button>
+        <button type="button" id="continueExitApp" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored" data-i18n="Exit">Exit</button>
       </div>
     </dialog>
   </div>

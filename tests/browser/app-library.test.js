@@ -15,7 +15,8 @@ const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { openApp, readStorage, startHarness, waitForStorage } = require('./harness');
 
-// delayedNavigation() runs the gamepad buttons of the menus 150 ms later (NAVIGATION_DELAY)
+// delayedNavigation() runs the gamepad buttons of the menus 50 ms later (BUTTON_NAVIGATION_DELAY) and a stick move 150 ms
+// later (NAVIGATION_DELAY)
 const AFTER_DELAY_MS = 250;
 
 let harness;

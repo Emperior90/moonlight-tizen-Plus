@@ -1,7 +1,7 @@
 'use strict';
 
 // Pins the menu gamepad polling of wasm/platform/gamepad.js (the Controller object): it polls
-// navigator.getGamepads() every 5 ms while the menus are shown and reports changed buttons and axes as a
+// navigator.getGamepads() every 16 ms while the menus are shown and reports changed buttons and axes as a
 // 'gamepadinputchanged' event, which index.js maps to Navigation operations (tests/unit/gamepad-menu-handler.test.js).
 // Since plan WP6 it also takes a fresh snapshot of a controller whose layout changed, finds controllers that never
 // fired gamepadconnected, reports the press that woke a controller, ignores small stick movements, and describes the
@@ -93,7 +93,7 @@ function loadController() {
   };
 }
 
-test('starting the polling registers the connection listeners once and polls every 5 ms', () => {
+test('starting the polling registers the connection listeners once and polls about once per frame (16 ms)', () => {
   const pads = loadController();
   pads.controller.startWatching();
   pads.controller.stopWatching();
@@ -101,7 +101,7 @@ test('starting the polling registers the connection listeners once and polls eve
   assert.equal(pads.platform.windowListeners.gamepadconnected.length, 1);
   assert.equal(pads.platform.windowListeners.gamepaddisconnected.length, 1);
   assert.equal(pads.intervals.filter((entry) => entry.active).length, 1);
-  assert.equal(pads.intervals[0].ms, 5);
+  assert.equal(pads.intervals[0].ms, 16);
   pads.controller.startWatching();
   assert.equal(pads.intervals.filter((entry) => entry.active).length, 1, 'a second start keeps one interval');
 });

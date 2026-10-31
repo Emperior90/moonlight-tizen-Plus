@@ -85,7 +85,7 @@ Moonlight Plus has its own package ID. It installs next to the regular Moonlight
 
 ### Updates
 
-Settings → About → *Check for updates* looks for a newer release of this fork. The app also checks once a day at startup and then shows a *New update* button in the header. Both show what changed, but they can't install the update: download the new file and install it the same way as before. A build of the same package installs over the current one and normally keeps the settings and the pairing. If the TV refuses the update because the author certificate doesn't match, uninstall the old app first, which loses its settings and pairing.
+Settings → About → *Check for updates* looks for a newer release of this fork. The app also checks once a day at startup and then shows a *New update* button in the header. A notice names a new version once, on the first start that finds it, and never during a stream; when the automatic check fails (e.g. without internet), it only writes that to the diagnostic log. Both show what changed, but they can't install the update: download the new file and install it the same way as before. A build of the same package installs over the current one and normally keeps the settings and the pairing. If the TV refuses the update because the author certificate doesn't match, uninstall the old app first, which loses its settings and pairing.
 
 ## 4. Optimal settings for this TV
 
@@ -169,8 +169,7 @@ Settings → About → *System information* shows what the app detected. A photo
 |---|---|
 | App Version | Name and version of the app. *Moonlight Plus-ForceGM* is the ForceGM variant. A pre-release adds *(pre-&lt;commit&gt;)*, the commit it was built from. So does a full release that was promoted from a tested pre-release, because it keeps the files of the pre-release, e.g. *Moonlight Plus v1.19.100 (pre-1a2b3c4)*. |
 | Platform Version | Tizen version of the TV |
-| TV Model Series, TV Model Name, TV Model Group | Model strings that the TV reports |
-| Model Year (from the model group) | The year that the model group suggests. Only a hint: it never decides a setting. |
+| TV Model Series, TV Model Name, TV Model Group | Model strings that the TV reports. The model group is followed by the model year that it suggests, e.g. *23_PONTUSM (model year 2023)*: only a hint, which never decides a setting. |
 | Panel | Full HD, 4K or 8K |
 | HDR Support | Whether the TV reports HDR support |
 | Network Connection Type | Ethernet, Wi-Fi, or Unknown |
@@ -324,9 +323,9 @@ Settings → Audio Settings → *Audio backend*:
   - If the sound drops out (*underruns* rise), raise the jitter buffer by 25 ms.
 - **Disabled** turns the sound of the TV off.
 
-*Audio configuration* offers Stereo, 5.1 and 7.1 surround (experimental). For 5.1 through a soundbar, see [Surround sound with a soundbar](#surround-sound-with-a-soundbar).
+*Audio configuration* offers Stereo, 5.1 and 7.1 surround (experimental). For 5.1 through a soundbar, see [Surround sound with a soundbar](#surround-sound-with-a-soundbar). The start of a stream also tells the host the chosen configuration, which Sunshine passes to the prep commands of an app as `SUNSHINE_CLIENT_AUDIO_CONFIGURATION` (e.g. *5.1*); before 2.2.0 it always said *2.0* there.
 
-*Continuous audio from the host* (on by default) asks the host to keep sending audio during silence. Without it, Sunshine on Windows sends no audio at all while the PC is silent, and the audio player of the TV and the link to a soundbar run dry. It needs Sunshine v2026.516.143833 or newer; older hosts and other host software ignore it. If the first sound after a long silence is cut off, or sound and picture drift apart over a long session, compare a session with it off.
+The app always asks the host to keep sending audio during silence. Without that, Sunshine on Windows sends no audio at all while the PC is silent, and the audio player of the TV and the link to a soundbar run dry. It needs Sunshine v2026.516.143833 or newer; older hosts and other host software ignore it. Up to 2.1.0 this was the switch *Continuous audio from the host*; an install that had switched it off asks for it as well from 2.2.0 on.
 
 ### Surround sound with a soundbar
 
@@ -417,7 +416,7 @@ Other problems:
 - **Play/Pause doesn't open the Stream Menu:** some TVs may not pass the key to apps (untested). Hold Select + Start on a controller for 1 second instead; RED and YELLOW keep working. Settings → Input Settings → *Input test* shows whether the key reaches the app and whether Moonlight registered it ([CONTROLLERS.md](CONTROLLERS.md#9-input-test)).
 - **A button of a controller does the wrong thing in games:** change it in Settings → Input Settings → *Button mapping*; a worn stick that drifts or doesn't reach the edge can be calibrated there ([CONTROLLERS.md](CONTROLLERS.md#8-button-mapping-and-stick-calibration)).
 - **An app is missing from the app list:** it may be hidden. Open the menu of any app (CH+ or Play/Pause) and choose *Show hidden apps* (see [section 16](#16-stream-menu-and-app-menu)).
-- **The PC isn't in the list, or it got a new IP address:** press UP in the host list and select *Rescan network* (the circular arrow, the first round button of the header) to search the local network again. The app searches for hosts on its own at startup.
+- **The PC isn't in the list, or it got a new IP address:** press UP in the host list and select *Rescan network* (the circular arrow, the first round button of the header) to search the local network again. The app searches for hosts on its own at startup, without a notice, while the host list shows; if you open a PC, the settings or a stream before the first check of the known PCs ended, there is no search at that start.
 - **The picture freezes on Tizen 9.0 or newer:** turn the *Game mode* switch off, and use the ForceGM variant for the Game Mode of the TV.
 - **Colors look washed out:** HDR is on in the app but off on the host display, or the TV doesn't support HDR (see [section 10](#10-hdr)).
 - **Only stereo from a soundbar or receiver:** see [Surround sound with a soundbar](#surround-sound-with-a-soundbar).
@@ -446,6 +445,7 @@ The earlier release of this fork, v1.19.0-s90c.1 (shown on the TV as *Moonlight 
 | Disconnect and quit the app on the PC | Ends the stream and then quits the app on the PC, like *Quit Running App*. Unsaved progress in the game is lost. |
 
 - The menu opens once the picture shows, not during "Starting…". RED and YELLOW keep working while it is open.
+- UP and DOWN stop at the first and the last entry; unlike the other menus, this one doesn't wrap around, so one UP too many from *Resume* never selects *Disconnect and quit the app on the PC*.
 - The buttons that are still held when the menu closes (e.g. A on *Resume*) reach the game only after you release them, and so does the key of the remote or keyboard that closed it (e.g. OK on *Resume*). Keyboard keys and mouse buttons that are held when the menu opens are released on the PC. [CONTROLLERS.md](CONTROLLERS.md#4-buttons-during-a-stream) describes the controller combo.
 - Untested on real TVs: whether every remote and firmware passes Play/Pause to the app (the combo and the color keys work without it), and the *Done* and *Cancel* keys of the keyboard of the TV in *Type text…*.
 
@@ -478,7 +478,7 @@ The earlier release of this fork, v1.19.0-s90c.1 (shown on the TV as *Moonlight 
 
 A *New update* button with a download arrow appears in the header when a newer release exists (see [Updates](#updates)).
 
-**Hosts.** The top of the screen shows the selected PC in large type: its address, its state as chips (*Running*, *Online*, *Paired*, *Unpaired*, *Offline*), one sentence on what OK does and the keys to press, next to a drawing of a PC that changes with the state. Below, each PC has a card with a colored tile (mint while a game runs, amber when not paired, gray when offline) and its most important state. The ⋯ button of a card opens its menu (*Refresh apps*, *Wake PC*, *Delete PC*, *View Details*): UP reaches it from the first row of cards, and CH+ or Play/Pause opens the menu from any row, as the hint *↑ Options* or *⋯ Options* says. When the focus is in the header or a menu, the top shows the last PC without the keys, or a summary of all PCs.
+**Hosts.** The top of the screen shows the selected PC in large type: its address, its state as chips (*Running*, *Online*, *Paired*, *Unpaired*, *Offline*), one sentence on what OK does and the keys to press, next to a drawing of a PC that changes with the state. Below, each PC has a card with a colored tile (mint while a game runs, amber when not paired, gray when offline) and its most important state. The ⋯ button of a card opens its menu, which starts on its first entry: *Refresh apps* (for a PC that is online) or *Wake PC* (for one that is offline), *View Details*, *Delete PC* and *Close*. UP reaches it from the first row of cards, and CH+ or Play/Pause opens the menu from any row, as the hint *↑ Options* or *⋯ Options* says. When the focus is in the header or a menu, the top shows the last PC without the keys, or a summary of all PCs.
 
 **App list.** The top shows the selected app with its box art, and the colors of the box art light up the screen once the selection rests on the app. A white ring marks the selected tile. The app that runs on the PC has a mint ring and a *Running* badge, a favorite has an amber star in the top right corner of its tile and a *Favorite* chip at the top, and hidden apps, when shown, are dimmed with a *Hidden* badge (see [section 16](#16-stream-menu-and-app-menu)). An app without box art shows its title on its tile. The box art of a new host loads two apps at a time, and never holds up the start, resume or quit of an app: starting a stream drops the box art that hasn't arrived yet, and it loads when you return to the app list.
 

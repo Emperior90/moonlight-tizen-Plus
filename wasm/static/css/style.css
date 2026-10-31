@@ -111,9 +111,8 @@ body[style*="transparent"]::before {
   stroke-linejoin: round;
   flex: none;
 }
-/* No MDL ripples: they repaint large areas */
-.mdl-button__ripple-container, .mdl-switch__ripple-container, .mdl-menu__item-ripple-container,
-.mdl-ripple, .mdl-switch__focus-helper {
+/* No grey circle of MDL around the thumb of a focused switch (the page uses no MDL ripples, which repaint large areas) */
+.mdl-switch__focus-helper {
   display: none !important;
 }
 button, .mdl-button, .mdl-menu__item, .mdl-textfield__input, .mdl-switch__label, .mdl-dialog, .mdl-snackbar__text,

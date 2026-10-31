@@ -6,7 +6,7 @@
 // - recommendedBitrate() and deriveOptimalSettings() over FHD / UHD / 8K panels x HDR yes / no x Tizen 5.5 to 9.0 x
 //   Ethernet / Wi-Fi / unknown connection, checked against expectations written out here, not computed by the same rules
 // - the golden S90C values of plan section 3, and that no result for a Full HD TV is above 50 Mbps
-// - the frozen defaults of settings schema 1 and the one-time snapshot for existing installs
+// - the frozen defaults of settings schema 1 and 2 and the one-time snapshots for existing installs
 // - that index.html loads the file before index.js and that the build copies it into the widget
 
 const { describe, test } = require('node:test');
@@ -525,9 +525,27 @@ describe('legacySettingsSnapshot() (plan WP1)', () => {
     assert.ok(Object.isFrozen(profile.LEGACY_SNAPSHOT_KEYS));
   });
 
-  test('the settings schema is version 2', () => {
-    assert.equal(profile.SETTINGS_SCHEMA_VERSION, 2);
+  test('the settings schema is version 3', () => {
+    assert.equal(profile.SETTINGS_SCHEMA_VERSION, 3);
     assert.equal(profile.SETTINGS_SCHEMA_KEY, 'settingsSchema');
+  });
+});
+
+describe('the frozen defaults of settings schema 2 and the snapshot of settings schema 3', () => {
+  test('the rumble was off, and the snapshot stores that only when it is unset', () => {
+    assert.deepEqual(profile.SCHEMA_2_DEFAULTS, { rumbleFeedback: false });
+    assert.ok(Object.isFrozen(profile.SCHEMA_2_DEFAULTS));
+    assert.deepEqual(profile.schema2Snapshot({ uniqueid: 'x', settingsSchema: 2 }), { rumbleFeedback: false });
+    assert.deepEqual(profile.schema2Snapshot({ rumbleFeedback: null }), { rumbleFeedback: false });
+    assert.deepEqual(profile.schema2Snapshot(null), { rumbleFeedback: false });
+    // A stored value is never replaced
+    assert.deepEqual(profile.schema2Snapshot({ rumbleFeedback: true }), {});
+    assert.deepEqual(profile.schema2Snapshot({ rumbleFeedback: false }), {});
+  });
+
+  test('the removed switch of the continuous audio is dropped', () => {
+    assert.deepEqual(profile.SCHEMA_3_REMOVED_KEYS, ['continuousAudio']);
+    assert.ok(Object.isFrozen(profile.SCHEMA_3_REMOVED_KEYS));
   });
 });
 

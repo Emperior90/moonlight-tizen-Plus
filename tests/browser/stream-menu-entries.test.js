@@ -19,7 +19,7 @@ const assert = require('node:assert/strict');
 const { openApp, readStorage, startHarness, waitForStorage } = require('./harness');
 
 const XBOX_ID = 'Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)';
-// delayedNavigation() runs the gamepad buttons of the menus 150 ms later, and the gamepads are polled every 5 ms
+// delayedNavigation() runs the gamepad buttons of the menus 50 ms later, and the gamepads are polled every 16 ms
 const AFTER_DELAY_MS = 250;
 
 let harness;

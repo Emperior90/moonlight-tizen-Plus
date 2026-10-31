@@ -1,13 +1,15 @@
 'use strict';
 
-// Checks the setting 'Continuous audio from the host' of the Audio Settings: on by default without being stored,
-// reachable with the remote, stored when switched, loaded at the next start, and passed to the launch and resume
-// requests of a stream, which then ask the host for audio also during silence (continuousAudio=1, see
-// tests/unit/continuous-audio.test.js). Restore Defaults turns it on again (video-defaults.test.js).
+// Checks the audio parameters of the launch and resume requests of a stream: every request asks the host for audio also
+// during silence (continuousAudio=1, see tests/unit/continuous-audio.test.js), which earlier versions had as the switch
+// 'Continuous audio from the host' for an A/B test. The switch is gone, and the stored value of an install that had
+// switched it off is dropped once by the snapshot of settings schema 3, with a log line. The requests also tell the
+// host the audio configuration of the settings (surroundAudioInfo: the channel mask << 16 | the channel count), which
+// was always stereo before.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
-const { openApp, readStorage, reloadApp, startHarness, waitForStorage } = require('./harness');
+const { openApp, readStorage, startHarness, waitForStorage } = require('./harness');
 
 let harness;
 before(async () => {
@@ -20,7 +22,7 @@ after(async () => {
 });
 
 // Start app 7 on a simulated paired host built on NvHTTP, whose requests go through a replaced sendMessage(), and
-// return the path and the continuousAudio parameter of the launch or resume request
+// return the path and the audio parameters of the launch or resume request
 const launchRequest = (page, currentGame) => page.evaluate(async (runningApp) => {
   const host = new NvHTTP('10.0.0.2', '0123456789abcdef', '', '');
   Object.assign(host, { paired: true, hostname: 'GAMING-PC', serverUid: 'HOST1', currentGame: runningApp, ppkstr: 'PINNED-CERT' });
@@ -44,28 +46,26 @@ const launchRequest = (page, currentGame) => page.evaluate(async (runningApp) =>
     sendMessage = realSendMessage;
     isInGame = false;
   }
-  return request ? { path: request.pathname, continuousAudio: request.searchParams.get('continuousAudio') } : null;
+  return request ? {
+    path: request.pathname,
+    continuousAudio: request.searchParams.get('continuousAudio'),
+    surroundAudioInfo: request.searchParams.get('surroundAudioInfo'),
+  } : null;
 }, currentGame);
 
-test('on by default, reachable in the Audio Settings, and asking the host for audio during silence', async () => {
+test('there is no switch for it, and every launch and resume asks the host for audio during silence', async () => {
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
   try {
     const shown = await app.page.evaluate(() => ({
-      checked: document.getElementById('continuousAudioSwitch').checked,
-      label: $('#continuousAudioOption > label').text().trim(),
-      help: $('#continuousAudioOption .mdl-list__item-text-body').text().trim(),
-      // The remote reaches it after 'Play audio on host'
+      rows: document.querySelectorAll('#continuousAudioOption, #continuousAudioSwitch').length,
       items: Views.AudioSettings.view.func(),
     }));
-    assert.equal(shown.checked, true);
-    assert.equal(shown.label, 'Continuous audio from the host');
-    assert.match(shown.help, /^- Keeps the host sending audio during silence, .* Needs a recent Sunshine; older hosts ignore it\.$/);
-    assert.equal(shown.items.indexOf('continuousAudioBtn'), shown.items.indexOf('playHostAudioBtn') + 1);
-    // A fresh install doesn't store the default
+    assert.equal(shown.rows, 0);
+    assert.deepEqual(shown.items, ['selectAudioBackend', 'selectAudio', 'audioSyncBtn', 'playHostAudioBtn', 'decryptHostAudioBtn']);
     assert.equal(Object.prototype.hasOwnProperty.call(await readStorage(app.page), 'continuousAudio'), false);
 
-    assert.deepEqual(await launchRequest(app.page, 0), { path: '/launch', continuousAudio: '1' });
-    assert.deepEqual(await launchRequest(app.page, 7), { path: '/resume', continuousAudio: '1' });
+    assert.deepEqual(await launchRequest(app.page, 0), { path: '/launch', continuousAudio: '1', surroundAudioInfo: String(0x030002) });
+    assert.deepEqual(await launchRequest(app.page, 7), { path: '/resume', continuousAudio: '1', surroundAudioInfo: String(0x030002) });
     assert.ok(app.logs.some((line) => line.indexOf('Continuous audio from the host: 1') >= 0));
     assert.deepEqual(app.errors, []);
   } finally {
@@ -73,22 +73,37 @@ test('on by default, reachable in the Audio Settings, and asking the host for au
   }
 });
 
-test('switched off, it is stored, kept at the next start, and left out of the launch and resume requests', async () => {
-  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
+test('an install that had switched it off asks for it as well, and its stored value is dropped once with a log line', async () => {
+  const app = await openApp(harness, {
+    tv: { tv: 's90c', conn: 'wifi' },
+    stored: { uniqueid: '0123456789abcdef', cert: { cert: 'TEST-CERT', privateKey: 'TEST-KEY' }, settingsSchema: 2, continuousAudio: false },
+  });
   try {
-    await app.page.evaluate(() => $('#continuousAudioSwitch').trigger('click'));
-    await waitForStorage(app.page, (values) => values.continuousAudio === false);
-    assert.equal(await app.page.evaluate(() => document.getElementById('continuousAudioSwitch').checked), false);
+    const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 3 && !('continuousAudio' in values));
+    assert.equal(stored.continuousAudio, undefined);
+    assert.ok(app.logs.some((line) => line.indexOf('Removing the stored value of a setting that no longer exists: continuousAudio = false') >= 0));
+    assert.deepEqual(await launchRequest(app.page, 0), { path: '/launch', continuousAudio: '1', surroundAudioInfo: String(0x030002) });
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
 
-    await reloadApp(app);
-    assert.equal(await app.page.evaluate(() => document.getElementById('continuousAudioSwitch').checked), false);
-    assert.deepEqual(await launchRequest(app.page, 0), { path: '/launch', continuousAudio: null });
-    assert.deepEqual(await launchRequest(app.page, 7), { path: '/resume', continuousAudio: null });
-
-    // And on again
-    await app.page.evaluate(() => $('#continuousAudioSwitch').trigger('click'));
-    await waitForStorage(app.page, (values) => values.continuousAudio === true);
-    assert.deepEqual(await launchRequest(app.page, 0), { path: '/launch', continuousAudio: '1' });
+test('the launch and resume requests tell the host the audio configuration of the settings', async () => {
+  // 5.1 as stored by the settings
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, stored: { audioConfig: '51Surround' } });
+  try {
+    assert.equal(await app.page.evaluate(() => $('#selectAudio').data('value')), '51Surround');
+    // The channel mask (front left and right, centre, LFE, back left and right) << 16 | 6 channels
+    assert.deepEqual(await launchRequest(app.page, 0), { path: '/launch', continuousAudio: '1', surroundAudioInfo: String(0x3F0006) });
+    assert.deepEqual(await launchRequest(app.page, 7), { path: '/resume', continuousAudio: '1', surroundAudioInfo: String(0x3F0006) });
+    // 7.1 with 8 channels, and stereo for a value the settings don't know, which the module streams in stereo too
+    const infos = {};
+    for (const config of ['71Surround', 'Stereo', 'Quad']) {
+      await app.page.evaluate((value) => $('#selectAudio').data('value', value), config);
+      infos[config] = (await launchRequest(app.page, 0)).surroundAudioInfo;
+    }
+    assert.deepEqual(infos, { '71Surround': String(0x63F0008), 'Stereo': String(0x030002), 'Quad': String(0x030002) });
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
