@@ -23,7 +23,7 @@ const FORK = 'https://github.com/Emperior90/moonlight-tizen-Plus';
 
 test('no workflow, bot or dependency update of upstream that never runs in this fork is left', () => {
   const workflows = fs.readdirSync(path.join(REPO_ROOT, '.github', 'workflows')).sort();
-  assert.deepEqual(workflows, ['check-upstream-dependencies.yml', 'release-development.yml', 'tests.yml']);
+  assert.deepEqual(workflows, ['check-upstream-dependencies.yml', 'licence-assets.yml', 'release-development.yml', 'tests.yml']);
   workflows.forEach((name) => {
     assert.doesNotMatch(read('.github/workflows/' + name), /github\.repository == 'brightcraft\/moonlight-tizen'/, name);
   });
