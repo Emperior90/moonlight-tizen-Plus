@@ -1,7 +1,8 @@
 'use strict';
 
 // Pins wasm/platform/diagnostics.js: what the log hides (the remote input keys, the pairing secrets and PIN, the unique
-// ID, the RTSP session URL, the public IP address and every MAC address but the all-zero one) and what it keeps (the
+// ID, the RTSP session URL, the public IP address, also by its value in a URL once utils.js or index.js hands it over,
+// and every MAC address but the all-zero one, also in a host object that the line cuts) and what it keeps (the
 // local addresses and the names of the PCs), the log of the current and the previous session (a new session for each stream, the
 // lines of the console with the style of '%c' left out and the console still getting them, the lines that only repeat
 // the overlay left out, a repeated line counted, the oldest lines dropped when a session is full, the native lines of the
@@ -15,7 +16,8 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { REPO_ROOT } = require('../lib/dev-modules');
-const { loadPlatformScripts, plain } = require('./helpers/platform-loader');
+const { webcrypto } = require('crypto');
+const { createPlatformContext, loadPlatformScripts, plain } = require('./helpers/platform-loader');
 
 // Load diagnostics.js with a clock of the test (Date.now()), a module stub whose native lines a test sets, and an
 // interval that the test runs by hand
@@ -144,6 +146,10 @@ test('the log hides the public IP address and the MAC addresses, but keeps the a
       'Updated MAC address for host GAMING-PC from 00:00:00:00:00:00 to <hidden>'],
     ['Sent 6 of 6 magic packets to MAC address: 3C:7C:3F:12:AB:CD (subnet broadcast: 192.168.1.255)',
       'Sent 6 of 6 magic packets to MAC address: <hidden> (subnet broadcast: 192.168.1.255)'],
+    // A host without a public address yet (the default of NvHTTP, logged by its constructor): the label of the next line stays
+    ['local address: 192.168.1.20\r\nexternal IP: \r\nmac address: 3C:7C:3F:12:AB:CD\r\n',
+      'local address: 192.168.1.20\r\nexternal IP: \r\nmac address: <hidden>\r\n'],
+    ['external IP: \nmac address: undefined', 'external IP: \nmac address: undefined'],
   ];
   cases.forEach(([text, expected]) => assert.equal(redact(text), expected));
   // What support needs stays: the all-zero MAC, local and link-local addresses, times and other hex numbers
@@ -161,6 +167,79 @@ test('the log hides the public IP address and the MAC addresses, but keeps the a
   (stun.match(/console\.\w+\([^\n]*/g) || []).forEach((line) => assert.doesNotMatch(line, /externalIP|addr\b/, line));
   assert.match(utils, /string \+= 'external IP: ' \+ this\.externalIP/);
   assert.match(utils, /string \+= 'mac address: ' \+ this\.macAddress/);
+});
+
+test('the log hides a public address that the app learnt wherever it appears, e.g. in the URLs of requests to a host that does not answer', () => {
+  const app = loadDiagnostics();
+  const redact = app.platform.get('redactDiagnosticText');
+  const hide = app.platform.get('hideDiagnosticAddress');
+  // A poll of the address that STUN found, kept before the app learnt it, is hidden once the log is shown
+  app.platform.run(`console.warn('%c[utils.js, _openUrlWithTimeout]', 'color: orange;', 'Skipping dead/hanging URL to prevent C++ WASM freeze: https://203.0.113.7:47984/serverinfo?uniqueid=0123456789ABCDEF&uuid=1234');`);
+  hide('203.0.113.7');
+  assert.deepEqual(texts(app.log.getSessions()[0]),
+    ['W [utils.js, _openUrlWithTimeout] Skipping dead/hanging URL to prevent C++ WASM freeze: https://<hidden>:47984/serverinfo?uniqueid=<hidden>&uuid=1234']);
+  // The lines of _openUrlWithTimeout() (utils.js) and sendMessage() (messages.js), the native lines and a host as text
+  const cases = [
+    ['Skipping dead/hanging URL to prevent C++ WASM freeze: https://203.0.113.7:47984/serverinfo?uniqueid=X&uuid=1234',
+      'Skipping dead/hanging URL to prevent C++ WASM freeze: https://<hidden>:47984/serverinfo?uniqueid=<hidden>&uuid=1234'],
+    ['Warning: HTTPS request timed out, canceling C++ HTTP request for URL: http://203.0.113.7:47989/serverinfo?uniqueid=X',
+      'Warning: HTTPS request timed out, canceling C++ HTTP request for URL: http://<hidden>:47989/serverinfo?uniqueid=<hidden>'],
+    ['Connecting to 203.0.113.7.', 'Connecting to <hidden>.'],
+    ['host address: 203.0.113.7\r\nlocal address: 192.168.1.20', 'host address: <hidden>\r\nlocal address: 192.168.1.20'],
+  ];
+  cases.forEach(([text, expected]) => assert.equal(redact(text), expected));
+  // Only the whole address: other addresses that start or end like it, and a GFE version, stay
+  ['203.0.113.70 and 1203.0.113.7 and 203.0.113.7.5', 'gfe version: 3.23.0.74'].forEach((text) => assert.equal(redact(text), text));
+  // An IPv6 address as well, but not a private, loopback or link-local address, or text that only looks like an address
+  hide('2001:db8:85a3::8a2e:370:7334');
+  assert.equal(redact('http://[2001:DB8:85A3::8A2E:370:7334]:47989/serverinfo and 2001:db8:85a3::8a2e:370:73345'),
+    'http://[<hidden>]:47989/serverinfo and 2001:db8:85a3::8a2e:370:73345');
+  ['192.168.1.20', '10.0.0.2', '172.16.5.4', '127.0.0.1', '169.254.1.2', 'fe80::1', 'fd00::2', '::1', '12:34:56', '3C:7C:3F:12:AB:CD',
+    'GAMING-PC', '', undefined].forEach((address) => hide(address));
+  ['Polling 192.168.1.20, 10.0.0.2, 172.16.5.4, 127.0.0.1 and 169.254.1.2', 'fe80::1 fd00::2 ::1 at 12:34:56', 'host name: GAMING-PC']
+    .forEach((text) => assert.equal(redact(text), text));
+  // A host object as JSON is hidden before formatConsoleArguments() cuts it, so a MAC address cut in half is hidden too
+  const host = { hostname: 'Living Room Gaming PC RTX 4090 Ti (2)', address: '192.168.1.20', userEnteredAddress: '192.168.1.20',
+    localAddress: '192.168.1.20', externalIP: '198.51.100.23', macAddress: '3C:7C:3F:12:AB:CD', httpsPort: 47984 };
+  assert.match(JSON.stringify(host).slice(0, 200), /"macAddress":"3C:7C:3F:12:AB$/, 'the cut falls inside the MAC address');
+  const formatted = app.log.formatConsoleArguments(['Error: Failed to contact the PC!', host]);
+  assert.match(formatted, /"externalIP":"<hidden>","macAddress":"<hidden>"/);
+  ['198.51.100.23', '3C:7C', 'AB:CD'].forEach((secret) => assert.equal(formatted.indexOf(secret), -1, secret));
+  // A value that the cut left without its closing quote is hidden up to the end of its line, not into the next lines
+  assert.equal(redact('{"hostname":"PC","clientUid":"<hid \nhost name: PC\r\nexternal IP: 203.0.113.7\r\nclient UID: 0123456789ABCDEF'),
+    '{"hostname":"PC","clientUid":"<hidden>\nhost name: PC\r\nexternal IP: <hidden>\r\nclient UID: <hidden>');
+});
+
+test('the app hands every public address of a host to the log: from STUN, the server info and the stored hosts', async () => {
+  // STUN (updateExternalAddressIP4() of utils.js), with diagnostics.js loaded before utils.js as in index.html
+  const platform = createPlatformContext({
+    globals: { crypto: webcrypto, sendMessage: (method) => Promise.resolve(method === 'STUN' ? '198.51.100.23' : null) },
+  });
+  platform.load('wasm/platform/diagnostics.js');
+  platform.load('wasm/static/js/utils.js');
+  const host = platform.run('new NvHTTP("192.168.1.20", "0123456789abcdef", "", "")');
+  await host.updateExternalAddressIP4();
+  assert.equal(host.externalIP, '198.51.100.23');
+  assert.equal(platform.get('redactDiagnosticText')('Skipping dead/hanging URL: https://198.51.100.23:47984/serverinfo'),
+    'Skipping dead/hanging URL: https://<hidden>:47984/serverinfo');
+  // A host logged as an object and with NvHTTP.toString(), as index.js does: the object is cut after its hidden client
+  // UID, and the lines of toString() stay readable with their values hidden
+  host.hostname = 'GAMING-PC';
+  host.macAddress = '3C:7C:3F:12:AB:CD';
+  platform.context.loggedHost = host;
+  platform.run(`console.log('%c[index.js, showApps]', 'color: green;', 'Current host object: \\n', loggedHost, '\\n' + loggedHost.toString());`);
+  const sessions = platform.get('DiagnosticLog').getSessions();
+  const line = sessions[sessions.length - 1].lines.filter((text) => text.indexOf('Current host object') >= 0)[0];
+  assert.match(line, /"clientUid":"<hidden> host name: GAMING-PC host address: 192\.168\.1\.20 local address: {2}external IP: <hidden> mac address: <hidden> /);
+  ['198.51.100.23', '3C:7C:3F:12:AB:CD', '0123456789abcdef'].forEach((secret) => assert.equal(line.indexOf(secret), -1, secret));
+  // <ExternalIP> of the server info (_parseServerInfo() needs jQuery, which the browser tests have) and the stored hosts
+  const utils = fs.readFileSync(path.join(REPO_ROOT, 'wasm/static/js/utils.js'), 'utf8');
+  assert.match(utils, /this\.externalIP = externIP;[^]{0,200}?hideDiagnosticAddress\(externIP\);/);
+  const index = fs.readFileSync(path.join(REPO_ROOT, 'wasm/platform/index.js'), 'utf8');
+  assert.match(index, /revivedHost\.externalIP = hosts\[hostUID\]\.externalIP;[^]{0,250}?hideDiagnosticAddress\(revivedHost\.externalIP\);/);
+  // Every place that sets the public address of a host is one of these three
+  assert.deepEqual((utils + index).match(/\w+\.externalIP = [^;]+;/g),
+    ["this.externalIP = '';", 'this.externalIP = externIP;', 'this.externalIP = addr;', 'revivedHost.externalIP = hosts[hostUID].externalIP;']);
 });
 
 test('the console lines go into the log without their styles, and the console still gets them', () => {

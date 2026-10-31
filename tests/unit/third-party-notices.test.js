@@ -10,9 +10,10 @@
 //   compiles and the ports it links (USE_CRYPTO, USE_SSL, USE_CURL), the Emscripten runtime, and the third-party files
 //   of wasm/static
 // - the licence texts are complete: the vendored ones (ENet, Opus, the header of rs.c) as in the repository, the others
-//   by sentences from each text; the Apache License 2.0 once for both components that use it
-// - no e-mail address, written with " [at] " instead, and no entry for Material Icons, whose glyphs the app no longer
-//   has
+//   by sentences from each text, with the ISC licence of the inet_ntop.c that the port of curl builds; the Apache License
+//   2.0 once for both components that use it
+// - the e-mail addresses of the licence texts as published (the SSLeay acknowledgment must be kept with them), and no
+//   entry for Material Icons, whose glyphs the app no longer has
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -24,8 +25,8 @@ const { installedDirectories, installedFiles } = require('../lib/widget-files');
 const NOTICES_FILE = 'wasm/static/licenses/THIRD-PARTY-NOTICES.txt';
 const read = (file) => fs.readFileSync(path.join(REPO_ROOT, file), 'utf8').replace(/\r\n/g, '\n');
 const notices = () => read(NOTICES_FILE);
-// Whitespace and line breaks don't count, and e-mail addresses are written with " [at] "
-const flat = (text) => text.replace(/([A-Za-z0-9._%+-]+)@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/g, '$1 [at] $2').replace(/\s+/g, ' ').trim();
+// Whitespace and line breaks don't count
+const flat = (text) => text.replace(/\s+/g, ' ').trim();
 
 // The entries "[n] Name ..." of the notices, as { number, text } up to the next entry
 function entries() {
@@ -93,7 +94,7 @@ test('every component of the package has an entry with its version and licence',
     ['Reed-Solomon', /Licence: BSD 2-Clause license/],
     ['Opus 1.5.2', /Licence: BSD 3-Clause license/],
     ['OpenSSL 1.1.1d', /Licence: OpenSSL License and original SSLeay License/],
-    ['curl 7.68.0', /Licence: curl license/],
+    ['curl 7.68.0', /Licence: curl license \(MIT\/X derivative\); lib\/inet_ntop\.c: ISC license/],
     ['zlib 1.2.8', /Licence: zlib license/],
     ['Emscripten 1.39.4.7', /Licence: MIT license and University of Illinois\/NCSA Open Source License/],
     ['TizenTV Emscripten extensions', /Copyright 2020 Samsung Electronics[\s\S]*Licence: MIT license and University of Illinois\/NCSA/],
@@ -112,9 +113,18 @@ test('every component of the package has an entry with its version and licence',
   // The OpenSSL entry repeats its acknowledgments and names the open licence issue
   const openssl = flat(entry('OpenSSL 1.1.1d'));
   assert.ok(openssl.indexOf('This product includes software developed by the OpenSSL Project for use in the OpenSSL Toolkit (http://www.openssl.org/).') >= 0);
-  assert.ok(openssl.indexOf('This product includes cryptographic software written by Eric Young (eay [at] cryptsoft.com).') >= 0);
+  assert.ok(openssl.indexOf('This product includes cryptographic software written by Eric Young (eay@cryptsoft.com).') >= 0);
   assert.match(openssl, /Known licence issue: the Free Software Foundation considers the OpenSSL\/SSLeay licence incompatible with the GPL/);
   assert.match(openssl, /OpenSSL 3 or mbedTLS/);
+  // The port of curl builds its own inet_ntop.c (its curl_config.h has no HAVE_INET_NTOP), whose ISC licence asks for its
+  // notice in all copies as well
+  const curl = flat(entry('curl 7.68.0'));
+  const isc = curl.slice(curl.indexOf('libcurl also contains lib/inet_ntop.c (original code by Paul Vixie)'));
+  assert.ok(isc.length < curl.length, 'the paragraph about inet_ntop.c');
+  ['Copyright (C) 1996-2019 Internet Software Consortium.',
+    'Permission to use, copy, modify, and distribute this software for any purpose with or without fee is hereby granted, provided that the above copyright notice and this permission notice appear in all copies.',
+    'THE SOFTWARE IS PROVIDED "AS IS" AND INTERNET SOFTWARE CONSORTIUM DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL INTERNET SOFTWARE CONSORTIUM BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.',
+  ].forEach((sentence) => assert.ok(isc.indexOf(sentence) >= 0, 'inet_ntop.c: ' + sentence));
 });
 
 test('every library that CMakeLists.txt builds or links, and every third-party file of wasm/static, is named', () => {
@@ -172,9 +182,9 @@ test('the other licence texts are complete', () => {
     'OpenSSL License': ['Copyright (c) 1998-2019 The OpenSSL Project. All rights reserved.',
       '6. Redistributions of any form whatsoever must retain the following acknowledgment:',
       'THIS SOFTWARE IS PROVIDED BY THE OpenSSL PROJECT ``AS IS\'\' AND ANY EXPRESSED OR IMPLIED WARRANTIES'],
-    'SSLeay License': ['Copyright (C) 1995-1998 Eric Young (eay [at] cryptsoft.com) All rights reserved.',
+    'SSLeay License': ['Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com) All rights reserved.',
       'The licence and distribution terms for any publically available version or derivative of this code cannot be changed. i.e. this code cannot simply be copied and put under another distribution licence [including the GNU Public Licence.]'],
-    'curl license': ['Copyright (c) 1996 - 2020, Daniel Stenberg, <daniel [at] haxx.se>, and many contributors, see the THANKS file.',
+    'curl license': ['Copyright (c) 1996 - 2020, Daniel Stenberg, <daniel@haxx.se>, and many contributors, see the THANKS file.',
       'Permission to use, copy, modify, and distribute this software for any purpose with or without fee is hereby granted, provided that the above copyright notice and this permission notice appear in all copies.'],
     'zlib license': ['(C) 1995-2013 Jean-loup Gailly and Mark Adler', '3. This notice may not be removed or altered from any source distribution.'],
     'Emscripten (MIT and NCSA)': ['Emscripten is available under 2 licenses, the MIT license and the University of Illinois/NCSA Open Source License.',
@@ -199,9 +209,11 @@ test('the other licence texts are complete', () => {
   assert.ok(notices().indexOf('\nLICENCE TEXTS\n') < notices().indexOf('TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION'));
 });
 
-test('the notices name no e-mail address and no model of the TV', () => {
+test('the notices keep the e-mail addresses of the licence texts and name no model of the TV', () => {
   const text = notices();
-  assert.doesNotMatch(text, /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/);
-  assert.match(flat(text), /e-mail addresses are written with " \[at\] " in place of "@"/);
+  // The acknowledgments that the SSLeay licence requires to be kept, with their addresses as published
+  assert.ok(flat(text).indexOf('This product includes cryptographic software written by Eric Young (eay@cryptsoft.com)') >= 0);
+  assert.ok(flat(text).indexOf('This product includes software written by Tim Hudson (tjh@cryptsoft.com)') >= 0);
+  assert.doesNotMatch(text, /\[at\]/);
   assert.doesNotMatch(text, /s90c/i);
 });

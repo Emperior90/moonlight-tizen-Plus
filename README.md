@@ -99,13 +99,13 @@ To support the developer of Moonlight Tizen or to get help with the regular Moon
 
 Moonlight Plus has no analytics, telemetry, ads or accounts, and sends nothing to its developer. On its own it connects only to:
 
-- **The PCs you add or that the scan finds**, for pairing and streaming: at their address, their name with `.local`, their local address and, if none of these answers, the public address of their network.
-- **Your local network**, at startup while the PC list shows and when you choose *Rescan network*: one HTTP request to port 47989 of every address of the /24 network of the TV (e.g. 192.168.1.1 to 192.168.1.254), to find PCs with Sunshine.
-- **api.github.com (GitHub)**, at startup at most once a day and when you choose *Check for updates*, to read the latest release of this fork. GitHub sees the IP address of your network and the usual headers of the browser of the TV, such as its user agent, and no identifier of the app or of you.
+- **The PCs you add or that the scan finds**, for pairing and streaming: at their address, their name with `.local`, their local address and, if none of these answers, the public address of their network. The TV has no mDNS, so the lookup of the name with `.local` can reach the DNS server of your network.
+- **Your local network**, at startup while the PC list shows and when you choose *Rescan network*: one HTTP request to port 47989 of every address of the /24 network of the TV (e.g. 192.168.1.1 to 192.168.1.254), to find PCs with Sunshine. The *Wake PC* dialog repeats this scan while it waits for a PC, which may come back with a new address.
+- **api.github.com (GitHub)**, at startup at most once a day and when you choose *Check for updates*, to read the latest release of this fork. GitHub sees the IP address of your network and the usual headers of the browser of the TV, such as its user agent, and no identifier of the TV or of you.
 - **stun.moonlight-stream.org (the Moonlight project), UDP port 3478**, when the scan finds a new PC or a new address of a known PC, to learn the public IP address of your network (inherited from Moonlight).
-- **Wake-on-LAN broadcasts** on your local network, only when you choose *Wake PC*.
+- **Wake-on-LAN broadcasts** on your local network, only when you choose *Wake PC* or open an offline PC for which you turned on *Always wake this PC automatically*, and again every 10 seconds while the *Wake PC* dialog waits for the PC.
 
-The background service of the Smart Hub tiles also serves the cached box art on port 8889 of the TV for the Smart Hub, which other devices on your network can reach as well. Settings, paired PCs, the pairing certificate and the box art stay in the storage of the app on the TV. The [diagnostic log](docs/GUIDE.md#diagnostic-log) and the report of the last session are kept in memory and shown on the screen; they leave the TV only if you photograph or share them. The log hides the keys, the public IP address and the MAC addresses. The privacy statement of GitHub applies to what GitHub receives.
+The background service of the Smart Hub tiles also serves the cached box art on port 8889 of the TV for the Smart Hub, which other devices on your network can reach as well. Settings, paired PCs, the pairing certificate and the box art stay on the TV: in the storage of the app, and the previews of the Smart Hub tiles in the shared documents folder of the TV, which the background service reads. The [diagnostic log](docs/GUIDE.md#diagnostic-log) and the report of the last session are kept in memory and shown on the screen; they leave the TV only if you photograph or share them. The log hides the keys, the public IP address of your network that the app learns from STUN or from the PC, and the MAC addresses; the local addresses and the addresses that you enter yourself stay. The privacy statement of GitHub applies to what GitHub receives.
 
 ---
 
@@ -119,6 +119,7 @@ Moonlight Plus is free software: you can redistribute it and/or modify it under 
 - The Tizen WebAssembly port of moonlight-chrome: Copyright (c) 2015 Samsung Electronics
 - `wasm/platform/common.js`: Copyright (c) 2012 The Chromium Authors
 - Moonlight Plus changes: Copyright (C) 2026 Emperior90, made with AI assistance
+- Code ported from other forks of Moonlight Tizen: Portions Copyright (C) fidoboy, mmadej20, samirmartins, Diogo8500, waresz and the contributors of their forks
 
 The third-party components and their licences, with the full licence texts, are listed in [wasm/static/licenses/THIRD-PARTY-NOTICES.txt](wasm/static/licenses/THIRD-PARTY-NOTICES.txt). This file and LICENSE are also inside the app package.
 

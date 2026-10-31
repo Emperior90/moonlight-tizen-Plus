@@ -9,7 +9,7 @@ Thanks for contributing to Moonlight Plus! Whether you're opening an issue or pr
 - Clearly explain your feature request or the problem you're facing.
 - Include steps to reproduce the issue whenever possible.
 - Include screenshots or video demonstrations when they help explain the issue.
-- When posting an issue, include a photo of the end of the diagnostic log (Settings → About → *Diagnostic log*) and the Sunshine log if you have it. The diagnostic log hides the keys, the public IP address and the MAC addresses, but shows the local addresses and the name of your PC, which you can cover before you upload the photo.
+- When posting an issue, include a photo of the end of the diagnostic log (Settings → About → *Diagnostic log*) and the Sunshine log if you have it. The diagnostic log hides the keys, the public IP address of your network that the app learns and the MAC addresses, but shows the local addresses, the addresses that you entered and the name of your PC, which you can cover before you upload the photo.
 
 ## Reporting Issues
 

@@ -576,6 +576,10 @@ NvHTTP.prototype = {
     if (externIP) {
       // Don't overwrite the external IP we found via STUN
       this.externalIP = externIP;
+      // The diagnostic log hides it wherever it appears from now on, e.g. in the URLs of the requests that try it
+      if (typeof hideDiagnosticAddress === 'function') {
+        hideDiagnosticAddress(externIP);
+      }
     }
 
     // These are present in all supported GFE versions
@@ -1150,7 +1154,11 @@ NvHTTP.prototype = {
     return sendMessage('STUN', []).then(function(addr) {
       if (addr) {
         this.externalIP = addr;
-        // The address itself stays out of the log, whose photos users post on the issue tracker
+        // The address itself stays out of the log, whose photos users post on the issue tracker, also in the URLs of the
+        // requests that try it (diagnostics.js)
+        if (typeof hideDiagnosticAddress === 'function') {
+          hideDiagnosticAddress(addr);
+        }
         console.log('%c[utils.js, updateExternalAddressIP4]', 'color: gray;', 'Found the external IPv4 address of ' + this.hostname + '.');
       } else {
         console.error('%c[utils.js, updateExternalAddressIP4]', 'color: gray;', 'Error: External IPv4 address lookup failed!');

@@ -6217,6 +6217,11 @@ function loadHTTPCertsCb() {
           revivedHost.externalPort = hosts[hostUID].externalPort || revivedHost.httpPort;
           revivedHost.serverUid = hosts[hostUID].serverUid;
           revivedHost.externalIP = hosts[hostUID].externalIP;
+          // The diagnostic log hides the stored public address wherever it appears, e.g. in the URLs of the polls that
+          // try it (diagnostics.js)
+          if (typeof hideDiagnosticAddress === 'function') {
+            hideDiagnosticAddress(revivedHost.externalIP);
+          }
           revivedHost.hostname = hosts[hostUID].hostname;
           revivedHost.ppkstr = hosts[hostUID].ppkstr;
           revivedHost.autoWolEnabled = hosts[hostUID].autoWolEnabled || false;

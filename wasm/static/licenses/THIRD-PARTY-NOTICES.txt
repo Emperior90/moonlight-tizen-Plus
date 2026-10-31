@@ -60,8 +60,9 @@ THIRD-PARTY COMPONENTS
 ----------------------
 
 The app package contains the components below. Each entry gives the version, the source, the copyright and the
-licence. The licence texts are reproduced as published, except that e-mail addresses are written with " [at] " in
-place of "@". The Apache License 2.0, which two components share, is printed once at the end of this file.
+licence. The licence texts are reproduced as published, including the e-mail addresses in the copyright notices and
+acknowledgments that they require to be kept. The Apache License 2.0, which two components share, is printed once at
+the end of this file.
 
 Components under the GPL-3.0 (the text is in LICENSE):
 
@@ -117,13 +118,13 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 fec.c -- forward error correction based on Vandermonde matrices
 
-(C) 1997-98 Luigi Rizzo (luigi [at] iet.unipi.it)
-(C) 2001 Alain Knaff (alain [at] knaff.lu)
-(C) 2017 Iwan Timmer (irtimmer [at] gmail.com)
+(C) 1997-98 Luigi Rizzo (luigi@iet.unipi.it)
+(C) 2001 Alain Knaff (alain@knaff.lu)
+(C) 2017 Iwan Timmer (irtimmer@gmail.com)
 
-Portions derived from code by Phil Karn (karn [at] ka9q.ampr.org),
-Robert Morelos-Zaragoza (robert [at] spectra.eng.hawaii.edu) and Hari
-Thirumoorthy (harit [at] spectra.eng.hawaii.edu), Aug 1995
+Portions derived from code by Phil Karn (karn@ka9q.ampr.org),
+Robert Morelos-Zaragoza (robert@spectra.eng.hawaii.edu) and Hari
+Thirumoorthy (harit@spectra.eng.hawaii.edu), Aug 1995
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions
@@ -209,8 +210,8 @@ https://datatracker.ietf.org/ipr/1526/
 
     This product includes software developed by the OpenSSL Project for use in the OpenSSL Toolkit
     (http://www.openssl.org/).
-    This product includes cryptographic software written by Eric Young (eay [at] cryptsoft.com).
-    This product includes software written by Tim Hudson (tjh [at] cryptsoft.com).
+    This product includes cryptographic software written by Eric Young (eay@cryptsoft.com).
+    This product includes software written by Tim Hudson (tjh@cryptsoft.com).
 
     Known licence issue: the Free Software Foundation considers the OpenSSL/SSLeay licence incompatible with the GPL.
     Moonlight Tizen and the other forks of Moonlight Tizen link OpenSSL 1.1.1d in the same way, through the Samsung
@@ -250,7 +251,7 @@ https://datatracker.ietf.org/ipr/1526/
  * 4. The names "OpenSSL Toolkit" and "OpenSSL Project" must not be used to
  *    endorse or promote products derived from this software without
  *    prior written permission. For written permission, please contact
- *    openssl-core [at] openssl.org.
+ *    openssl-core@openssl.org.
  *
  * 5. Products derived from this software may not be called "OpenSSL"
  *    nor may "OpenSSL" appear in their names without prior written
@@ -276,19 +277,19 @@ https://datatracker.ietf.org/ipr/1526/
  * ====================================================================
  *
  * This product includes cryptographic software written by Eric Young
- * (eay [at] cryptsoft.com).  This product includes software written by Tim
- * Hudson (tjh [at] cryptsoft.com).
+ * (eay@cryptsoft.com).  This product includes software written by Tim
+ * Hudson (tjh@cryptsoft.com).
  *
  */
 
  Original SSLeay License
  -----------------------
 
-/* Copyright (C) 1995-1998 Eric Young (eay [at] cryptsoft.com)
+/* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
  * This package is an SSL implementation written
- * by Eric Young (eay [at] cryptsoft.com).
+ * by Eric Young (eay@cryptsoft.com).
  * The implementation was written so as to conform with Netscapes SSL.
  *
  * This library is free for commercial and non-commercial use as long as
@@ -296,7 +297,7 @@ https://datatracker.ietf.org/ipr/1526/
  * apply to all code found in this distribution, be it the RC4, RSA,
  * lhash, DES, etc., code; not just the SSL code.  The SSL documentation
  * included with this distribution is covered by the same copyright terms
- * except that the holder is Tim Hudson (tjh [at] cryptsoft.com).
+ * except that the holder is Tim Hudson (tjh@cryptsoft.com).
  *
  * Copyright remains Eric Young's, and as such any Copyright notices in
  * the code are not to be removed.
@@ -316,12 +317,12 @@ https://datatracker.ietf.org/ipr/1526/
  * 3. All advertising materials mentioning features or use of this software
  *    must display the following acknowledgement:
  *    "This product includes cryptographic software written by
- *     Eric Young (eay [at] cryptsoft.com)"
+ *     Eric Young (eay@cryptsoft.com)"
  *    The word 'cryptographic' can be left out if the rouines from the library
  *    being used are not cryptographic related :-).
  * 4. If you include any Windows specific code (or a derivative thereof) from
  *    the apps directory (application code) you must include an acknowledgement:
- *    "This product includes software written by Tim Hudson (tjh [at] cryptsoft.com)"
+ *    "This product includes software written by Tim Hudson (tjh@cryptsoft.com)"
  *
  * THIS SOFTWARE IS PROVIDED BY ERIC YOUNG ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
@@ -346,11 +347,11 @@ https://datatracker.ietf.org/ipr/1526/
 [8] curl 7.68.0 (libcurl, built by the Tizen port of the Samsung Emscripten SDK and linked statically into
     moonlight-wasm.wasm)
     Source: https://curl.se/ (https://curl.se/download/curl-7.68.0.tar.bz2)
-    Licence: curl license (MIT/X derivative)
+    Licence: curl license (MIT/X derivative); lib/inet_ntop.c: ISC license
 
 COPYRIGHT AND PERMISSION NOTICE
 
-Copyright (c) 1996 - 2020, Daniel Stenberg, <daniel [at] haxx.se>, and many
+Copyright (c) 1996 - 2020, Daniel Stenberg, <daniel@haxx.se>, and many
 contributors, see the THANKS file.
 
 All rights reserved.
@@ -370,6 +371,24 @@ OR OTHER DEALINGS IN THE SOFTWARE.
 Except as contained in this notice, the name of a copyright holder shall not
 be used in advertising or otherwise to promote the sale, use or other dealings
 in this Software without prior written authorization of the copyright holder.
+
+libcurl also contains lib/inet_ntop.c (original code by Paul Vixie), which the
+Tizen port compiles, under this licence:
+
+Copyright (C) 1996-2019  Internet Software Consortium.
+
+Permission to use, copy, modify, and distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND INTERNET SOFTWARE CONSORTIUM
+DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL
+INTERNET SOFTWARE CONSORTIUM BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING
+FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT,
+NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION
+WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ------------------------------------------------------------------------
 
@@ -399,7 +418,7 @@ Copyright notice:
   3. This notice may not be removed or altered from any source distribution.
 
   Jean-loup Gailly        Mark Adler
-  jloup [at] gzip.org          madler [at] alumni.caltech.edu
+  jloup@gzip.org          madler@alumni.caltech.edu
 
 ------------------------------------------------------------------------
 
