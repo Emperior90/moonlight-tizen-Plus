@@ -1,6 +1,7 @@
 // Copyright (c) 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+// The Chromium BSD license text is in static/licenses/THIRD-PARTY-NOTICES.txt.
 
 // JavaScript module pattern, see: https://en.wikipedia.org/wiki/Unobtrusive_JavaScript#Namespaces
 // In essence, we define an anonymous function which is immediately called and

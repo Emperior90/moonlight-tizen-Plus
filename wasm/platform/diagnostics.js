@@ -1,8 +1,8 @@
 // Diagnostics of Moonlight Plus: the report of the last session in System information, the diagnostic log of the current
 // and the previous session (Settings > About > Diagnostic log), and the heartbeat of a stream that tells at the next start
 // that the app ended during it. Everything stays on the TV: the log lives in memory only and is shown on the screen when
-// the user opens it, with the PIN, the remote input keys and the RTSP address hidden, and the heartbeat is a tiny record
-// in localStorage without any of them.
+// the user opens it, with the PIN, the remote input keys, the RTSP address, the public IP address and the MAC addresses
+// hidden, and the heartbeat is a tiny record in localStorage without any of them.
 // The report at the end of a stream comes from the fork of samirmartins (moonlight-tizen, 1d8f2e3 and bcdcda5,
 // diagnostics.js), in plain language instead of abbreviations. The log of the current and the previous session with the
 // native lines of a ring that never blocks (wasm/diagnostic_log.hpp), the redaction and the heartbeat come from the fork of
@@ -15,17 +15,32 @@
 // secrets, the private key of the client certificate, the unique ID of the client (in the query of a request, as a
 // 'name: value' pair, as 'client UID: …' of NvHTTP.toString(), as a JSON value of a stored setting or a host object, or
 // as the value of its stored key), and the RTSP session URL of a stream, which holds the address and the ports of the
-// host. Values that the app knows (hideDiagnosticValue()) are hidden wherever they appear.
+// host. Values that the app knows (hideDiagnosticValue()) are hidden wherever they appear. A JSON value that a cut left
+// without its closing quote is hidden up to the end of its line (a JSON string has no line break), so that the lines of
+// NvHTTP.toString() that a console call often adds after a host object stay.
+// Users post photos of the log on the public issue tracker, so it also hides what identifies their household on the
+// internet or their devices: the public (external) IP address that STUN or the host reports ('external IP: …' of
+// NvHTTP.toString(), a host object as JSON, <ExternalIP> of the server info, and its value wherever it appears once the
+// app knows it, e.g. in the URL of a request to a host that doesn't answer: hideDiagnosticAddress()) and every MAC
+// address. The all-zero MAC 00:00:00:00:00:00 stays, since it tells that a host never reported its MAC, which
+// Wake-on-LAN needs. The local addresses, the addresses that the user entered and the names of the PCs stay as well:
+// support needs them, and the bug form tells users to cover them.
 const REDACTED_TEXT = '<hidden>';
 const REDACTED_QUERY_KEYS = 'rikey|rikeyid|uniqueid|salt|clientcert|clientchallenge|serverchallengeresp|clientpairingsecret|pin';
+const MAC_ADDRESS_PATTERN = /\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b/g;
+const ZERO_MAC_ADDRESS_PATTERN = /^(?:00[:-]){5}00$/;
 function redactDiagnosticText(text) {
   return redactKnownValues(String(text === undefined || text === null ? '' : text)
     .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, REDACTED_TEXT)
     .replace(/rtsp(?:enc|ru)?:\/\/[^\s'"<>]*/gi, 'rtsp://' + REDACTED_TEXT)
     .replace(new RegExp('([?&;](?:' + REDACTED_QUERY_KEYS + ')=)[^&\\s\'"]*', 'gi'), '$1' + REDACTED_TEXT)
-    .replace(/(\\?"(?:rikey|rikeyid|uniqueid|clientUid|privateKey)\\?"\s*:\s*\\?")(?:\\\\|\\[^"]|[^"\\])*/gi, '$1' + REDACTED_TEXT)
+    .replace(/(\\?"(?:rikey|rikeyid|uniqueid|clientUid|privateKey|externalIP)\\?"\s*:\s*\\?")(?:\\\\|\\[^"\r\n]|[^"\\\r\n])*/gi, '$1' + REDACTED_TEXT)
     .replace(/(\b(?:rikey|rikeyid|uniqueid|pin)\b\s*(?:[:=]|is)\s*)[^\s,;&'"]+/gi, '$1' + REDACTED_TEXT)
     .replace(/(\bclient\s*UID\s*:\s*)[^\s,;&'"]+/gi, '$1' + REDACTED_TEXT)
+    .replace(/(\bexternal[ \t]*IP[ \t]*:[ \t]*)[^\s,;&'"<]+/gi, '$1' + REDACTED_TEXT)
+    .replace(/(\bexternal IPv4 address of [^\r\n]{0,80}? is\s+)[^\s,;&'"<]+/gi, '$1' + REDACTED_TEXT)
+    .replace(/(<ExternalIP>)[^<]*/gi, '$1' + REDACTED_TEXT)
+    .replace(MAC_ADDRESS_PATTERN, (mac) => (ZERO_MAC_ADDRESS_PATTERN.test(mac) ? mac : REDACTED_TEXT))
     .replace(/(\b(?:uniqueid|cert)\b\s+with\s+(?:values?|data)\s*:\s*).*/gi, '$1' + REDACTED_TEXT)
     .replace(/(\bpin\b\D{0,24}?)\b\d{4,8}\b/gi, '$1' + REDACTED_TEXT));
 }
@@ -40,10 +55,35 @@ function hideDiagnosticValue(name, value) {
     diagnosticKnownValues[name] = text;
   }
 }
+
+// The public IP addresses that STUN or a host reported, which redactDiagnosticText() hides wherever they appear, as
+// patterns by address (hideDiagnosticAddress()): the rules above find the address only by its label, not in a URL, e.g.
+// of a request to a host that doesn't answer. Only these addresses are hidden, not everything that looks like a public
+// address (a GFE version such as 3.23.0.74 does), and only as a whole, so that 203.0.113.7 leaves 203.0.113.70 alone.
+// A private, loopback or link-local address is never hidden, since support needs the local ones.
+const diagnosticKnownAddresses = {};
+const IPV4_ADDRESS_PATTERN = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+const IPV6_ADDRESS_PATTERN = /^(?=[0-9A-Fa-f:]*::|(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}$)[0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7}$/;
+const LOCAL_ADDRESS_PATTERN = /^(?:0|10|127)\.|^169\.254\.|^192\.168\.|^172\.(?:1[6-9]|2\d|3[01])\.|^(?:fe[89ab]|f[cd])|^::1?$/i;
+function hideDiagnosticAddress(address) {
+  const text = String(address === undefined || address === null ? '' : address).trim();
+  const ipv4 = IPV4_ADDRESS_PATTERN.test(text);
+  if ((!ipv4 && !IPV6_ADDRESS_PATTERN.test(text)) || LOCAL_ADDRESS_PATTERN.test(text) ||
+    Object.prototype.hasOwnProperty.call(diagnosticKnownAddresses, text)) {
+    return;
+  }
+  const escaped = text.replace(/[.]/g, '\\.');
+  diagnosticKnownAddresses[text] = ipv4 ? new RegExp('(?<![\\d.])' + escaped + '(?!\\d|\\.\\d)', 'g')
+    : new RegExp('(?<![0-9A-Fa-f:])' + escaped + '(?![0-9A-Fa-f]|:[0-9A-Fa-f:])', 'gi');
+}
+
 function redactKnownValues(text) {
-  return Object.keys(diagnosticKnownValues).reduce(function(result, name) {
+  const withoutValues = Object.keys(diagnosticKnownValues).reduce(function(result, name) {
     return result.split(diagnosticKnownValues[name]).join(REDACTED_TEXT);
   }, text);
+  return Object.keys(diagnosticKnownAddresses).reduce(function(result, address) {
+    return result.replace(diagnosticKnownAddresses[address], REDACTED_TEXT);
+  }, withoutValues);
 }
 
 // ===== The diagnostic log =====
@@ -179,7 +219,8 @@ const DiagnosticLog = (function() {
         } catch (error) {
           json = '';
         }
-        parts.push(json && json !== '{}' ? json.slice(0, 200) : String(value));
+        // Hidden before it is cut, since a rule no longer finds a value that the cut leaves half, e.g. a MAC address
+        parts.push(json && json !== '{}' ? redactDiagnosticText(json).slice(0, 200) : String(value));
       } else {
         parts.push(String(value));
       }

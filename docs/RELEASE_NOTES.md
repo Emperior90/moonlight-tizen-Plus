@@ -3,7 +3,7 @@
 - Presets follow the recommended bitrate; *Optimize bitrate presets* is gone
 - Fixed: one UP in the Stream Menu could select *Quit app on the PC*
 - Questions that quit or delete start on *No*; no update notice in a stream
-- Faster screens, rumble on for new installs, a download 240 KB smaller
+- Faster screens, rumble on for new installs, a download 210 KB smaller
 
 **Which file?** Tizen 9 and newer: `Moonlight-ForceGM.wgt` (keep *Ultra low latency mode* off). Tizen 5.5 to 8: `Moonlight.wgt`.
 

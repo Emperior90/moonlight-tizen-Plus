@@ -63,6 +63,7 @@ The earlier release v1.19.0-s90c.1 (*Moonlight S90C*) never offers Moonlight Plu
 - [Controllers](docs/CONTROLLERS.md): supported controllers, modes, buttons, controller type, rumble and mouse emulation
 - [Patch notes](docs/PATCH_NOTES.md): what changed in each version, in short, with every detail in the [changelog](CHANGELOG.md)
 - [Translating](docs/TRANSLATING.md): the languages of the app, the rules and the German, Spanish and French glossaries for translators, and how to add a text or a language
+- [Building](docs/BUILD.md): the build commands of the releases and everything that the build downloads, with its source
 - [S90C documents of the first release](https://github.com/Emperior90/moonlight-tizen-Plus/tree/v1.19.0-s90c.1/docs): the German tuning plan and quick guide of the Samsung S90C, the model this fork was first tuned on, kept at the tag v1.19.0-s90c.1
 
 ---
@@ -75,7 +76,7 @@ Open an issue on the [issue tracker of this fork](https://github.com/Emperior90/
 
 ## Development
 
-- Build: the [Development Guide of Moonlight Tizen](https://github.com/brightcraft/moonlight-tizen/wiki/Development-Guide) applies. A release or development build of the `Dockerfile` needs `--build-arg REPO_OWNER=<owner> --build-arg REPO_NAME=<repo>`, the repository whose releases the in-app update check reads.
+- Build: [docs/BUILD.md](docs/BUILD.md) gives the commands of the releases and lists the SDKs and library sources that the build downloads; the [Development Guide of Moonlight Tizen](https://github.com/brightcraft/moonlight-tizen/wiki/Development-Guide) explains the setup. A release or development build of the `Dockerfile` needs `--build-arg REPO_OWNER=<owner> --build-arg REPO_NAME=<repo>`, the repository whose releases the in-app update check reads.
 - Tests: `npm test --prefix tests` runs the tests without a TV (see [tests/README.md](tests/README.md)).
 - Upstream: the workflow *Check upstream dependencies* (run it from the Actions tab) lists the changes of Moonlight Tizen, moonlight-common-c, ENet, Opus, libgamestream and Sunshine that are newer than the reviewed state in [dependency-baselines.json](.github/dependency-baselines.json), in one issue with compare links. That file records each upstream change as taken or skipped, with the reason.
 - Contributing: see [CONTRIBUTING](.github/CONTRIBUTING.md).
@@ -94,9 +95,39 @@ To support the developer of Moonlight Tizen or to get help with the regular Moon
 
 ---
 
+## Privacy
+
+Moonlight Plus has no analytics, telemetry, ads or accounts, and sends nothing to its developer. On its own it connects only to:
+
+- **The PCs you add or that the scan finds**, for pairing and streaming: at their address, their name with `.local`, their local address and, if none of these answers, the public address of their network. The TV has no mDNS, so the lookup of the name with `.local` can reach the DNS server of your network.
+- **Your local network**, at startup while the PC list shows and when you choose *Rescan network*: one HTTP request to port 47989 of every address of the /24 network of the TV (e.g. 192.168.1.1 to 192.168.1.254), to find PCs with Sunshine. The *Wake PC* dialog repeats this scan while it waits for a PC, which may come back with a new address.
+- **api.github.com (GitHub)**, at startup at most once a day and when you choose *Check for updates*, to read the latest release of this fork. GitHub sees the IP address of your network and the usual headers of the browser of the TV, such as its user agent, and no identifier of the TV or of you.
+- **stun.moonlight-stream.org (the Moonlight project), UDP port 3478**, when the scan finds a new PC or a new address of a known PC, to learn the public IP address of your network (inherited from Moonlight).
+- **Wake-on-LAN broadcasts** on your local network, only when you choose *Wake PC* or open an offline PC for which you turned on *Always wake this PC automatically*, and again every 10 seconds while the *Wake PC* dialog waits for the PC.
+
+The background service of the Smart Hub tiles also serves the cached box art on port 8889 of the TV for the Smart Hub, which other devices on your network can reach as well. Settings, paired PCs, the pairing certificate and the box art stay on the TV: in the storage of the app, and the previews of the Smart Hub tiles in the shared documents folder of the TV, which the background service reads. The [diagnostic log](docs/GUIDE.md#diagnostic-log) and the report of the last session are kept in memory and shown on the screen; they leave the TV only if you photograph or share them. The log hides the keys, the public IP address of your network that the app learns from STUN or from the PC, and the MAC addresses; the local addresses and the addresses that you enter yourself stay. The privacy statement of GitHub applies to what GitHub receives.
+
+---
+
 ## License
 
-Moonlight Plus is licensed under the `GNU General Public License v3.0`, like Moonlight Tizen. See the [LICENSE](LICENSE) file for more information. Each release links the commit it was built from, which is its source code.
+Moonlight Plus is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, version 3 of the License, which Moonlight Tizen uses as well. Moonlight Plus is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the [LICENSE](LICENSE) file for the full text.
+
+- Moonlight Tizen: Copyright (C) brightcraft and the contributors of Moonlight Tizen
+- Moonlight (moonlight-chrome, moonlight-common-c): Copyright (C) the Moonlight Game Streaming Project
+- libgamestream of Moonlight Embedded: Copyright (C) 2015 Iwan Timmer
+- The Tizen WebAssembly port of moonlight-chrome: Copyright (c) 2015 Samsung Electronics
+- `wasm/platform/common.js`: Copyright (c) 2012 The Chromium Authors
+- Moonlight Plus changes: Copyright (C) 2026 Emperior90, made with AI assistance
+- Code ported from other forks of Moonlight Tizen: Portions Copyright (C) fidoboy, mmadej20, samirmartins, Diogo8500, waresz and the contributors of their forks
+
+The third-party components and their licences, with the full licence texts, are listed in [wasm/static/licenses/THIRD-PARTY-NOTICES.txt](wasm/static/licenses/THIRD-PARTY-NOTICES.txt). This file and LICENSE are also inside the app package.
+
+**Code from other projects:** Moonlight Plus contains code ported from the GPL-3.0 forks of Moonlight Tizen by [fidoboy](https://github.com/fidoboy/moonlight-tizen-ac3) (moonlight-tizen-ac3), [mmadej20](https://github.com/mmadej20/moonlight-tizen-modern) (moonlight-tizen-modern), [samirmartins](https://github.com/samirmartins/moonlight-tizen), [Diogo8500](https://github.com/Diogo8500/moonlight-tizen) and [waresz](https://github.com/waresz/moonlight-tizen) (each moonlight-tizen). The source files and the notices name what comes from where.
+
+**Source code:** each release links the commit it was built from, which is its source code. [docs/BUILD.md](docs/BUILD.md) lists the SDKs and the sources of the libraries that the build downloads.
+
+**Known licence issue:** the build statically links OpenSSL 1.1.1d (OpenSSL/SSLeay licence) through the Samsung Emscripten ports, as Moonlight Tizen and the other Moonlight Tizen forks do. The FSF considers that licence incompatible with the GPL. Moving to a TLS library that is compatible with GPL-3.0 (OpenSSL 3 or mbedTLS) is planned.
 
 ---
 

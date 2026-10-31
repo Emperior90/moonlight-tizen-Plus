@@ -30,7 +30,8 @@ What changed in each version of Moonlight Plus, in short, newest first.
 - Rumble is on for new installs; questions that quit an app or delete a PC start on *No*
 - The PC menu lists only what works, and the PC list shows one state chip
 - *Restore Defaults* keeps the button mapping and the stick calibration
-- About 240 KB smaller download: unused files, styles and code are gone
+- About 210 KB smaller download: unused files, styles and code are gone
+- Licence notices and a privacy section; the diagnostic log also hides the public IP and MAC addresses
 
 ### Removed
 

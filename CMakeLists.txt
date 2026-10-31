@@ -230,3 +230,6 @@ install(DIRECTORY res/service DESTINATION widget)
 install(FILES wasm/index.html DESTINATION widget)
 install(FILES res/config.xml DESTINATION widget)
 install(FILES res/platform.js DESTINATION widget)
+# The GPL-3.0 asks for a copy of the licence with every copy of the app, and a .wgt is often passed on without the
+# repository. The notices of the third-party components are in wasm/static/licenses, which ships with wasm/static
+install(FILES LICENSE DESTINATION widget)

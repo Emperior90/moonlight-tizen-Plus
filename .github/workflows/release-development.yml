@@ -1,6 +1,8 @@
-# Builds the app in Docker, pushes the images to the GitHub Container Registry and publishes the widget files of both
-# variants as a GitHub pre-release of the branch. With `promote_tag`, it builds nothing and turns that pre-release into a
-# full release instead (see the last job). This is the only release workflow: every full release is a tested pre-release.
+# Builds the widget files of both variants in Docker and publishes them as a GitHub pre-release of the branch. The build
+# exports only the widget files (the target wgt of the Dockerfile) to the runner and pushes no image: an image would
+# publish the Tizen Studio CLI and the Ubuntu packages of the build along with the app. With `promote_tag`, it builds
+# nothing and turns that pre-release into a full release instead (see the last job). This is the only release workflow:
+# every full release is a tested pre-release.
 name: Release
 # Started by hand from the Actions tab, on the branch to build.
 on:
@@ -16,85 +18,55 @@ on:
         required: false
         default: ''
         type: string
-# Queues the release runs, because they push the ForceGM image to the same `:forcegm` tag, which an overlapping run would
-# overwrite before the upload job of the other run pulls it (a package of another commit).
+# Queues the release runs: a run deletes the earlier pre-release of its branch before it creates its own, and a run of the
+# same branch that overlapped it could delete the new pre-release or leave two.
 concurrency:
-  group: moonlight-release-images
+  group: moonlight-release
   cancel-in-progress: false
-# The Container registry, and the name of the Docker image that this workflow builds.
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
 jobs:
-  build-and-push-image:
+  build-and-release:
     if: github.ref != 'refs/heads/master' && inputs.promote_tag == ''
     runs-on: ubuntu-latest
+    # contents: write deletes the earlier pre-release of the branch and creates the new one
     permissions:
-      contents: read
-      packages: write
-    outputs:
-      image_tag: ${{ steps.meta.outputs.tags }}
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
-      - name: Log in to the Container registry
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      # Docker rejects image tags with uppercase letters, which `github.repository` has when the name of the owner does.
-      - name: Convert image name to lowercase
-        run: echo "IMAGE_NAME_LOWER=${IMAGE_NAME,,}" >> "$GITHUB_ENV"
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
       # Both variants are built from the same tree with BUILD_TYPE=development and the repository that the built app checks
       # for updates. FORCE_GAME_MODE=false builds the Standard variant, FORCE_GAME_MODE=true the ForceGM variant, which gets
-      # one metadata line injected at packaging time.
-      - name: Build and push Docker image (Standard variant)
+      # one metadata line injected at packaging time. The target wgt holds only the widget file, which the local output
+      # writes into the folder `dest` of the runner; the second build reuses the layers of the first up to that line.
+      - name: Build the widget file (Standard variant)
         uses: docker/build-push-action@v7
         with:
           context: .
-          push: true
+          target: wgt
+          push: false
+          outputs: type=local,dest=out/standard
           build-args: |
             BUILD_TYPE=development
             REPO_OWNER=${{ github.repository_owner }}
             REPO_NAME=${{ github.event.repository.name }}
             FORCE_GAME_MODE=false
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-      - name: Build and push Docker image (ForceGM variant)
+      - name: Build the widget file (ForceGM variant)
         uses: docker/build-push-action@v7
         with:
           context: .
-          push: true
+          target: wgt
+          push: false
+          outputs: type=local,dest=out/forcegm
           build-args: |
             BUILD_TYPE=development
             REPO_OWNER=${{ github.repository_owner }}
             REPO_NAME=${{ github.event.repository.name }}
             FORCE_GAME_MODE=true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}:forcegm
-          labels: ${{ steps.meta.outputs.labels }}
-  run-and-upload-release:
-    if: github.ref != 'refs/heads/master' && inputs.promote_tag == ''
-    runs-on: ubuntu-latest
-    needs: build-and-push-image
-    # contents: write deletes the earlier pre-release of the branch and creates the new one, packages: read pulls the images
-    permissions:
-      contents: write
-      packages: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-      - name: Log in to the Container registry
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      # The pre-release takes the files from the folder of the run, under the names that the Dockerfile gives them
+      - name: Collect the widget files
+        run: |
+          set -euo pipefail
+          cp out/standard/Moonlight.wgt out/forcegm/Moonlight-ForceGM.wgt .
+          ls -la Moonlight.wgt Moonlight-ForceGM.wgt
       # The tag of the pre-release is "v" + this timestamp + "-" + the branch name, e.g. v2026.1031.1405-stufe-2
       - name: Generate timestamp number
         run: |
@@ -105,10 +77,6 @@ jobs:
         run: |
           BRANCH=${GITHUB_REF_NAME//\//-}
           echo "BRANCH=$BRANCH" >> "$GITHUB_ENV"
-      - name: Set up image tags
-        run: |
-          echo "IMAGE_TAG=${{ needs.build-and-push-image.outputs.image_tag }}" >> "$GITHUB_ENV"
-          echo "IMAGE_TAG_FORCEGM=${{ env.REGISTRY }}/${IMAGE_NAME,,}:forcegm" >> "$GITHUB_ENV"
       # Deletes the earlier pre-release of this branch and its tag, so that the branch keeps one pre-release. The branch
       # name must be all that follows the timestamp of the tag: a branch whose name only contains this one (stufe-2-fix
       # for stufe-2) keeps its pre-release, and so does every full release. It reads up to 100 releases, the most that
@@ -152,19 +120,6 @@ jobs:
             done
             echo "Cleanup completed."
           fi
-      # Runs the images in detached mode to copy the widget files out of them
-      - name: Run Docker containers
-        run: |
-          docker run -d --name temp_container "$IMAGE_TAG"
-          docker run -d --name temp_container_forcegm "$IMAGE_TAG_FORCEGM"
-      - name: Copy artifacts from Docker containers
-        run: |
-          docker cp temp_container:/home/moonlight/Moonlight.wgt .
-          docker cp temp_container_forcegm:/home/moonlight/Moonlight-ForceGM.wgt .
-      - name: Stop and remove Docker containers
-        run: |
-          docker stop temp_container temp_container_forcegm
-          docker rm temp_container temp_container_forcegm
       # The notes of a pre-release ask testers to report on the issue tracker of this fork, so the run warns when Issues are
       # turned off or the default branch lacks the issue forms and the guide, without stopping the test build.
       - name: Check the issue tracker and the default branch

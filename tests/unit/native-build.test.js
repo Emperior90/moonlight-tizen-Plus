@@ -5,8 +5,8 @@
 // code that nothing called, no NaCl entry point Init(), no display message callbacks that moonlight-common-c dropped
 // (and with them the 'TransientMsg: ' branch of messages.js), no Opus encoder (the app only decodes; tests/native/run.sh
 // builds the decoder from the list of CMakeLists.txt and decodes with it), no CPPLINT.cfg, and no member of
-// MoonlightInstance that is written but never read. Every file the build names exists, and the Docker build context
-// leaves out the models of opus/dnn, which nothing compiles.
+// MoonlightInstance that is written but never read. Every file the build names exists, the Docker build context
+// leaves out the models of opus/dnn, which nothing compiles, and the unused headers of ports/ are gone.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -57,6 +57,10 @@ test('the Dockerfile copies only what exists, and the build context leaves out o
   assert.ok(copies.length >= 10, copies.join(' '));
   copies.filter((source) => source.indexOf('[') < 0 && source.indexOf('*') < 0).forEach((source) => assert.ok(exists(source), source));
   assert.equal(dockerfile.indexOf('h264bitstream'), -1);
+  // The headers of OpenSSL 1.0.2d, curl 7.44.0 and zlib 1.2.8 in ports/include, which no build read (the Samsung
+  // Emscripten ports bring their own), are gone since 2.2.0
+  assert.equal(exists('ports'), false);
+  assert.ok(copies.indexOf('ports') < 0, copies.join(' '));
   const ignored = read('.dockerignore').split('\n').map((line) => line.trim());
   assert.ok(ignored.indexOf('opus/dnn') >= 0);
   // Nothing that the build compiles lies there
