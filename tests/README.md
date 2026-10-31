@@ -35,7 +35,7 @@ npm run test:browser --prefix tests
 node --test tests/browser/video-defaults.test.js   # a single file
 ```
 
-RUNTIMES_PLACEHOLDER
+Measured run times for 2.2.0 on a machine with 4 CPUs: the tools about 1 second, the unit tests about 6 seconds, the native tests about 2 minutes (mostly compiling) and the browser tests about 8 minutes (333 tests, two files at a time), so `npm test` takes about 10 minutes. In CI the whole run of 2.1.0 took about 5 minutes. A single test file is the faster way while you work on one part.
 
 ## Looking at the UI in a browser
 

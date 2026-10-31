@@ -317,7 +317,7 @@ jobs:
           # pre-release: the first line after its heading carries the date of the release
           if [ -f docs/PATCH_NOTES.md ] && awk -v heading="## $app_version" '{ sub(/[ \t\r]+$/, "") } $0 == heading { found = 1; next } found && NF { print; exit }' docs/PATCH_NOTES.md | grep -q '^\*Pre-release'; then
             echo "The section $app_version of docs/PATCH_NOTES.md still says Pre-release."
-            echo "Date it, and add v$app_version to RELEASES in tests/unit/patch-notes.test.js, before promoting."
+            echo "Date it and the section of CHANGELOG.md, and add v$app_version to RELEASES in tests/unit/patch-notes.test.js, before promoting."
             exit 1
           fi
 
