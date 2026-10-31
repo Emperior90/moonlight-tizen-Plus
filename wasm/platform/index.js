@@ -638,21 +638,35 @@ function showHosts() {
   $('#wasmSpinner').hide();
   $('#main-header').children().show();
 
+  // Select the host that was opened last, before the Hosts view marks its selection
+  selectLastOpenedHost();
+
   // Navigate to the Hosts view
   showHostsMode();
+  Navigation.switch();
+}
 
-  // Select the host that was opened last
+// Move the selection of the host grid to the card of the host that was opened last (hostChosen() stores it), so that
+// coming back from its app list lands on it. Views is a const of navigation.js, which is no property of window, so the
+// check is typeof; the cards are the host containers (addHostToGrid()).
+function selectLastOpenedHost() {
   var lastOpenedHost = localStorage.getItem('lastOpenedHost');
-  if (lastOpenedHost && window.Views && Views.Hosts && Views.Hosts.view) {
-    var children = Views.Hosts.view.func();
-    for (var i = 0; i < children.length; i++) {
-      if (children[i].id === 'host-' + lastOpenedHost) {
-        Views.Hosts.view.index = i;
-        break;
+  if (!lastOpenedHost || typeof Views === 'undefined' || !Views.Hosts || !Views.Hosts.view) {
+    return;
+  }
+  var view = Views.Hosts.view;
+  var children = view.func();
+  for (var i = 0; i < children.length; i++) {
+    if (children[i].id === 'host-container-' + lastOpenedHost) {
+      // Move the mark with the selection like ListView.prev()/next(), in case the view is entered already
+      if (i !== view.index) {
+        unmark(view.current());
+        view.index = i;
+        mark(view.current());
       }
+      break;
     }
   }
-  Navigation.switch();
 }
 
 function restoreUiAfterWasmLoad() {
@@ -3268,7 +3282,7 @@ function showApps(host) {
         });
 
         var appToSelect = (host.currentGame != 0) ? host.currentGame : localStorage.getItem('lastOpenedApp_' + host.serverUid);
-        if (appToSelect && window.Views && Views.Apps && Views.Apps.view) {
+        if (appToSelect && typeof Views !== 'undefined' && Views.Apps && Views.Apps.view) {
           var children = Views.Apps.view.func();
           for (var i = 0; i < children.length; i++) {
             if (children[i].id === 'game-container-' + appToSelect) {
@@ -3278,7 +3292,7 @@ function showApps(host) {
           }
         }
         // Keep the selection on a tile, e.g. when the app that was selected is hidden now
-        if (window.Views && Views.Apps && Views.Apps.view && Views.Apps.view.index >= Views.Apps.view.func().length) {
+        if (typeof Views !== 'undefined' && Views.Apps && Views.Apps.view && Views.Apps.view.index >= Views.Apps.view.func().length) {
           Views.Apps.view.index = Math.max(0, Views.Apps.view.func().length - 1);
         }
 
