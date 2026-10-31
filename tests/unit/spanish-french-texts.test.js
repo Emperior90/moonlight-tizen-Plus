@@ -93,9 +93,17 @@ test('the Spanish and French texts use the terms of the glossary', () => {
     assert.equal(texts[source], term, source);
     assert.deepEqual(matching(withoutGuideHeading(texts), avoided), [], source);
   });
-  // The PC is "equipo" or "PC" in Spanish and "PC" in French; "hôte" stays only for the hostname and for hosts like Wolf
-  assert.equal(spanish['Add PC'], 'Añadir equipo');
+  // The PC is "PC" in both languages, one name for one thing (the English texts say PC since 2.2.0); Spanish keeps
+  // "servidor" only for host software (Sunshine or another GameStream host, hosts like Wolf), French "hôte" only for the
+  // hostname and for hosts like Wolf
+  assert.equal(spanish['Add PC'], 'Añadir PC');
   assert.equal(french['Add PC'], 'Ajouter un PC');
+  ['PCs', 'PC Details', 'the PC', 'Remove all PCs', 'Delete All PCs', 'Are you sure you want to delete all saved PCs?',
+    'No PC is saved.', 'All PCs have been deleted.'].forEach((key) => assert.match(spanish[key], /\bPC\b/, key));
+  assert.deepEqual(matching(spanish, /\bequipos?\b/i), []);
+  const hostSoftwareEs = /GameStream host|Wolf/;
+  assert.deepEqual(keys.filter((key) => /\bservidor(es)?\b/.test(spanish[key]) && !hostSoftwareEs.test(key) && key !== 'Decrypt host audio')
+    .map((key) => spanish[key]), []);
   // The game mode of the TV, which the ForceGM variant asks for, keeps its name
   assert.match(spanish['ForceGM variant detected: the app asks the TV for its Game Mode, so the Ultra low latency mode setting stays off here and the decoder uses the Low Latency mode.'], /Modo Juego/);
   assert.match(french['ForceGM variant detected: the app asks the TV for its Game Mode, so the Ultra low latency mode setting stays off here and the decoder uses the Low Latency mode.'], /mode Jeu/);
@@ -160,7 +168,7 @@ test('texts that name a setting, a value or a menu entry use its Spanish and Fre
   });
   // The fallback name of a PC in 'Failed to connect to %1$s...' fits the preposition of the sentence
   assert.equal(spanish['Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.']
-    .replace('%1$s', spanish['the PC']).indexOf('con el equipo'), 'No se pudo conectar '.length);
+    .replace('%1$s', spanish['the PC']).indexOf('con el PC'), 'No se pudo conectar '.length);
   assert.ok(french['Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.']
     .replace('%1$s', french['the PC']).indexOf('se connecter à ce PC') > 0);
 });

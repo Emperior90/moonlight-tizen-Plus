@@ -28,7 +28,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 - The bitrate presets are the recommended bitrates, and *Optimal settings* lets the bitrate follow them again
 - Screens open without the half-second wait, and controller buttons act after 50 ms in the menus
 - Rumble is on for new installs; questions that quit an app or delete a PC start on *No*
-- The PC menu lists only what works, and the hosts screen shows one state chip
+- The PC menu lists only what works, and the PC list shows one state chip
 - *Restore Defaults* keeps the button mapping and the stick calibration
 - About 240 KB smaller download: unused files, styles and code are gone
 

@@ -79,15 +79,15 @@ The earlier release v1.19.0-s90c.1 (*Moonlight S90C* on the TV) checks the relea
 
 | Icon | Button | Where |
 |---|---|---|
-| Circular arrow | Rescan network: searches the local network for PCs again, the arrow turns while it searches | Hosts |
-| Gear | Settings | Hosts |
-| Question mark | Support: the guide as a QR code, and where to report problems | Hosts |
+| Circular arrow | Rescan network: searches the local network for PCs again, the arrow turns while it searches | PC list |
+| Gear | Settings | PC list |
+| Question mark | Support: the guide as a QR code, and where to report problems | PC list |
 | Round arrow with a clock | Restore Defaults | Settings |
 | Circle with a cross | Quit app on the PC: only shows while an app runs on the PC | App list |
 
 A *New update* button with a download arrow appears in the header when a newer release exists (see [Updates](#updates)). The questions before quitting the running app, deleting a PC or all PCs and *Restore Defaults* open with *No* selected, so an OK pressed by mistake only closes them.
 
-**Hosts.** The top of the screen shows the selected PC in large type: its address, its state as one chip, the same as on its card (*Running*, *Online*, *Unpaired* or *Offline*), one sentence on what OK does and the keys to press, next to a drawing of a PC that changes with the state. Below, each PC has a card with a colored tile (mint while a game runs, amber when not paired, gray when offline) and its most important state. The ⋯ button of a card opens its menu, which starts on its first entry: *Refresh apps* (for a PC that is online) or *Wake PC* (for one that is offline), *View Details*, *Delete PC* and *Close*. UP reaches it from the first row of cards, and CH+ or Play/Pause opens the menu from any row, as the hint *↑ Options* or *⋯ Options* says. When the focus is in the header or a menu, the top shows the last PC without the keys, or a summary of all PCs.
+**PC list.** The first screen, titled *PCs*. Its top shows the selected PC in large type: its address, its state as one chip, the same as on its card (*Running*, *Online*, *Unpaired* or *Offline*), one sentence on what OK does and the keys to press, next to a drawing of a PC that changes with the state. Below, each PC has a card with a colored tile (mint while a game runs, amber when not paired, gray when offline) and its most important state. The ⋯ button of a card opens its menu, which starts on its first entry: *Refresh apps* (for a PC that is online) or *Wake PC* (for one that is offline), *View Details*, *Delete PC* and *Close*. UP reaches it from the first row of cards, and CH+ or Play/Pause opens the menu from any row, as the hint *↑ Options* or *⋯ Options* says. When the focus is in the header or a menu, the top shows the last PC without the keys, or a summary of all PCs.
 
 **App list.** The top shows the selected app with its box art, and the colors of the box art light up the screen once the selection rests on the app. A white ring marks the selected tile. The app that runs on the PC has a mint ring and a *Running* badge, a favorite has an amber star in the top right corner of its tile and a *Favorite* chip at the top, and hidden apps, when shown, are dimmed with a *Hidden* badge (see [Stream Menu and app menu](#stream-menu-and-app-menu)). An app without box art shows its title on its tile. The box art of a new host loads two apps at a time, and never holds up the start, resume or quit of an app: starting a stream drops the box art that hasn't arrived yet, and it loads when you return to the app list.
 
@@ -206,7 +206,7 @@ This table shows what the button applies. A test checks it against the code of t
 - The TV stores the hidden apps and the favorites of each host, by ID and title, so an app stays hidden or a favorite when Sunshine gives it a new ID. Deleting the host forgets them.
 - The running app always shows, also when it is hidden, so you can resume or quit it. When every app of a host is hidden, all of them show.
 
-**Order of the app list.** Settings → General → *Sort the list of apps* offers *A to Z* (the default), *Z to A*, *Recently played* (the last 20 apps you started on this host first, the latest first, then the others from A to Z) and *As on the PC* (the order in which the host lists them, e.g. the order set in Apollo). The favorites always come first, in the same order among themselves. The Smart Hub tiles follow the same order.
+**Order of the app list.** Settings → General → *Sort the list of apps* offers *A to Z* (the default), *Z to A*, *Recently played* (the last 20 apps you started on this PC first, the latest first, then the others from A to Z) and *As on the PC* (the order in which the PC lists them, e.g. the order set in Apollo). The favorites always come first, in the same order among themselves. The Smart Hub tiles follow the same order.
 
 ## Finding your bitrate
 
@@ -487,7 +487,7 @@ Other problems:
 - **Play/Pause doesn't open the Stream Menu:** some TVs may not pass the key to apps (untested). Hold Select + Start on a controller for 1 second instead; RED and YELLOW keep working. Settings → Input Settings → *Input test* shows whether the key reaches the app and whether Moonlight registered it ([CONTROLLERS.md](CONTROLLERS.md#input-test)).
 - **A button of a controller does the wrong thing in games:** change it in Settings → Input Settings → *Button mapping*; a worn stick that drifts or doesn't reach the edge can be calibrated there ([CONTROLLERS.md](CONTROLLERS.md#button-mapping-and-stick-calibration)).
 - **An app is missing from the app list:** it may be hidden. Open the menu of any app (CH+ or Play/Pause) and choose *Show hidden apps* (see [Stream Menu and app menu](#stream-menu-and-app-menu)).
-- **The PC isn't in the list, or it got a new IP address:** press UP in the host list and select *Rescan network* (the circular arrow, the first round button of the header) to search the local network again. The app searches for hosts on its own at startup, without a notice, while the host list shows; if you open a PC, the settings or a stream before the first check of the known PCs ended, there is no search at that start.
+- **The PC isn't in the list, or it got a new IP address:** press UP in the PC list and select *Rescan network* (the circular arrow, the first round button of the header) to search the local network again. The app searches for PCs on its own at startup, without a notice, while the PC list shows; if you open a PC, the settings or a stream before the first check of the known PCs ended, there is no search at that start.
 - **The picture freezes on Tizen 9.0 or newer:** turn the *Ultra low latency mode* switch off, and use the ForceGM variant for the Game Mode of the TV.
 - **Colors look washed out:** HDR is on in the app but off on the host display, or the TV doesn't support HDR (see [HDR](#hdr)).
 - **Only stereo from a soundbar or receiver:** see [Surround sound with a soundbar](#surround-sound-with-a-soundbar).

@@ -47,7 +47,7 @@ The menus use the button positions (Xbox names first, PlayStation names in brack
 | Start / Menu (Options) | Like CH- on the remote: set the focus on the current item |
 
 - A, B, Select and Start act 50 ms after the press, close to the keys of the remote. A move of the left stick acts after 150 ms, so that a diagonal movement doesn't make two steps.
-- The in-app *Navigation guide* (Settings → About) lists the same buttons, with the remote and keyboard keys next to them, and one line for the mouse emulation (see [Mouse emulation](#mouse-emulation)).
+- The in-app *Navigation guide* (Settings → About) lists the same buttons except Start, which only sets the focus like CH-, with the remote and keyboard keys next to them, and one line for the mouse emulation (see [Mouse emulation](#mouse-emulation)).
 - The [button mapping](#button-mapping-and-stick-calibration) only applies during a stream. In the menus, the bottom button always selects, also on Nintendo controllers, whose labels differ.
 - Buttons that are still held when a stream ends (e.g. the stop combo) don't trigger anything in the menus.
 

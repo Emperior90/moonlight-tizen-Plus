@@ -8,6 +8,7 @@
 // - the bitrate presets, which give the recommended bitrate of every resolution and frame rate (presetBitrate())
 // - the controller type that System information shows when the setting overrides the detection
 // - the Start of a hold that switches the mouse emulation on, which the game sees (wasm/gamepad.cpp)
+// - the buttons in the menus of docs/CONTROLLERS.md that the navigation guide of wasm/index.html leaves out
 // - the version suffix of a release promoted from a pre-release, and what the earlier release v1.19.0-s90c.1 offers
 // - the audio path that the section on surround sound with a soundbar describes: the 5.1 entry of the audio
 //   configuration, the 6-channel PCM track that only the EMSS backend adds, the two channels of the Web Audio output and
@@ -209,4 +210,46 @@ test('the guide gives the tested bitrate steps of the S90C itself and links the 
   for (const file of ['docs/GUIDE.md', 'README.md', 'docs/PATCH_NOTES.md']) {
     assert.ok(read(file).indexOf('](' + tagLink + ')') >= 0, file + ' links the tag v1.19.0-s90c.1');
   }
+});
+
+test('the controller page names the menu buttons that the navigation guide leaves out', () => {
+  const controllers = read('docs/CONTROLLERS.md');
+  const start = controllers.indexOf('\n## Buttons in the menus\n');
+  const section = controllers.slice(start, controllers.indexOf('\n## ', start + 1));
+  // The buttons of the table by their Xbox names (before a slash or a bracket), e.g. "Select / View (Share, Create)"
+  const buttons = section.split('\n').filter((line) => /^\| /.test(line) && !/^\| (Button|---)/.test(line))
+    .map((line) => line.split('|')[1].trim().split(' / ')[0].replace(/ \(.*\)$/, ''));
+  assert.deepEqual(buttons, ['A', 'B', 'D-pad, left stick', 'Select', 'Start']);
+  // The controller keys of the navigation guide (wasm/index.html), each line of a button as its own key
+  const guideKeys = [];
+  const pattern = /class="navGuideGamepadText" data-i18n="([^"]+)"/g;
+  let match;
+  while ((match = pattern.exec(read('wasm/index.html'))) !== null) {
+    guideKeys.push(match[1]);
+  }
+  const KEYS = { 'A': ['A'], 'B': ['B'], 'D-pad, left stick': ['D-PAD UP', 'L-STICK UP'], 'Select': ['SELECT'], 'Start': ['START'] };
+  const missing = buttons.filter((button) => KEYS[button].some((key) => guideKeys.indexOf(key) < 0));
+  // Start (CH- on the remote) only sets the focus, and the guide has no line for it since 2.2.0
+  assert.deepEqual(missing, ['Start']);
+  const sentence = section.split('\n').find((line) => line.indexOf('- The in-app *Navigation guide* (Settings → About) lists') === 0);
+  assert.ok(sentence, 'the controller page refers to the navigation guide');
+  assert.match(sentence, new RegExp('lists the same buttons except ' + missing.join(' and ') + ','));
+});
+
+test('the README and the guide name the PC list, its chip and its Add PC card as the English UI does', () => {
+  // The title of the first screen and its card for a new PC (wasm/platform/index.js, wasm/index.html)
+  assert.match(read('wasm/platform/index.js'), /\$\('#header-title'\)\.attr\('data-i18n', 'PCs'\)/);
+  assert.match(read('wasm/index.html'), /<span class="host-text" data-i18n="Add PC">Add PC<\/span>/);
+  const readme = read('README.md');
+  const hostsShot = readme.split('\n').find((line) => line.indexOf('](docs/images/hosts.jpg)') > 0);
+  assert.ok(hostsShot, 'the README shows docs/images/hosts.jpg');
+  assert.match(hostsShot, /titled PCs/);
+  assert.match(hostsShot, /with one Running chip/);
+  assert.match(hostsShot, /next to the Add PC card/);
+  // Names of 2.1.0 that the screens no longer show: the screen Hosts, the card Add Host, three chips of a PC, and the
+  // gamepad in the header of the app list
+  for (const [file, text] of [['README.md', readme], ['docs/GUIDE.md', GUIDE]]) {
+    assert.doesNotMatch(text, /Add Host|Hosts screen|host list\b|\*\*Hosts\.\*\*|\| Hosts \||Running, Online and Paired|Select on a gamepad/, file);
+  }
+  assert.match(GUIDE, /\*\*PC list\.\*\* The first screen, titled \*PCs\*\./);
 });

@@ -93,13 +93,12 @@ The Spanish texts address the user with the informal *tú* (*Selecciona*, *Pulsa
 
 | English | Spanish | Note |
 |---|---|---|
-| host | equipo | *Añadir equipo*, *Eliminar todos los equipos* |
-| PC | PC | *el PC*, *Enviar al PC*, *Despertar el PC* |
+| host, host PC, PC | PC | *el PC*, plural *los PC*: *Añadir PC*, *Eliminar todos los PC*, *Despertar el PC*; not *equipo*. Host software is *servidor*: *u otro servidor de GameStream*, *servidores como Wolf*, *audio del servidor* |
 | pair, pairing | vincular, vinculación | |
 | gamepad, controller | mando | *Mandos* |
 | remote | mando a distancia | |
 | TV | televisor | |
-| settings | Ajustes | sections: *Ajustes básicos*, *Ajustes de interfaz*, *Ajustes del equipo*, *Ajustes de entrada*, *Ajustes de audio*, *Ajustes de vídeo*, *Ajustes avanzados*, *Acerca de* |
+| settings | Ajustes | sections: *Ajustes básicos*, *Ajustes de vídeo*, *Ajustes de audio*, *Ajustes de entrada*, *General*, *Ajustes avanzados*, *Acerca de*; the block *Experimental* |
 | Auto | Automático | |
 | On, Off | Activado, Desactivado | |
 | stream, streaming | transmisión | not *retransmisión* |
@@ -133,7 +132,7 @@ The French texts address the user with *vous*, as the menus of French TVs do (*S
 
 | English | French | Note |
 |---|---|---|
-| host, host PC | PC | *Ajouter un PC*, *Paramètres des PC*; *hôte* only for the hostname and for host software (*nom d’hôte*, *hôtes de type Wolf*, *audio de l’hôte*) |
+| host, host PC | PC | *Ajouter un PC*, *Supprimer tous les PC*; *hôte* only for the hostname and for host software (*nom d’hôte*, *hôtes de type Wolf*, *audio de l’hôte*) |
 | pair, pairing | associer, association | |
 | gamepad, controller | manette | |
 | remote | télécommande | |

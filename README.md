@@ -21,9 +21,9 @@ Moonlight Plus is an unofficial fork of [Moonlight Tizen](https://github.com/bri
 
 What changed in each version, in short: [patch notes](docs/PATCH_NOTES.md). Every detail: [changelog](CHANGELOG.md).
 
-![The Hosts screen of Moonlight Plus: the focused PC "GAMING-PC" with the chips Running, Online and Paired, the hints "OK Open" and "Options", a drawing of a PC that runs a game, and a row of PC cards that show their state (running, offline, unpaired, online) next to the Add Host card](docs/images/hosts.jpg)
+![The PC list of Moonlight Plus, titled PCs: the focused PC "GAMING-PC" with one Running chip, the hints "OK Open" and "Options", a drawing of a PC that runs a game, and a row of PC cards that show their state (running, offline, unpaired, online) next to the Add PC card](docs/images/hosts.jpg)
 
-![The app list of Moonlight Plus: the running game "Neon Drift" with its box art at the top right and a Running chip, and below it a grid of box art tiles, the focused one with a white ring and a mint Running badge](docs/images/apps.jpg)
+![The app list of Moonlight Plus: the running game "Neon Drift" with its box art at the top right, a Running chip and the hint "OK Resume", the keys of the app menu and the button that quits the app on the PC in the header, and below a grid of box art tiles, the focused one with a white ring and a mint Running badge](docs/images/apps.jpg)
 
 *Screenshots of a simulated TV with made-up PCs and generated box art.*
 
