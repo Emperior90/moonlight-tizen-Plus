@@ -137,8 +137,9 @@ function replaceKnownStatsLabels(text) {
     .replace(/Incoming frame rate from network:/g, t('Incoming frame rate from network:'))
     .replace(/Decoding frame rate:/g, t('Decoding frame rate:'))
     .replace(/Rendering frame rate:/g, t('Rendering frame rate:'))
-    .replace(/Incoming bitrate from network:/g, t('Incoming bitrate from network:'))
-    .replace(/Configured bitrate:/g, t('Configured bitrate:'))
+    .replace(/Bitrate: ([\d.]+) Mbps received, ([\d.]+) Mbps configured/g, function(match, received, configured) {
+      return t('Bitrate: %1$s Mbps received, %2$s Mbps configured', received, configured);
+    })
     .replace(/Host frame rate \(30 s\):/g, t('Host frame rate (30 s):'))
     .replace(/Host processing latency min\/max\/average:/g, t('Host processing latency min/max/average:'))
     .replace(/Frames dropped by your network connection:/g, t('Frames dropped by your network connection:'))
@@ -155,7 +156,6 @@ function replaceKnownStatsLabels(text) {
     .replace(/Session recovery keyframes:/g, t('Session recovery keyframes:'))
     .replace(/Session FEC recoveries:/g, t('Session FEC recoveries:'))
     .replace(/Worst FEC block:/g, t('Worst FEC block:'))
-    .replace(/UDP receive buffer:/g, t('UDP receive buffer:'))
     .replace(/TV player rejections:/g, t('TV player rejections:'))
     .replace(/WASM heap top:/g, t('WASM heap top:'))
     .replace(/Slow connection to PC\.\nReduce your bitrate!/g, t('Slow connection to PC.\nReduce your bitrate!'));

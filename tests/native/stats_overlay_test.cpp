@@ -78,8 +78,10 @@ bool LiGetEstimatedRttInfo(uint32_t* estimatedRtt, uint32_t* estimatedRttVarianc
 bool LiGetCurrentHostDisplayHdrMode(void) {
   return true;
 }
+// The network figures of moonlight-common-c, all zero unless a test sets them
+static VIDEO_NETWORK_STATS s_TestNetworkStats;
 void LiGetVideoNetworkStats(PVIDEO_NETWORK_STATS stats) {
-  std::memset(stats, 0, sizeof(*stats));
+  *stats = s_TestNetworkStats;
 }
 void LiTerminateConnectionAsync(int) {}
 void PostToJs(std::string message) {
@@ -104,6 +106,7 @@ static void StartStream(int level) {
   posted.clear();
   postedAsync.clear();
   nowMs = 100000;
+  std::memset(&s_TestNetworkStats, 0, sizeof(s_TestNetworkStats));
 
   s_VideoFormat = VIDEO_FORMAT_H265_MAIN10;
   s_Width = 3840;
@@ -238,6 +241,33 @@ static void FullLevelSendsTheTextWithTheFrameIntervals() {
   }
 }
 
+static void FullLevelShowsOneBitrateLineAndNoReceiveBuffer() {
+  StartStream(kPerformanceStatsFull);
+  nextFrame = 1;
+  // The receive buffer of the video socket and a worst FEC block, as moonlight-common-c reports them during a stream
+  s_TestNetworkStats.requestedReceiveBufferSize = 1024 * 1024;
+  s_TestNetworkStats.reportedReceiveBufferSize = 512 * 1024;
+  s_TestNetworkStats.fecWorstMissingPackets = 2;
+  s_TestNetworkStats.fecWorstParityPackets = 4;
+  SubmitFrames(200);
+  CHECK(!postedAsync.empty());
+  const std::string& last = postedAsync.back();
+  // 100 KB per frame at 60 FPS is about 48 Mbps; the app set 75 Mbps
+  const size_t bitrate = last.find("\nBitrate: 48.0");
+  CHECK(bitrate != std::string::npos);
+  CHECK(last.find(" Mbps received, 75.0 Mbps configured\n") == bitrate + 15);
+  CHECK(bitrate > last.find("\nRendering frame rate: "));
+  CHECK(last.find("Incoming bitrate from network") == std::string::npos);
+  CHECK(last.find("Configured bitrate") == std::string::npos);
+  // The receive buffer stays the same for the whole stream: only the log of the stream start names it
+  CHECK(last.find("receive buffer") == std::string::npos);
+  CHECK(last.find("\nWorst FEC block: 2 of 4 parity packets used\n") != std::string::npos);
+  CHECK(last.find("\nWASM heap top: ") != std::string::npos);
+  if (bitrate == std::string::npos) {
+    std::printf("  # got %s\n", last.c_str());
+  }
+}
+
 static void TheIntervalWindowsFollowTheStatsWindows() {
   // The lines cover the last two stats windows: a stall of the host shows at the next two windows, then drops out
   StartStream(kPerformanceStatsFull);
@@ -317,6 +347,7 @@ int main() {
   test_support::RunTest("nothing is sent while the level is Off", NothingWhileTheLevelIsOff);
   test_support::RunTest("the Compact level sends only the figures of the compact line", CompactLevelSendsTheFiguresOnly);
   test_support::RunTest("the Full level sends the text with the frame intervals", FullLevelSendsTheTextWithTheFrameIntervals);
+  test_support::RunTest("the Full level shows one bitrate line and not the receive buffer", FullLevelShowsOneBitrateLineAndNoReceiveBuffer);
   test_support::RunTest("the frame intervals cover the last two stats windows", TheIntervalWindowsFollowTheStatsWindows);
   test_support::RunTest("the point of the graph counts the frames lost in the last window", TheGraphPointCountsTheFramesLostInTheLastWindow);
   test_support::RunTest("the end of the stream sends the totals of the session", TheEndOfTheStreamSendsTheSessionReport);

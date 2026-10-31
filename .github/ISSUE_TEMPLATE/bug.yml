@@ -8,23 +8,14 @@ body:
       value: |
         This is the issue tracker of **Moonlight Plus**, an unofficial fork of Moonlight Tizen. Please report problems with the regular Moonlight Tizen app to the Moonlight Tizen project instead.
 
-        Before you report, check the troubleshooting section of the [guide](https://github.com/Emperior90/moonlight-tizen-Plus/blob/HEAD/docs/GUIDE.md#14-troubleshooting) and, for controllers, the [controller page](https://github.com/Emperior90/moonlight-tizen-Plus/blob/HEAD/docs/CONTROLLERS.md).
+        Before you report, check the troubleshooting section of the [guide](https://github.com/Emperior90/moonlight-tizen-Plus/blob/HEAD/docs/GUIDE.md#troubleshooting) and, for controllers, the [controller page](https://github.com/Emperior90/moonlight-tizen-Plus/blob/HEAD/docs/CONTROLLERS.md).
 
         ## TV
   - type: input
     attributes:
       label: App version
-      description: The first line of Settings → About → System information.
-      placeholder: "Example: App Version: Moonlight Plus-ForceGM v1.19.100 (pre-1a2b3c4)"
-    validations:
-      required: true
-  - type: dropdown
-    attributes:
-      label: App file
-      description: Which file did you install?
-      options:
-        - Moonlight.wgt
-        - Moonlight-ForceGM.wgt
+      description: The first line of Settings → About → System information. It also tells which file you installed (Moonlight Plus-ForceGM for Moonlight-ForceGM.wgt).
+      placeholder: "Example: App Version: Moonlight Plus-ForceGM v2.x.y (pre-1a2b3c4)"
     validations:
       required: true
   - type: input
@@ -37,10 +28,8 @@ body:
   - type: input
     attributes:
       label: Tizen version
-      description: The Platform Version line of System information.
+      description: The Platform Version line of System information (optional, the photo of System information shows it).
       placeholder: "Example: Tizen 9.0"
-    validations:
-      required: true
   - type: textarea
     attributes:
       label: System information
@@ -134,6 +123,6 @@ body:
       placeholder: "Drag and drop photos here, or type the message."
   - type: textarea
     attributes:
-      label: Log files
-      description: Moonlight or Sunshine log files, if you have them. Please remove or mask your private IP addresses.
-      placeholder: "Drag and drop the log files here or click to upload."
+      label: Diagnostic log and Sunshine log
+      description: The app keeps no log files. Take a photo of the end of Settings → About → Diagnostic log right after the problem, and add the Sunshine log if you have it. Please remove or mask your private IP addresses.
+      placeholder: "Drag and drop the photo and the Sunshine log here."

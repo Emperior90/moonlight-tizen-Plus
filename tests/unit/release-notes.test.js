@@ -12,7 +12,7 @@
 //   next to the regular Moonlight app, how the version was tested, no link to the patch notes of their own (the line of
 //   links of the workflows has it, and the dialog would show a link as text that can't be followed), and the stable
 //   notes, which the update dialog shows to the installs of the last release, fit the dialog without being cut
-// - the release descriptions that release-development.yml (pre-release and promotion) and release-stable.yml build are
+// - the release descriptions that the release workflow release-development.yml builds (pre-release and promotion) are
 //   run with bash on the documents of the repository and read back by extractReleaseNotes(): the title, the notes, one
 //   line of links (commit, and the patch notes and the guide when the commit has them) and, for a pre-release, a
 //   one-line warning
@@ -268,12 +268,10 @@ function runBlock(block, cwd) {
 const WORKFLOW_DESCRIPTIONS = [
   { workflow: 'release-development.yml', index: 0, title: '# Moonlight Plus v2026.1025.1200', notes: 'RELEASE_NOTES_DEV.md', preRelease: true },
   { workflow: 'release-development.yml', index: 1, title: '# Moonlight Plus v1.19.100', notes: 'RELEASE_NOTES_STABLE.md', preRelease: false },
-  { workflow: 'release-stable.yml', index: 0, title: '# Moonlight Plus v1.19.100', notes: 'RELEASE_NOTES_STABLE.md', preRelease: false },
 ];
 
-test('the workflows build their release descriptions in the expected places', () => {
+test('the workflow builds its release descriptions in the expected places', () => {
   assert.equal(releaseNoteBlocks('release-development.yml').length, 2, 'pre-release and promotion');
-  assert.equal(releaseNoteBlocks('release-stable.yml').length, 1, 'stable release');
 });
 
 const SHA = '0123456789abcdef0123456789abcdef01234567';
@@ -339,7 +337,7 @@ test('the line of links of a release description names the patch notes and the g
       assert.ok(description.indexOf('https://github.com/owner/repo/blob/') < 0, entry.workflow + ': no link to a missing document');
     }
     fs.writeFileSync(path.join(dir, 'docs', 'PATCH_NOTES.md'), '# Patch notes\n');
-    const description = runBlock(releaseNoteBlocks('release-stable.yml')[0], dir);
+    const description = runBlock(releaseNoteBlocks('release-development.yml')[0], dir);
     assert.ok(description.indexOf('`](https://github.com/owner/repo/commit/' + SHA + ') · [Patch notes](https://github.com/owner/repo/blob/' + SHA + '/docs/PATCH_NOTES.md)\n') > 0, description);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

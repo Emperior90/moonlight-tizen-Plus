@@ -6,9 +6,12 @@
 // that GitHub derives from the headings. Links to web addresses are not fetched.
 //
 // It reads inline links and images ([text](target), ![alt](target)), reference definitions ([ref]: target) and the href
-// and src attributes of HTML tags, and skips fenced code blocks and inline code.
+// and src attributes of HTML tags, and skips fenced code blocks and inline code. A link to a file of this fork on its
+// default branch (https://github.com/Emperior90/moonlight-tizen-Plus/blob/HEAD/...), as the issue forms use them, is
+// checked like a local link from the root of the repository, with its heading.
 //
-// Usage: node tests/tools/check-markdown-links.js [files...] (default: README.md, CHANGELOG.md and the documents in docs/)
+// Usage: node tests/tools/check-markdown-links.js [files...] (default: the Markdown documents of the repository and the
+// issue forms, whose texts are Markdown)
 
 const fs = require('fs');
 const path = require('path');
@@ -16,6 +19,13 @@ const { REPO_ROOT } = require('../lib/dev-modules');
 
 // A target with a scheme (https:, mailto: ...) or a protocol-relative address points outside the repository
 const EXTERNAL_TARGET = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
+// A file or folder of this fork on its default branch, which GitHub shows for blob/HEAD and tree/HEAD
+const FORK_HEAD_TARGET = /^https:\/\/github\.com\/Emperior90\/moonlight-tizen-Plus\/(?:blob|tree)\/HEAD\//i;
+
+// Return the target as a local one when it names a file of this fork on its default branch
+function localTarget(target) {
+  return FORK_HEAD_TARGET.test(target) ? '/' + target.replace(FORK_HEAD_TARGET, '') : target;
+}
 
 // List the Markdown files below a folder
 function listMarkdown(dir) {
@@ -31,11 +41,16 @@ function listMarkdown(dir) {
   return files.sort();
 }
 
-// The documents that the check reads by default
+// The documents that the check reads by default: the Markdown files of the repository outside the vendored libraries,
+// and the issue forms
 function defaultFiles() {
-  return ['README.md', 'CHANGELOG.md'].map((name) => path.join(REPO_ROOT, name))
+  const formsDir = path.join(REPO_ROOT, '.github', 'ISSUE_TEMPLATE');
+  const forms = fs.existsSync(formsDir)
+    ? fs.readdirSync(formsDir).filter((name) => /\.ya?ml$/.test(name)).sort().map((name) => path.join(formsDir, name)) : [];
+  return ['README.md', 'CHANGELOG.md', 'SECURITY.md', 'CODE_OF_CONDUCT.md', '.github/CONTRIBUTING.md',
+    '.github/PULL_REQUEST_TEMPLATE.md', 'tests/README.md'].map((name) => path.join(REPO_ROOT, name))
     .filter((file) => fs.existsSync(file))
-    .concat(listMarkdown(path.join(REPO_ROOT, 'docs')));
+    .concat(listMarkdown(path.join(REPO_ROOT, 'docs')), forms);
 }
 
 // Return the lines of a document with fenced code blocks blanked out, so that their content is neither a link nor a
@@ -134,7 +149,7 @@ function checkFile(file) {
   };
 
   extractLinks(source).forEach((link) => {
-    const target = link.target;
+    const target = localTarget(link.target);
     if (target === '' || EXTERNAL_TARGET.test(target)) {
       return;
     }
@@ -145,14 +160,14 @@ function checkFile(file) {
     try {
       decodedPath = decodeURIComponent(targetPath.split('?')[0]);
     } catch (error) {
-      problems.push(`line ${link.line}: '${target}' is not a valid address`);
+      problems.push(`line ${link.line}: '${link.target}' is not a valid address`);
       return;
     }
     // GitHub resolves a path that starts with / from the root of the repository
     const resolved = decodedPath === '' ? file
       : (decodedPath.startsWith('/') ? path.join(REPO_ROOT, decodedPath) : path.resolve(path.dirname(file), decodedPath));
     if (!fs.existsSync(resolved)) {
-      problems.push(`line ${link.line}: '${target}' points to ${path.relative(REPO_ROOT, resolved) || '.'}, which doesn't exist`);
+      problems.push(`line ${link.line}: '${link.target}' points to ${path.relative(REPO_ROOT, resolved) || '.'}, which doesn't exist`);
       return;
     }
     if (anchor !== '' && resolved.endsWith('.md') && fs.statSync(resolved).isFile()) {
@@ -163,7 +178,7 @@ function checkFile(file) {
         // Compare the anchor as it is written
       }
       if (!anchorsOf(resolved).has(decodedAnchor.toLowerCase())) {
-        problems.push(`line ${link.line}: '${target}' names the heading #${anchor}, which ${path.relative(REPO_ROOT, resolved)} doesn't have`);
+        problems.push(`line ${link.line}: '${link.target}' names the heading #${anchor}, which ${path.relative(REPO_ROOT, resolved)} doesn't have`);
       }
     }
   });
@@ -176,7 +191,8 @@ function main() {
   let failures = 0;
   files.forEach((file) => {
     const name = path.relative(REPO_ROOT, file);
-    const local = extractLinks(fs.readFileSync(file, 'utf8')).filter((link) => link.target !== '' && !EXTERNAL_TARGET.test(link.target));
+    const local = extractLinks(fs.readFileSync(file, 'utf8')).map((link) => localTarget(link.target))
+      .filter((target) => target !== '' && !EXTERNAL_TARGET.test(target));
     links += local.length;
     const problems = checkFile(file);
     if (problems.length > 0) {
@@ -195,4 +211,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { checkFile, extractLinks, headingAnchors, headingSlug, defaultFiles };
+module.exports = { checkFile, extractLinks, headingAnchors, headingSlug, defaultFiles, localTarget };

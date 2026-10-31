@@ -198,8 +198,9 @@ test('the stored values are read as before when IndexedDB works', async () => {
 });
 
 test('a dialog opened before the first translation pass keeps its title and text', async () => {
+  // On a German TV: English needs no locale file (wasm/platform/i18n.js), so its translation pass can't be held back
   const app = await openApp(harness, {
-    tv: { tv: 's90c', conn: 'wifi' },
+    tv: { tv: 's90c', conn: 'wifi', locale: 'de_DE' },
     initScripts: [heldLocales()],
     // The app starts without waiting for the translation (loadSystemInfo() only runs after the translation pass)
     readySignals: ['Auto adjust bitrate state', 'Entering "Show Hosts" mode.'],
@@ -216,7 +217,7 @@ test('a dialog opened before the first translation pass keeps its title and text
     }));
     assert.deepEqual(dialog, { title: 'Compatibility Warning', text: 'A warning that opened before the translation.', open: true });
     // A static text of the page is still translated by the same pass
-    assert.equal(await app.page.evaluate(() => $('#closeWarning').text()), 'Close');
+    assert.equal(await app.page.evaluate(() => $('#closeWarning').text()), 'Schließen');
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

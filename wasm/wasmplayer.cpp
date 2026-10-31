@@ -1358,14 +1358,13 @@ void MoonlightInstance::FormatVideoStats(VIDEO_STATS& stats, char* output, int l
       offset += ret;
     }
 
-    // Print frame rates at various stages of the pipeline
+    // Print frame rates at various stages of the pipeline, and the bitrate that arrives next to the one set in the app
     ret = snprintf(
       &output[offset], length - offset,
       "Incoming frame rate from network: %.2f FPS\n"
       "Decoding frame rate: %.2f FPS\n"
       "Rendering frame rate: %.2f FPS\n"
-      "Incoming bitrate from network: %.2f Mbps\n"
-      "Configured bitrate: %.1f Mbps\n",
+      "Bitrate: %.2f Mbps received, %.1f Mbps configured\n",
       stats.receivedFps, stats.decodedFps, stats.renderedFps, stats.receivedBitrate,
       g_Instance->m_StreamConfig.bitrate / 1000.0f
     );
@@ -1536,20 +1535,8 @@ void MoonlightInstance::FormatVideoStats(VIDEO_STATS& stats, char* output, int l
       }
       offset += ret;
     }
-
-    // Print the receive buffer of the video socket, which is the whole tolerance for stalls of the receive thread
-    if (networkStats.reportedReceiveBufferSize > 0) {
-      ret = snprintf(
-        &output[offset], length - offset,
-        "UDP receive buffer: requested %d KB, reported %d KB\n",
-        networkStats.requestedReceiveBufferSize / 1024, networkStats.reportedReceiveBufferSize / 1024
-      );
-      if (ret < 0 || ret >= length - offset) {
-        assert(false);
-        return;
-      }
-      offset += ret;
-    }
+    // (The receive buffer of the video socket stays the same for the whole stream, so only the log of the stream start
+    // names it)
   }
 
   // Print the audio stream: the negotiated format, the data rate of its packets and the packets the network lost

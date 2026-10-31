@@ -2280,8 +2280,8 @@ function releaseNoteMarkdownToText(text) {
 
 // Extract the "What's Changed" section of a release and turn its Markdown into plain text lines for the update dialog,
 // joined with <br> and escaped as HTML. The section ends at the "**Full Changelog**" line of upstream releases, at the
-// "- **Commit**:" line that the release workflows of this fork add after the notes (release-development.yml and
-// release-stable.yml), or at the next heading of level 1 or 2. Returns null without a "What's Changed" section.
+// "- **Commit**:" line that the release workflow of this fork adds after the notes (release-development.yml), or at
+// the next heading of level 1 or 2. Returns null without a "What's Changed" section.
 // - headings become a line of their own without a trailing period
 // - bullets become '•', nested bullets an indented '–', numbered items keep their number
 // - quotes lose their marks, and GitHub alert markers ('> [!NOTE]') and rules ('---') are dropped

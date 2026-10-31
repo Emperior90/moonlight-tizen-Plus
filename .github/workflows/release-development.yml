@@ -1,7 +1,8 @@
-# This workflow builds a Docker image from the repository, pushes it to GitHub Container Registry, and then triggers a second job to extract an artifact and create a GitHub pre-release.
-name: Release (Development)
-# Configure this workflow to be triggered manually from the GitHub Actions tab for development-related branches.
-# With `promote_tag`, it builds nothing and turns that pre-release into a full release instead (see the last job).
+# Builds the app in Docker, pushes the images to the GitHub Container Registry and publishes the widget files of both
+# variants as a GitHub pre-release of the branch. With `promote_tag`, it builds nothing and turns that pre-release into a
+# full release instead (see the last job). This is the only release workflow: every full release is a tested pre-release.
+name: Release
+# Started by hand from the Actions tab, on the branch to build.
 on:
   workflow_dispatch:
     inputs:
@@ -15,53 +16,44 @@ on:
         required: false
         default: ''
         type: string
-# Queues the release runs of both workflows, because they push the ForceGM image to the same `:forcegm` tag, which an
-# overlapping run would overwrite before the upload job of the other run pulls it (a package of another commit).
+# Queues the release runs, because they push the ForceGM image to the same `:forcegm` tag, which an overlapping run would
+# overwrite before the upload job of the other run pulls it (a package of another commit).
 concurrency:
   group: moonlight-release-images
   cancel-in-progress: false
-# Defines two custom environment variables for the workflow. These are used for the Container registry domain, and a name for the Docker image that this workflow builds.
+# The Container registry, and the name of the Docker image that this workflow builds.
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-# Defines two jobs. The first builds and pushes the Docker images, while the second extracts the artifacts and creates a GitHub pre-release.
 jobs:
   build-and-push-image:
     if: github.ref != 'refs/heads/master' && inputs.promote_tag == ''
     runs-on: ubuntu-latest
-    # Sets the permissions granted to the `GITHUB_TOKEN` for the actions in this job.
     permissions:
       contents: read
       packages: write
-      issues: write
-      actions: write
     outputs:
       image_tag: ${{ steps.meta.outputs.tags }}
-      short_sha: ${{ github.sha }}
-    # This job checks out the code, logs into GitHub Container Registry, builds the Docker image with metadata, pushes it to the registry, and triggers the next workflow via repository dispatch.
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
-      # Uses the `docker/login-action` action to log in to the Container registry using the account and password that will publish the packages. Once published, the packages are scoped to the account defined here.
       - name: Log in to the Container registry
         uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # Converts the image name to lowercase, because Docker rejects image tags with uppercase letters, which `github.repository` contains when the repository owner's name does.
+      # Docker rejects image tags with uppercase letters, which `github.repository` has when the name of the owner does.
       - name: Convert image name to lowercase
-        run: echo "IMAGE_NAME_LOWER=${IMAGE_NAME,,}" >> $GITHUB_ENV
-      # This step uses [docker/metadata-action](https://github.com/docker/metadata-action#about) to extract tags and labels that will be applied to the specified image. The `id` "meta" allows the output of this step to be referenced in a subsequent step. The `images` value provides the base name for the tags and labels.
+        run: echo "IMAGE_NAME_LOWER=${IMAGE_NAME,,}" >> "$GITHUB_ENV"
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-      # This step uses the `docker/build-push-action` action to build the image, based on your repository's `Dockerfile`. If the build succeeds, it pushes the image to GitHub Packages.
-      # It uses the `context` parameter to define the build's context as the set of files located in the specified path. For more information, see "[Usage](https://github.com/docker/build-push-action#usage)" in the README of the `docker/build-push-action` repository.
-      # It uses the `build-args` parameter to define the `BUILD_TYPE` as "development" and injects the repository owner and name into the Docker build process. The `FORCE_GAME_MODE` argument is set to false, which builds the Standard variant without metadata injection at packaging time.
-      # It uses the `tags` and `labels` parameters to tag and label the image with the output from the "meta" step.
+      # Both variants are built from the same tree with BUILD_TYPE=development and the repository that the built app checks
+      # for updates. FORCE_GAME_MODE=false builds the Standard variant, FORCE_GAME_MODE=true the ForceGM variant, which gets
+      # one metadata line injected at packaging time.
       - name: Build and push Docker image (Standard variant)
         uses: docker/build-push-action@v7
         with:
@@ -74,10 +66,6 @@ jobs:
             FORCE_GAME_MODE=false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-      # This step uses the `docker/build-push-action` action to build the image, based on your repository's `Dockerfile`. If the build succeeds, it pushes the image to GitHub Packages.
-      # It uses the `context` parameter to define the build's context as the set of files located in the specified path. For more information, see "[Usage](https://github.com/docker/build-push-action#usage)" in the README of the `docker/build-push-action` repository.
-      # It uses the `build-args` parameter to define the `BUILD_TYPE` as "development" and injects the repository owner and name into the Docker build process. The `FORCE_GAME_MODE` argument is set to true, which builds the ForceGM variant in the same tree with one metadata line injected at packaging time.
-      # It uses the `tags` parameter to tag the image with the `REGISTRY` and lowercase `IMAGE_NAME`, and the `labels` parameter to label the image with the output from the "meta" step.
       - name: Build and push Docker image (ForceGM variant)
         uses: docker/build-push-action@v7
         with:
@@ -94,56 +82,60 @@ jobs:
     if: github.ref != 'refs/heads/master' && inputs.promote_tag == ''
     runs-on: ubuntu-latest
     needs: build-and-push-image
-    # Sets the permissions granted to the `GITHUB_TOKEN` for the actions in this job.
+    # contents: write deletes the earlier pre-release of the branch and creates the new one, packages: read pulls the images
     permissions:
       contents: write
       packages: read
-      issues: write
-      actions: write
-    # This job depends on the completion of the build-and-push-image job. It checks out the repository, generates a timestamp, deletes any existing GitHub pre-releases from the same branch to avoid duplicates, extracts build artifacts from the Docker image, and creates a new GitHub pre-release with the extracted files.
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
-      # Uses the `docker/login-action` action to log in to the Container registry using the account and password that will run the container.
       - name: Log in to the Container registry
         uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # Generates a timestamp number from the current date and time for use in tagging and pre-release.
+      # The tag of the pre-release is "v" + this timestamp + "-" + the branch name, e.g. v2026.1031.1405-stufe-2
       - name: Generate timestamp number
         run: |
           TIMESTAMP=$(TZ="CET" date +"%Y.%m%d.%H%M")
-          echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
-      # Extracts the branch name from the Git reference, replacing any slashes with dashes for compatibility in tagging and pre-release naming.
+          echo "TIMESTAMP=$TIMESTAMP" >> "$GITHUB_ENV"
+      # Slashes of the branch name become dashes, which a tag can carry
       - name: Extract branch name
         run: |
           BRANCH=${GITHUB_REF_NAME//\//-}
-          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
-      # Sets up the image tags for the Standard and ForceGM variants, storing them in environment variables for use in subsequent steps.
-      # The Standard variant tag is obtained from the output of the build-and-push-image job, while the ForceGM variant tag is constructed using the registry and image name (converted to lowercase), with the ":forcegm" suffix.
+          echo "BRANCH=$BRANCH" >> "$GITHUB_ENV"
       - name: Set up image tags
         run: |
-          echo "IMAGE_TAG=${{ needs.build-and-push-image.outputs.image_tag }}" >> $GITHUB_ENV
-          echo "IMAGE_TAG_FORCEGM=${{ env.REGISTRY }}/${IMAGE_NAME,,}:forcegm" >> $GITHUB_ENV
-      # Deletes any existing GitHub pre-releases from the same branch to avoid duplicates.
+          echo "IMAGE_TAG=${{ needs.build-and-push-image.outputs.image_tag }}" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG_FORCEGM=${{ env.REGISTRY }}/${IMAGE_NAME,,}:forcegm" >> "$GITHUB_ENV"
+      # Deletes the earlier pre-release of this branch and its tag, so that the branch keeps one pre-release. The branch
+      # name must be all that follows the timestamp of the tag: a branch whose name only contains this one (stufe-2-fix
+      # for stufe-2) keeps its pre-release, and so does every full release. It reads up to 100 releases, the most that
+      # one page of the API gives.
       - name: Check and delete any existing GitHub pre-releases from the same branch
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          API_URL: ${{ github.api_url }}/repos/${{ github.repository }}
         run: |
+          set -euo pipefail
           echo "Checking for existing pre-releases from branch: $BRANCH"
           releases=$(curl -sSL \
             -H "Authorization: token $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/${{ github.repository }}/releases")
-          dev_releases=$(echo "$releases" | jq -c ".[] | select(.prerelease==true and (.tag_name | contains(\"$BRANCH\")))")
+            "$API_URL/releases?per_page=100")
+          if ! echo "$releases" | jq -e 'type == "array"' > /dev/null 2>&1; then
+            echo "Could not read the releases: $releases"
+            exit 1
+          fi
+          dev_releases=$(echo "$releases" | jq -c --arg branch "$BRANCH" \
+            '.[] | select(.prerelease == true and (((.tag_name | capture("^v[0-9]{4}\\.[0-9]{4}\\.[0-9]{4}-(?<branch>.+)$") | .branch) // "") == $branch))')
           if [ -z "$dev_releases" ]; then
             echo "No pre-releases found for branch: $BRANCH"
           else
             echo "Found one or more pre-releases for branch: $BRANCH"
             echo "Starting cleanup..."
-            echo "$dev_releases" | while read -r release; do
+            echo "$dev_releases" | while IFS= read -r release; do
               release_id=$(echo "$release" | jq -r '.id')
               release_name=$(echo "$release" | jq -r '.name')
               tag_name=$(echo "$release" | jq -r '.tag_name')
@@ -151,26 +143,24 @@ jobs:
               curl -sSL -X DELETE \
                 -H "Authorization: token $GITHUB_TOKEN" \
                 -H "Accept: application/vnd.github.v3+json" \
-                "https://api.github.com/repos/${{ github.repository }}/releases/$release_id"
+                "$API_URL/releases/$release_id"
               echo "Deleting tag reference: $tag_name"
               curl -sSL -X DELETE \
                 -H "Authorization: token $GITHUB_TOKEN" \
                 -H "Accept: application/vnd.github.v3+json" \
-                "https://api.github.com/repos/${{ github.repository }}/git/refs/tags/${tag_name}"
+                "$API_URL/git/refs/tags/$tag_name"
             done
             echo "Cleanup completed."
           fi
-      # Runs the Docker containers in detached mode to extract the build artifacts.
+      # Runs the images in detached mode to copy the widget files out of them
       - name: Run Docker containers
         run: |
-          docker run -d --name temp_container $IMAGE_TAG
-          docker run -d --name temp_container_forcegm $IMAGE_TAG_FORCEGM
-      # Copies the built widget files from the Docker containers.
+          docker run -d --name temp_container "$IMAGE_TAG"
+          docker run -d --name temp_container_forcegm "$IMAGE_TAG_FORCEGM"
       - name: Copy artifacts from Docker containers
         run: |
           docker cp temp_container:/home/moonlight/Moonlight.wgt .
           docker cp temp_container_forcegm:/home/moonlight/Moonlight-ForceGM.wgt .
-      # Stops and removes the temporary Docker containers to clean up resources.
       - name: Stop and remove Docker containers
         run: |
           docker stop temp_container temp_container_forcegm
@@ -182,10 +172,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           API_URL: ${{ github.api_url }}/repos/${{ github.repository }}
           SUPPORT_CHECK_MODE: warn
-        run: |
-          if [ -f .github/scripts/check-support-path.sh ]; then
-            bash .github/scripts/check-support-path.sh
-          fi
+        run: bash .github/scripts/check-support-path.sh
       # Builds the description of the pre-release: the title, the short release notes from `docs/RELEASE_NOTES_DEV.md` under
       # the "## What's Changed:" heading, one line of links (the commit, and the patch notes and the guide of the commit when
       # it has them) and a one-line warning. The update dialog of the app stops reading the notes at the commit line
@@ -218,42 +205,21 @@ jobs:
             echo "> A test build that may be unstable. Please report problems on the [issue tracker](${REPO_URL}/issues)."
           } > release_notes.md
           cat release_notes.md
-      # Creates a new GitHub pre-release using the extracted version and the release notes prepared above.
+      # Creates the pre-release with both widget files and the notes prepared above. The tag goes on the commit of this run
+      # (--target), which the files were built from; without it, GitHub would create the tag on the default branch.
       - name: Create GitHub pre-release
-        id: create_prerelease
-        uses: actions/create-release@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: v${{ env.TIMESTAMP }}-${{ env.BRANCH }}
-          release_name: "Moonlight Plus v${{ env.TIMESTAMP }}-${{ env.BRANCH }}"
-          body_path: release_notes.md
-          draft: false
-          prerelease: true
-      # Uploads the Moonlight.wgt file as a release asset in the newly created GitHub pre-release.
-      - name: Upload the Standard widget file to GitHub pre-release
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_prerelease.outputs.upload_url }}
-          asset_path: ./Moonlight.wgt
-          asset_name: Moonlight.wgt
-          asset_content_type: application/octet-stream
-      # Uploads the Moonlight-ForceGM.wgt file as a release asset in the newly created GitHub pre-release.
-      - name: Upload the ForceGM widget file to GitHub pre-release
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_prerelease.outputs.upload_url }}
-          asset_path: ./Moonlight-ForceGM.wgt
-          asset_name: Moonlight-ForceGM.wgt
-          asset_content_type: application/octet-stream
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${TIMESTAMP}-${BRANCH}" Moonlight.wgt Moonlight-ForceGM.wgt \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Moonlight Plus v${TIMESTAMP}-${BRANCH}" \
+            --notes-file release_notes.md \
+            --prerelease
   promote-pre-release:
     if: inputs.promote_tag != ''
     runs-on: ubuntu-latest
-    # Sets the permissions granted to the `GITHUB_TOKEN` for the actions in this job.
     permissions:
       contents: write
     # This job turns an existing pre-release into a full release, so that a tested build stays available: the cleanup of

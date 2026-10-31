@@ -14,7 +14,7 @@ The app shows its texts in English, German, Spanish, French or Brazilian Portugu
 
 ## How the languages work
 
-- The English texts are the keys. `wasm/static/locales/en-US.json` maps each English text to itself, and every other locale file maps the same keys to its translation.
+- The English texts are the keys. `wasm/static/locales/en-US.json` maps each English text to itself, and every other locale file maps the same keys to its translation. The app doesn't load `en-US.json` (English needs no dictionary), and the build leaves it and `i18n-sync.js` out of the widget (`CMakeLists.txt`); both stay in the repository for the tools and for you.
 - `wasm/platform/i18n.js` lists the languages in `LOCALES`, each with the name it has in its own language (*English*, *Deutsch*, *Español*, *Français*, *Português (Brasil)*), in the order of the language menu after *Auto*.
 - With *Auto* the app takes the language of the TV (`tizen.systeminfo` `LOCALE`, else the languages of the browser): first the locale itself, then a locale of the same language, so de-AT and de-CH get German, es-MX, es-US and es-419 get Spanish, fr-CA, fr-BE and fr-CH get French, and pt-PT gets Brazilian Portuguese. The other languages of Spain (ca, eu, gl) are languages of their own and get English. Any other language gets English. A stored language that the app no longer has counts as *Auto*.
 - Each language adds about 60 KB to the package, so the app keeps to a few languages that its users need.

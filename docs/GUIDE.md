@@ -212,7 +212,7 @@ That is the stream as set up, the frames handed to the video player of the TV pe
 |---|---|
 | Video stream | Resolution, frame rate and codec. *10-bit SDR* means that HDR is off on the host display. |
 | Incoming frame rate from network, Decoding frame rate, Rendering frame rate | Frames per second at each stage on the TV. They should all match the chosen frame rate. |
-| Incoming bitrate from network, Configured bitrate | The bitrate that arrives, and the one set in the app |
+| Bitrate | The bitrate that arrives (*received*), and the one set in the app (*configured*) |
 | Host frame rate (30 s) | Frame rate of the host, measured over 30 seconds. 59.94 instead of 60 means that the host display runs at 59.94 Hz; set it to 60 Hz. |
 | Host processing latency min/max/average | Time the host needs to capture and encode a frame |
 
@@ -245,7 +245,6 @@ That is the stream as set up, the frames handed to the video player of the TV pe
 
 | Line | Meaning |
 |---|---|
-| UDP receive buffer | The receive buffer that the app asked for, and the one that the TV reports |
 | WASM heap top | Memory of the streaming engine against its fixed size. A steady climb over hours points to a memory leak; please report it. |
 | Network connection | Ethernet (with the reminder of the 100 Mbps port), or Wi-Fi with the signal strength in percent when the TV reports it, refreshed every 5 seconds |
 | Audio stream | The audio that the host sends: codec, channel layout and packet duration as negotiated (e.g. *Opus 5.1 surround (6 channels), 5 ms packets*) and its data rate. If you chose 5.1 or 7.1 and it shows *Stereo*, the host only offers stereo. For 5.1 on a soundbar, see [section 11](#surround-sound-with-a-soundbar). |
