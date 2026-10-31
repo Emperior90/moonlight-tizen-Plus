@@ -32,6 +32,9 @@ test('the release build-inputs never becomes the latest release, and a second ru
   assert.match(WORKFLOW, /gh release create build-inputs [^\n]*\\\n[^\n]*--latest=false/);
   assert.doesNotMatch(WORKFLOW, /--prerelease|make_latest|--latest(?!=false)/);
   assert.match(WORKFLOW, /gh release upload build-inputs build-inputs\/\* --clobber/);
+  // The job stops when the release became the latest one after all, and docs/BUILD.md points to it
+  assert.match(WORKFLOW, /releases\/latest" --jq '\.tag_name'/);
+  assert.match(BUILD, /releases\/tag\/build-inputs/);
 });
 
 test('old-release-notices attaches the notices and the GPL-3.0 text to the four releases before 2.2.0', () => {

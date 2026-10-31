@@ -34,4 +34,6 @@ The libraries that the ports of the Samsung Emscripten SDK download and compile 
 - **zlib 1.2.8**, which the port of curl pulls in (`tools/ports/zlib.py`, version `version_1` of emscripten-ports/zlib): https://github.com/emscripten-ports/zlib/archive/version_1.zip. SHA-512:
   `77f7d8f18fe11bb66a57e358325b7422d721f7b506bd63293cfde74079f958864db66ead5a36c311a76dd8c2b089b7659641a5522de650de0f9e6865782a60dd`
 
+Copies of these three archives, checked against the checksums above, are kept in the release [build-inputs](https://github.com/Emperior90/moonlight-tizen-Plus/releases/tag/build-inputs) of this repository (with `SHA512SUMS.txt`), in case their servers drop them. The workflow *Licence and source assets* (`.github/workflows/licence-assets.yml`, task *build-inputs*) makes them.
+
 The OpenSSL/SSLeay licence of OpenSSL 1.1.1d is considered incompatible with the GPL by the FSF; see *Known licence issue* in the [README](../README.md#license).

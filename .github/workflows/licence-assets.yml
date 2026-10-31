@@ -62,7 +62,14 @@ jobs:
             gh release create build-inputs build-inputs/* --target "$GITHUB_SHA" --title "Build inputs: source archives of the libraries" \
               --notes-file build-inputs-notes.md --latest=false
           fi
-          gh release view build-inputs --json tagName,isLatest,isPrerelease,assets --jq '{tagName, isLatest, isPrerelease, assets: [.assets[].name]}'
+          gh release view build-inputs --json tagName,isPrerelease,assets --jq '{tagName, isPrerelease, assets: [.assets[].name]}'
+          # The in-app update check reads the latest release, which must stay a version of the app
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')
+          echo "Latest release: $latest"
+          if [ "$latest" = "build-inputs" ]; then
+            echo "The release build-inputs became the latest release."
+            exit 1
+          fi
   old-release-notices:
     if: inputs.task == 'old-release-notices'
     runs-on: ubuntu-latest
