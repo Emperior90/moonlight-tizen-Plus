@@ -178,7 +178,8 @@ function reselectStreamMenuEntry(entry) {
 
 // The lowest and the highest bitrate of the bitrate entry of the Stream Menu in Mbps: 5 Mbps up to the end of the bitrate
 // slider (MAX_BITRATE_MBPS in tv_profile.js), so that the limit is the same in the settings and in a game. Above the
-// decoder cap of the TV, OK gives the same warning as the slider (warnBitrate() in index.js, through saveBitrate()).
+// warning threshold of the TV (getBitrateWarningMbps() in tv_profile.js), OK gives the same warning as the slider
+// (warnBitrate() in index.js, through saveBitrate()).
 function getStreamMenuBitrateRange() {
   return { min: STREAM_MENU_BITRATE_STEP, max: MAX_BITRATE_MBPS };
 }
@@ -216,8 +217,8 @@ function changeStreamMenuBitrate(direction) {
 
 // Reconnect the stream with the bitrate of the bitrate entry, which becomes the bitrate setting, as if it was chosen with
 // the slider of the settings. That includes the bitrate warnings of the slider (warnBitrate() through saveBitrate()), once
-// per crossing of the decoder cap or the limit of the Ethernet port, which show over the launch screen of the reconnect.
-// Nothing happens to an unchanged bitrate except a hint how to change it.
+// per crossing of the warning threshold of the TV or the limit of the Ethernet port, which show over the launch screen
+// of the reconnect. Nothing happens to an unchanged bitrate except a hint how to change it.
 function applyStreamMenuBitrate() {
   const mbps = streamMenuBitrateMbps;
   if (mbps === streamBitrateMbps) {

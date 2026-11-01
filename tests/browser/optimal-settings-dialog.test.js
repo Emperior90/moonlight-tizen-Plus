@@ -150,10 +150,11 @@ describe('the dialog shows exactly what Apply applies', { concurrency: 3 }, () =
   }
 });
 
-test('the bitrate advice over Wi-Fi stays within the decoder cap, where the bitrate warning of the TV starts', async () => {
+test('the bitrate advice over Wi-Fi stays within the bitrate where the warning of the TV starts', async () => {
   const warning = 'exceed what is recommended for the video decoder of this TV';
-  // Per TV: the decoder cap, and the advice (null when the applied bitrate already reaches the cap)
-  const expected = { s90c: [100, null], uhd: [80, null], '8k': [80, null], fhd: [50, 40] };
+  // Per TV: where the bitrate warning starts (the decoder cap, on the S90C 150 Mbps above its 100 Mbps over Wi-Fi), and
+  // the advice (null when the applied bitrate already reaches it)
+  const expected = { s90c: [150, 150], uhd: [80, null], '8k': [80, null], fhd: [50, 40] };
   for (const tvName of Object.keys(expected)) {
     const [cap, advisedLimit] = expected[tvName];
     const app = await openApp(harness, { tv: { tv: tvName, conn: 'wifi' } });
@@ -166,6 +167,8 @@ test('the bitrate advice over Wi-Fi stays within the decoder cap, where the bitr
       assert.equal(raise ? parseFloat(raise[1]) : null, advisedLimit, tvName + ': ' + dialog.text);
       assert.equal(atLimit, advisedLimit === null, tvName + ': ' + dialog.text);
       assert.equal(atLimit, applied === cap, tvName + ': the applied bitrate reaches the cap');
+      // The optimal settings stay at the recommended bitrate, also on the S90C
+      assert.equal(applied, { s90c: 100, uhd: 80, '8k': 80, fhd: 25 }[tvName], tvName + ': the applied bitrate');
       // No warning up to the advised bitrate and the cap, and the warning right above the cap
       await setBitrateByHand(app.page, advisedLimit === null ? applied : advisedLimit);
       await setBitrateByHand(app.page, cap);
@@ -210,8 +213,17 @@ test('the button is the first of the basic settings, with its generic label and 
 describe('the remote reaches the button', { concurrency: 2 }, () => {
   // The id of the focused element
   const focused = (page) => page.evaluate(() => (document.activeElement ? document.activeElement.id : ''));
+  // The marked buttons of the dialog
+  const marked = (page) => page.evaluate(() => ['continueWarning', 'closeWarning'].filter((id) => document.getElementById(id).classList.contains('hovered')));
   // Wait until the element with the id has the focus
   const waitForFocus = (page, id) => page.waitForFunction((elementId) => document.activeElement && document.activeElement.id === elementId, id, { timeout: 3000 });
+  // Wait until the button of the dialog with the id has the focus, and for the view of the dialog, which focuses its
+  // button 100 ms after the dialog opened (WarningDialog.enter() in navigation.js): showModal() already focuses Cancel,
+  // the first button of the dialog, before that
+  const waitForDialogFocus = async (page, id) => {
+    await waitForFocus(page, id);
+    await page.waitForTimeout(150);
+  };
 
   // Open the settings and the basic settings with the remote, like a user does from the hosts view
   async function openBasicSettings(page) {
@@ -236,15 +248,36 @@ describe('the remote reaches the button', { concurrency: 2 }, () => {
         await app.page.keyboard.press('Enter');
         await app.page.waitForFunction(() => isDialogOpen === true);
         assert.ok((await app.page.evaluate(() => document.getElementById('warningDialogTitle').innerHTML)).indexOf('Optimal settings for this TV') === 0);
-        // Apply gets the focus (the view of the dialog moves it there about 100 ms after the dialog opened it on
-        // Cancel), and RIGHT moves it to Cancel
-        await waitForFocus(app.page, 'continueWarning');
+        // The dialog opens on Cancel, which also has the mark, like the dialogs that confirm an action that can't be
+        // undone; LEFT selects Apply and RIGHT Cancel again
+        await waitForDialogFocus(app.page, 'closeWarning');
+        assert.deepEqual(await marked(app.page), ['closeWarning']);
+        await app.page.keyboard.press('ArrowLeft');
+        assert.equal(await focused(app.page), 'continueWarning');
+        assert.deepEqual(await marked(app.page), ['continueWarning']);
         await app.page.keyboard.press('ArrowRight');
         assert.equal(await focused(app.page), 'closeWarning');
         await app.page.keyboard.press('Enter');
         await app.page.waitForFunction(() => isDialogOpen === false);
         assert.equal(await focused(app.page), 'optimalSettingsBtn');
         assert.deepEqual(await readVideoSettings(app.page), before, 'Cancel keeps the settings');
+
+        // RETURN cancels as well, also with Apply selected
+        await app.page.keyboard.press('Enter');
+        await app.page.waitForFunction(() => isDialogOpen === true);
+        await waitForDialogFocus(app.page, 'closeWarning');
+        await app.page.keyboard.press('ArrowLeft');
+        await app.page.evaluate(() => {
+          ['keydown', 'keyup'].forEach((type) => {
+            const event = new KeyboardEvent(type, { key: 'XF86Back', bubbles: true, cancelable: true });
+            Object.defineProperty(event, 'keyCode', { value: 10009 });
+            Object.defineProperty(event, 'which', { value: 10009 });
+            document.activeElement.dispatchEvent(event);
+          });
+        });
+        await app.page.waitForFunction(() => isDialogOpen === false);
+        await waitForFocus(app.page, 'optimalSettingsBtn');
+        assert.deepEqual(await readVideoSettings(app.page), before, 'RETURN keeps the settings');
 
         // DOWN and UP move through the basic settings in their order
         await app.page.keyboard.press('ArrowDown');
@@ -258,13 +291,48 @@ describe('the remote reaches the button', { concurrency: 2 }, () => {
     });
   }
 
-  test('ENTER on Apply applies the settings and returns the focus to the button', async () => {
+  test('a quick double OK on the button keeps AV1 at 150 Mbps on the S90C, with the focus and the mark back on the button', async () => {
+    const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, stored: { videoCodec: 'AV1', bitrate: '150', autoAdjustBitrate: false } });
+    try {
+      await openBasicSettings(app.page);
+      const before = await readVideoSettings(app.page);
+      assert.deepEqual([before.codec, before.bitrate], ['AV1', '150']);
+      // The second OK comes before the view of the dialog focused its button, and still lands on Cancel
+      await app.page.keyboard.press('Enter');
+      await app.page.keyboard.press('Enter');
+      await app.page.waitForFunction(() => isDialogOpen === false);
+      await app.page.waitForTimeout(250);
+      assert.deepEqual(await readVideoSettings(app.page), before, 'AV1 at 150 Mbps stays');
+      assert.equal(await focused(app.page), 'optimalSettingsBtn');
+      assert.deepEqual(await app.page.evaluate(() => Array.prototype.map.call(document.querySelectorAll('.hovered'), (element) => element.id)), ['optimalSettingsBtn']);
+      assert.ok(!app.logs.some((line) => line.indexOf('The optimal streaming settings for this TV have been applied.') >= 0));
+      assert.ok(!app.logs.some((line) => line.indexOf('unresolved target') >= 0), 'the view of the dialog finds its buttons');
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.context.close();
+    }
+  });
+
+  test('OK twice on the button keeps the settings, and LEFT and OK on Apply apply them and return the focus to the button', async () => {
     const app = await openApp(harness, { tv: { tv: 'uhd', conn: 'wifi' } });
     try {
       await setBitrateByHand(app.page, 33);
       await openBasicSettings(app.page);
+      const before = await readVideoSettings(app.page);
+      // A second OK, e.g. pressed twice by mistake, lands on Cancel and closes the dialog without applying anything
       await app.page.keyboard.press('Enter');
       await app.page.waitForFunction(() => isDialogOpen === true);
+      await waitForDialogFocus(app.page, 'closeWarning');
+      await app.page.keyboard.press('Enter');
+      await app.page.waitForFunction(() => isDialogOpen === false);
+      assert.deepEqual(await readVideoSettings(app.page), before, 'OK twice keeps the settings');
+      assert.ok(!app.logs.some((line) => line.indexOf('The optimal streaming settings for this TV have been applied.') >= 0));
+
+      await waitForFocus(app.page, 'optimalSettingsBtn');
+      await app.page.keyboard.press('Enter');
+      await app.page.waitForFunction(() => isDialogOpen === true);
+      await waitForDialogFocus(app.page, 'closeWarning');
+      await app.page.keyboard.press('ArrowLeft');
       await waitForFocus(app.page, 'continueWarning');
       await app.page.keyboard.press('Enter');
       await app.page.waitForFunction(() => isDialogOpen === false);

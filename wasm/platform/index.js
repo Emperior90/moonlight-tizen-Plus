@@ -37,10 +37,16 @@ var wasmSessionStarted = false; // Flag indicating whether the start request of 
 var isDialogOpen = false; // Flag indicating whether the dialog is open, initial value is false
 var isPairingInProgress = false; // Flag indicating whether a pairing process is in progress, initial value is false
 var wasPairingCanceled = false; // Flag indicating whether the current pairing process was canceled by the user, initial value is false
-var isClickPrevented = false; // Flag indicating whether the click event should be prevented, initial value is false
+var isClickPrevented = false; // Flag indicating whether a click on a host card should be prevented, for 2 seconds after one, initial value is false
+// Times (performance.now(), which a change of the clock of the TV can't move) of the last click on a host card and of the
+// last click on an app tile that started an app. The app list shows at once after the click on a host card, with the app
+// started last selected, so its tile only ignores an OK right after it (the same press, or a double press) and another
+// start within 2 seconds, instead of sharing the flag of the host cards and ignoring every OK for 2 seconds.
+var lastHostClickAt = -Infinity;
+var lastAppTileClickAt = -Infinity;
 var resFpsWarning = false; // Message key of the video resolution and frame rate warning that has shown for the current selection (VIDEO_WARNINGS in tv_profile.js), initial value is false
 var fps90Warning = false; // Flag indicating whether the 90 FPS cadence hint has been shown, initial value is false
-var bitrateWarning = false; // Flag indicating whether the warning about a bitrate above the decoder cap of the TV has shown, initial value is false
+var bitrateWarning = false; // Flag indicating whether the warning about a bitrate above the warning threshold of the TV (getBitrateWarningMbps() in tv_profile.js) has shown, initial value is false
 var audioWarning = false; // Flag indicating whether the audio configuration warning message has shown, initial value is false
 var codecWarning = false; // Flag indicating whether the video codec warning message has shown, initial value is false
 var ethernetBitrateWarning = false; // Flag indicating whether the Ethernet bitrate warning message has shown, initial value is false
@@ -68,6 +74,8 @@ var _smartHubLocalMessagePort = null; // Local message port for receiving messag
 var _smartHubMessagePortListener = null; // Listener ID for the Smart Hub local message port
 var _previewApps = {}; // Per-host app cache for Smart Hub Preview: {serverUid: {hostname, address, apps: [{id, title, imageUri}]}}
 var _isSmartHubSupported = false; // Flag indicating if Smart Hub Preview is supported on this device
+const SMART_HUB_SUPPORT_KEY = 'smartHubSupported2'; // Key of localStorage that keeps the answer of the Smart Hub service whether it supports the Preview tiles (probeSmartHubSupport())
+const LEGACY_SMART_HUB_SUPPORT_KEY = 'smartHubSupported'; // Key of the same answer in 2.1.0 and earlier, which also stored 'false' after a single failed launch of the service, so it isn't trusted
 
 const REPEAT_DELAY = 350; // Repeat delay set to 350ms (milliseconds)
 const REPEAT_INTERVAL = 100; // Repeat interval set to 100ms (milliseconds)
@@ -658,11 +666,16 @@ function selectLastOpenedHost() {
   var children = view.func();
   for (var i = 0; i < children.length; i++) {
     if (children[i].id === 'host-container-' + lastOpenedHost) {
-      // Move the mark with the selection like ListView.prev()/next(), in case the view is entered already
+      // Move the mark with the selection like ListView.prev()/next() when the grid has it already. Back from the
+      // settings, the button of the header (HostsNav) is marked instead, and a mark on the card would show a second
+      // selection.
       if (i !== view.index) {
+        var wasMarked = !!view.current() && view.current().classList.contains(hoveredClassName);
         unmark(view.current());
         view.index = i;
-        mark(view.current());
+        if (wasMarked) {
+          mark(view.current());
+        }
       }
       break;
     }
@@ -1588,6 +1601,7 @@ function addHostToGrid(host, ismDNSDiscovered) {
     }
     // Block subsequent clicks immediately
     isClickPrevented = true;
+    lastHostClickAt = performance.now();
     // Select the host when the Click key is pressed
     hostChosen(host);
     // Reset the click flag after 2 second delay
@@ -1635,7 +1649,8 @@ function updateMacAddress(host) {
 }
 
 // Push the view of a dialog that confirms an action that can't be undone (quit the running app, delete hosts, restore
-// the default settings) with the focus on No, its second button, so that an OK pressed by mistake doesn't confirm it
+// the default settings, apply the optimal settings) with the focus on No or Cancel, its second button, so that an OK
+// pressed by mistake doesn't confirm it
 function pushConfirmationView(view) {
   view.view.index = 1;
   Navigation.push(view);
@@ -2660,16 +2675,17 @@ function warningDialog(title, message) {
   document.getElementById('warningDialogText').innerHTML = t(message);
   warningDialog.classList.remove('is-optimal');
 
-  // Show the dialog and push the view
-  warningDialogOverlay.style.display = 'flex';
-  warningDialog.showModal();
-  isDialogOpen = true;
-  Navigation.push(Views.WarningDialog);
-
   // Ensure the continueWarning button is hidden for standard warnings
   $('#continueWarning').hide();
   // Add single-button class for CSS styling when only Close button is visible
   warningDialog.classList.add('single-button');
+
+  // Show the dialog and push the view, which opens on Close, its only button
+  warningDialogOverlay.style.display = 'flex';
+  warningDialog.showModal();
+  isDialogOpen = true;
+  Views.WarningDialog.view.index = 0;
+  Navigation.push(Views.WarningDialog);
 
   // Cancel the operation if the Close button is pressed
   $('#closeWarning').off('click');
@@ -2698,16 +2714,18 @@ function wakeOnLanWarningDialog(host) {
     t('The Operating System may be using a random MAC address instead of the physical network card address.') + ' ' +
     t('Wake-on-LAN may be unable to wake up the machine since the MAC address does not match the one from the network card.');
 
-  // Show the dialog and push the view
-  warningDialogOverlay.style.display = 'flex';
-  warningDialog.showModal();
-  isDialogOpen = true;
-  Navigation.push(Views.WarningDialog);
-
   // Dynamically swap buttons: show "Continue" and change "Close" to act as Cancel
   $('#continueWarning').show();
   // Remove single-button class since both buttons are now visible
   warningDialog.classList.remove('single-button');
+
+  // Show the dialog and push the view, which opens on Continue, with both buttons already shown so that the mark goes
+  // where the focus goes
+  warningDialogOverlay.style.display = 'flex';
+  warningDialog.showModal();
+  isDialogOpen = true;
+  Views.WarningDialog.view.index = 0;
+  Navigation.push(Views.WarningDialog);
 
   // Cancel — close dialog without sending WoL (using Close button)
   $('#closeWarning').off('click');
@@ -2933,6 +2951,14 @@ function stylizeBoxArts(freshApi, appsList) {
 // button that only says that no app runs. Its place in the header row (Views.AppsNav in navigation.js) goes with it.
 function updateQuitRunningAppButton(host) {
   const isAppRunning = !!(host && host.currentGame && host.currentGame != 0);
+  // A button that goes away while it has the selection (e.g. after it quit the app) hands it to the back button, the
+  // only one left in the header row. unmark() also closes its tooltip, which would otherwise stay on the screen, and a
+  // stale mark would show a second selection once the button shows again.
+  if (!isAppRunning && $('#quitRunningAppBtn').hasClass('hovered')) {
+    unmark('quitRunningAppBtn');
+    mark('goBackBtn');
+    focusElement('goBackBtn');
+  }
   $('#quitRunningAppBtn').toggle(isAppRunning);
   if (!isAppRunning && typeof Views !== 'undefined' && Views.AppsNav.view.index > 0) {
     Views.AppsNav.view.index = 0;
@@ -3193,16 +3219,15 @@ function showApps(host) {
             // Attach the click event listener to the game container
             gameContainer.off('click');
             gameContainer.on('click', function() {
-              // Prevent further clicks
-              if (isClickPrevented) {
+              // Ignore a click within 600 ms of the click on the host card that opened this list, and a second start
+              // within 2 seconds of the last one (see lastAppTileClickAt)
+              var now = performance.now();
+              if (now - lastHostClickAt < 600 || now - lastAppTileClickAt < 2000) {
                 return;
               }
-              // Block subsequent clicks immediately
-              isClickPrevented = true;
+              lastAppTileClickAt = now;
               // Start the game when the Click key is pressed
               startGame(host, app.id);
-              // Reset the click flag after 2 second delay
-              setTimeout(() => isClickPrevented = false, 2000);
             });
 
             // Append the game container to the game grid
@@ -4495,7 +4520,9 @@ function showVideoWarning(messageKey) {
       snackbarLogLong('Warning: Samsung TVs usually have a 100 Mbps Ethernet port, so bitrates above %1$s Mbps can cause packet loss. Use 5 GHz Wi-Fi for higher bitrates!', ETHERNET_MAX_BITRATE);
       break;
     case VIDEO_WARNINGS.BITRATE_ABOVE_CAP:
-      snackbarLogLong('Warning: Bitrates above %1$s Mbps exceed what is recommended for the video decoder of this TV and may cause playback interruptions and performance issues, please try with caution!', getDecoderCapMbps(tvCapabilities));
+      // Name the threshold of the warning, which lies above the decoder cap of the presets on the tested model
+      // (getBitrateWarningMbps() in tv_profile.js)
+      snackbarLogLong('Warning: Bitrates above %1$s Mbps exceed what is recommended for the video decoder of this TV and may cause playback interruptions and performance issues, please try with caution!', getBitrateWarningMbps(tvCapabilities));
       break;
     case VIDEO_WARNINGS.H264_RESOLUTION:
       snackbarLogLong('Warning: Samsung TVs generally decode H.264 only up to 1080p, so use HEVC or AV1 for higher resolutions!');
@@ -4590,9 +4617,10 @@ function applyBitratePresets() {
     getActiveConnectionType(), tvCapabilities);
   if (!autoAdjustBitrate) {
     console.log('%c[index.js, applyBitratePresets]', 'color: green;', 'Keeping the bitrate of ' + $('#bitrateSlider').val() + ' Mbps instead of the preset of ' + preset + ' Mbps');
-    // Explain once how to get the presets back, since nothing else changes on screen
+    // Explain once how to get the presets back, since nothing else changes on screen, and that the button also resets
+    // the codec (e.g. AV1 to HEVC) and the other video settings
     if (!keptBitrateNotice) {
-      snackbarLogLong('Keeping your bitrate of %1$s Mbps (recommended for these video settings: %2$s Mbps). After the optimal settings button, the bitrate follows the video settings again.',
+      snackbarLogLong('Keeping your bitrate of %1$s Mbps (recommended for these video settings: %2$s Mbps). The optimal settings button lets the bitrate follow the video settings again, but it also resets the codec and the other video settings.',
         $('#bitrateSlider').val(), preset);
       keptBitrateNotice = true;
     }
@@ -4608,7 +4636,7 @@ function applyBitratePresets() {
 function warnBitrate() {
   var chosenBitrate = $('#bitrateSlider').val();
   // Which bitrate limit is exceeded, if any: the 100 Mbps Ethernet port that Samsung TVs usually have, or otherwise the
-  // decoder cap of the TV (bitrateWarningKey() in tv_profile.js)
+  // warning threshold of the TV (bitrateWarningKey() in tv_profile.js)
   const warningKey = bitrateWarningKey(chosenBitrate, getActiveConnectionType(), tvCapabilities);
 
   // Video bitrate warning for the 100 Mbps Ethernet port of the TV
@@ -4625,13 +4653,13 @@ function warnBitrate() {
     ethernetBitrateWarning = false;
   }
 
-  // Video bitrate warning for the decoder cap of the TV (e.g. 100 Mbps for a tested model, 80 Mbps for other 4K TVs)
+  // Video bitrate warning above the threshold of the TV (e.g. 150 Mbps on the tested model, 80 Mbps on other 4K TVs)
   if (!bitrateWarning && warningKey === VIDEO_WARNINGS.BITRATE_ABOVE_CAP) {
     showVideoWarning(warningKey);
     // Set flag for video bitrate warning
     bitrateWarning = true;
   } else if (bitrateWarning && warningKey !== VIDEO_WARNINGS.BITRATE_ABOVE_CAP) {
-    // Reset the flag for video bitrate warning if the condition goes back to normal (at or below the decoder cap)
+    // Reset the flag for video bitrate warning if the condition goes back to normal (at or below the threshold)
     bitrateWarning = false;
   }
 }
@@ -5243,8 +5271,8 @@ function optimalSettingsDialog() {
     message += t('The TV is connected via Ethernet. Samsung TVs usually have a 100 Mbps Ethernet port, so to avoid packet loss from the traffic bursts of the much faster host PC, set its network adapter to 100 Mbps Full Duplex or enable flow control on your switch. Use 5 GHz Wi-Fi for higher bitrates.');
   } else if (connectionType === 'wifi') {
     message += t('The TV is connected via Wi-Fi. Use a 5 GHz network with a strong signal and connect the host PC by cable.') + ' ';
-    // Suggest how far the bitrate can go for this resolution, up to the decoder cap of the TV (bitrateRaiseLimit() in
-    // tv_profile.js), where the bitrate warning starts
+    // Suggest how far the bitrate can go for this resolution, up to where the bitrate warning starts (bitrateRaiseLimit()
+    // in tv_profile.js), which lies above the applied bitrate on the tested model
     const raiseLimit = bitrateRaiseLimit(optimalSettings.resolution, optimalSettings.frameRate, tvCapabilities);
     if (raiseLimit > optimalSettings.bitrate) {
       message += t('If the performance statistics show no dropped frames, you can raise the bitrate up to %1$s Mbps.', raiseLimit);
@@ -5279,17 +5307,19 @@ function optimalSettingsDialog() {
     Launcher.fillValueTiles(document.getElementById('warningDialogValues'), optimalSettings);
   }
 
-  // Show the dialog and push the view
-  warningDialogOverlay.style.display = 'flex';
-  warningDialog.showModal();
-  isDialogOpen = true;
-  Navigation.push(Views.WarningDialog);
-
   // Show the Apply button next to the Cancel button, which this dialog names so instead of Continue and Close
   setWarningButtonLabels(true);
   $('#continueWarning').show();
   // Remove single-button class since both buttons are now visible
   warningDialog.classList.remove('single-button');
+
+  // Show the dialog and push the view with the focus on Cancel, like the dialogs that confirm an action that can't be
+  // undone: Apply replaces the video settings, e.g. AV1 and a bitrate picked by hand, so two presses of OK on the button
+  // mustn't apply it. LEFT and RIGHT reach Apply.
+  warningDialogOverlay.style.display = 'flex';
+  warningDialog.showModal();
+  isDialogOpen = true;
+  pushConfirmationView(Views.WarningDialog);
 
   // Cancel — close the dialog and keep the current settings
   $('#closeWarning').off('click');
@@ -6582,12 +6612,16 @@ function updatePreviewData() {
 }
 
 // Find out once whether the Smart Hub service of the app (res/service) can show the Preview tiles, and keep its answer
-// in localStorage. Only a real answer of the service is kept: a launch of the service that fails or throws can be
-// passing (e.g. right after the install), so the next start asks again instead of turning the tiles off for good.
+// in localStorage (SMART_HUB_SUPPORT_KEY). Only a real answer of the service is kept: a launch of the service that fails
+// or throws can be passing (e.g. right after the install), so the next start asks again instead of turning the tiles off
+// for good.
 function probeSmartHubSupport() {
   return new Promise(function(resolve) {
+    // Forget the answer under the key of 2.1.0 and earlier, which also stored 'false' after a single failed launch of the
+    // service, so that every install asks the service once more
+    localStorage.removeItem(LEGACY_SMART_HUB_SUPPORT_KEY);
     // Check localStorage cache first
-    var cached = localStorage.getItem('smartHubSupported');
+    var cached = localStorage.getItem(SMART_HUB_SUPPORT_KEY);
     if (cached !== null) {
       _isSmartHubSupported = cached === 'true';
       console.log('%c[index.js, probeSmartHubSupport]', 'color: green;', 'Smart Hub support (cached): ' + _isSmartHubSupported);
@@ -6609,7 +6643,7 @@ function probeSmartHubSupport() {
         
         var value = data[0].value;
         _isSmartHubSupported = (value === 'SMART_HUB_SUPPORTED');
-        localStorage.setItem('smartHubSupported', String(_isSmartHubSupported));
+        localStorage.setItem(SMART_HUB_SUPPORT_KEY, String(_isSmartHubSupported));
         console.log('%c[index.js, probeSmartHubSupport]', 'color: green;', 'Smart Hub support (probed): ' + _isSmartHubSupported);
         try {
           probePort.removeMessagePortListener(probeListener);

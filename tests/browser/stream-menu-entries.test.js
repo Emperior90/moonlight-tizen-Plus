@@ -6,9 +6,9 @@
 //   250 Mbps, the end of the bitrate slider, and no further on every TV, OK on an unchanged bitrate does nothing but
 //   explain, and OK on a new one keeps it as the bitrate setting, ends the stream without quitting the app on the PC and
 //   resumes the app with the new bitrate a moment later, with the launch screen and the new bitrate meanwhile; above the
-//   decoder cap of the TV, or above 80 Mbps over Ethernet, OK shows the warning of the slider once; RED cancels the
-//   reconnect, an app that no longer runs ends it with a message, and an end of the stream for another reason never
-//   reconnects;
+//   warning threshold of the TV (150 Mbps on the S90C), or above 80 Mbps over Ethernet, OK shows the warning of the
+//   slider once; RED cancels the reconnect, an app that no longer runs ends it with a message, and an end of the stream
+//   for another reason never reconnects;
 // - 'Type text…' opens a field that takes the keys of the keyboard while nothing reaches the stream, Enter and the Done
 //   key of the keyboard of the TV send the text once through sendText() of the module and resume the stream, RETURN and
 //   the Cancel key send nothing and return to the Stream Menu, a text that can't be sent keeps the field with the reason,
@@ -196,7 +196,8 @@ test('LEFT and RIGHT change the bitrate in steps of 5 Mbps up to 250 Mbps, and O
     await remoteKey(app.page, ...LEFT);
     await remoteKey(app.page, ...LEFT);
     assert.deepEqual(await bitrateEntry(app.page), { value: '35 Mbps', pending: true, note: 'OK: reconnect (now 40 Mbps)', lowerLimit: false, higherLimit: false });
-    // Past the decoder cap of the S90C profile, 100 Mbps, up to the end of the slider, 250 Mbps, and no further
+    // Past the decoder cap of the S90C profile, 100 Mbps, and its warning threshold, 150 Mbps, up to the end of the slider,
+    // 250 Mbps, and no further
     for (let i = 0; i < 13; i++) {
       await remoteKey(app.page, ...RIGHT);
     }
@@ -312,7 +313,7 @@ test('on other TVs the bitrate entry also goes from 5 up to 250 Mbps, past the d
   }
 });
 
-test('OK above the decoder cap shows the warning of the slider once per crossing, and the stream reconnects as usual', async () => {
+test('OK above the warning threshold shows the warning of the slider once per crossing, and the stream reconnects as usual', async () => {
   const app = await openStreaming();
   try {
     // What the page shows right after OK, while the stream reconnects
@@ -339,27 +340,31 @@ test('OK above the decoder cap shows the warning of the slider once per crossing
       }
     };
 
-    // 40 -> 105 Mbps on the S90C over Wi-Fi: one step above its decoder cap of 100 Mbps
+    // 40 -> 150 Mbps on the S90C over Wi-Fi: no warning up to the 150 Mbps that it streams over 5 GHz Wi-Fi
     await openMenuAt(app.page, 'streamMenuBitrate');
-    await step(RIGHT, 13);
-    assert.deepEqual(await bitrateEntry(app.page), { value: '105 Mbps', pending: true, note: 'OK: reconnect (now 40 Mbps)', lowerLimit: false, higherLimit: false });
-    assert.deepEqual(await reconnect(105), [DECODER_CAP_WARNING(100)], 'the warning shows at OK, over the launch screen');
-    await waitForStorage(app.page, (values) => values.bitrate === '105' && values.autoAdjustBitrate === false);
-    // Further up to 250 Mbps: no second warning, as with the slider
-    await openMenuAt(app.page, 'streamMenuBitrate');
-    assert.equal((await bitrateEntry(app.page)).value, '105 Mbps');
-    await step(RIGHT, 29);
-    assert.deepEqual(await bitrateEntry(app.page), { value: '250 Mbps', pending: true, note: 'OK: reconnect (now 105 Mbps)', lowerLimit: false, higherLimit: true });
-    assert.deepEqual(await reconnect(250), [DECODER_CAP_WARNING(100)]);
-    assert.equal(await app.page.evaluate(() => window.__startStreamArgs[5]), '250000');
-    assert.deepEqual(await app.page.evaluate(() => [$('#bitrateSlider').val(), $('#selectBitrate').text()]), ['250', '250 Mbps']);
-    // Back to the cap ends the warning, so that the next step above it warns again
-    await openMenuAt(app.page, 'streamMenuBitrate');
-    await step(LEFT, 30);
-    assert.deepEqual(await reconnect(100), [DECODER_CAP_WARNING(100)]);
+    await step(RIGHT, 22);
+    assert.deepEqual(await bitrateEntry(app.page), { value: '150 Mbps', pending: true, note: 'OK: reconnect (now 40 Mbps)', lowerLimit: false, higherLimit: false });
+    assert.deepEqual(await reconnect(150), [], 'no warning at 150 Mbps');
+    // One step above it
     await openMenuAt(app.page, 'streamMenuBitrate');
     await step(RIGHT, 1);
-    assert.deepEqual(await reconnect(105), [DECODER_CAP_WARNING(100), DECODER_CAP_WARNING(100)]);
+    assert.deepEqual(await reconnect(155), [DECODER_CAP_WARNING(150)], 'the warning shows at OK, over the launch screen');
+    await waitForStorage(app.page, (values) => values.bitrate === '155' && values.autoAdjustBitrate === false);
+    // Further up to 250 Mbps: no second warning, as with the slider
+    await openMenuAt(app.page, 'streamMenuBitrate');
+    assert.equal((await bitrateEntry(app.page)).value, '155 Mbps');
+    await step(RIGHT, 19);
+    assert.deepEqual(await bitrateEntry(app.page), { value: '250 Mbps', pending: true, note: 'OK: reconnect (now 155 Mbps)', lowerLimit: false, higherLimit: true });
+    assert.deepEqual(await reconnect(250), [DECODER_CAP_WARNING(150)]);
+    assert.equal(await app.page.evaluate(() => window.__startStreamArgs[5]), '250000');
+    assert.deepEqual(await app.page.evaluate(() => [$('#bitrateSlider').val(), $('#selectBitrate').text()]), ['250', '250 Mbps']);
+    // Back to the threshold ends the warning, so that the next step above it warns again
+    await openMenuAt(app.page, 'streamMenuBitrate');
+    await step(LEFT, 20);
+    assert.deepEqual(await reconnect(150), [DECODER_CAP_WARNING(150)]);
+    await openMenuAt(app.page, 'streamMenuBitrate');
+    await step(RIGHT, 1);
+    assert.deepEqual(await reconnect(155), [DECODER_CAP_WARNING(150), DECODER_CAP_WARNING(150)]);
     assert.deepEqual(app.errors, []);
     assert.deepEqual(await app.page.evaluate(() => window.__videoKeys.slice()), []);
   } finally {

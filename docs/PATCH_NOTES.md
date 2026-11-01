@@ -20,7 +20,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 > **Install:** by hand over 2.1.0 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >
-> **Tested:** with simulated TVs, hosts and controllers only; the shorter waits, the new defaults and bitrates above 100 Mbps still need a test on a TV.
+> **Tested:** with simulated TVs, hosts and controllers only; the shorter waits, the new defaults and bitrates above 150 Mbps still need a test on a TV.
 
 ### Changed
 
@@ -29,6 +29,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 - The bitrate goes up to 250 Mbps in the settings and the Stream Menu, for a strong 5 or 6 GHz Wi-Fi link
 - Screens open without the half-second wait, and controller buttons act after 50 ms in the menus
 - Rumble is on for new installs; questions that quit an app or delete a PC start on *No*
+- The S90C warns above 150 Mbps (its presets stay at 100); the optimal settings dialog opens on *Cancel*
 - The PC menu lists only what works, and the PC list shows one state chip
 - *Restore Defaults* keeps the button mapping and the stick calibration
 - About 210 KB smaller download: unused files, styles and code are gone

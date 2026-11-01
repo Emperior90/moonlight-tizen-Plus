@@ -3,7 +3,8 @@
 // Checks the probe of the Smart Hub service (probeSmartHubSupport() in wasm/platform/index.js), which decides whether
 // the app shows Preview tiles in Smart Hub (Tizen 5.5 to 6.5) and keeps the answer in localStorage: only a real answer
 // of the service is kept. A launch of the service that fails or throws can be passing (e.g. right after the install),
-// so it must not turn the tiles off for good; the next start asks again.
+// so it must not turn the tiles off for good; the next start asks again. 2.1.0 and earlier stored 'false' under the key
+// smartHubSupported after a single failed launch, so that key is dropped and the service asked once more.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -11,8 +12,9 @@ const { INDEX_SCRIPTS, loadPlatformScripts } = require('./helpers/platform-loade
 
 // Load index.js with a message port and a launch of the service that do what the test says: launch is 'answer' (the
 // service starts and answers the probe with `answer`), 'error' (the launch fails) or 'throw' (the API throws)
-function loadProbe(launch, answer) {
+function loadProbe(launch, answer, storedBefore) {
   const platform = loadPlatformScripts(INDEX_SCRIPTS);
+  Object.keys(storedBefore || {}).forEach((key) => platform.context.localStorage.setItem(key, storedBefore[key]));
   const calls = { launches: 0, removed: [] };
   let listener = null;
   platform.context.tizen.messageport = {
@@ -38,7 +40,12 @@ function loadProbe(launch, answer) {
     onSuccess();
     listener([{ key: 'PROBE', value: answer }]);
   };
-  return { platform, calls, stored: () => platform.context.localStorage.getItem('smartHubSupported') };
+  return {
+    platform,
+    calls,
+    stored: () => platform.context.localStorage.getItem('smartHubSupported2'),
+    legacy: () => platform.context.localStorage.getItem('smartHubSupported'),
+  };
 }
 
 test('a failed launch of the service stores nothing, so the next start asks again', async () => {
@@ -67,5 +74,20 @@ test('the answer of the service is stored and used at the next start without a p
     assert.equal(probe.platform.get('_isSmartHubSupported'), expected === 'true', answer);
     await probe.platform.get('probeSmartHubSupport')();
     assert.equal(probe.calls.launches, 1, 'the stored answer is used');
+  }
+});
+
+test('an answer stored by 2.1.0 or earlier is dropped, and the service is asked exactly once more', async () => {
+  // 2.1.0 stored 'false' after a single failed launch, which turned the tiles off for good
+  for (const [answer, expected] of [['SMART_HUB_SUPPORTED', 'true'], ['SMART_HUB_NOT_SUPPORTED', 'false']]) {
+    const probe = loadProbe('answer', answer, { smartHubSupported: 'false' });
+    await probe.platform.get('probeSmartHubSupport')();
+    assert.equal(probe.calls.launches, 1, answer + ': the old answer is not trusted');
+    assert.equal(probe.legacy(), null, answer + ': the old key is removed');
+    assert.equal(probe.stored(), expected, answer);
+    assert.equal(probe.platform.get('_isSmartHubSupported'), expected === 'true', answer);
+    // The next start uses the new answer, also a real 'not supported'
+    await probe.platform.get('probeSmartHubSupport')();
+    assert.equal(probe.calls.launches, 1, answer + ': the new answer is used');
   }
 });

@@ -42,8 +42,8 @@ const TVS = {
     detected: '4K panel, HDR, Tizen 9.0',
     testedModel: true,
     hint120Hz: false,
-    // The 100 Mbps over Wi-Fi already reach its tested decoder cap of 100 Mbps
-    wifiRaiseLimit: null,
+    // The 100 Mbps over Wi-Fi stay below the 150 Mbps that it streams over 5 GHz Wi-Fi, where its warning starts
+    wifiRaiseLimit: 150,
   },
   // Generic UHD TV with HDR on Tizen 6.5: the 80 Mbps cap of 4K TVs without a tested profile, and 60 FPS at most
   uhd: {

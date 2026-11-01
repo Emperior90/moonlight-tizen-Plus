@@ -1,8 +1,10 @@
 'use strict';
 
 // Checks the dialogs that confirm an action that can't be undone (pushConfirmationView() in wasm/platform/index.js):
-// quitting the running app (also before the start of another app), deleting a host or all hosts and Restore Defaults
-// open with the focus on No, so that an OK pressed by mistake only closes them. LEFT still reaches Yes.
+// quitting the running app (also before the start of another app), deleting a host or all hosts, Restore Defaults and
+// the optimal settings, which replace the video settings, open with the focus on No or Cancel, so that an OK pressed by
+// mistake only closes them. LEFT still reaches Yes or Apply. The other dialogs of the warning dialog keep their first
+// button: a warning its Close button, the Wake-on-LAN warning Continue.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -117,6 +119,42 @@ test('quitting the running app opens on No, also when another app is started, an
     await app.page.waitForTimeout(300);
     assert.equal(await app.page.evaluate(() => window.__quits), 0);
     assert.equal(await app.page.evaluate(() => window.__host.currentGame), 7);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('the optimal settings open on Cancel, also after LEFT selected Apply the time before, and the other warnings keep their button', async () => {
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, stored: { videoCodec: 'AV1', bitrate: '150', autoAdjustBitrate: false } });
+  try {
+    const marked = () => app.page.evaluate(() => ['continueWarning', 'closeWarning'].filter((id) => document.getElementById(id).classList.contains('hovered')));
+    await app.page.evaluate(() => optimalSettingsDialog());
+    assert.deepEqual(await selection(app.page), { focused: 'closeWarning', marked: ['closeWarning'] });
+    await app.page.keyboard.press('Enter');
+    await app.page.waitForTimeout(300);
+    assert.deepEqual(await openDialogs(app.page), []);
+    const stored = await readStorage(app.page);
+    assert.deepEqual([stored.videoCodec, stored.bitrate], ['AV1', '150']);
+
+    await app.page.evaluate(() => optimalSettingsDialog());
+    await selection(app.page);
+    await app.page.keyboard.press('ArrowLeft');
+    assert.deepEqual(await selection(app.page), { focused: 'continueWarning', marked: ['continueWarning'] });
+    await app.page.evaluate(() => $('#closeWarning').trigger('click'));
+    await app.page.evaluate(() => optimalSettingsDialog());
+    assert.deepEqual(await selection(app.page), { focused: 'closeWarning', marked: ['closeWarning'] });
+    await app.page.evaluate(() => $('#closeWarning').trigger('click'));
+    await app.page.waitForTimeout(250);
+    assert.deepEqual(await marked(), [], 'no mark stays in the closed dialog');
+
+    // A warning opens on Close, its only button, and the Wake-on-LAN warning on Continue
+    await app.page.evaluate(() => warningDialog('Unsupported Feature', 'A warning'));
+    assert.deepEqual(await selection(app.page), { focused: 'closeWarning', marked: ['closeWarning'] });
+    await app.page.evaluate(() => $('#closeWarning').trigger('click'));
+    await app.page.evaluate(() => wakeOnLanWarningDialog({ hostname: 'GAMING-PC', macAddress: '02:11:22:33:44:55' }));
+    assert.deepEqual(await selection(app.page), { focused: 'continueWarning', marked: ['continueWarning'] });
+    await app.page.evaluate(() => $('#closeWarning').trigger('click'));
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

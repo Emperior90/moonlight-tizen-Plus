@@ -5,12 +5,14 @@
 // navigation.js, and a top-level const is no property of window, so none of them ran. The host check also looked for
 // the inner card element instead of the host container that the view lists.
 // - Back from an app list, the host grid selects (and marks) the card of the host that was opened last.
+// - Back from the settings, the button of the header keeps the mark, and the card of the host that was opened last is
+//   only selected for the next DOWN: the grid used to mark it as well, so two items looked selected.
 // - The app grid selects the running app, else the app that was started last on that host.
 // - When the app list got shorter (e.g. a hidden app), the selection stays on a tile.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
-const { openApp, startHarness } = require('./harness');
+const { SUNSHINE_HOSTS, openApp, startHarness } = require('./harness');
 
 let harness;
 before(async () => {
@@ -87,6 +89,81 @@ test('without a stored host, or with one that is gone, the host selection stays 
     await app.context.close();
   }
 });
+
+// Press and release a key of the remote on the focused element, like the TV delivers it
+const remoteKey = (page, keyCode, key) => page.evaluate(({ code, name }) => {
+  ['keydown', 'keyup'].forEach((type) => {
+    const event = new KeyboardEvent(type, { key: name, bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'keyCode', { value: code });
+    Object.defineProperty(event, 'which', { value: code });
+    (document.activeElement || document.body).dispatchEvent(event);
+  });
+}, { code: keyCode, name: key });
+const UP = [38, 'ArrowUp'];
+const DOWN = [40, 'ArrowDown'];
+const RIGHT = [39, 'ArrowRight'];
+const OK = [13, 'Enter'];
+const RETURN = [10009, 'XF86Back'];
+
+const focusedId = (page) => page.evaluate(() => (document.activeElement ? document.activeElement.id : ''));
+const markedIds = (page) => page.evaluate(() => Array.prototype.map.call(document.querySelectorAll('.hovered'), (element) => element.id).filter(Boolean));
+
+// The ways back from the settings to the hosts view, which all press the back button of the header (showHosts())
+const WAYS_BACK = {
+  'RETURN in the categories': async (page) => {
+    await remoteKey(page, ...RETURN);
+  },
+  'UP to the header and OK on the back button': async (page) => {
+    await remoteKey(page, ...UP);
+    await page.waitForFunction(() => document.activeElement && document.activeElement.id === 'goBackBtn', null, { timeout: 3000 });
+    await remoteKey(page, ...OK);
+  },
+  'RETURN in a section, then RETURN in the categories': async (page) => {
+    await remoteKey(page, ...OK);
+    await page.waitForTimeout(400);
+    await remoteKey(page, ...RETURN);
+    await page.waitForTimeout(300);
+    await remoteKey(page, ...RETURN);
+  },
+};
+
+for (const [way, goBack] of Object.entries(WAYS_BACK)) {
+  test(`back from the settings (${way}), only the settings button is marked, and DOWN goes to the PC opened last`, async () => {
+    // A stored PC (mocks/sunshine-host.js) that an earlier session opened, which the grid lists after the Add PC card
+    const app = await openApp(harness, { tv: TV, moduleScripts: ['sunshine-host.js'], stored: { hosts: SUNSHINE_HOSTS } });
+    const { page } = app;
+    try {
+      await page.waitForFunction(() => typeof hosts !== 'undefined' && hosts.HOST1 && hosts.HOST1.online === true, null, { timeout: 10000 });
+      await page.evaluate(() => localStorage.setItem('lastOpenedHost', 'HOST1'));
+      assert.equal(await page.evaluate(() => Views.Hosts.view.current().id), 'addHostContainer');
+      // UP to the header (the first key may only give the menus the focus), RIGHT to the settings button, OK
+      for (let i = 0; i < 3 && ['updateAppBtn', 'rescanNetworkBtn', 'settingsBtn', 'supportBtn'].indexOf(await focusedId(page)) < 0; i++) {
+        await remoteKey(page, ...UP);
+        await page.waitForTimeout(150);
+      }
+      for (let i = 0; i < 4 && await focusedId(page) !== 'settingsBtn'; i++) {
+        await remoteKey(page, ...RIGHT);
+      }
+      assert.equal(await focusedId(page), 'settingsBtn');
+      await remoteKey(page, ...OK);
+      await page.waitForFunction(() => document.body.getAttribute('data-view') === 'settings' && $('#settings-list').is(':visible'), null, { timeout: 5000 });
+      await page.waitForTimeout(300);
+
+      await goBack(page);
+      await page.waitForFunction(() => document.body.getAttribute('data-view') === 'hosts' && $('#host-grid').is(':visible'), null, { timeout: 5000 });
+      await page.waitForTimeout(300);
+      assert.deepEqual(await markedIds(page), ['settingsBtn']);
+      assert.equal(await focusedId(page), 'settingsBtn');
+      assert.equal(await page.evaluate(() => Views.Hosts.view.current().id), 'host-container-HOST1', 'the PC opened last is selected');
+
+      await remoteKey(page, ...DOWN);
+      assert.deepEqual(await markedIds(page), ['host-container-HOST1']);
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.context.close();
+    }
+  });
+}
 
 // Open the app list of a simulated host (sorted A-Z: Cyberpunk 2077, Desktop, Forza Horizon 5, Steam Big Picture) whose
 // running app is currentGame (0 for none)

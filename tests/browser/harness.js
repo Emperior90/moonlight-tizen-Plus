@@ -4,6 +4,8 @@
 // with settings already stored in IndexedDB, like an existing install), and read what the settings screen shows and
 // what the app stored.
 
+const fs = require('fs');
+const path = require('path');
 const { requireDevModule } = require('../lib/dev-modules');
 const { startServer } = require('./server');
 
@@ -33,6 +35,16 @@ const READY_SETTLE_MS = 150;
 // last one (whether the bitrate presets follow the video settings) and works the others out at every start.
 const VIDEO_KEYS = ['resolution', 'frameRate', 'bitrate', 'videoCodec', 'hdrMode', 'unlockAllFps', 'framePacing',
   'fullRange', 'gameMode', 'autoAdjustBitrate'];
+
+// The PC of mocks/sunshine-host.js as the hosts list of an existing install stores it, for
+// `openApp(harness, { moduleScripts: ['sunshine-host.js'], stored: { hosts: SUNSHINE_HOSTS } })`
+const SUNSHINE_HOSTS = {
+  HOST1: {
+    address: '10.0.0.2', userEnteredAddress: '10.0.0.2', hostname: 'GAMING-PC', serverUid: 'HOST1', ppkstr: 'PPK',
+    httpPort: 47989, httpsPort: 47984, externalPort: 47989, externalIP: '', macAddress: '00:11:22:33:44:55', paired: true,
+    online: true, currentGame: 0, _baseUrlHttps: 'https://10.0.0.2:47984', _baseUrlHttp: 'http://10.0.0.2:47989',
+  },
+};
 
 // Start the server and the browser that a test file shares between its tests
 async function startHarness() {
@@ -161,7 +173,8 @@ function appUrl(baseUrl, tvOptions) {
 
 // Open the app in a fresh browser profile on a simulated TV, optionally with settings stored beforehand.
 // Resolves once the app finished starting, or once it logged the given `readySignals` instead, e.g. for a start that
-// stops early on purpose. `app.logs` collects the console, `app.errors` the uncaught errors.
+// stops early on purpose. `moduleScripts` names files of mocks/ whose code runs right after the stub of the WebAssembly
+// module, e.g. the simulated host of sunshine-host.js. `app.logs` collects the console, `app.errors` the uncaught errors.
 async function openApp(harness, options) {
   const opts = options || {};
   const context = await harness.browser.newContext({ viewport: { width: 1920, height: 1080 } });
@@ -173,6 +186,14 @@ async function openApp(harness, options) {
       route.abort();
     }
   });
+  if (opts.moduleScripts) {
+    // A route registered later takes precedence over the one above
+    const extra = opts.moduleScripts.map((name) => fs.readFileSync(path.join(__dirname, 'mocks', name), 'utf8')).join('\n');
+    await context.route(harness.baseUrl + '/moonlight-wasm.js', async (route) => {
+      const response = await route.fetch();
+      await route.fulfill({ response, body: (await response.text()) + '\n' + extra });
+    });
+  }
   if (opts.mockConfig) {
     await context.addInitScript((config) => {
       window.__MOCK_CONFIG__ = config;
@@ -267,6 +288,7 @@ function readOtherSettings(page) {
 module.exports = {
   DB_NAME,
   STORE_NAME,
+  SUNSHINE_HOSTS,
   VIDEO_KEYS,
   appUrl,
   openApp,

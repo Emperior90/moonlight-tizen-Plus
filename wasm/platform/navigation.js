@@ -2196,15 +2196,31 @@ const Views = {
       focusElement(this.view.current());
     },
     enter: function() {
-      // Default to Continue button (index 0) when both buttons are visible
-      // Otherwise default to the only visible Close button (index 0)
-      this.view.index = 0;
+      // Open on the button that the dialog selected before it pushed this view with its buttons shown (index.js): Close,
+      // the only button of a warning, Continue of the Wake-on-LAN warning, or Cancel of the optimal settings dialog
+      // (pushConfirmationView()), so that the mark and the focus are on the button that OK presses
+      if (!this.view.current()) {
+        this.view.index = 0;
+      }
       mark(this.view.current());
-      setTimeout(() => focusElement(this.view.current()), 100);
+      // Focus it once the dialog shows, unless a quick second OK closed the dialog meanwhile: its buttons are hidden
+      // then, and focusing nothing would take the focus from the view below
+      setTimeout(() => {
+        const current = this.view.current();
+        if (current) {
+          focusElement(current);
+        }
+      }, 100);
     },
     leave: function() {
-      unmark(this.view.current());
-      setTimeout(() => blurElement(this.view.current()), 100);
+      // The dialog closes before its view leaves, so its hidden buttons are no longer in the list of the view: unmark
+      // both, so that no mark stays for the next dialog
+      unmark('continueWarning');
+      unmark('closeWarning');
+      setTimeout(() => {
+        blurElement('continueWarning');
+        blurElement('closeWarning');
+      }, 100);
     },
   },
   RestartMoonlightDialog: {

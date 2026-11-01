@@ -8,11 +8,13 @@
 //    (an 8K TV, whose decoder goes beyond level 5.2, gets the warning of case 1 there)
 // 3. above the luma sample rate of level 5.2 (4K at 144 FPS): a warning on every TV, today's text on the S90C
 // 4. HDR switched on for a TV that doesn't report HDR
-// 5. the bitrate warning starts at the decoder cap of the TV instead of a fixed 100 Mbps (the S90C keeps 100 Mbps)
+// 5. the bitrate warning starts at the decoder cap of the TV instead of a fixed 100 Mbps, and on the S90C above the
+//    150 Mbps that it streams in daily use (an owner decision of 2.2.0), while its presets stay at 100 Mbps
 // 6. the Ethernet warning names the 100 Mbps port that Samsung TVs usually have, above 80 Mbps as before
 // 7. the H.264 warning above 1080p stays as it is
 // The expectations are written out here. The S90C rows are also compared with a copy of the rules before 1.19.100, so that
-// every resolution and frame rate of the menus keeps the warning it had.
+// every resolution and frame rate of the menus keeps the warning it had, and every bitrate except those from 100.5 to
+// 150 Mbps, which no longer warn on the S90C since 2.2.0.
 
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -58,6 +60,10 @@ function bitrateWarningBeforeWp4(bitrate, conn) {
   }
   return bitrate > 100 ? W.BITRATE_ABOVE_CAP : null;
 }
+
+// The S90C warns above 150 Mbps since 2.2.0 instead of above 100 Mbps: it streams 4K HDR in AV1 at 150 Mbps over 5 GHz
+// Wi-Fi with an FEC of 5 % in Sunshine (the warnAboveMbps of its profile in tv_profile.js)
+const S90C_WARNING_MBPS = 150;
 
 // Every bitrate the slider offers, from 0.5 to 250 Mbps in 0.5 Mbps steps
 const SLIDER_BITRATES = Array.from({ length: 500 }, (_, i) => (i + 1) / 2);
@@ -177,16 +183,18 @@ describe('HDR warning (case 4)', () => {
 });
 
 describe('bitrate warnings (cases 5 and 6)', () => {
-  test('the S90C keeps its warnings for every bitrate of the slider and every connection', () => {
+  test('the S90C keeps its warnings for every bitrate of the slider and every connection, except 100.5 to 150 Mbps', () => {
     for (const conn of CONNECTIONS) {
       for (const bitrate of SLIDER_BITRATES) {
-        assert.equal(profile.bitrateWarningKey(bitrate, conn, S90C), bitrateWarningBeforeWp4(bitrate, conn), conn + ' ' + bitrate);
+        const before = bitrateWarningBeforeWp4(bitrate, conn);
+        const expected = before === W.BITRATE_ABOVE_CAP && bitrate <= S90C_WARNING_MBPS ? null : before;
+        assert.equal(profile.bitrateWarningKey(bitrate, conn, S90C), expected, conn + ' ' + bitrate);
       }
     }
   });
 
-  test('the decoder warning starts at the decoder cap of the TV: 100 / 80 / 80 / 50 Mbps', () => {
-    for (const [name, caps, cap] of [['s90c', S90C, 100], ['uhd', UHD, 80], ['8k', UHD_8K, 80], ['fhd', FHD, 50]]) {
+  test('the decoder warning starts at the warning threshold of the TV: 150 / 80 / 80 / 50 Mbps', () => {
+    for (const [name, caps, cap] of [['s90c', S90C, 150], ['uhd', UHD, 80], ['8k', UHD_8K, 80], ['fhd', FHD, 50]]) {
       for (const conn of ['wifi', 'unknown']) {
         for (const bitrate of SLIDER_BITRATES) {
           assert.equal(profile.bitrateWarningKey(bitrate, conn, caps), bitrate > cap ? W.BITRATE_ABOVE_CAP : null, name + ' ' + conn + ' ' + bitrate);
@@ -207,8 +215,9 @@ describe('bitrate warnings (cases 5 and 6)', () => {
   });
 
   test('the bitrate can be text, as the slider gives it', () => {
-    assert.equal(profile.bitrateWarningKey('100.5', 'wifi', S90C), W.BITRATE_ABOVE_CAP);
-    assert.equal(profile.bitrateWarningKey('100', 'wifi', S90C), null);
+    assert.equal(profile.bitrateWarningKey('150.5', 'wifi', S90C), W.BITRATE_ABOVE_CAP);
+    assert.equal(profile.bitrateWarningKey('150', 'wifi', S90C), null);
+    assert.equal(profile.bitrateWarningKey('100.5', 'wifi', S90C), null);
     assert.equal(profile.bitrateWarningKey('', 'wifi', S90C), null);
   });
 });
@@ -227,8 +236,12 @@ describe('H.264 warning (case 7)', () => {
 });
 
 describe('bitrate advice of the optimal settings dialog', () => {
-  test('twice the preset of the resolution and frame rate, at most the end of the slider and the decoder cap', () => {
-    assert.equal(profile.bitrateRaiseLimit('3840:2160', 60, S90C), 100);
+  test('twice the preset of the resolution and frame rate, at most the end of the slider and the warning threshold', () => {
+    // The S90C: up to its warning threshold of 150 Mbps, while the optimal settings apply 100 Mbps over Wi-Fi
+    assert.equal(profile.bitrateRaiseLimit('3840:2160', 60, S90C), 150);
+    assert.equal(profile.deriveOptimalSettings(S90C, 'wifi').bitrate, 100);
+    assert.equal(profile.bitrateRaiseLimit('3840:2160', 120, S90C), 150);
+    assert.equal(profile.bitrateRaiseLimit('3200:1800', 60, S90C), 120);
     assert.equal(profile.bitrateRaiseLimit('3840:2160', 60, UHD), 80);
     assert.equal(profile.bitrateRaiseLimit('3840:2160', 60, UHD_8K), 80);
     assert.equal(profile.bitrateRaiseLimit('1920:1080', 60, FHD), 40);
@@ -238,12 +251,14 @@ describe('bitrate advice of the optimal settings dialog', () => {
     assert.equal(profile.bitrateRaiseLimit('1920:1080', 75, FHD), 40);
   });
 
-  test('never above the slider, the decoder cap, or twice the preset', () => {
+  test('never above the slider, the warning threshold, or twice the preset', () => {
     for (const caps of [S90C, UHD, FHD, UHD_8K]) {
       for (const res of RESOLUTIONS) {
         for (const fps of FRAME_RATES) {
           const limit = profile.bitrateRaiseLimit(res, fps, caps);
-          assert.ok(limit <= profile.MAX_BITRATE_MBPS && limit <= profile.getDecoderCapMbps(caps) && limit <= 2 * profile.getStandardPresetBitrate(res, fps), res + '@' + fps);
+          assert.ok(limit <= profile.MAX_BITRATE_MBPS && limit <= profile.getBitrateWarningMbps(caps) && limit <= 2 * profile.getStandardPresetBitrate(res, fps), res + '@' + fps);
+          // So the advice never names a bitrate that the warning warns about
+          assert.equal(profile.bitrateWarningKey(limit, 'wifi', caps), null, res + '@' + fps);
         }
       }
     }
@@ -289,11 +304,11 @@ describe('the texts of the message keys (showVideoWarning() in index.js)', () =>
       [['Warning: Samsung TVs generally decode H.264 only up to 1080p, so use HEVC or AV1 for higher resolutions!']]);
   });
 
-  test('the bitrate texts name the limit: 80 Mbps for the Ethernet port, and the decoder cap of the TV', () => {
+  test('the bitrate texts name the limit: 80 Mbps for the Ethernet port, and the warning threshold of the TV', () => {
     const ethernet = shownFor({ tv: 'fhd' }, W.ETHERNET_BITRATE).shown[0];
     assert.equal(ethernet[0], 'Warning: Samsung TVs usually have a 100 Mbps Ethernet port, so bitrates above %1$s Mbps can cause packet loss. Use 5 GHz Wi-Fi for higher bitrates!');
     assert.equal(ethernet[1], 80);
-    for (const [tv, cap] of [['s90c', 100], ['uhd', 80], ['8k', 80], ['fhd', 50]]) {
+    for (const [tv, cap] of [['s90c', 150], ['uhd', 80], ['8k', 80], ['fhd', 50]]) {
       const shown = shownFor({ tv }, W.BITRATE_ABOVE_CAP).shown[0];
       assert.ok(shown[0].indexOf('Bitrates above %1$s Mbps exceed what is recommended for the video decoder of this TV') >= 0, shown[0]);
       assert.equal(shown[1], cap, tv);

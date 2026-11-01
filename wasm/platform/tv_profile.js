@@ -35,8 +35,9 @@ const UHD_DECODER_CAP_MBPS = 80; // Highest recommended bitrate in Mbps for a 4K
 const FHD_DECODER_CAP_MBPS = 50; // Highest recommended bitrate in Mbps for a Full HD TV, which Samsung specifies for HEVC at 1080p and 60 FPS on its Full HD models
 // Highest bitrate in Mbps of the bitrate slider (index.html) and of the bitrate entry of the Stream Menu (menus.js). It
 // lies far above the decoder caps on purpose, for testing a TV over a strong 5 GHz or 6 GHz Wi-Fi link: the presets and
-// the optimal settings stay at the caps, and the bitrate warning names the cap of the TV. moonlight-common-c sends the
-// bitrate to Sunshine uncapped (x-ml-video.configuredBitrateKbps in SdpGenerator.c); only GFE stops at 100 Mbps.
+// the optimal settings stay at the caps, and the bitrate warning names the threshold of the TV (getBitrateWarningMbps()).
+// moonlight-common-c sends the bitrate to Sunshine uncapped (x-ml-video.configuredBitrateKbps in SdpGenerator.c); only
+// GFE stops at 100 Mbps.
 const MAX_BITRATE_MBPS = 250;
 
 // Highest luma sample rates (width x height x frame rate) of the decoder levels of HEVC and AV1. Level 5.1 covers 4K at
@@ -50,12 +51,18 @@ const LEVEL_52_MAX_LUMA_SAMPLE_RATE = 1069547520;
 // TV models whose settings were tested on the real TV. A profile is selected by its regular expression, which is
 // tested against the model name and the model series, and overrides what the TV can't report through its APIs:
 // - unlockAllFps: the panel shows more than 60 Hz, so 'Unlock all frame rates' starts switched on
-// - decoderCapMbps: the highest bitrate in Mbps that the video decoder of this model handled in the tests
+// - decoderCapMbps: the highest bitrate in Mbps that the presets and the optimal settings give this model, the bitrate
+//   it was tested with over Wi-Fi
+// - warnAboveMbps (optional): the bitrate in Mbps above which the bitrate warning appears, when the model streams more
+//   than decoderCapMbps; without it the warning starts at decoderCapMbps
 // - refresh120: the panel runs at 120 Hz or more
 // Every other model gets the values derived from its detected capabilities.
 const VERIFIED_PROFILES = Object.freeze([
   // Samsung S90C (2023 OLED with a 144 Hz panel), the TV this app was tuned and tested on
-  Object.freeze({ id: 'S90C', match: /S90C/i, unlockAllFps: true, decoderCapMbps: 100, refresh120: true }),
+  // It streams 4K HDR in AV1 at 150 Mbps in daily use over 5 GHz Wi-Fi with an FEC of 5 % in Sunshine (fec_percentage),
+  // so the warning starts above that. Its presets stay at 100 Mbps over Wi-Fi, so that they also work over a weaker
+  // Wi-Fi link than that one.
+  Object.freeze({ id: 'S90C', match: /S90C/i, unlockAllFps: true, decoderCapMbps: 100, warnAboveMbps: 150, refresh120: true }),
 ]);
 
 // Standard bitrate presets in Mbps by resolution and frame rate. 1800p is interpolated by pixel count between the
@@ -421,13 +428,25 @@ function getStandardPresetBitrate(res, frameRate) {
   return preset !== undefined ? preset : null;
 }
 
-// Return the highest bitrate in Mbps that the video decoder of the TV is recommended for: the tested value of its
-// profile, otherwise what Samsung specifies for HEVC at 60 FPS on most 4K models, or on its Full HD models
+// Return the highest bitrate in Mbps that the presets and the optimal settings give the TV, the cap of the recommended
+// bitrates: the tested value of its profile, otherwise what Samsung specifies for HEVC at 60 FPS on most 4K models, or
+// on its Full HD models
 function getDecoderCapMbps(caps) {
   if (caps && caps.profile && caps.profile.decoderCapMbps) {
     return caps.profile.decoderCapMbps;
   }
   return caps && (caps.is4k || caps.is8k) ? UHD_DECODER_CAP_MBPS : FHD_DECODER_CAP_MBPS;
+}
+
+// Return the bitrate in Mbps above which the bitrate warning appears on the TV: the warning threshold of its profile when
+// the model streams more than its presets give it (warnAboveMbps), otherwise its decoder cap (getDecoderCapMbps()). Only
+// the warning and the advice of the optimal settings dialog use it; the presets and the optimal settings stay at the
+// decoder cap.
+function getBitrateWarningMbps(caps) {
+  if (caps && caps.profile && caps.profile.warnAboveMbps) {
+    return caps.profile.warnAboveMbps;
+  }
+  return getDecoderCapMbps(caps);
 }
 
 // Get the recommended bitrate in Mbps for a resolution, a frame rate and the network connection type of the TV, starting
@@ -457,16 +476,17 @@ function recommendedBitrate(res, frameRate, connectionType, caps) {
 
 // Return the bitrate in Mbps that the optimal streaming settings dialog suggests as the upper end for raising the
 // bitrate over Wi-Fi, when the performance statistics show no dropped frames: twice the standard preset of the
-// resolution and frame rate, but at most the highest bitrate of the slider and the decoder cap of the TV
-// (getDecoderCapMbps()), above which the bitrate warning appears. When the recommended bitrate already reaches it, the
-// dialog says so instead.
+// resolution and frame rate, but at most the highest bitrate of the slider and the bitrate where the warning appears
+// (getBitrateWarningMbps()), e.g. 150 Mbps for 4K at 60 FPS on the tested model. It is only advice for a good Wi-Fi
+// link: the optimal settings apply the recommended bitrate (recommendedBitrate()). When the recommended bitrate already
+// reaches it, the dialog says so instead.
 function bitrateRaiseLimit(res, frameRate, caps) {
   let preset = getStandardPresetBitrate(res, frameRate);
   if (preset === null) {
     // A frame rate without a preset gets the preset of 60 FPS
     preset = getStandardPresetBitrate(res, 60);
   }
-  return Math.min(2 * preset, MAX_BITRATE_MBPS, getDecoderCapMbps(caps));
+  return Math.min(2 * preset, MAX_BITRATE_MBPS, getBitrateWarningMbps(caps));
 }
 
 // Return the bitrate in Mbps as the bitrate slider (index.html) holds it: rounded to its steps of 0.5 Mbps, within 0.5
@@ -562,7 +582,7 @@ const VIDEO_WARNINGS = Object.freeze({
   HDR_NOT_REPORTED: 'hdrNotReported',
   // A bitrate above what the 100 Mbps Ethernet port that Samsung TVs usually have can carry (ETHERNET_MAX_BITRATE)
   ETHERNET_BITRATE: 'ethernetBitrate',
-  // A bitrate above the decoder cap of the TV (getDecoderCapMbps())
+  // A bitrate above the warning threshold of the TV (getBitrateWarningMbps()), its decoder cap on most TVs
   BITRATE_ABOVE_CAP: 'bitrateAboveCap',
   // H.264 above 1080p, which Samsung TVs generally can't decode
   H264_RESOLUTION: 'h264Resolution',
@@ -626,7 +646,8 @@ function hdrWarningKey(hdrMode, caps) {
 
 // Return the message key of the warning for a bitrate in Mbps on a TV with the network connection type (VIDEO_WARNINGS),
 // or null: above ETHERNET_MAX_BITRATE over Ethernet, the 100 Mbps port that Samsung TVs usually have, and otherwise above
-// the decoder cap of the TV (getDecoderCapMbps(), e.g. 100 Mbps for a tested model, 80 Mbps for other 4K and 8K TVs)
+// the warning threshold of the TV (getBitrateWarningMbps(), e.g. 150 Mbps on the tested model, 80 Mbps on other 4K and
+// 8K TVs)
 function bitrateWarningKey(bitrate, connectionType, caps) {
   const mbps = parseFloat(bitrate);
   if (!(mbps > 0)) {
@@ -635,7 +656,7 @@ function bitrateWarningKey(bitrate, connectionType, caps) {
   if (connectionType === 'ethernet' && mbps > ETHERNET_MAX_BITRATE) {
     return VIDEO_WARNINGS.ETHERNET_BITRATE;
   }
-  return mbps > getDecoderCapMbps(caps) ? VIDEO_WARNINGS.BITRATE_ABOVE_CAP : null;
+  return mbps > getBitrateWarningMbps(caps) ? VIDEO_WARNINGS.BITRATE_ABOVE_CAP : null;
 }
 
 // Return the message key of the warning for a video codec at a resolution (VIDEO_WARNINGS), or null: H.264 above 1080p,
@@ -799,6 +820,7 @@ if (typeof module === 'object' && module && module.exports) {
     detectTvCapabilities: detectTvCapabilities,
     getStandardPresetBitrate: getStandardPresetBitrate,
     getDecoderCapMbps: getDecoderCapMbps,
+    getBitrateWarningMbps: getBitrateWarningMbps,
     recommendedBitrate: recommendedBitrate,
     bitrateRaiseLimit: bitrateRaiseLimit,
     sliderBitrate: sliderBitrate,

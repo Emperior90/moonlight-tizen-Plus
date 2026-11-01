@@ -114,10 +114,11 @@ test('a hand-picked bitrate is kept when the video settings change, with one not
     shown = await readVideoSettings(app.page);
     assert.deepEqual([shown.bitrate, shown.frameRate, shown.resolution], ['62', '60', '3200:1800']);
     assert.equal(count(app, 'Keeping your bitrate of'), 1);
-    // The notice names the recommended bitrate of the selection it appeared for (4K at 120 FPS: the decoder cap)
+    // The notice names the recommended bitrate of the selection it appeared for (4K at 120 FPS: the decoder cap), and
+    // that the button also resets the codec and the other video settings
     const messages = await app.page.evaluate(() => window.__snackbarMessages);
     assert.deepEqual(messages.filter((message) => message.indexOf('Keeping your bitrate of') === 0), [
-      'Keeping your bitrate of 62 Mbps (recommended for these video settings: 100 Mbps). After the optimal settings button, the bitrate follows the video settings again.',
+      'Keeping your bitrate of 62 Mbps (recommended for these video settings: 100 Mbps). The optimal settings button lets the bitrate follow the video settings again, but it also resets the codec and the other video settings.',
     ]);
   } finally {
     await app.context.close();
@@ -145,7 +146,7 @@ test('the notice about a kept bitrate names the preset of this TV, also on a Ful
     await pickFrameRate(app.page, 30);
     const messages = await app.page.evaluate(() => window.__snackbarMessages);
     assert.deepEqual(messages.filter((message) => message.indexOf('Keeping your bitrate of') === 0), [
-      'Keeping your bitrate of 25 Mbps (recommended for these video settings: 13 Mbps). After the optimal settings button, the bitrate follows the video settings again.',
+      'Keeping your bitrate of 25 Mbps (recommended for these video settings: 13 Mbps). The optimal settings button lets the bitrate follow the video settings again, but it also resets the codec and the other video settings.',
     ]);
     assert.equal((await readVideoSettings(app.page)).bitrate, '25');
     // The button applies 1080p at 60 FPS and its bitrate, which then follows the frame rate: 13 Mbps at 30 FPS, as named

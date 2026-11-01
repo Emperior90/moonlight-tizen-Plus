@@ -187,9 +187,34 @@ describe('the tested profiles', () => {
 
   test('the S90C profile holds its tested values and can not be changed at run time', () => {
     const s90c = profile.VERIFIED_PROFILES.find((entry) => entry.id === 'S90C');
-    assert.deepEqual([s90c.unlockAllFps, s90c.decoderCapMbps, s90c.refresh120], [true, 100, true]);
+    // The presets stop at 100 Mbps, and the warning starts above the 150 Mbps that it streams over 5 GHz Wi-Fi
+    assert.deepEqual([s90c.unlockAllFps, s90c.decoderCapMbps, s90c.warnAboveMbps, s90c.refresh120], [true, 100, 150, true]);
     assert.ok(Object.isFrozen(s90c));
     assert.ok(Object.isFrozen(profile.VERIFIED_PROFILES));
+  });
+});
+
+describe('getBitrateWarningMbps()', () => {
+  test('is 150 Mbps on the S90C and the decoder cap on every other TV', () => {
+    for (const [tv, warning, cap] of [['s90c', 150, 100], ['uhd', 80, 80], ['8k', 80, 80], ['fhd', 50, 50]]) {
+      const caps = detect({ tv });
+      assert.equal(profile.getBitrateWarningMbps(caps), warning, tv);
+      assert.equal(profile.getDecoderCapMbps(caps), cap, tv);
+    }
+    // A profile without a warning threshold of its own warns at its decoder cap, and so does a TV without capabilities
+    assert.equal(profile.getBitrateWarningMbps({ profile: { decoderCapMbps: 90 }, is4k: true }), 90);
+    assert.equal(profile.getBitrateWarningMbps(null), profile.FHD_DECODER_CAP_MBPS);
+  });
+
+  test('changes no bitrate that the presets and the optimal settings give the S90C', () => {
+    const s90c = detect({ tv: 's90c' });
+    const optimal = (conn) => profile.deriveOptimalSettings(s90c, conn).bitrate;
+    assert.deepEqual([optimal('ethernet'), optimal('wifi'), optimal('unknown')], [75, 100, 80]);
+    for (const res of RESOLUTIONS) {
+      for (const fps of FRAME_RATES) {
+        assert.ok(profile.presetBitrate(res, fps, 'wifi', s90c) <= 100, res + '@' + fps);
+      }
+    }
   });
 });
 

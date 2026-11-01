@@ -2,8 +2,9 @@
 
 // Checks that the table of recommended bitrates in docs/GUIDE.md (between the recommended-bitrates markers) says what the
 // app applies: the resolution and frame rate of deriveOptimalSettings() and its bitrate for each connection, the end of
-// the Wi-Fi ladder that the dialog suggests (bitrateRaiseLimit()) and the decoder cap where the bitrate warning starts
-// (getDecoderCapMbps()), each for a simulated TV of the class. It also checks the Ethernet limits that the guide names.
+// the Wi-Fi ladder that the dialog suggests (bitrateRaiseLimit()) and the bitrate where the warning starts
+// (getBitrateWarningMbps(), the decoder cap except on the S90C), each for a simulated TV of the class. It also checks
+// the Ethernet limits that the guide names.
 // So a change of the TV profile in wasm/platform/tv_profile.js fails here until the guide is updated with it.
 
 const test = require('node:test');
@@ -96,10 +97,11 @@ test('the table of recommended bitrates in the guide matches the TV profile of t
     assert.equal(mbps(row[4], tvClass + ', connection not detected'), settings.unknown.bitrate, tvClass + ': bitrate without a detected connection');
     assert.equal(mbps(row[5], tvClass + ', ladder'), profile.bitrateRaiseLimit(shown.resolution, shown.frameRate, caps),
       tvClass + ': the highest bitrate the dialog suggests over Wi-Fi');
-    assert.equal(mbps(row[6], tvClass + ', warning'), profile.getDecoderCapMbps(caps), tvClass + ': decoder cap');
-    // The bitrate of the button never starts above the cap where the warning appears
+    assert.equal(mbps(row[6], tvClass + ', warning'), profile.getBitrateWarningMbps(caps), tvClass + ': warning threshold');
+    // The bitrate of the button never starts above the decoder cap, nor above the bitrate where the warning appears
     Object.keys(settings).forEach((connection) => {
       assert.ok(settings[connection].bitrate <= profile.getDecoderCapMbps(caps), tvClass + ': bitrate over ' + connection + ' within the cap');
+      assert.ok(settings[connection].bitrate <= profile.getBitrateWarningMbps(caps), tvClass + ': bitrate over ' + connection + ' without a warning');
     });
   });
 });

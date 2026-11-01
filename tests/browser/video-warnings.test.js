@@ -182,8 +182,9 @@ test('HDR switched on for a TV that does not report HDR warns, and is still stor
   }
 });
 
-test('the bitrate warning starts at the decoder cap of the TV and names it (case 5)', async () => {
-  for (const [tv, cap] of [['s90c', 100], ['uhd', 80], ['fhd', 50]]) {
+test('the bitrate warning starts at the warning threshold of the TV and names it (case 5)', async () => {
+  // The decoder cap, and 150 Mbps on the S90C, which it streams over 5 GHz Wi-Fi (its presets stay at 100 Mbps)
+  for (const [tv, cap] of [['s90c', 150], ['uhd', 80], ['fhd', 50]]) {
     const app = await openApp(harness, { tv: { tv, conn: 'wifi' } });
     try {
       await setBitrateByHand(app.page, cap);
@@ -226,6 +227,30 @@ test('on the S90C the presets stop at its decoder cap, so 4K at 120 FPS no longe
     // The standard preset of 120 Mbps of 2.1.0 went past the cap of 100 Mbps and warned about it
     assert.equal(await app.page.evaluate(() => $('#bitrateSlider').val()), '100');
     assert.deepEqual(counts(app), only({ lowerEnd: 1 }));
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('on the S90C a kept bitrate of 150 Mbps in AV1 does not warn when the resolution or frame rate changes', async () => {
+  // The owner's settings: 4K HDR at 60 FPS in AV1 at 150 Mbps, picked by hand
+  const app = await openApp(harness, {
+    tv: { tv: 's90c', conn: 'wifi' },
+    stored: { resolution: '3840:2160', frameRate: '60', videoCodec: 'AV1', hdrMode: true, bitrate: '150', autoAdjustBitrate: false },
+  });
+  try {
+    await pickFrameRate(app.page, 120);
+    await pickResolution(app.page, '2560:1440');
+    await pickResolution(app.page, '3840:2160');
+    await pickFrameRate(app.page, 60);
+    assert.equal(await app.page.evaluate(() => $('#bitrateSlider').val()), '150');
+    assert.equal(count(app, TEXTS.decoderCap), 0, 'no bitrate warning at 150 Mbps');
+    // The notice about the kept bitrate still names the recommendation of 100 Mbps for 4K at 120 FPS over Wi-Fi
+    assert.ok(app.logs.some((line) => line.indexOf('Keeping your bitrate of %1$s Mbps') >= 0 && / 150 100$/.test(line)));
+    // Above 150 Mbps the warning appears
+    await setBitrateByHand(app.page, 150.5);
+    assert.equal(count(app, TEXTS.decoderCap), 1);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

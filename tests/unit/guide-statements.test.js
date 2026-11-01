@@ -97,7 +97,11 @@ test('the guide names the bitrates of the presets at other resolutions and frame
     assert.equal(profile.presetBitrate('3840:2160', fps, 'wifi', s90c), 100, 'S90C at 4K and ' + fps + ' FPS');
   }
   assert.equal(profile.getDecoderCapMbps(s90c), 100);
-  assert.match(GUIDE, /On the tested S90C over Wi-Fi, 4K at 90, 120 or 144 FPS gets 100 Mbps, its decoder cap;/);
+  assert.equal(profile.getBitrateWarningMbps(s90c), 150);
+  // The app names 150 Mbps as the recommendation for the decoder of the S90C in its warning, so the guide calls the
+  // 100 Mbps the highest bitrate of the presets, not a decoder cap
+  assert.match(GUIDE, /On the tested S90C over Wi-Fi, 4K at 90, 120 or 144 FPS gets 100 Mbps, the highest bitrate its presets give \(the warning starts above 150 Mbps\);/);
+  assert.doesNotMatch(GUIDE, /gets 100 Mbps, its decoder cap/);
   // The presets are the bitrates that the optimal settings button applies for the same resolution and frame rate
   for (const conn of ['ethernet', 'wifi', 'unknown']) {
     const optimal = profile.deriveOptimalSettings(s90c, conn);
@@ -106,22 +110,34 @@ test('the guide names the bitrates of the presets at other resolutions and frame
   assert.match(GUIDE, /Once you move the bitrate slider yourself \(or change the bitrate in the Stream Menu\), the app keeps your bitrate/);
 });
 
+test('the guide says what the optimal settings button resets and where its dialog opens, as the app does', () => {
+  // The notice about a kept bitrate (applyBitratePresets() in index.js) and the guide both say that the button also
+  // resets the codec and the other video settings
+  const locale = JSON.parse(read('wasm/static/locales/en-US.json'));
+  assert.ok(Object.keys(locale).some((key) => key.indexOf('Keeping your bitrate of %1$s Mbps') === 0 &&
+    key.indexOf('but it also resets the codec and the other video settings.') > 0));
+  assert.match(GUIDE, /The button lets the bitrate follow again, but it also resets the codec and the other video settings \(e\.g\. AV1 goes back to HEVC\)/);
+  // The dialog opens on Cancel like the dialogs that confirm an action that can't be undone (pushConfirmationView())
+  assert.match(read('wasm/platform/index.js'), /pushConfirmationView\(Views\.WarningDialog\);/);
+  assert.match(GUIDE, /The dialog opens on \*Cancel\*, so that pressing OK twice on the button doesn't replace your settings/);
+});
+
 test('the guide names the end of the slider and of the Stream Menu, and what a bitrate above 150 Mbps needs', () => {
   const menus = read('wasm/platform/menus.js');
   assert.match(menus, /return \{ min: STREAM_MENU_BITRATE_STEP, max: MAX_BITRATE_MBPS \};/);
   assert.equal(profile.MAX_BITRATE_MBPS, 250);
   const row = tableRow('Bitrate');
-  assert.match(row[1], /change it in 5 Mbps steps, from 5 Mbps up to 250 Mbps like the slider\. Above the decoder cap of the TV \(100 Mbps on the tested S90C profile, 80 Mbps on other 4K and 8K TVs, 50 Mbps on Full HD TVs\), OK shows the same warning as the slider\./);
-  assert.equal(profile.getDecoderCapMbps(capsOf({ tv: 's90c' })), 100);
-  assert.equal(profile.getDecoderCapMbps(capsOf({ tv: 'uhd' })), 80);
-  assert.equal(profile.getDecoderCapMbps(capsOf({ tv: 'fhd' })), 50);
+  assert.match(row[1], /change it in 5 Mbps steps, from 5 Mbps up to 250 Mbps like the slider\. Above the warning threshold of the TV \(150 Mbps on the tested S90C profile, 80 Mbps on other 4K and 8K TVs, 50 Mbps on Full HD TVs\), OK shows the same warning as the slider\./);
+  assert.equal(profile.getBitrateWarningMbps(capsOf({ tv: 's90c' })), 150);
+  assert.equal(profile.getBitrateWarningMbps(capsOf({ tv: 'uhd' })), 80);
+  assert.equal(profile.getBitrateWarningMbps(capsOf({ tv: 'fhd' })), 50);
   const above = GUIDE.slice(GUIDE.indexOf('\n### Above 150 Mbps\n'), GUIDE.indexOf('\n## ', GUIDE.indexOf('\n### Above 150 Mbps\n')));
   assert.ok(above.length > 0, 'the guide has the section Above 150 Mbps');
   assert.match(above, /The slider and the Stream Menu go up to 250 Mbps/);
   assert.match(above, /Only a strong 5 GHz or 6 GHz Wi-Fi link close to the router carries that much; the Ethernet port of the TV has 100 Mbps\./);
   assert.match(above, /If `max_bitrate` of Sunshine is set, it must allow the bitrate/);
-  assert.match(above, /The warning above the decoder cap of the TV stays/);
-  assert.doesNotMatch(GUIDE, /goes up to 150 Mbps|up to the decoder cap of the TV \(100 Mbps/);
+  assert.match(above, /The bitrate warning of the TV stays \(above 150 Mbps on the S90C\)/);
+  assert.doesNotMatch(GUIDE, /goes up to 150 Mbps|up to the decoder cap of the TV \(100 Mbps|Above the decoder cap of the TV \(100 Mbps/);
 });
 
 test('the documents describe the controller type of System information and the Start of the mouse emulation as the code does', () => {
@@ -223,7 +239,9 @@ test('the sections of the guide that the app names by their heading exist', () =
 
 test('the guide gives the tested bitrate steps of the S90C itself and links the documents of v1.19.0-s90c.1 at their tag', () => {
   const bitrate = GUIDE.slice(GUIDE.indexOf('\n## Finding your bitrate\n'), GUIDE.indexOf('\n## ', GUIDE.indexOf('\n## Finding your bitrate\n') + 1));
-  assert.match(bitrate, /\*\*Samsung S90C over Wi-Fi:\*\* starts at its cap of 100 Mbps\. The tuning plan of this model tests 100 → 120 → 135 → 150 Mbps/);
+  assert.match(bitrate, /\*\*Samsung S90C over Wi-Fi:\*\* starts at 100 Mbps, the recommendation that also suits a weaker Wi-Fi link, and the app warns above 150 Mbps, which this model streams in daily use \(4K HDR in AV1 over 5 GHz Wi-Fi, `fec_percentage` 5 in Sunshine\)\. The tuning plan of this model tests 100 → 120 → 135 → 150 Mbps/);
+  assert.equal(profile.presetBitrate('3840:2160', 60, 'wifi', capsOf({ tv: 's90c' })), 100);
+  assert.equal(profile.getBitrateWarningMbps(capsOf({ tv: 's90c' })), 150);
   // The archive of the German documents left the branch; the tag keeps them
   assert.ok(!fs.existsSync(path.join(REPO_ROOT, 'docs', 'profiles')));
   const tagLink = 'https://github.com/Emperior90/moonlight-tizen-Plus/tree/v1.19.0-s90c.1/docs';

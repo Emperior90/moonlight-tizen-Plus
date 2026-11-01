@@ -119,7 +119,7 @@ Settings → Basic Settings → *Optimal settings for this TV* → *Apply the op
 - advice for the network connection: over Wi-Fi how far you can raise the bitrate, over Ethernet how to avoid packet loss on the 100 Mbps port of the TV
 - on Tizen 9.0 and newer, a pointer to the ForceGM variant, or a note that it is installed
 
-*Apply* applies the settings, *Cancel* keeps your current ones. The same values are the defaults of a fresh install and of *Restore Defaults* (the round arrow at the top right of the settings, see [the screens](#the-screens-of-the-app)).
+The dialog opens on *Cancel*, so that pressing OK twice on the button doesn't replace your settings: LEFT selects *Apply*, which applies them, and *Cancel* or RETURN keep your current ones. The same values are the defaults of a fresh install and of *Restore Defaults* (the round arrow at the top right of the settings, see [the screens](#the-screens-of-the-app)).
 
 What the button applies:
 
@@ -132,7 +132,7 @@ What the button applies:
 - **Ultra low latency mode:** on for Tizen 6.0 to 8.0 and off on Tizen 9.0 and newer. On Tizen 5.5 it is off and disabled, unless the video player of the TV says that it offers the Ultra Low Latency mode: then it is off, but you can turn it on, and the dialog lists *Ultra low latency mode off*. On any version it is off and disabled when the video player doesn't offer the mode (see [ForceGM variant and game mode](#forcegm-variant-and-game-mode)).
 - **Video frame pacing** on, **Full color range** off.
 
-After the button, a fresh install or *Restore Defaults*, the bitrate follows the resolution and frame rate: each change of them sets the recommended bitrate for the new resolution and frame rate, by the rules below. Once you move the bitrate slider yourself (or change the bitrate in the Stream Menu), the app keeps your bitrate when the resolution or frame rate changes, and a notice names the recommended one. The button lets the bitrate follow again; moonlight-qt keeps a bitrate picked by hand until you reset its settings.
+After the button, a fresh install or *Restore Defaults*, the bitrate follows the resolution and frame rate: each change of them sets the recommended bitrate for the new resolution and frame rate, by the rules below. Once you move the bitrate slider yourself (or change the bitrate in the Stream Menu), the app keeps your bitrate when the resolution or frame rate changes, and a notice names the recommended one. The button lets the bitrate follow again, but it also resets the codec and the other video settings (e.g. AV1 goes back to HEVC); moonlight-qt keeps a bitrate picked by hand until you reset its settings.
 
 ### TV classes
 
@@ -144,7 +144,7 @@ The app asks the TV for its panel resolution (Full HD, 4K or 8K), HDR support, T
 | 4K, 60 Hz panel | Streams 4K at 60 FPS by default. Frame rates above 60 FPS stay locked. If you unlock them, the app can't tell a 60 Hz panel from a 120 Hz one, so it shows the warnings of the next row: at 4K, 90 and 120 FPS need a Level 5.2 decoder and 144 FPS exceeds Level 5.2. The warning that many Samsung TVs have 60 Hz panels appears at lower resolutions above 60 FPS (up to 1440p, or 1800p at 90 FPS). |
 | 4K, 120 Hz panel | Same defaults as a 60 Hz panel. You can unlock 90, 120 and 144 FPS yourself (Settings → Basic Settings → *Unlock all frame rates*, right below the frame rate). 4K above 60 FPS needs an HEVC or AV1 Level 5.2 decoder, which most Samsung TVs with a 120 Hz panel have, and the app warns about that. 4K at 144 FPS exceeds Level 5.2, the highest level that the app asks the TV for, and gets its own warning. Untested on any 120 Hz TV except the S90C. |
 | 8K | The highest stream resolution is 4K, so an 8K TV gets the same defaults and bitrates as a 4K TV. Its decoder handles 8K at 60 FPS, beyond Level 5.2, so 4K at 90 or 120 FPS gets the warning that many Samsung TVs have 60 Hz panels instead of the Level 5.2 warning. 4K at 144 FPS still gets the warning that it exceeds Level 5.2. Untested. |
-| Tested profile (Samsung S90C) | The 4K values with a higher bitrate over Wi-Fi (100 Mbps), and the higher frame rates unlocked from the start, because they were tested on this model. |
+| Tested profile (Samsung S90C) | The 4K values with a higher bitrate over Wi-Fi (100 Mbps), and the higher frame rates unlocked from the start, because they were tested on this model. The bitrate warning starts above 150 Mbps, which this model streams over 5 GHz Wi-Fi. |
 
 ### Recommended bitrates
 
@@ -153,9 +153,9 @@ The bitrate starts from the standard preset of the resolution and frame rate (20
 - **Ethernet:** 25 % above the preset, but at most 75 Mbps, because of the 100 Mbps port.
 - **Wi-Fi:** 25 % above the preset.
 - **Connection not detected:** the preset, but at most 80 Mbps.
-- None of them goes above the decoder cap of the TV class, where the bitrate warning starts.
+- None of them goes above the decoder cap of the TV class, where the bitrate warning starts (on the S90C only above 150 Mbps).
 
-When the bitrate follows the video settings, every other resolution and frame rate gets its bitrate by the same rules, e.g. 50 Mbps for 2560 x 1440 at 60 FPS over Wi-Fi. On the tested S90C over Wi-Fi, 4K at 90, 120 or 144 FPS gets 100 Mbps, its decoder cap; to go higher, raise the bitrate by hand as [Finding your bitrate](#finding-your-bitrate) describes.
+When the bitrate follows the video settings, every other resolution and frame rate gets its bitrate by the same rules, e.g. 50 Mbps for 2560 x 1440 at 60 FPS over Wi-Fi. On the tested S90C over Wi-Fi, 4K at 90, 120 or 144 FPS gets 100 Mbps, the highest bitrate its presets give (the warning starts above 150 Mbps); to go higher, raise the bitrate by hand as [Finding your bitrate](#finding-your-bitrate) describes.
 
 This table shows what the button applies. A test checks it against the code of the app (`wasm/platform/tv_profile.js`).
 
@@ -166,12 +166,12 @@ This table shows what the button applies. A test checks it against the code of t
 | 4K, 60 Hz panel | 3840 x 2160, 60 FPS | 75 Mbps | 80 Mbps | 80 Mbps | 80 Mbps | 80 Mbps |
 | 4K, 120 Hz panel | 3840 x 2160, 60 FPS | 75 Mbps | 80 Mbps | 80 Mbps | 80 Mbps | 80 Mbps |
 | 8K | 3840 x 2160, 60 FPS | 75 Mbps | 80 Mbps | 80 Mbps | 80 Mbps | 80 Mbps |
-| Samsung S90C (tested profile) | 3840 x 2160, 60 FPS | 75 Mbps | 100 Mbps | 80 Mbps | 100 Mbps | 100 Mbps |
+| Samsung S90C (tested profile) | 3840 x 2160, 60 FPS | 75 Mbps | 100 Mbps | 80 Mbps | 150 Mbps | 150 Mbps |
 <!-- recommended-bitrates:end -->
 
-- **Wi-Fi ladder ends at** is the highest bitrate the dialog suggests over Wi-Fi: twice the standard preset, but at most the decoder cap. When the recommended bitrate already reaches it, the dialog says so instead.
-- **Bitrate warning above** is the decoder cap of the TV class. Over Ethernet, a warning also appears above 80 Mbps, because of the 100 Mbps port.
-- Where the caps come from: 100 Mbps is what the S90C handled in its tests. The 80 Mbps for 4K and 8K TVs and the 50 Mbps for Full HD TVs follow summaries of Samsung's TV video specifications (HEVC at 60 FPS), which could not be checked against the specification pages themselves. Treat them as careful starting points, not as hard limits of your TV. The slider goes up to 250 Mbps, and so does *Bitrate* in the Stream Menu; [above 150 Mbps](#above-150-mbps) says when that much can work.
+- **Wi-Fi ladder ends at** is the highest bitrate the dialog suggests over Wi-Fi: twice the standard preset, but at most the bitrate where the warning starts. It is only advice for a good Wi-Fi link; *Apply* sets the bitrate of the *Wi-Fi* column. When the recommended bitrate already reaches it, the dialog says so instead.
+- **Bitrate warning above** is the decoder cap of the TV class, except on the S90C. Over Ethernet, a warning also appears above 80 Mbps, because of the 100 Mbps port.
+- Where the caps come from: the S90C warns only above 150 Mbps, which it streams in daily use (4K HDR in AV1 over 5 GHz Wi-Fi, with `fec_percentage` 5 in Sunshine). Its presets stay at the 100 Mbps of its tests over Wi-Fi, so that a weaker Wi-Fi link works too. The 80 Mbps for 4K and 8K TVs and the 50 Mbps for Full HD TVs follow summaries of Samsung's TV video specifications (HEVC at 60 FPS), which could not be checked against the specification pages themselves. Treat them as careful starting points, not as hard limits of your TV. The slider goes up to 250 Mbps, and so does *Bitrate* in the Stream Menu; [above 150 Mbps](#above-150-mbps) says when that much can work.
 
 ## Stream Menu and app menu
 
@@ -182,7 +182,7 @@ This table shows what the button applies. A test checks it against the code of t
 | Resume | Returns to the game |
 | Performance statistics | Steps the [statistics](#performance-statistics) through *Off*, *Compact* and *Full*, like YELLOW. The menu stays open and shows the level. |
 | Mouse emulation | Only shows with a controller connected. Switches the [mouse emulation](CONTROLLERS.md#mouse-emulation) of the controllers on or off, also when the setting *Mouse emulation* is off (the setting only allows the hold of Start). |
-| Bitrate | Shows the bitrate of the stream. LEFT and RIGHT (or the D-pad) change it in 5 Mbps steps, from 5 Mbps up to 250 Mbps like the slider. Above the decoder cap of the TV (100 Mbps on the tested S90C profile, 80 Mbps on other 4K and 8K TVs, 50 Mbps on Full HD TVs), OK shows the same warning as the slider. OK reconnects with the new bitrate: the stream ends without quitting the game, the start screen shows *Reconnecting with … Mbps* for a few seconds, and the game resumes. The new bitrate becomes the bitrate setting. This works with every host, since the bitrate goes to the host when a stream starts. |
+| Bitrate | Shows the bitrate of the stream. LEFT and RIGHT (or the D-pad) change it in 5 Mbps steps, from 5 Mbps up to 250 Mbps like the slider. Above the warning threshold of the TV (150 Mbps on the tested S90C profile, 80 Mbps on other 4K and 8K TVs, 50 Mbps on Full HD TVs), OK shows the same warning as the slider. OK reconnects with the new bitrate: the stream ends without quitting the game, the start screen shows *Reconnecting with … Mbps* for a few seconds, and the game resumes. The new bitrate becomes the bitrate setting. This works with every host, since the bitrate goes to the host when a stream starts. |
 | Type text… | Opens a text field with the keyboard of the TV. Its *Done* key, or *Send to the PC*, types the text on the PC as Unicode, whatever the keyboard layout of the PC, e.g. for a login or a search; RETURN, the *Cancel* key of the keyboard or B return to the menu without sending anything. Up to 1024 bytes (about 1000 Latin letters) at once, without line breaks. The keys go only to the field while it is open, and the app never logs or keeps the text. The keyboard of the TV is used with the remote; a USB keyboard types into the field as well, with Enter to send. |
 | Windows key, Alt + Tab, Alt + F4, Esc, Alt + Enter | Presses the keys on the PC and releases them again in reverse order, so that no key stays held, and returns to the game. Alt + Enter switches most Windows games and emulators between fullscreen and a window. |
 | Disconnect | Ends the stream, like RED. The game keeps running on the PC. |
@@ -229,7 +229,7 @@ Examples:
 - **Full HD TV over Wi-Fi:** 25 → 30 → 35 → 40 Mbps.
 - **4K TV over Wi-Fi without a tested profile:** the recommendation of 80 Mbps already is the cap. Higher bitrates are untested on these TVs, and the app warns above 80 Mbps. If you still try, use the same steps (80 → 95 → 110 Mbps) and go back as soon as *Session frames dropped by the TV* or *TV player rejections* appear.
 - **Over Ethernet:** the recommendation of 75 Mbps is close to what the 100 Mbps port of the TV can carry, and the app warns above 80 Mbps. Use 5 GHz Wi-Fi for higher bitrates.
-- **Samsung S90C over Wi-Fi:** starts at its cap of 100 Mbps. The tuning plan of this model tests 100 → 120 → 135 → 150 Mbps, 15 to 20 minutes each in the same demanding game, and goes down in 10 Mbps steps (90, 80) if 100 already fails. It keeps the highest step that passed minus 15 Mbps, but not less than 100 Mbps once 100 passed: e.g. 120 Mbps when 135 passes and 150 doesn't. Steps above 150 Mbps follow the same rule.
+- **Samsung S90C over Wi-Fi:** starts at 100 Mbps, the recommendation that also suits a weaker Wi-Fi link, and the app warns above 150 Mbps, which this model streams in daily use (4K HDR in AV1 over 5 GHz Wi-Fi, `fec_percentage` 5 in Sunshine). The tuning plan of this model tests 100 → 120 → 135 → 150 Mbps, 15 to 20 minutes each in the same demanding game, and goes down in 10 Mbps steps (90, 80) if 100 already fails. It keeps the highest step that passed minus 15 Mbps, but not less than 100 Mbps once 100 passed: e.g. 120 Mbps when 135 passes and 150 doesn't. Steps above 150 Mbps follow the same rule.
 
 If a long session stutters after a while, note the time and the lines above: they show whether the host, the network or the TV is the cause (see [Performance statistics](#performance-statistics)).
 
@@ -239,7 +239,7 @@ The slider and the Stream Menu go up to 250 Mbps, for TVs and networks that hand
 
 - Only a strong 5 GHz or 6 GHz Wi-Fi link close to the router carries that much; the Ethernet port of the TV has 100 Mbps. Sunshine fits its error correction (`fec_percentage`, 20 % by default) and the audio into the bitrate, so at 250 Mbps the encoder gets about 200 Mbps, and the network carries a few percent more for the packet headers.
 - If `max_bitrate` of Sunshine is set, it must allow the bitrate (see [Host settings](#host-settings-sunshine)).
-- The warning above the decoder cap of the TV stays, since bitrates this high are untested on every TV. Go back as soon as *Session frames dropped by the TV* or *TV player rejections* appear.
+- The bitrate warning of the TV stays (above 150 Mbps on the S90C), since bitrates this high are untested on every TV. Go back as soon as *Session frames dropped by the TV* or *TV player rejections* appear.
 
 ## Host settings (Sunshine)
 
