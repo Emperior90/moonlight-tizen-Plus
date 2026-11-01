@@ -282,7 +282,33 @@ describe('the bitrate presets', () => {
         }
       }
     }
-    assert.deepEqual([0.01, 4.492, 4.75, 35.936, 149.9, 300].map(profile.sliderBitrate), [0.5, 4.5, 5, 36, 150, 150]);
+    // Up to the end of the slider at 250 Mbps (150 Mbps before 2.2.0), so that e.g. 200 Mbps stays 200 Mbps
+    assert.deepEqual([0.01, 4.492, 4.75, 35.936, 149.9, 200.2, 249.8, 300].map(profile.sliderBitrate), [0.5, 4.5, 5, 36, 150, 200, 250, 250]);
+  });
+
+  test('the highest bitrate is 250 Mbps, the end of the slider of index.html, while the presets stay at the decoder caps', () => {
+    assert.equal(profile.MAX_BITRATE_MBPS, 250);
+    const html = fs.readFileSync(path.join(REPO_ROOT, 'wasm', 'index.html'), 'utf8');
+    const slider = /<input type="range" id="bitrateSlider"[^>]*>/.exec(html);
+    assert.ok(slider, 'the bitrate slider in index.html');
+    assert.match(slider[0], /\smin="0\.5"/);
+    assert.match(slider[0], /\smax="250"/);
+    assert.match(slider[0], /\sstep="0\.5"/);
+    assert.match(html, /<span id="bitrateHighestValue">250<\/span>/);
+    // The careful defaults don't follow the slider: no preset and no optimal setting goes above the decoder cap
+    for (const tv of ['s90c', 'uhd', 'fhd', '8k']) {
+      const caps = detect({ tv });
+      for (const res of RESOLUTIONS) {
+        for (const fps of FRAME_RATES) {
+          for (const conn of CONNECTIONS) {
+            assert.ok(profile.presetBitrate(res, fps, conn, caps) <= profile.getDecoderCapMbps(caps), [tv, res, fps, conn].join(' '));
+          }
+        }
+      }
+      for (const conn of CONNECTIONS) {
+        assert.ok(profile.deriveOptimalSettings(caps, conn).bitrate <= profile.getDecoderCapMbps(caps), tv + ' ' + conn);
+      }
+    }
   });
 
   test('at the resolution and frame rate of the optimal settings, the preset is their bitrate', () => {

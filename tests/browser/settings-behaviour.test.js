@@ -2,8 +2,8 @@
 
 // Pins how the video settings react to changes on the settings screen (from the earlier rounds of fixes): the bitrate
 // presets, which are the recommended bitrates since 2.2.0, and when they follow the resolution and frame rate, the 5 /
-// 0.5 Mbps steps of the bitrate menu, the Ethernet limit of the presets, and the one-shot hints and warnings (90 FPS,
-// H.264 above 1080p, codec fallbacks, AV1).
+// 0.5 Mbps steps of the bitrate menu up to 250 Mbps and a stored bitrate up there, the Ethernet limit of the presets,
+// and the one-shot hints and warnings (90 FPS, H.264 above 1080p, codec fallbacks, AV1).
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -189,10 +189,13 @@ test('on a TV without a tested profile a preset stays within the decoder cap and
   }
 });
 
-test('the bitrate menu steps 5 Mbps with UP/DOWN and 0.5 Mbps with LEFT/RIGHT, within 0.5 to 150 Mbps', async () => {
+test('the bitrate menu steps 5 Mbps with UP/DOWN and 0.5 Mbps with LEFT/RIGHT, within 0.5 to 250 Mbps', async () => {
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
   try {
     const bitrate = async () => (await readVideoSettings(app.page)).bitrate;
+    // The ends of the slider and their labels
+    assert.deepEqual(await app.page.evaluate(() => [$('#bitrateSlider').attr('min'), $('#bitrateSlider').attr('max'),
+      $('#bitrateSlider').attr('step'), $('#bitrateLowestValue').text(), $('#bitrateHighestValue').text()]), ['0.5', '250', '0.5', '0.5', '250']);
     await app.page.evaluate(() => {
       setAutoAdjustBitrate(true);
       Views.SelectBitrateMenu.up();
@@ -212,7 +215,17 @@ test('the bitrate menu steps 5 Mbps with UP/DOWN and 0.5 Mbps with LEFT/RIGHT, w
         Views.SelectBitrateMenu.up();
       }
     });
-    assert.equal(await bitrate(), '150');
+    assert.equal(await bitrate(), '205', 'past 150 Mbps, the end of the slider before 2.2.0');
+    await app.page.evaluate(() => {
+      for (let i = 0; i < 10; i++) {
+        Views.SelectBitrateMenu.up();
+      }
+      Views.SelectBitrateMenu.right();
+    });
+    const top = await readVideoSettings(app.page);
+    assert.deepEqual([top.bitrate, top.bitrateLabel], ['250', '250 Mbps'], 'no further than 250 Mbps');
+    await app.page.evaluate(() => Views.SelectBitrateMenu.left());
+    assert.equal(await bitrate(), '249.5');
     await app.page.evaluate(() => {
       $('#bitrateSlider')[0].MaterialSlider.change('3');
       for (let i = 0; i < 3; i++) {
@@ -220,6 +233,48 @@ test('the bitrate menu steps 5 Mbps with UP/DOWN and 0.5 Mbps with LEFT/RIGHT, w
       }
     });
     assert.equal(await bitrate(), '0.5');
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a stored bitrate above 150 Mbps stays as it is at the start and after a restart, and a stream starts with it', async () => {
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, stored: { bitrate: '200', autoAdjustBitrate: false } });
+  try {
+    let shown = await readVideoSettings(app.page);
+    assert.deepEqual([shown.bitrate, shown.bitrateLabel, shown.autoAdjustBitrate], ['200', '200 Mbps', false]);
+    // A new resolution keeps the bitrate picked by hand, and the next start still shows it
+    await pickResolution(app.page, '2560:1440');
+    assert.equal((await readVideoSettings(app.page)).bitrate, '200');
+    await app.page.waitForTimeout(300);
+    await reloadApp(app);
+    shown = await readVideoSettings(app.page);
+    assert.deepEqual([shown.bitrate, shown.bitrateLabel], ['200', '200 Mbps']);
+    // 247.5 Mbps, picked by hand, is stored as it is and comes back after a restart
+    await app.page.evaluate(() => {
+      $('#bitrateSlider')[0].MaterialSlider.change('247.5');
+      $('#bitrateSlider').trigger('input');
+    });
+    await app.page.waitForTimeout(300);
+    await reloadApp(app);
+    shown = await readVideoSettings(app.page);
+    assert.deepEqual([shown.bitrate, shown.bitrateLabel], ['247.5', '247.5 Mbps']);
+    // The start request of a stream carries it in kbps (startGame() in index.js)
+    await app.page.evaluate(async () => {
+      const host = {
+        paired: true, online: true, serverUid: 'HOST1', hostname: 'GAMING-PC', address: '10.0.0.2', httpPort: 47989, currentGame: 0,
+        appVersion: '7.1.431.-1', gfeVersion: '', serverCodecModeSupport: 0x1F03,
+        refreshServerInfo: () => Promise.resolve(),
+        getAppById: (id) => Promise.resolve({ id: id, title: 'Game ' + id }),
+        launchApp: () => Promise.resolve('<root status_code="200" status_message="OK"><sessionUrl0>rtsp://10.0.0.2:48010</sessionUrl0></root>'),
+        toString: () => 'GAMING-PC',
+      };
+      api = host;
+      startGame(host, 8);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+    assert.equal(await app.page.evaluate(() => window.__startStreamArgs && window.__startStreamArgs[5]), '247500');
+    assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
   }

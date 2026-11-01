@@ -1,6 +1,6 @@
 **New since 2.1.0:**
 - Settings in 7 sections, with short help texts and clearer names
-- Presets follow the recommended bitrate; *Optimize bitrate presets* is gone
+- Bitrate up to 250 Mbps, presets follow the recommendation, no *Optimize bitrate presets*
 - Fixed: one UP in the Stream Menu could select *Quit app on the PC*
 - Questions that quit or delete start on *No*; no update notice in a stream
 - Faster screens, rumble on for new installs, a download 210 KB smaller

@@ -370,6 +370,11 @@ test('the lines of the report in System information', () => {
     'Hint: Many frames were lost on the network: use a cable or lower the bitrate.',
     'Hint: The PC often sent whole frames again after a loss: turn on Reference frame invalidation in the Advanced Settings.',
   ]);
+  // Bitrates up to the end of the slider (250 Mbps), with the half Mbps of its steps
+  assert.equal(plain(describe(Object.assign({}, report, { bitrateKbps: 247500 }), {}))[0],
+    'Last session: 10 min 0 s, HEVC Main10, 3840x2160, 60 FPS, 247.5 Mbps');
+  assert.equal(plain(describe(Object.assign({}, report, { bitrateKbps: 250000 }), {}))[0],
+    'Last session: 10 min 0 s, HEVC Main10, 3840x2160, 60 FPS, 250 Mbps');
   const noVideo = readReports().filter((entry) => entry.name === 'no-video')[0];
   const lines = plain(describe(app.platform.get('parseSessionReport')(noVideo.message.slice(18)), {}));
   assert.equal(lines[0], 'Last session: 4 s, No video, 75 Mbps');

@@ -33,7 +33,11 @@ const UNKNOWN_CONNECTION_MAX_BITRATE = 80; // Highest recommended bitrate in Mbp
 const NETWORK_HEADROOM_FACTOR = 1.25; // Factor above the standard preset that a known network connection gets, for a sharper picture in fast motion
 const UHD_DECODER_CAP_MBPS = 80; // Highest recommended bitrate in Mbps for a 4K or 8K TV without a tested profile, which Samsung specifies for HEVC at 4K and 60 FPS on most of its models
 const FHD_DECODER_CAP_MBPS = 50; // Highest recommended bitrate in Mbps for a Full HD TV, which Samsung specifies for HEVC at 1080p and 60 FPS on its Full HD models
-const MAX_BITRATE_MBPS = 150; // Highest bitrate in Mbps of the bitrate slider (index.html)
+// Highest bitrate in Mbps of the bitrate slider (index.html) and of the bitrate entry of the Stream Menu (menus.js). It
+// lies far above the decoder caps on purpose, for testing a TV over a strong 5 GHz or 6 GHz Wi-Fi link: the presets and
+// the optimal settings stay at the caps, and the bitrate warning names the cap of the TV. moonlight-common-c sends the
+// bitrate to Sunshine uncapped (x-ml-video.configuredBitrateKbps in SdpGenerator.c); only GFE stops at 100 Mbps.
+const MAX_BITRATE_MBPS = 250;
 
 // Highest luma sample rates (width x height x frame rate) of the decoder levels of HEVC and AV1. Level 5.1 covers 4K at
 // up to 64 FPS, and every supported TV decodes it. Level 5.2 covers 4K at up to 128 FPS, which the 4K TVs with a 120 Hz

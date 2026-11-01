@@ -350,27 +350,54 @@ test('in every language the Stream Menu shows every entry without scrolling, and
     for (const language of languages) {
       await app.page.evaluate((locale) => i18n.setLanguage(locale), language);
       await app.page.waitForFunction((locale) => document.documentElement.getAttribute('lang') === locale, language);
-      // Both notes of the bitrate entry: the one of a changed bitrate and the one of OK on an unchanged bitrate
+      // Both notes of the bitrate entry: the one of a changed bitrate and the one of OK on an unchanged bitrate, also
+      // with the widest bitrates since the entry goes up to 250 Mbps: a stream at 247.5 Mbps (chosen with the slider)
+      // and the entry one step below it or at it
       await forEachTextWidth(app.page, async (stress) => {
-        for (const note of ['changed', 'unchanged']) {
+        for (const note of ['changed', 'unchanged', 'widest changed', 'widest unchanged']) {
           const fit = await app.page.evaluate((which) => {
+            const stream = streamBitrateMbps;
             if (which === 'changed') {
               changeStreamMenuBitrate(-1);
-            } else {
+            } else if (which === 'unchanged') {
               changeStreamMenuBitrate(1);
               applyStreamMenuBitrate();
+            } else {
+              streamBitrateMbps = 247.5;
+              streamMenuBitrateMbps = which === 'widest changed' ? 245 : 247.5;
+              if (which === 'widest changed') {
+                showStreamMenuBitrate();
+              } else {
+                applyStreamMenuBitrate();
+              }
             }
             const menu = document.getElementById('streamMenu');
             const oneLine = (element) => element.getBoundingClientRect().height < 2 * parseFloat(getComputedStyle(element).lineHeight);
             const labels = Array.prototype.filter.call(menu.querySelectorAll('.overlay-menu-label'), (label) => label.offsetParent !== null);
-            return {
+            const value = document.getElementById('streamMenuBitrateValue');
+            const result = {
+              value: value.textContent,
+              valueOneLine: oneLine(value),
               note: $('#streamMenuBitrateNote').text(),
               noteOneLine: oneLine(document.getElementById('streamMenuBitrateNote')),
               longLabels: labels.filter((label) => !oneLine(label)).map((label) => label.textContent),
               scrolls: menu.scrollHeight > menu.clientHeight,
+              insideMenu: value.getBoundingClientRect().right <= menu.getBoundingClientRect().right,
             };
+            // Back to the bitrate of the stream after the widest texts, where 'changed' and 'unchanged' step from
+            if (which.indexOf('widest') === 0) {
+              streamBitrateMbps = stream;
+              streamMenuBitrateMbps = stream;
+            }
+            result.open = isStreamMenuOpen;
+            return result;
           }, note);
-          assert.ok(fit.note !== '' && fit.noteOneLine && fit.longLabels.length === 0 && !fit.scrolls, language + stress + ' ' + JSON.stringify(fit));
+          assert.ok(fit.open && fit.note !== '' && fit.noteOneLine && fit.valueOneLine && fit.insideMenu && fit.longLabels.length === 0 && !fit.scrolls,
+            language + stress + ' ' + JSON.stringify(fit));
+          if (note.indexOf('widest') === 0) {
+            assert.equal(fit.value, note === 'widest changed' ? '245 Mbps' : '247.5 Mbps', language + stress);
+            assert.ok(note === 'widest unchanged' || fit.note.indexOf('247.5') >= 0, language + stress + ' ' + fit.note);
+          }
         }
       });
     }

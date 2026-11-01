@@ -2,11 +2,13 @@
 
 // Checks the bitrate entry and 'Type text…' of the Stream Menu in the real page (wasm/platform/menus.js with index.js
 // and messages.js), over a simulated stream with the remote and a simulated gamepad:
-// - the bitrate entry shows the bitrate of the stream, LEFT and RIGHT change it in steps of 5 Mbps up to the decoder cap
-//   of the TV and no further, OK on an unchanged bitrate does nothing but explain, and OK on a new one keeps it as the
-//   bitrate setting, ends the stream without quitting the app on the PC and resumes the app with the new bitrate a moment
-//   later, with the launch screen and the new bitrate meanwhile; RED cancels the reconnect, an app that no longer runs
-//   ends it with a message, and an end of the stream for another reason never reconnects;
+// - the bitrate entry shows the bitrate of the stream, LEFT and RIGHT change it in steps of 5 Mbps from 5 Mbps up to
+//   250 Mbps, the end of the bitrate slider, and no further on every TV, OK on an unchanged bitrate does nothing but
+//   explain, and OK on a new one keeps it as the bitrate setting, ends the stream without quitting the app on the PC and
+//   resumes the app with the new bitrate a moment later, with the launch screen and the new bitrate meanwhile; above the
+//   decoder cap of the TV, or above 80 Mbps over Ethernet, OK shows the warning of the slider once; RED cancels the
+//   reconnect, an app that no longer runs ends it with a message, and an end of the stream for another reason never
+//   reconnects;
 // - 'Type text…' opens a field that takes the keys of the keyboard while nothing reaches the stream, Enter and the Done
 //   key of the keyboard of the TV send the text once through sendText() of the module and resume the stream, RETURN and
 //   the Cancel key send nothing and return to the Stream Menu, a text that can't be sent keeps the field with the reason,
@@ -160,6 +162,12 @@ async function openMenuAt(page, entryId) {
   throw new Error('The Stream Menu has no entry ' + entryId);
 }
 
+// The bitrate warnings of the slider (showVideoWarning() in index.js), as the snackbar shows them in English
+const DECODER_CAP_WARNING = (cap) => 'Warning: Bitrates above ' + cap + ' Mbps exceed what is recommended for the video decoder of ' +
+  'this TV and may cause playback interruptions and performance issues, please try with caution!';
+const ETHERNET_WARNING = 'Warning: Samsung TVs usually have a 100 Mbps Ethernet port, so bitrates above 80 Mbps can cause packet ' +
+  'loss. Use 5 GHz Wi-Fi for higher bitrates!';
+
 // What the bitrate entry shows
 const bitrateEntry = (page) => page.evaluate(() => ({
   value: $('#streamMenuBitrateValue').text(),
@@ -172,7 +180,7 @@ const bitrateEntry = (page) => page.evaluate(() => ({
 // The calls of the module stub since the stream started, as 'name args'
 const moduleCalls = (page) => page.evaluate(() => window.__wasmCalls.map((call) => call.name + (call.args.length ? ' ' + call.args.join(',') : '')));
 
-test('LEFT and RIGHT change the bitrate in steps of 5 Mbps up to the decoder cap, and OK reconnects with it', async () => {
+test('LEFT and RIGHT change the bitrate in steps of 5 Mbps up to 250 Mbps, and OK reconnects with it', async () => {
   const app = await openStreaming();
   try {
     await openMenuAt(app.page, 'streamMenuBitrate');
@@ -188,12 +196,16 @@ test('LEFT and RIGHT change the bitrate in steps of 5 Mbps up to the decoder cap
     await remoteKey(app.page, ...LEFT);
     await remoteKey(app.page, ...LEFT);
     assert.deepEqual(await bitrateEntry(app.page), { value: '35 Mbps', pending: true, note: 'OK: reconnect (now 40 Mbps)', lowerLimit: false, higherLimit: false });
-    // Up to the decoder cap of the S90C profile, 100 Mbps, and no further
-    for (let i = 0; i < 20; i++) {
+    // Past the decoder cap of the S90C profile, 100 Mbps, up to the end of the slider, 250 Mbps, and no further
+    for (let i = 0; i < 13; i++) {
       await remoteKey(app.page, ...RIGHT);
     }
-    assert.deepEqual(await bitrateEntry(app.page), { value: '100 Mbps', pending: true, note: 'OK: reconnect (now 40 Mbps)', lowerLimit: false, higherLimit: true });
-    for (let i = 0; i < 11; i++) {
+    assert.deepEqual(await bitrateEntry(app.page), { value: '100 Mbps', pending: true, note: 'OK: reconnect (now 40 Mbps)', lowerLimit: false, higherLimit: false });
+    for (let i = 0; i < 35; i++) {
+      await remoteKey(app.page, ...RIGHT);
+    }
+    assert.deepEqual(await bitrateEntry(app.page), { value: '250 Mbps', pending: true, note: 'OK: reconnect (now 40 Mbps)', lowerLimit: false, higherLimit: true });
+    for (let i = 0; i < 41; i++) {
       await remoteKey(app.page, ...LEFT);
     }
     assert.equal((await bitrateEntry(app.page)).value, '45 Mbps');
@@ -241,35 +253,38 @@ test('LEFT and RIGHT change the bitrate in steps of 5 Mbps up to the decoder cap
   }
 });
 
-test('the bitrate entry stops at the decoder cap of other TVs and at 5 Mbps, and a gamepad changes and applies it', async () => {
-  // A 4K TV without a tested profile: 80 Mbps; a bitrate of the slider above the cap goes down to it
+test('on other TVs the bitrate entry also goes from 5 up to 250 Mbps, past the decoder cap, and a gamepad changes and applies it', async () => {
+  // A 4K TV without a tested profile (decoder cap 80 Mbps) with a bitrate of the slider above the cap: it isn't a limit
+  // of the entry any more
   const uhd = await openStreaming({ tv: { tv: 'uhd' }, stored: { bitrate: '120' }, gamepad: true });
   try {
     await openMenuAt(uhd.page, 'streamMenuBitrate');
-    assert.deepEqual(await bitrateEntry(uhd.page), { value: '120 Mbps', pending: false, note: '', lowerLimit: false, higherLimit: true });
+    assert.deepEqual(await bitrateEntry(uhd.page), { value: '120 Mbps', pending: false, note: '', lowerLimit: false, higherLimit: false });
     // D-pad left and right of the gamepad
-    await uhd.page.evaluate(() => window.__setButton(0, 14, true));
-    await uhd.page.waitForTimeout(50);
-    await uhd.page.evaluate(() => window.__setButton(0, 14, false));
-    await uhd.page.waitForTimeout(50);
-    assert.deepEqual(await bitrateEntry(uhd.page), { value: '80 Mbps', pending: true, note: 'OK: reconnect (now 120 Mbps)', lowerLimit: false, higherLimit: true });
-    await uhd.page.evaluate(() => window.__setButton(0, 15, true));
-    await uhd.page.waitForTimeout(50);
-    await uhd.page.evaluate(() => window.__setButton(0, 15, false));
-    await uhd.page.waitForTimeout(50);
-    assert.equal((await bitrateEntry(uhd.page)).value, '80 Mbps');
-    // A applies it
+    const press = async (button) => {
+      await uhd.page.evaluate((index) => window.__setButton(0, index, true), button);
+      await uhd.page.waitForTimeout(50);
+      await uhd.page.evaluate((index) => window.__setButton(0, index, false), button);
+      await uhd.page.waitForTimeout(50);
+    };
+    await press(14);
+    await press(14);
+    assert.deepEqual(await bitrateEntry(uhd.page), { value: '110 Mbps', pending: true, note: 'OK: reconnect (now 120 Mbps)', lowerLimit: false, higherLimit: false });
+    await press(15);
+    assert.equal((await bitrateEntry(uhd.page)).value, '115 Mbps');
+    // A applies it, with the warning about the decoder cap of this TV, which the slider gives as well
     await uhd.page.evaluate(() => window.__setButton(0, 0, true));
     await uhd.page.waitForTimeout(AFTER_DELAY_MS);
     await uhd.page.evaluate(() => window.__setButton(0, 0, false));
     await uhd.page.waitForTimeout(300);
-    assert.deepEqual(await uhd.page.evaluate(() => window.__events.slice()), ['stop', 'resume', 'start request 80000']);
+    assert.deepEqual(await uhd.page.evaluate(() => window.__events.slice()), ['stop', 'resume', 'start request 115000']);
+    assert.deepEqual(await uhd.page.evaluate(() => window.__snackbar.slice()), [DECODER_CAP_WARNING(80)]);
     assert.deepEqual(uhd.errors, []);
   } finally {
     await uhd.context.close();
   }
 
-  // A Full HD TV: 50 Mbps, and down to 5 Mbps
+  // A Full HD TV (decoder cap 50 Mbps): down to 5 Mbps and up to 250 Mbps
   const fhd = await openStreaming({ tv: { tv: 'fhd' }, stored: { bitrate: '10' } });
   try {
     await openMenuAt(fhd.page, 'streamMenuBitrate');
@@ -280,15 +295,92 @@ test('the bitrate entry stops at the decoder cap of other TVs and at 5 Mbps, and
     for (let i = 0; i < 15; i++) {
       await remoteKey(fhd.page, ...RIGHT);
     }
-    assert.deepEqual(await bitrateEntry(fhd.page), { value: '50 Mbps', pending: true, note: 'OK: reconnect (now 10 Mbps)', lowerLimit: false, higherLimit: true });
+    assert.deepEqual(await bitrateEntry(fhd.page), { value: '80 Mbps', pending: true, note: 'OK: reconnect (now 10 Mbps)', lowerLimit: false, higherLimit: false });
+    for (let i = 0; i < 40; i++) {
+      await remoteKey(fhd.page, ...RIGHT);
+    }
+    assert.deepEqual(await bitrateEntry(fhd.page), { value: '250 Mbps', pending: true, note: 'OK: reconnect (now 10 Mbps)', lowerLimit: false, higherLimit: true });
     // Closing the menu forgets the change
     await remoteKey(fhd.page, ...RETURN);
     await remoteKey(fhd.page, ...PLAY_PAUSE);
     assert.equal((await bitrateEntry(fhd.page)).value, '10 Mbps');
     assert.deepEqual(await fhd.page.evaluate(() => window.__events.slice()), []);
+    assert.deepEqual(await fhd.page.evaluate(() => window.__snackbar.slice()), []);
     assert.deepEqual(fhd.errors, []);
   } finally {
     await fhd.context.close();
+  }
+});
+
+test('OK above the decoder cap shows the warning of the slider once per crossing, and the stream reconnects as usual', async () => {
+  const app = await openStreaming();
+  try {
+    // What the page shows right after OK, while the stream reconnects
+    const afterOk = () => app.page.evaluate(() => ({
+      menu: isStreamMenuOpen, spinner: $('#loadingSpinner').is(':visible'), message: $('#loadingSpinnerMessage').text(),
+      snackbar: window.__snackbar.slice(),
+    }));
+    // Apply the bitrate of the entry, wait for the reconnect, and let the video show again
+    const reconnect = async (mbps) => {
+      await remoteKey(app.page, ...ENTER);
+      const state = await afterOk();
+      assert.equal(state.menu, false);
+      assert.equal(state.spinner, true);
+      assert.equal(state.message, 'Reconnecting with ' + mbps + ' Mbps...');
+      await app.page.waitForTimeout(400);
+      assert.deepEqual(await app.page.evaluate(() => window.__events.splice(0)), ['stop', 'resume', 'start request ' + (mbps * 1000)]);
+      await app.page.evaluate(() => handleMessage('Connection Established'));
+      assert.equal(await app.page.evaluate(() => $('#wasm_module').is(':visible')), true);
+      return state.snackbar;
+    };
+    const step = async (key, presses) => {
+      for (let i = 0; i < presses; i++) {
+        await remoteKey(app.page, ...key);
+      }
+    };
+
+    // 40 -> 105 Mbps on the S90C over Wi-Fi: one step above its decoder cap of 100 Mbps
+    await openMenuAt(app.page, 'streamMenuBitrate');
+    await step(RIGHT, 13);
+    assert.deepEqual(await bitrateEntry(app.page), { value: '105 Mbps', pending: true, note: 'OK: reconnect (now 40 Mbps)', lowerLimit: false, higherLimit: false });
+    assert.deepEqual(await reconnect(105), [DECODER_CAP_WARNING(100)], 'the warning shows at OK, over the launch screen');
+    await waitForStorage(app.page, (values) => values.bitrate === '105' && values.autoAdjustBitrate === false);
+    // Further up to 250 Mbps: no second warning, as with the slider
+    await openMenuAt(app.page, 'streamMenuBitrate');
+    assert.equal((await bitrateEntry(app.page)).value, '105 Mbps');
+    await step(RIGHT, 29);
+    assert.deepEqual(await bitrateEntry(app.page), { value: '250 Mbps', pending: true, note: 'OK: reconnect (now 105 Mbps)', lowerLimit: false, higherLimit: true });
+    assert.deepEqual(await reconnect(250), [DECODER_CAP_WARNING(100)]);
+    assert.equal(await app.page.evaluate(() => window.__startStreamArgs[5]), '250000');
+    assert.deepEqual(await app.page.evaluate(() => [$('#bitrateSlider').val(), $('#selectBitrate').text()]), ['250', '250 Mbps']);
+    // Back to the cap ends the warning, so that the next step above it warns again
+    await openMenuAt(app.page, 'streamMenuBitrate');
+    await step(LEFT, 30);
+    assert.deepEqual(await reconnect(100), [DECODER_CAP_WARNING(100)]);
+    await openMenuAt(app.page, 'streamMenuBitrate');
+    await step(RIGHT, 1);
+    assert.deepEqual(await reconnect(105), [DECODER_CAP_WARNING(100), DECODER_CAP_WARNING(100)]);
+    assert.deepEqual(app.errors, []);
+    assert.deepEqual(await app.page.evaluate(() => window.__videoKeys.slice()), []);
+  } finally {
+    await app.context.close();
+  }
+
+  // Over Ethernet the warning about the 100 Mbps port of the TV comes first, above 80 Mbps, as with the slider
+  const ethernet = await openStreaming({ tv: { conn: 'ethernet' } });
+  try {
+    await openMenuAt(ethernet.page, 'streamMenuBitrate');
+    for (let i = 0; i < 9; i++) {
+      await remoteKey(ethernet.page, ...RIGHT);
+    }
+    assert.equal((await bitrateEntry(ethernet.page)).value, '85 Mbps');
+    await remoteKey(ethernet.page, ...ENTER);
+    await ethernet.page.waitForTimeout(400);
+    assert.deepEqual(await ethernet.page.evaluate(() => window.__events.slice()), ['stop', 'resume', 'start request 85000']);
+    assert.deepEqual(await ethernet.page.evaluate(() => window.__snackbar.slice()), [ETHERNET_WARNING]);
+    assert.deepEqual(ethernet.errors, []);
+  } finally {
+    await ethernet.context.close();
   }
 });
 

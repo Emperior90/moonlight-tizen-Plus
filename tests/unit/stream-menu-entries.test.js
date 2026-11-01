@@ -1,8 +1,9 @@
 'use strict';
 
 // Pins the pure logic of the bitrate entry and of 'Type text…' of the Stream Menu (wasm/platform/menus.js): the steps of
-// 5 Mbps within 5 Mbps and the decoder cap of the TV (getDecoderCapMbps() in tv_profile.js), also from a bitrate of the
-// slider that lies between the steps or above the cap; the check of a text for the PC before it goes to sendText() of
+// 5 Mbps from 5 Mbps up to the end of the bitrate slider (MAX_BITRATE_MBPS in tv_profile.js, 250 Mbps) on every TV,
+// whatever its decoder cap, also from a bitrate of the slider that lies between the steps or outside the range given;
+// the check of a text for the PC before it goes to sendText() of
 // the module, with the same answers and the same limit as wasm/text_input.hpp, including the lone surrogate that the
 // module can't see; a message for every answer that isn't sent; and the keys that the field of the text panel leaves to
 // the field. The browser tests (tests/browser/stream-menu-entries.test.js) run both entries in the page, the native test
@@ -54,24 +55,37 @@ test('LEFT and RIGHT step the bitrate to the next multiple of 5 Mbps within the 
   assert.equal(step(102.5, -1, range), 100);
 });
 
-test('the range of the bitrate entry ends at the decoder cap of the TV', () => {
-  // The tested profile of the S90C (100 Mbps), a 4K TV without a profile (80 Mbps) and a Full HD TV (50 Mbps)
+test('the range of the bitrate entry ends at the end of the slider, 250 Mbps, on every TV, above its decoder cap', () => {
+  // The tested profile of the S90C (decoder cap 100 Mbps), a 4K and an 8K TV without a profile (80 Mbps) and a Full HD
+  // TV (50 Mbps): the cap only decides where the bitrate warning starts (warnBitrate() in index.js), not the range
   const cases = [
     [{ profile: { decoderCapMbps: 100 }, is4k: true }, 100],
     [{ profile: null, is4k: true, is8k: false }, 80],
     [{ profile: null, is4k: false, is8k: true }, 80],
     [{ profile: null, is4k: false, is8k: false }, 50],
   ];
-  for (const [caps, max] of cases) {
+  for (const [caps, cap] of cases) {
     const menus = loadMenus(caps);
-    assert.deepEqual(plain(menus.get('getStreamMenuBitrateRange()')), { min: 5, max: max }, JSON.stringify(caps));
-    assert.equal(menus.get('getDecoderCapMbps')(menus.get('tvCapabilities')), max);
-    // Never above the cap, however often RIGHT is pressed
+    const step = menus.get('stepStreamBitrate');
+    assert.equal(menus.get('MAX_BITRATE_MBPS'), 250);
+    assert.deepEqual(plain(menus.get('getStreamMenuBitrateRange()')), { min: 5, max: 250 }, JSON.stringify(caps));
+    assert.equal(menus.get('getDecoderCapMbps')(menus.get('tvCapabilities')), cap);
+    // RIGHT goes past the cap in steps of 5 Mbps and stops at 250 Mbps, however often it is pressed
+    const seen = [];
     let mbps = 5;
-    for (let i = 0; i < 40; i++) {
-      mbps = menus.get('stepStreamBitrate')(mbps, 1, menus.get('getStreamMenuBitrateRange()'));
+    for (let i = 0; i < 60; i++) {
+      mbps = step(mbps, 1, menus.get('getStreamMenuBitrateRange()'));
+      seen.push(mbps);
     }
-    assert.equal(mbps, max);
+    assert.equal(mbps, 250);
+    assert.equal(seen.indexOf(250), 48, '49 steps from 5 to 250 Mbps');
+    assert.ok(seen.indexOf(cap + 5) >= 0, 'one step above the cap of ' + cap + ' Mbps');
+    assert.ok(seen.every((value, index) => index === 0 || value - seen[index - 1] === (seen[index - 1] < 250 ? 5 : 0)), JSON.stringify(seen));
+    // A bitrate of the slider between the steps near the end goes to the next step, and LEFT comes back from 250 Mbps
+    assert.equal(step(247.5, 1, menus.get('getStreamMenuBitrateRange()')), 250);
+    assert.equal(step(247.5, -1, menus.get('getStreamMenuBitrateRange()')), 245);
+    assert.equal(step(250, 1, menus.get('getStreamMenuBitrateRange()')), 250);
+    assert.equal(step(250, -1, menus.get('getStreamMenuBitrateRange()')), 245);
   }
 });
 

@@ -6,6 +6,8 @@
 // - the game mode on Tizen 5.5 with a WASM player that offers the Ultra Low Latency mode, and the switch that stays
 //   disabled on a TV whose WASM player doesn't offer it (getGameModeDefault())
 // - the bitrate presets, which give the recommended bitrate of every resolution and frame rate (presetBitrate())
+// - the end of the bitrate slider and of the bitrate entry of the Stream Menu (MAX_BITRATE_MBPS), and what a bitrate
+//   above 150 Mbps needs
 // - the controller type that System information shows when the setting overrides the detection
 // - the Start of a hold that switches the mouse emulation on, which the game sees (wasm/gamepad.cpp)
 // - the buttons in the menus of docs/CONTROLLERS.md that the navigation guide of wasm/index.html leaves out
@@ -102,6 +104,24 @@ test('the guide names the bitrates of the presets at other resolutions and frame
     assert.equal(profile.presetBitrate(optimal.resolution, optimal.frameRate, conn, s90c), optimal.bitrate, conn);
   }
   assert.match(GUIDE, /Once you move the bitrate slider yourself \(or change the bitrate in the Stream Menu\), the app keeps your bitrate/);
+});
+
+test('the guide names the end of the slider and of the Stream Menu, and what a bitrate above 150 Mbps needs', () => {
+  const menus = read('wasm/platform/menus.js');
+  assert.match(menus, /return \{ min: STREAM_MENU_BITRATE_STEP, max: MAX_BITRATE_MBPS \};/);
+  assert.equal(profile.MAX_BITRATE_MBPS, 250);
+  const row = tableRow('Bitrate');
+  assert.match(row[1], /change it in 5 Mbps steps, from 5 Mbps up to 250 Mbps like the slider\. Above the decoder cap of the TV \(100 Mbps on the tested S90C profile, 80 Mbps on other 4K and 8K TVs, 50 Mbps on Full HD TVs\), OK shows the same warning as the slider\./);
+  assert.equal(profile.getDecoderCapMbps(capsOf({ tv: 's90c' })), 100);
+  assert.equal(profile.getDecoderCapMbps(capsOf({ tv: 'uhd' })), 80);
+  assert.equal(profile.getDecoderCapMbps(capsOf({ tv: 'fhd' })), 50);
+  const above = GUIDE.slice(GUIDE.indexOf('\n### Above 150 Mbps\n'), GUIDE.indexOf('\n## ', GUIDE.indexOf('\n### Above 150 Mbps\n')));
+  assert.ok(above.length > 0, 'the guide has the section Above 150 Mbps');
+  assert.match(above, /The slider and the Stream Menu go up to 250 Mbps/);
+  assert.match(above, /Only a strong 5 GHz or 6 GHz Wi-Fi link close to the router carries that much; the Ethernet port of the TV has 100 Mbps\./);
+  assert.match(above, /If `max_bitrate` of Sunshine is set, it must allow the bitrate/);
+  assert.match(above, /The warning above the decoder cap of the TV stays/);
+  assert.doesNotMatch(GUIDE, /goes up to 150 Mbps|up to the decoder cap of the TV \(100 Mbps/);
 });
 
 test('the documents describe the controller type of System information and the Start of the mouse emulation as the code does', () => {

@@ -176,15 +176,16 @@ function reselectStreamMenuEntry(entry) {
   focusElement(entries[index]);
 }
 
-// The lowest and the highest bitrate of the bitrate entry of the Stream Menu in Mbps: 5 Mbps up to the decoder cap of
-// the TV (getDecoderCapMbps() in tv_profile.js)
+// The lowest and the highest bitrate of the bitrate entry of the Stream Menu in Mbps: 5 Mbps up to the end of the bitrate
+// slider (MAX_BITRATE_MBPS in tv_profile.js), so that the limit is the same in the settings and in a game. Above the
+// decoder cap of the TV, OK gives the same warning as the slider (warnBitrate() in index.js, through saveBitrate()).
 function getStreamMenuBitrateRange() {
-  return { min: STREAM_MENU_BITRATE_STEP, max: getDecoderCapMbps(tvCapabilities) };
+  return { min: STREAM_MENU_BITRATE_STEP, max: MAX_BITRATE_MBPS };
 }
 
 // The bitrate after a press of LEFT (direction -1) or RIGHT (1) on the bitrate entry: the next multiple of 5 Mbps within
-// the range. A bitrate above the range (chosen with the slider of the settings) only goes down, to the highest bitrate of
-// the range, and one below it only goes up.
+// the range. A bitrate below the range (chosen with the slider of the settings, which starts at 0.5 Mbps) only goes up,
+// and one above it only goes down, to the highest bitrate of the range.
 function stepStreamBitrate(mbps, direction, range) {
   const current = Number(mbps);
   if (direction > 0 ? current >= range.max : current <= range.min) {
@@ -214,7 +215,9 @@ function changeStreamMenuBitrate(direction) {
 }
 
 // Reconnect the stream with the bitrate of the bitrate entry, which becomes the bitrate setting, as if it was chosen with
-// the slider of the settings. Nothing happens to an unchanged bitrate except a hint how to change it.
+// the slider of the settings. That includes the bitrate warnings of the slider (warnBitrate() through saveBitrate()), once
+// per crossing of the decoder cap or the limit of the Ethernet port, which show over the launch screen of the reconnect.
+// Nothing happens to an unchanged bitrate except a hint how to change it.
 function applyStreamMenuBitrate() {
   const mbps = streamMenuBitrateMbps;
   if (mbps === streamBitrateMbps) {

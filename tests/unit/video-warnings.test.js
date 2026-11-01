@@ -59,8 +59,8 @@ function bitrateWarningBeforeWp4(bitrate, conn) {
   return bitrate > 100 ? W.BITRATE_ABOVE_CAP : null;
 }
 
-// Every bitrate the slider offers, from 0.5 to 150 Mbps in 0.5 Mbps steps
-const SLIDER_BITRATES = Array.from({ length: 300 }, (_, i) => (i + 1) / 2);
+// Every bitrate the slider offers, from 0.5 to 250 Mbps in 0.5 Mbps steps
+const SLIDER_BITRATES = Array.from({ length: 500 }, (_, i) => (i + 1) / 2);
 
 describe('resolution and frame rate warnings', () => {
   test('the luma sample rate limits are those of HEVC and AV1 level 5.1 and 5.2, and level 5.1 matches wasmplayer.cpp', () => {
@@ -199,6 +199,7 @@ describe('bitrate warnings (cases 5 and 6)', () => {
     assert.equal(profile.bitrateWarningKey(80, 'ethernet', UHD), null);
     assert.equal(profile.bitrateWarningKey(80.5, 'ethernet', UHD), W.ETHERNET_BITRATE);
     assert.equal(profile.bitrateWarningKey(150, 'ethernet', S90C), W.ETHERNET_BITRATE);
+    assert.equal(profile.bitrateWarningKey(250, 'ethernet', S90C), W.ETHERNET_BITRATE);
     // A Full HD TV with its 50 Mbps cap warns about the decoder from 50.5 Mbps and about the port from 80.5 Mbps
     assert.equal(profile.bitrateWarningKey(50, 'ethernet', FHD), null);
     assert.equal(profile.bitrateWarningKey(60, 'ethernet', FHD), W.BITRATE_ABOVE_CAP);
@@ -226,7 +227,7 @@ describe('H.264 warning (case 7)', () => {
 });
 
 describe('bitrate advice of the optimal settings dialog', () => {
-  test('twice the preset of the resolution and frame rate, at most 150 Mbps and the decoder cap', () => {
+  test('twice the preset of the resolution and frame rate, at most the end of the slider and the decoder cap', () => {
     assert.equal(profile.bitrateRaiseLimit('3840:2160', 60, S90C), 100);
     assert.equal(profile.bitrateRaiseLimit('3840:2160', 60, UHD), 80);
     assert.equal(profile.bitrateRaiseLimit('3840:2160', 60, UHD_8K), 80);
@@ -242,7 +243,7 @@ describe('bitrate advice of the optimal settings dialog', () => {
       for (const res of RESOLUTIONS) {
         for (const fps of FRAME_RATES) {
           const limit = profile.bitrateRaiseLimit(res, fps, caps);
-          assert.ok(limit <= 150 && limit <= profile.getDecoderCapMbps(caps) && limit <= 2 * profile.getStandardPresetBitrate(res, fps), res + '@' + fps);
+          assert.ok(limit <= profile.MAX_BITRATE_MBPS && limit <= profile.getDecoderCapMbps(caps) && limit <= 2 * profile.getStandardPresetBitrate(res, fps), res + '@' + fps);
         }
       }
     }

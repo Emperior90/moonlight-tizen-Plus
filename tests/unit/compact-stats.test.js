@@ -60,6 +60,9 @@ test('the example line of the owner, with the stream as the setting names it and
   // Below 10 Mb/s with one decimal, and a 10-bit stream without HDR
   assert.equal(platform.get('formatCompactStatsLine')(plain({ w: 1920, h: 1080, fps: 60, codec: 'AV1', bits: 10, hdr: 0, rfps: null,
     mbps: 4.04, rtt: null, drop: null, delay: null })), '1080p60 AV1 10-bit · 4.0 Mb/s');
+  // Near the end of the slider (250 Mbps) three digits without decimals, as wide as up to 150 Mbps before 2.2.0
+  assert.equal(platform.get('formatCompactStatsLine')(plain({ w: 3840, h: 2160, fps: 60, codec: 'HEVC', bits: 10, hdr: 1, rfps: 59.94,
+    mbps: 245.5, rtt: 3, drop: null, delay: null })), '4K60 HEVC HDR · 59.9 fps · 246 Mb/s · RTT 3 ms');
 });
 
 test('a message that is not an object of figures is no compact line', () => {

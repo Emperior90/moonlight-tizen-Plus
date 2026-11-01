@@ -1125,7 +1125,7 @@ const Views = {
     view: new ListView(() => 
       document.getElementById('videoBitrateMenu')
       .parentNode.children[3].children[1].children),
-    // UP/DOWN change the bitrate in coarse steps, so that e.g. 95 -> 150 Mbps takes 11 presses instead of 110.
+    // UP/DOWN change the bitrate in coarse steps, so that e.g. 100 -> 250 Mbps takes 30 presses instead of 300.
     // The value is assigned directly, because the range input always clamps and snaps an assigned value.
     up: function() {
       bitrateSlider.value = Math.min(parseFloat(bitrateSlider.max), parseFloat(bitrateSlider.value) + BITRATE_COARSE_STEP);

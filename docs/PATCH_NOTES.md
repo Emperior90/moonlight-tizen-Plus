@@ -20,12 +20,13 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 > **Install:** by hand over 2.1.0 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >
-> **Tested:** with simulated TVs, hosts and controllers only; the shorter waits and the new defaults still need a test on a TV.
+> **Tested:** with simulated TVs, hosts and controllers only; the shorter waits, the new defaults and bitrates above 100 Mbps still need a test on a TV.
 
 ### Changed
 
 - Settings in 7 sections in the order of use, with short help texts and names that say what ON does
 - The bitrate presets are the recommended bitrates, and *Optimal settings* lets the bitrate follow them again
+- The bitrate goes up to 250 Mbps in the settings and the Stream Menu, for a strong 5 or 6 GHz Wi-Fi link
 - Screens open without the half-second wait, and controller buttons act after 50 ms in the menus
 - Rumble is on for new installs; questions that quit an app or delete a PC start on *No*
 - The PC menu lists only what works, and the PC list shows one state chip
