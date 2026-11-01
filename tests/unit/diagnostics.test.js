@@ -446,3 +446,117 @@ test('the front end takes the native lines from the ring of the module, which ev
   assert.match(main, /emscripten::function\("takeDiagnosticLog", &takeDiagnosticLog\);/);
   assert.match(read('wasm/platform/diagnostics.js'), /Module\.takeDiagnosticLog\(\)/);
 });
+
+// Record the length of every text that the redaction rules run over
+function spyRedaction(app) {
+  const lengths = [];
+  const redact = app.platform.get('redactDiagnosticText');
+  app.platform.context.redactDiagnosticText = (text) => {
+    lengths.push(String(text).length);
+    return redact(text);
+  };
+  return lengths;
+}
+
+test('a huge line is cut before the redaction runs over it, and the secrets in the part it keeps are still hidden', () => {
+  const app = loadDiagnostics();
+  const lengths = spyRedaction(app);
+  // A message of the module of a few MB, e.g. a large answer that 'Message data: ' printed
+  const secrets = 'rikey=00112233445566778899aabbccddeeff mac 3C:7C:3F:12:AB:CD uniqueid: 0123456789ABCDEF ';
+  app.log.add('Message data: ' + secrets + 'x'.repeat(4 * 1024 * 1024));
+  const line = texts(app.log.getSessions()[0])[0];
+  assert.equal(line.length, 400);
+  assert.ok(line.endsWith('…'));
+  assert.equal(line.slice(0, 104), 'Message data: rikey=<hidden> mac <hidden> uniqueid: <hidden> ' + 'x'.repeat(43));
+  // The rules ran over the start of the text only, never over the whole of it
+  assert.ok(lengths.length > 0 && Math.max(...lengths) < 2000, JSON.stringify(lengths));
+
+  // A secret that the cut of the start leaves half is never kept: the start grows while the redaction shortened it so
+  // much that the half secret would fall into the kept part (here every 'rikey=' value becomes '<hidden>')
+  // (12 keys of 70 characters, and a MAC address across the end of the first start of 912 characters, which the 12
+  // keys shorten to 179)
+  lengths.length = 0;
+  const keys = Array.from({ length: 12 }, (unused, index) => 'rikey=' + String(index).padStart(2, '0') + 'a'.repeat(62)).join('&');
+  const across = keys + ' ' + 'q'.repeat(53) + ' AA:BB:CC:DD:EE:FF ';
+  assert.equal(across.indexOf('AA:BB'), 906);
+  app.clock.now += 5000;
+  app.log.add(across + 'y'.repeat(100000));
+  const shrunk = texts(app.log.getSessions()[0])[1];
+  assert.equal(shrunk.slice(0, 245), Array(12).fill('rikey=<hidden>').join('&') + ' ' + 'q'.repeat(53) + ' <hidden> ' + 'y'.repeat(2));
+  assert.doesNotMatch(shrunk, /AA:|aaaa/);
+  assert.ok(Math.max(...lengths) < 20000, JSON.stringify(lengths));
+
+  // A private key at the start that is longer than the first start keeps the text after it, without the key
+  app.clock.now += 5000;
+  const key = '-----BEGIN PRIVATE KEY-----\n' + 'MIIE'.repeat(800) + '\n-----END PRIVATE KEY-----';
+  app.log.add('Client cert: ' + key + ' then mac 3C:7C:3F:12:AB:CD and ' + 'z'.repeat(50000));
+  const afterKey = texts(app.log.getSessions()[0])[2];
+  assert.match(afterKey, /^Client cert: <hidden> then mac <hidden> and z+…$/);
+
+  // A value that the app knows is hidden in the kept part however long it is (hideDiagnosticValue())
+  const known = 'K'.repeat(300) + '-known-value';
+  app.platform.get('hideDiagnosticValue')('rikey', known);
+  app.clock.now += 5000;
+  app.log.add('w'.repeat(390) + known + 'v'.repeat(10000));
+  assert.doesNotMatch(texts(app.log.getSessions()[0])[3], /KK/);
+});
+
+test('an object goes into a line as the start of its JSON, without turning the whole object into text, and its secrets hidden', () => {
+  const app = loadDiagnostics();
+  const lengths = spyRedaction(app);
+  const format = app.platform.get('DiagnosticLog').formatConsoleArguments;
+  // Box art bytes and a large list as they could reach the console
+  const bytes = app.platform.run('new Uint8Array(2 * 1024 * 1024)');
+  const list = app.platform.run('Array.from({ length: 200000 }, (unused, index) => ({ id: index, title: "App " + index }))');
+  const host = app.platform.run(`({ hostname: 'GAMING-PC', uniqueid: '0123456789ABCDEF', macAddress: '3c:7c:3f:12:ab:cd',
+    externalIP: '203.0.113.7', ppkstr: '-----BEGIN PRIVATE KEY-----\\n' + 'MIIE'.repeat(100000) + '\\n-----END PRIVATE KEY-----' })`);
+  // JSON.stringify() of the page never gets the whole object
+  const stringified = [];
+  const json = app.platform.get('JSON');
+  const stringify = json.stringify;
+  json.stringify = function(value) {
+    stringified.push(value);
+    return stringify.apply(json, arguments);
+  };
+  try {
+    const text = format([bytes, list, host]);
+    // Each object keeps the first 200 characters of its JSON
+    const bytesJson = ('{' + Array.from({ length: 100 }, (unused, index) => '"' + index + '":0').join(',')).slice(0, 200);
+    const listJson = ('[' + Array.from({ length: 10 }, (unused, index) => '{"id":' + index + ',"title":"App ' + index + '"}').join(',')).slice(0, 200);
+    assert.ok(text.startsWith(bytesJson + ' ' + listJson + ' {'), text);
+    assert.match(text, /\{"hostname":"GAMING-PC","uniqueid":"<hidden>","macAddress":"<hidden>","externalIP":"<hidden>","ppkstr":"<hidden>/);
+  } finally {
+    json.stringify = stringify;
+  }
+  assert.ok(!stringified.includes(bytes) && !stringified.includes(list) && !stringified.includes(host));
+  // The private key of 400 KB, which ends the JSON, is hidden from a start of at most 16 KB
+  assert.ok(Math.max(...lengths) <= 16 * 1024, JSON.stringify(lengths));
+
+  // The start of the JSON is the same as the start of JSON.stringify() for any value, and an object that is '{}' still
+  // shows as its name, an object with a cycle as well
+  const jsonStart = app.platform.get('jsonStart');
+  const values = app.platform.run(`[
+    { a: 1, b: 'two', c: [1, 2, { d: undefined, e: function() {} }], f: null, g: new Date(0) },
+    [undefined, function() {}, NaN, Infinity, -0, 'é\\u2028"\\\\'], { toJSON: function() { return { replaced: true }; } },
+    { n: new Number(3), s: new String('s'), b: new Boolean(false) }, new Uint8Array([1, 2, 250]), { a: [, , 3] }, 'text', 7, null,
+    { nested: { deep: ['x'.repeat(50), 'y\\n'.repeat(30)] } }
+  ]`);
+  values.forEach((value) => {
+    const full = stringify.call(json, value);
+    [0, 1, 5, 17, 40, 100, full.length - 1, full.length, full.length + 5].forEach((size) => {
+      assert.equal(jsonStart(value, size), full.slice(0, size), full + ' / ' + size);
+    });
+  });
+  assert.equal(format([app.platform.run('new Map([[1, 2]])')]), '[object Map]');
+  assert.equal(format([app.platform.run('(function() { const loop = { a: 1 }; loop.self = loop; return loop; })()')]), '[object Object]');
+});
+
+test('a long native line is cut before the redaction runs over it as well', () => {
+  const app = loadDiagnostics();
+  const lengths = spyRedaction(app);
+  app.module.nativeLog = app.clock.now + '\tCURL: request with PPK 3C:7C:3F:12:AB:CD ' + 'p'.repeat(500000) + '\n';
+  const line = texts(app.log.getSessions()[0])[0];
+  assert.equal(line.length, 400);
+  assert.match(line, /^CURL: request with PPK <hidden> p+…$/);
+  assert.ok(Math.max(...lengths) < 2000, JSON.stringify(lengths));
+});

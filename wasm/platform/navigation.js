@@ -168,9 +168,15 @@ function focusElement(target) {
     }
     return;
   }
-  // If the element supports focus, add focus to it
+  // If the element supports focus, add focus to it. A card of the host or app grid scrolls with its row
+  // (ListView.scrollToCardRow()): focusing it with a scroll of its own made the browser lay out the page in the middle
+  // of each step to jump to the card at once, before the smooth scroll of the row moved it again.
   if (typeof element.focus === 'function') {
-    element.focus();
+    if (element.closest && element.closest('#game-grid, #host-grid')) {
+      element.focus({ preventScroll: true });
+    } else {
+      element.focus();
+    }
   }
 }
 

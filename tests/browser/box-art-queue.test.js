@@ -106,7 +106,9 @@ test('quitting the running app goes before the box art that waits, and the box a
       await page.evaluate((what) => window.__answer(what, new Uint8Array([137, 80, 78, 71])), 'boxart ' + id);
     }
     assert.deepEqual((await httpState(page)).sent, ['boxart 1', '/cancel', 'boxart 2', 'boxart 3', 'boxart 4', 'boxart 5', 'boxart 6']);
-    await page.waitForFunction(() => $('#game-grid .game-container img').toArray().every((img) => /^data:image\/png/.test(img.getAttribute('src') || '')));
+    // Each tile shows its box art: an object URL of it, or a data URL where the image refused the object URL (here the
+    // four bytes are no image)
+    await page.waitForFunction(() => $('#game-grid .game-container img').toArray().every((img) => /^(blob:|data:image\/png)/.test(img.getAttribute('src') || '')));
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

@@ -119,6 +119,74 @@ test('the arrow keys keep the browser from scrolling, except in a text field and
   assert.equal(remote.press('KEY_CHANNEL_UP', { target: { tagName: 'DIV' } }), false);
 });
 
+test('a held arrow key drops the repeats that came before its last step reached the screen, and a press always moves', () => {
+  // The animation frames and the task after them run when the test says, at the time of its clock
+  const frames = [];
+  const tasks = [];
+  const clock = { now: 1000 };
+  const remote = loadRemoteController({
+    requestAnimationFrame: (callback) => frames.push(callback),
+    setTimeout: (callback) => tasks.push(callback),
+    performance: { now: () => clock.now },
+  });
+  const operations = remote.recorder.operations;
+  const showSteps = (time) => {
+    clock.now = time;
+    frames.splice(0).forEach((callback) => callback());
+    tasks.splice(0).forEach((callback) => callback());
+  };
+  assert.equal(remote.press('KEY_RIGHT', { timeStamp: 1000 }), true);
+  // The remote repeats the held key before the step is on the screen: the repeat is dropped, and still doesn't scroll
+  assert.equal(remote.press('KEY_RIGHT', { repeat: true, timeStamp: 1010 }), true);
+  assert.equal(remote.press('KEY_DOWN', { repeat: true, timeStamp: 1020 }), true);
+  assert.deepEqual(operations, ['right']);
+  // A press moves whenever it comes
+  remote.press('KEY_LEFT', { timeStamp: 1030 });
+  assert.deepEqual(operations, ['right', 'left']);
+  // Once the frame of the last step ran, a repeat that the remote sent before then is still dropped, a later one moves
+  showSteps(1100);
+  remote.press('KEY_LEFT', { repeat: true, timeStamp: 1090 });
+  remote.press('KEY_LEFT', { repeat: true, timeStamp: 1110 });
+  assert.deepEqual(operations, ['right', 'left', 'left']);
+  remote.press('KEY_UP', { repeat: true, timeStamp: 1120 });
+  showSteps(1200);
+  remote.press('KEY_UP', { repeat: true, timeStamp: 1210 });
+  assert.deepEqual(operations, ['right', 'left', 'left', 'up']);
+  // A step that comes between the frame of the step before and the task after that frame is still on its way then
+  frames.splice(0).forEach((callback) => callback());
+  remote.press('KEY_UP', { timeStamp: 1220 });
+  clock.now = 1230;
+  tasks.splice(0).forEach((callback) => callback());
+  remote.press('KEY_UP', { repeat: true, timeStamp: 1235 });
+  showSteps(1300);
+  remote.press('KEY_UP', { repeat: true, timeStamp: 1310 });
+  assert.deepEqual(operations, ['right', 'left', 'left', 'up', 'up', 'up']);
+  // The repeat of other keys and the arrow keys during a stream (e.g. in the Stream Menu) are left as they were
+  remote.press('KEY_RETURN', { repeat: true, timeStamp: 1305 });
+  remote.platform.run('isInGame = true; wasmSessionStarted = true;');
+  remote.press('KEY_DOWN', { repeat: true, timeStamp: 1306 });
+  assert.deepEqual(operations, ['right', 'left', 'left', 'up', 'up', 'up', 'back', 'down']);
+});
+
+test('a held arrow key still moves every half second when the times of its repeats look stale for good', () => {
+  // A TV whose key events carry times of another clock, or whose frames don't come: no frame runs here, so every repeat
+  // looks as if it came before the last step reached the screen
+  const clock = { now: 1000 };
+  const remote = loadRemoteController({
+    requestAnimationFrame: () => {},
+    setTimeout: () => {},
+    performance: { now: () => clock.now },
+  });
+  const operations = remote.recorder.operations;
+  remote.press('KEY_RIGHT', { timeStamp: 1000 });
+  // Repeats every 100 ms: dropped within 500 ms of the last step, and the first one after that moves again
+  for (let time = 1100; time <= 2200; time += 100) {
+    clock.now = time;
+    remote.press('KEY_RIGHT', { repeat: true, timeStamp: time - 50 });
+  }
+  assert.deepEqual(operations, ['right', 'right', 'right']);
+});
+
 test('both Enter keys accept and prevent the native click', () => {
   const { recorder, press } = loadRemoteController();
   assert.equal(press('KEY_ENTER'), true);

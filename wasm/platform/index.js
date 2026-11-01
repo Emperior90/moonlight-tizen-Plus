@@ -22,6 +22,7 @@ var isStartupUiShown = false; // Whether restoreUiAfterWasmLoad() showed the hos
 var activePolls = {}; // Hosts currently being polled. An associated array of polling IDs, keyed by server UID
 var pollGenerations = {}; // Number of the latest start of the polling of each host, keyed by server UID
 var appGridGeneration = 0; // Number of the latest build of the app grid (showApps()), whose box art downloads are the only ones still wanted
+var appGridBoxArtUrls = []; // The object URLs of the box art that the app grid shows (makeBoxArtUrl() in utils.js), freed when the grid is built again
 var pairingCert; // Loads the generated certificate
 var myUniqueid;
 var api; // The `api` should only be set if we're in a host-specific screen, on the initial screen it should always be null
@@ -3095,6 +3096,12 @@ function showApps(host) {
     // Remove all game container elements from the game grid and from any other div elements
     $('#game-grid').empty();
     $('div.game-container').remove();
+    // No image shows the box art of the removed grid any more (releaseBoxArtUrl() in utils.js)
+    appGridBoxArtUrls.splice(0).forEach(function(url) {
+      if (typeof releaseBoxArtUrl === 'function') {
+        releaseBoxArtUrl(url);
+      }
+    });
     // The box art downloads of an earlier build of the grid that still wait are dropped (NvHTTP.getBoxArt() in utils.js)
     var gridGeneration = ++appGridGeneration;
     var isBoxArtStale = function() {
@@ -3146,9 +3153,37 @@ function showApps(host) {
         endBackgroundPollingOfHost(host);
 
         var boxArtPromises = [];
-        
+        // The box art of each app loads once the grid shows, one app per task (see loadNextBoxArt below)
+        var boxArtJobs = [];
+        var reportedObjectUrlFallback = false;
+
         // Reset preview promises for this showApps invocation
         window.previewPromises = [];
+
+        // The address of the TV and the path of the documents directory for the Smart Hub tiles, asked once per grid
+        // instead of once per app: each is a synchronous call into the TV
+        var previewLocation = null;
+        var getPreviewLocation = function() {
+          if (!previewLocation) {
+            // Resolve real TV IP because Smart Hub might block 127.0.0.1
+            var tvIp = '127.0.0.1';
+            try {
+              if (typeof webapis !== 'undefined' && webapis.network) {
+                tvIp = webapis.network.getIp();
+              }
+            } catch(e) {
+              console.log('%c[index.js, showApps]', 'color: green;', 'Failed to get TV IP: ', e);
+            }
+            var documentsPath = '/opt/usr/home/owner/content/Documents';
+            try {
+              documentsPath = tizen.filesystem.toURI('documents').replace('file://', '');
+            } catch(err) {
+              // The usual path of the documents directory stays
+            }
+            previewLocation = { tvIp: tvIp, documentsPath: documentsPath };
+          }
+          return previewLocation;
+        };
 
         // Leave out the apps that the user hid with the app menu, unless they show after 'Show hidden apps' (menus.js)
         var hiddenApps = loadHiddenApps(host.serverUid);
@@ -3239,57 +3274,71 @@ function showApps(host) {
             return a.id === app.id; 
           }) : null;
           var boxArtPromise = new Promise(function(resolveBoxArt) {
-            host.getBoxArt(app.id, _isSmartHubSupported, isBoxArtStale).then(function(resolvedPromise) {
-              boxArtPlaceholderImg.src = resolvedPromise;
-              // The resolvedPromise is now the absolute file URI (or data URL if it failed to save).
-              if (_isSmartHubSupported && _previewApps[host.serverUid] && appEntry) {
-                // Resolve real TV IP because Smart Hub might block 127.0.0.1
-                var tvIp = '127.0.0.1';
-                try {
-                  if (typeof webapis !== 'undefined' && webapis.network) {
-                    tvIp = webapis.network.getIp();
-                  }
-                } catch(e) {
-                  console.log('%c[index.js, showApps]', 'color: green;', 'Failed to get TV IP: ', e);
-                }
-
-                // Use deterministic filename so the local HTTP server route stays stable
-                var filename = SMART_HUB_PREVIEW_FILE_PREFIX + app.id + '.jpg';
-                var cacheBuster = '?v=' + Date.now();
-
-                // Determine local path from resolvedPromise if it's a file URI
-                if (resolvedPromise.startsWith('file://')) {
-                  var localPngPath = resolvedPromise.replace('file://', '');
-                  appEntry.txtPath = localPngPath;
-                  appEntry.imageUri = 'http://' + tvIp + ':' + SMART_HUB_PREVIEW_PORT + '/' + filename + cacheBuster;
-                  resolveBoxArt();
-                } else {
-                  try {
-                    var documentsPath = tizen.filesystem.toURI('documents').replace('file://', '');
-                    appEntry.txtPath = documentsPath + '/' + filename;
-                    appEntry.imageUri = 'http://' + tvIp + ':' + SMART_HUB_PREVIEW_PORT + '/' + filename + cacheBuster;
-                  } catch(err) {
-                    appEntry.txtPath = '/opt/usr/home/owner/content/Documents/' + filename;
-                    appEntry.imageUri = 'http://' + tvIp + ':' + SMART_HUB_PREVIEW_PORT + '/' + filename + cacheBuster;
-                  }
-                  resolveBoxArt();
-                }
-
-                // Early return to prevent the fallback synchronous resolveBoxArt from firing
+            boxArtJobs.push(function() {
+              // Nothing more loads for a grid that was built again or once a stream starts (its downloads were dropped)
+              if (isBoxArtStale() || isInGame === true) {
+                resolveBoxArt();
                 return;
               }
-              resolveBoxArt();
-            }, function(failedPromise) {
-              // A download that was dropped (the grid was built again, or a stream starts) is no error
-              if (failedPromise !== BOX_ART_DOWNLOAD_DROPPED) {
-                console.error('%c[index.js, showApps]', 'color: green;', 'Error: Failed to retrieve box art for app ID: ' + app.id + '. Returned value was: ' + failedPromise + '. Host object: ', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
-                boxArtPlaceholderImg.src = 'static/res/placeholder_error.svg';
-              }
-              resolveBoxArt();
+              host.getBoxArt(app.id, _isSmartHubSupported, isBoxArtStale).then(function(resolvedPromise) {
+                // The image of a grid that was built again is gone, and so is the use of its box art
+                if (isBoxArtStale()) {
+                  if (typeof releaseBoxArtUrl === 'function') {
+                    releaseBoxArtUrl(resolvedPromise);
+                  }
+                  resolveBoxArt();
+                  return;
+                }
+                appGridBoxArtUrls.push(resolvedPromise);
+                boxArtPlaceholderImg.src = resolvedPromise;
+                // The resolvedPromise is now an object URL of the box art (or a data URL where object URLs are missing).
+                if (_isSmartHubSupported && _previewApps[host.serverUid] && appEntry) {
+                  var previewPlace = getPreviewLocation();
+
+                  // Use deterministic filename so the local HTTP server route stays stable
+                  var filename = SMART_HUB_PREVIEW_FILE_PREFIX + app.id + '.jpg';
+                  var cacheBuster = '?v=' + Date.now();
+
+                  // Determine local path from resolvedPromise if it's a file URI
+                  if (resolvedPromise.startsWith('file://')) {
+                    var localPngPath = resolvedPromise.replace('file://', '');
+                    appEntry.txtPath = localPngPath;
+                  } else {
+                    appEntry.txtPath = previewPlace.documentsPath + '/' + filename;
+                  }
+                  appEntry.imageUri = 'http://' + previewPlace.tvIp + ':' + SMART_HUB_PREVIEW_PORT + '/' + filename + cacheBuster;
+                }
+                resolveBoxArt();
+              }, function(failedPromise) {
+                // A download that was dropped (the grid was built again, or a stream starts) is no error
+                if (failedPromise !== BOX_ART_DOWNLOAD_DROPPED) {
+                  console.error('%c[index.js, showApps]', 'color: green;', 'Error: Failed to retrieve box art for app ID: ' + app.id + '. Returned value was: ' + failedPromise + '. Host object: ', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
+                  boxArtPlaceholderImg.src = 'static/res/placeholder_error.svg';
+                }
+                resolveBoxArt();
+              });
             });
           });
 
           boxArtPlaceholderImg.onload = e => boxArtPlaceholderImg.classList.add('fade-in');
+          // An image that refuses the object URL of the box art gets a data URL of it instead, once (boxArtDataUrl() in
+          // utils.js), so that a TV without object URLs for images still shows the box art
+          boxArtPlaceholderImg.onerror = function() {
+            var failedUrl = boxArtPlaceholderImg.getAttribute('src') || '';
+            if (typeof boxArtDataUrl !== 'function' || !/^blob:/.test(failedUrl) || boxArtPlaceholderImg.triedDataUrl) {
+              return;
+            }
+            boxArtPlaceholderImg.triedDataUrl = true;
+            if (!reportedObjectUrlFallback) {
+              reportedObjectUrlFallback = true;
+              console.warn('%c[index.js, showApps]', 'color: green;', 'Warning: An image could not show the object URL of its box art, trying a data URL of it instead.');
+            }
+            boxArtDataUrl(failedUrl).then(function(dataUrl) {
+              if (dataUrl && boxArtPlaceholderImg.getAttribute('src') === failedUrl) {
+                boxArtPlaceholderImg.src = dataUrl;
+              }
+            });
+          };
           $(gameContainer).append(boxArtPlaceholderImg);
           boxArtPromises.push(boxArtPromise);
         });
@@ -3324,6 +3373,18 @@ function showApps(host) {
         // Navigate to the Apps view
         showAppsMode();
         resolve();
+
+        // The box art loads one app at a time, each in a task of its own, once the grid shows: reading the cached box art
+        // of every app (a synchronous call into the TV each) in the task that built the grid held up the grid, and the
+        // key presses waited behind all of them, then ran at once
+        var loadNextBoxArt = function() {
+          var job = boxArtJobs.shift();
+          if (job) {
+            job();
+            setTimeout(loadNextBoxArt, 0);
+          }
+        };
+        setTimeout(loadNextBoxArt, 0);
 
         Promise.all(settledPromises).then(function() {
           // Resume background polling now that all box art downloads are complete

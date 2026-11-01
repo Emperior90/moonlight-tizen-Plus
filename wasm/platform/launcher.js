@@ -26,6 +26,11 @@ const Launcher = (function() {
   let ambientSource = ''; // The box art whose colours the ambient light of the hero shows, initial value is ''
   let ambientNext = null; // The box art that the ambient light shows next, while ambientTimer runs, initial value is null
   let ambientTimer = 0; // The timer of AMBIENT_DELAY_MS for ambientNext, initial value is 0
+  // The colours of the box art of each image, with the source they were read from (artColours()): reading them draws the
+  // full-size box art, which the TV decodes on its main thread each time, so each box art is read only once
+  const artColourCache = typeof WeakMap === 'function' ? new WeakMap() : null;
+  let fadeFrame = 0; // The animation frame that updates the fade of the hero (scheduleFade()), initial value is 0
+  let appCards = null; // The live list of the app cards, initial value is null
 
   function byId(id) {
     return document.getElementById(id);
@@ -116,8 +121,14 @@ const Launcher = (function() {
     if (!hero) {
       return;
     }
-    hero.setAttribute('data-kind', kind);
-    hero.setAttribute('data-state', state);
+    // Only a changed attribute is set: setting one, even to the value it has, can make the browser match the styles of
+    // the whole hero again on every step
+    if (hero.getAttribute('data-kind') !== kind) {
+      hero.setAttribute('data-kind', kind);
+    }
+    if (hero.getAttribute('data-state') !== state) {
+      hero.setAttribute('data-state', state);
+    }
     setContent('hero-overline', content.overline || '');
     setContent('hero-title', content.title || '');
     setContent('hero-chips', content.chips || '', true);
@@ -145,8 +156,14 @@ const Launcher = (function() {
         ambient.classList.remove('is-painted');
       }
       ambientTimer = setTimeout(function() {
-        ambientNext = null;
-        ambientSource = paintAmbient(ambient, art) ? source : '';
+        artColoursSoon(art).then(function(colours) {
+          // The focus went on to other art while the colours were read
+          if (ambientNext !== source) {
+            return;
+          }
+          ambientNext = null;
+          ambientSource = applyAmbient(ambient, colours) ? source : '';
+        });
       }, AMBIENT_DELAY_MS);
     }
   }
@@ -157,13 +174,55 @@ const Launcher = (function() {
     if (!art || !art.complete || !art.naturalWidth) {
       return null;
     }
+    const source = art.getAttribute('src');
+    const cached = artColourCache ? artColourCache.get(art) : null;
+    if (cached && cached.source === source) {
+      return cached.colours;
+    }
+    const colours = sampleColours(art);
+    if (colours && artColourCache) {
+      artColourCache.set(art, { source: source, colours: colours });
+    }
+    return colours;
+  }
+
+  // The colours of box art as artColours() reads them, as a promise. The box art of the app grid is a Blob (boxArtBlob()
+  // in utils.js), which createImageBitmap() decodes and shrinks to the 12 x 16 pixels away from the main thread: drawing
+  // the full-size image into the sample canvas decoded it on the main thread, a long task each time the focus came to
+  // rest on another app, right when the next key came. Other art is read at once.
+  function artColoursSoon(art) {
+    if (!art || !art.complete || !art.naturalWidth) {
+      return Promise.resolve(null);
+    }
+    const source = art.getAttribute('src');
+    const cached = artColourCache ? artColourCache.get(art) : null;
+    const blob = typeof boxArtBlob === 'function' ? boxArtBlob(source) : null;
+    if ((cached && cached.source === source) || !blob || typeof createImageBitmap !== 'function') {
+      return Promise.resolve(artColours(art));
+    }
+    return createImageBitmap(blob, { resizeWidth: 12, resizeHeight: 16, resizeQuality: 'high' }).then(function(bitmap) {
+      const colours = sampleColours(bitmap);
+      if (typeof bitmap.close === 'function') {
+        bitmap.close();
+      }
+      if (colours && artColourCache && art.getAttribute('src') === source) {
+        artColourCache.set(art, { source: source, colours: colours });
+      }
+      return colours;
+    }, function() {
+      return artColours(art);
+    });
+  }
+
+  // Draw an image (box art, or an ImageBitmap of it) into the 12 x 16 pixels of the sample canvas and average its bands
+  function sampleColours(image) {
     try {
       sampleCanvas = sampleCanvas || document.createElement('canvas');
       sampleCanvas.width = 12;
       sampleCanvas.height = 16;
       const context = sampleCanvas.getContext('2d');
       context.imageSmoothingQuality = 'high';
-      context.drawImage(art, 0, 0, 12, 16);
+      context.drawImage(image, 0, 0, 12, 16);
       const data = context.getImageData(0, 0, 12, 16).data;
       return [[0, 5], [5, 11], [11, 16]].map(function(band) {
         const sum = [0, 0, 0, 0];
@@ -187,10 +246,13 @@ const Launcher = (function() {
 
   // Ambient light of the box art: style.css draws its colours (--a1 to --a3) as radial glows under a vignette
   function paintAmbient(element, art) {
+    return applyAmbient(element, artColours(art));
+  }
+
+  function applyAmbient(element, colours) {
     if (!element) {
       return false;
     }
-    const colours = artColours(art);
     if (colours) {
       colours.forEach(function(colour, index) {
         element.style.setProperty('--a' + (index + 1), colour);
@@ -276,7 +338,10 @@ const Launcher = (function() {
 
   function showApp(card) {
     const hostName = typeof api !== 'undefined' && api ? api.hostname : '';
-    const count = document.querySelectorAll('#game-grid > .game-container').length;
+    // A live list, which the browser counts again only after the grid changed, instead of a search of the grid per step
+    const grid = byId('game-grid');
+    appCards = appCards || (grid ? grid.getElementsByClassName('game-container') : null);
+    const count = appCards ? appCards.length : 0;
     const overline = hostName + (count ? '  ·  ' + (typeof _n === 'function' ? _n('%1$s app', '%1$s apps', count) : count) : '');
     if (!card) {
       // No app card yet, e.g. while the list of another host loads
@@ -312,6 +377,20 @@ const Launcher = (function() {
     return document.body ? document.body.getAttribute('data-view') : '';
   }
 
+  // Update the fade in the next animation frame, where the browser lays out the page anyway: render() runs on every step
+  // of the focus, right after the hero and the marks changed, where reading the scroll position of the grid made the
+  // browser lay out the page in the middle of the step, and once more for the frame
+  function scheduleFade() {
+    if (typeof requestAnimationFrame !== 'function') {
+      updateFade();
+    } else if (!fadeFrame) {
+      fadeFrame = requestAnimationFrame(function() {
+        fadeFrame = 0;
+        updateFade();
+      });
+    }
+  }
+
   // Fade the bottom edge of the hero while the grid below is scrolled, so that the rows don't end in a hard cut
   function updateFade() {
     const hero = byId('launcher-hero');
@@ -340,7 +419,7 @@ const Launcher = (function() {
         showHostSummary();
       }
     }
-    updateFade();
+    scheduleFade();
   }
 
   // Light up the settings row of the focused control, and scroll the whole row into view below the fade at the top of
