@@ -14,7 +14,7 @@ How to read it:
 - [Installation](#installation), with [which file](#which-file) and [updates](#updates)
 - [The screens of the app](#the-screens-of-the-app), with [language](#language)
 - [Optimal settings for this TV](#optimal-settings-for-this-tv), with [TV classes](#tv-classes) and [recommended bitrates](#recommended-bitrates)
-- [Stream Menu and app menu](#stream-menu-and-app-menu)
+- [Stream Menu and app menu](#stream-menu-and-app-menu), with [when a quit game keeps running](#when-a-quit-game-keeps-running)
 - [Finding your bitrate](#finding-your-bitrate), with [above 150 Mbps](#above-150-mbps)
 - [Host settings (Sunshine)](#host-settings-sunshine), with [Apollo and Vibepollo](#apollo-and-vibepollo)
 - [ForceGM variant and game mode](#forcegm-variant-and-game-mode)
@@ -186,7 +186,7 @@ This table shows what the button applies. A test checks it against the code of t
 | Type text… | Opens a text field with the keyboard of the TV. Its *Done* key, or *Send to the PC*, types the text on the PC as Unicode, whatever the keyboard layout of the PC, e.g. for a login or a search; RETURN, the *Cancel* key of the keyboard or B return to the menu without sending anything. Up to 1024 bytes (about 1000 Latin letters) at once, without line breaks. The keys go only to the field while it is open, and the app never logs or keeps the text. The keyboard of the TV is used with the remote; a USB keyboard types into the field as well, with Enter to send. |
 | Windows key, Alt + Tab, Alt + F4, Esc, Alt + Enter | Presses the keys on the PC and releases them again in reverse order, so that no key stays held, and returns to the game. Alt + Enter switches most Windows games and emulators between fullscreen and a window. |
 | Disconnect | Ends the stream, like RED. The game keeps running on the PC. |
-| Quit app on the PC | Ends the stream and then quits the app on the PC, like the button of the same name in the header of the app list. Unsaved progress in the game is lost. |
+| Quit app on the PC | Ends the stream and then quits the app on the PC, like the button of the same name in the header of the app list. Unsaved progress in the game is lost. Sunshine only closes a program that it started itself, so a game started from *Desktop* or *Steam Big Picture* keeps running (see [When a quit game keeps running](#when-a-quit-game-keeps-running)). |
 
 - The menu opens once the picture shows, not during "Starting…". RED and YELLOW keep working while it is open.
 - UP and DOWN stop at the first and the last entry; unlike the other menus, this one doesn't wrap around, so one UP too many from *Resume* never selects *Quit app on the PC*.
@@ -207,6 +207,16 @@ This table shows what the button applies. A test checks it against the code of t
 - The running app always shows, also when it is hidden, so you can resume or quit it. When every app of a host is hidden, all of them show.
 
 **Order of the app list.** Settings → General → *Sort the list of apps* offers *A to Z* (the default), *Z to A*, *Recently played* (the last 20 apps you started on this PC first, the latest first, then the others from A to Z) and *As on the PC* (the order in which the PC lists them, e.g. the order set in Apollo). The favorites always come first, in the same order among themselves. The Smart Hub tiles follow the same order.
+
+### When a quit game keeps running
+
+*Quit app on the PC* asks the host to quit the app of the stream (the request `/cancel`, as Moonlight on other devices does), and Moonlight Plus then shows the app list without it. What closes on the PC is up to the host: Sunshine closes only the programs that the *Command* of its app started, and it runs the *Undo* commands of the app. A game started any other way keeps running:
+
+- *Desktop* has no program of its own, so quitting it closes nothing.
+- *Steam Big Picture*: Sunshine closes Big Picture (with the *Undo* command `steam://close/bigpicture` of its default app), but a game started from it belongs to Steam and keeps running. The same goes for games that a launcher (Steam, Epic, Playnite, …) starts.
+- A *Command* that only starts a launcher and ends within 5 seconds counts as a detached program (*Continue streaming if the application exits quickly*, `auto-detach`, on by default), which Sunshine can't close either.
+
+To have a game closed by *Quit app on the PC*, add it as an app of its own in Sunshine (*Applications*) with the game's `.exe` as *Command* and its folder as *Working Directory*. Sunshine then asks the game to close and ends it after the *Exit Timeout* (5 seconds by default), so give games that save on exit a longer timeout. For games that only start through a launcher, an *Undo* command can close them, e.g. `taskkill /IM Game.exe` (with the name of the game's process; `/F` would end it without saving). Without such a setup, *Alt + F4* of the Stream Menu closes the game window first, and *Quit app on the PC* then ends the app in Sunshine.
 
 ## Finding your bitrate
 
@@ -474,6 +484,7 @@ The app ends a failed stream with a message instead of a frozen or black picture
 | "No video received from the PC." (-100) | Moonlight Plus first starts the stream once more by itself, without a message, since a host that switches its display (e.g. to 4K HDR or a virtual display) can be too slow for the first start. If the message shows, the second start failed as well: check the firewall of the host PC and the port forwarding of your router. The message names the ports the video and audio need (UDP 47998 and UDP 48000, or the ports of the host's port setting, e.g. UDP 50009 and UDP 50011 for Sunshine with the port 50000). |
 | "RTSP handshake failed (error …)" and other "… failed (error …)" messages of the connection | The connection to the host failed at this step. When the step needs certain ports, the message names them (e.g. TCP 48010, UDP 48000 and UDP 48010 for the RTSP handshake, UDP 47999 for the control stream; a host with another port setting gets its own ports, e.g. TCP 50021, UDP 50011 and UDP 50021 for Sunshine with the port 50000); check that the firewall of the host PC and your router let them through. |
 | "… is still running on …, probably because another device started it." | *Quit app on the PC* didn't quit the app, usually because another device started it. Quit it on that device or on the PC. |
+| The app list shows no running app, but the game still runs on the PC | Sunshine quit its app, but the game wasn't a program that the app started (e.g. a game started from *Desktop* or *Steam Big Picture*). See [When a quit game keeps running](#when-a-quit-game-keeps-running). |
 | "Your network connection isn't performing well." (-101) | Lower the bitrate, or use a faster connection. |
 | "Something went wrong on your host PC when starting the stream." (-102) | Restart the host PC and try again. |
 | "… Make sure you don't have any DRM-protected content open on your host PC." (-103) | Close the protected content on the host. |
