@@ -2,7 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
-- [2.2.0](#220): pre-release, a tidier app with fixes and a smaller download
+- [2.2.0](#220): 2026-11-03, a tidier app with fixes and a smaller download
 - [2.1.0](#210): 2026-10-30, five languages and new tools in the Stream Menu
 - [2.0.0](#200): pre-release only, its changes come with 2.1.0
 - [1.19.101](#119101): 2026-10-29, a new look and two new menus
@@ -16,7 +16,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ## 2.2.0
 
-*Pre-release, in testing.* A tidier app: settings in the order of use, fixes for the Stream Menu and the start, and a smaller download.
+*2026-11-03.* A tidier app: settings in the order of use, fixes for the Stream Menu and the start, and a smaller download.
 
 > **Install:** by hand over 2.1.0 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >

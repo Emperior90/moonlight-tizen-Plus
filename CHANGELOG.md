@@ -2,7 +2,7 @@
 
 All notable changes to Moonlight Plus, by version, newest first. Each version lists what is new since the version before it; the [patch notes](docs/PATCH_NOTES.md) sum them up for users.
 
-## 2.2.0 (unreleased)
+## 2.2.0 (2026-11-03)
 
 ### Added
 - Added the notices of the third-party components to the app package (`static/licenses/THIRD-PARTY-NOTICES.txt`): what Moonlight Plus is, that it is free software under the GPL-3.0 without any warranty, where its source is, the copyright lines, the forks of Moonlight Tizen whose code it contains, and for every component of the package (moonlight-common-c, libgamestream, ENet, the Reed-Solomon code, Opus, OpenSSL 1.1.1d, curl 7.68.0 with the ISC licence of its `inet_ntop.c`, zlib, the Emscripten runtime with musl, libc++, libc++abi and compiler-rt, the TizenTV extensions of Samsung, jQuery, Material Design Lite, Roboto, Manrope and the `common.js` of Chromium) its version, source, copyright and full licence text. The BSD, MIT, NCSA, OpenSSL and Apache licences of these components ask for their notices in every copy, and no release of Moonlight Tizen or of Moonlight Plus had them (inherited from upstream); `tests/unit/third-party-notices.test.js` checks the entries and the licence texts
