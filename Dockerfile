@@ -65,11 +65,9 @@ RUN ./emsdk activate latest-fastcomp
 WORKDIR /home/moonlight
 RUN mkdir -p moonlight-tizen
 COPY --chown=moonlight CMakeLists.txt ./moonlight-tizen/
-COPY --chown=moonlight h264bitstream ./moonlight-tizen/h264bitstream/
 COPY --chown=moonlight libgamestream ./moonlight-tizen/libgamestream/
 COPY --chown=moonlight moonlight-common-c ./moonlight-tizen/moonlight-common-c/
 COPY --chown=moonlight opus ./moonlight-tizen/opus/
-COPY --chown=moonlight ports ./moonlight-tizen/ports/ 
 COPY --chown=moonlight wasm/*.c ./moonlight-tizen/wasm/
 COPY --chown=moonlight wasm/*.cpp ./moonlight-tizen/wasm/
 COPY --chown=moonlight wasm/*.hpp ./moonlight-tizen/wasm/
@@ -87,7 +85,9 @@ RUN --mount=type=cache,target=/home/moonlight/.ccache,uid=1000,gid=1000 \
 	--mount=type=cache,target=/home/moonlight/.emscripten_ports,uid=1000,gid=1000 \
 	CCACHE_DIR=/home/moonlight/.ccache cmake --build build
 
-# Copy the remaining frontend files required for packaging the application
+# Copy the remaining frontend files required for packaging the application, and the GPL-3.0 text that CMakeLists.txt
+# installs next to them
+COPY --chown=moonlight LICENSE ./moonlight-tizen/
 COPY --chown=moonlight res/ ./moonlight-tizen/res/
 COPY --chown=moonlight wasm/index.html ./moonlight-tizen/wasm/
 COPY --chown=moonlight wasm/platform/ ./moonlight-tizen/wasm/platform/
@@ -187,6 +187,13 @@ RUN rm -rf \
 	.emscripten_cache.lock \
 	.emscripten_ports \
 	.emscripten_sanity
+
+# Only the widget file, for the release workflow, which builds this target and writes it to the runner instead of
+# pushing an image (no image is published: it would carry the Tizen Studio CLI and the Ubuntu packages):
+#   docker build --target wgt --output type=local,dest=out .
+# A plain `docker build .` still builds the last stage below.
+FROM scratch AS wgt
+COPY --from=base /home/moonlight/Moonlight*.wgt /
 
 # Use a multi-stage build to reclaim space from deleted files
 FROM ubuntu:22.04

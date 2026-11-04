@@ -20,8 +20,11 @@
 // install where the user never touched that setting. Version 2 stores the defaults of version 1 once for existing
 // installs (legacySettingsSnapshot()), and a fresh install starts at version 2 with the defaults derived for its TV.
 // When a later build changes the default of a stored setting again, it raises the version and freezes the defaults of
-// the previous version the same way.
-const SETTINGS_SCHEMA_VERSION = 2;
+// the previous version the same way. Version 3 turned the rumble on by default, so it stores the earlier default (off)
+// once for an existing install that never switched it (schema2Snapshot()), and it drops the stored values of the
+// switches 'Continuous audio from the host', which is gone since the host always keeps sending audio, and 'Optimize
+// bitrate presets', which is gone since the presets are the recommended bitrates (SCHEMA_3_REMOVED_KEYS).
+const SETTINGS_SCHEMA_VERSION = 3;
 const SETTINGS_SCHEMA_KEY = 'settingsSchema';
 
 const RECOMMENDED_ETHERNET_BITRATE = 75; // Highest recommended bitrate in Mbps over the 100 Mbps Ethernet port of Samsung TVs, leaving headroom for FEC, network overhead and larger frames
@@ -30,7 +33,12 @@ const UNKNOWN_CONNECTION_MAX_BITRATE = 80; // Highest recommended bitrate in Mbp
 const NETWORK_HEADROOM_FACTOR = 1.25; // Factor above the standard preset that a known network connection gets, for a sharper picture in fast motion
 const UHD_DECODER_CAP_MBPS = 80; // Highest recommended bitrate in Mbps for a 4K or 8K TV without a tested profile, which Samsung specifies for HEVC at 4K and 60 FPS on most of its models
 const FHD_DECODER_CAP_MBPS = 50; // Highest recommended bitrate in Mbps for a Full HD TV, which Samsung specifies for HEVC at 1080p and 60 FPS on its Full HD models
-const MAX_BITRATE_MBPS = 150; // Highest bitrate in Mbps of the bitrate slider (index.html)
+// Highest bitrate in Mbps of the bitrate slider (index.html) and of the bitrate entry of the Stream Menu (menus.js). It
+// lies far above the decoder caps on purpose, for testing a TV over a strong 5 GHz or 6 GHz Wi-Fi link: the presets and
+// the optimal settings stay at the caps, and the bitrate warning names the threshold of the TV (getBitrateWarningMbps()).
+// moonlight-common-c sends the bitrate to Sunshine uncapped (x-ml-video.configuredBitrateKbps in SdpGenerator.c); only
+// GFE stops at 100 Mbps.
+const MAX_BITRATE_MBPS = 250;
 
 // Highest luma sample rates (width x height x frame rate) of the decoder levels of HEVC and AV1. Level 5.1 covers 4K at
 // up to 64 FPS, and every supported TV decodes it. Level 5.2 covers 4K at up to 128 FPS, which the 4K TVs with a 120 Hz
@@ -43,12 +51,18 @@ const LEVEL_52_MAX_LUMA_SAMPLE_RATE = 1069547520;
 // TV models whose settings were tested on the real TV. A profile is selected by its regular expression, which is
 // tested against the model name and the model series, and overrides what the TV can't report through its APIs:
 // - unlockAllFps: the panel shows more than 60 Hz, so 'Unlock all frame rates' starts switched on
-// - decoderCapMbps: the highest bitrate in Mbps that the video decoder of this model handled in the tests
+// - decoderCapMbps: the highest bitrate in Mbps that the presets and the optimal settings give this model, the bitrate
+//   it was tested with over Wi-Fi
+// - warnAboveMbps (optional): the bitrate in Mbps above which the bitrate warning appears, when the model streams more
+//   than decoderCapMbps; without it the warning starts at decoderCapMbps
 // - refresh120: the panel runs at 120 Hz or more
 // Every other model gets the values derived from its detected capabilities.
 const VERIFIED_PROFILES = Object.freeze([
   // Samsung S90C (2023 OLED with a 144 Hz panel), the TV this app was tuned and tested on
-  Object.freeze({ id: 'S90C', match: /S90C/i, unlockAllFps: true, decoderCapMbps: 100, refresh120: true }),
+  // It streams 4K HDR in AV1 at 150 Mbps in daily use over 5 GHz Wi-Fi with an FEC of 5 % in Sunshine (fec_percentage),
+  // so the warning starts above that. Its presets stay at 100 Mbps over Wi-Fi, so that they also work over a weaker
+  // Wi-Fi link than that one.
+  Object.freeze({ id: 'S90C', match: /S90C/i, unlockAllFps: true, decoderCapMbps: 100, warnAboveMbps: 150, refresh120: true }),
 ]);
 
 // Standard bitrate presets in Mbps by resolution and frame rate. 1800p is interpolated by pixel count between the
@@ -72,6 +86,17 @@ const LEGACY_DEFAULT_BITRATES = Object.freeze({ ethernet: 75, wifi: 100, unknown
 // order in which loadStoredSettings() in index.js loads them
 const LEGACY_SNAPSHOT_KEYS = Object.freeze(['resolution', 'unlockAllFps', 'frameRate', 'bitrate', 'videoCodec', 'hdrMode',
   'framePacing', 'fullRange', 'gameMode', 'optimizeBitrate', 'autoAdjustBitrate']);
+
+// Frozen copy of the defaults of settings schema 2 that settings schema 3 changed: the rumble was off until the user
+// switched it on. Never change these values: they describe what existing installs showed before the snapshot of
+// settings schema 3, not what new installs should get.
+const SCHEMA_2_DEFAULTS = Object.freeze({ rumbleFeedback: false });
+
+// The stored keys of the settings that settings schema 3 removed: the switch 'Continuous audio from the host' of an
+// A/B test, since the launch and resume requests always ask for audio during silence now, and the switch 'Optimize
+// bitrate presets', whose presets aimed below the recommended bitrate, since the presets are the recommended bitrates
+// now (recommendedBitrate()). The stored bitrate stays (schema3Replacements()).
+const SCHEMA_3_REMOVED_KEYS = Object.freeze(['continuousAudio', 'optimizeBitrate']);
 
 // Call a Tizen or Samsung API and return its result, or the fallback value if the call throws (e.g. a missing API
 // object, a missing privilege or an unusual firmware) or returns nothing
@@ -403,13 +428,25 @@ function getStandardPresetBitrate(res, frameRate) {
   return preset !== undefined ? preset : null;
 }
 
-// Return the highest bitrate in Mbps that the video decoder of the TV is recommended for: the tested value of its
-// profile, otherwise what Samsung specifies for HEVC at 60 FPS on most 4K models, or on its Full HD models
+// Return the highest bitrate in Mbps that the presets and the optimal settings give the TV, the cap of the recommended
+// bitrates: the tested value of its profile, otherwise what Samsung specifies for HEVC at 60 FPS on most 4K models, or
+// on its Full HD models
 function getDecoderCapMbps(caps) {
   if (caps && caps.profile && caps.profile.decoderCapMbps) {
     return caps.profile.decoderCapMbps;
   }
   return caps && (caps.is4k || caps.is8k) ? UHD_DECODER_CAP_MBPS : FHD_DECODER_CAP_MBPS;
+}
+
+// Return the bitrate in Mbps above which the bitrate warning appears on the TV: the warning threshold of its profile when
+// the model streams more than its presets give it (warnAboveMbps), otherwise its decoder cap (getDecoderCapMbps()). Only
+// the warning and the advice of the optimal settings dialog use it; the presets and the optimal settings stay at the
+// decoder cap.
+function getBitrateWarningMbps(caps) {
+  if (caps && caps.profile && caps.profile.warnAboveMbps) {
+    return caps.profile.warnAboveMbps;
+  }
+  return getDecoderCapMbps(caps);
 }
 
 // Get the recommended bitrate in Mbps for a resolution, a frame rate and the network connection type of the TV, starting
@@ -439,44 +476,17 @@ function recommendedBitrate(res, frameRate, connectionType, caps) {
 
 // Return the bitrate in Mbps that the optimal streaming settings dialog suggests as the upper end for raising the
 // bitrate over Wi-Fi, when the performance statistics show no dropped frames: twice the standard preset of the
-// resolution and frame rate, but at most the highest bitrate of the slider and the decoder cap of the TV
-// (getDecoderCapMbps()), above which the bitrate warning appears. When the recommended bitrate already reaches it, the
-// dialog says so instead.
+// resolution and frame rate, but at most the highest bitrate of the slider and the bitrate where the warning appears
+// (getBitrateWarningMbps()), e.g. 150 Mbps for 4K at 60 FPS on the tested model. It is only advice for a good Wi-Fi
+// link: the optimal settings apply the recommended bitrate (recommendedBitrate()). When the recommended bitrate already
+// reaches it, the dialog says so instead.
 function bitrateRaiseLimit(res, frameRate, caps) {
   let preset = getStandardPresetBitrate(res, frameRate);
   if (preset === null) {
     // A frame rate without a preset gets the preset of 60 FPS
     preset = getStandardPresetBitrate(res, 60);
   }
-  return Math.min(2 * preset, MAX_BITRATE_MBPS, getDecoderCapMbps(caps));
-}
-
-// Return the highest bitrate that a bitrate preset may set on this TV and network connection, as { mbps, reason }, or
-// null for no limit:
-// - over Ethernet RECOMMENDED_ETHERNET_BITRATE (reason 'ethernet'), since the 100 Mbps port that Samsung TVs usually
-//   have can't carry more without packet loss
-// - on a TV without a tested profile, also the highest bitrate that recommendedBitrate() gives for any resolution and
-//   frame rate on this connection (reason 'recommended'): the decoder cap of the TV (getDecoderCapMbps()), and over an
-//   unknown connection UNKNOWN_CONNECTION_MAX_BITRATE, so that a preset (e.g. 120 Mbps for 4K at 120 FPS) never sets a
-//   bitrate above the recommendation of the app, which the bitrate warning would then warn about
-// A TV with a tested profile keeps the standard presets above its decoder cap (e.g. 120 Mbps for 4K at 120 FPS on the
-// first model of VERIFIED_PROFILES), which its tests went up to. The bitrate slider still goes up to MAX_BITRATE_MBPS on
-// every TV.
-function presetBitrateLimit(connectionType, caps) {
-  let limit = null;
-  if (connectionType === 'ethernet') {
-    limit = { mbps: RECOMMENDED_ETHERNET_BITRATE, reason: 'ethernet' };
-  }
-  if (!(caps && caps.profile)) {
-    let recommendedMax = getDecoderCapMbps(caps);
-    if (connectionType !== 'ethernet' && connectionType !== 'wifi') {
-      recommendedMax = Math.min(recommendedMax, UNKNOWN_CONNECTION_MAX_BITRATE);
-    }
-    if (!limit || recommendedMax < limit.mbps) {
-      limit = { mbps: recommendedMax, reason: 'recommended' };
-    }
-  }
-  return limit;
+  return Math.min(2 * preset, MAX_BITRATE_MBPS, getBitrateWarningMbps(caps));
 }
 
 // Return the bitrate in Mbps as the bitrate slider (index.html) holds it: rounded to its steps of 0.5 Mbps, within 0.5
@@ -485,40 +495,13 @@ function sliderBitrate(mbps) {
   return Math.min(MAX_BITRATE_MBPS, Math.max(0.5, Math.round(mbps * 2) / 2));
 }
 
-// Return the optimized bitrate preset ('Optimize bitrate presets') in Mbps for a resolution, frame rate, codec and HDR
-// mode, before the bitrate slider rounds it: the luma samples per second divided by 8309 (SDR) or 6630.5 (HDR) give
-// the bitrate in kbps for H.264, of which HEVC needs 60 % and AV1 40 %. A result that isn't positive gives 10 kbps.
-// Sweet-spot formula reference: https://www.reddit.com/r/MoonlightStreaming/comments/1gg2cdy/sweet_spot_bitrate/
-function getOptimizedPresetBitrate(res, frameRate, videoCodec, hdrMode) {
-  const size = parseResolution(res) || { width: NaN, height: NaN };
-  // Multiplier to adjust bitrate based on codec efficiency
-  const codecMultiplier = { H264: 1.0, HEVC: 0.6, AV1: 0.4 }[videoCodec];
-  // Bitrate factor depends on HDR state
-  const bitrateFactor = hdrMode ? 6630.5 : 8309;
-  const baseBitrate = size.width * size.height * Number(frameRate) / bitrateFactor;
-  let finalBitrate = Math.round(baseBitrate * codecMultiplier);
-  // Apply the default bitrate value in case of invalid calculation
-  if (finalBitrate <= 0) {
-    finalBitrate = 10;
-  }
-  return finalBitrate / 1000;
-}
-
-// Return the bitrates in Mbps that the standard and the optimized bitrate presets set for a resolution, frame rate,
-// codec and HDR mode on this TV and network connection, rounded like the bitrate slider and limited like
-// presetBitrateLimit() says, as { standard, optimized }. standard is null for a frame rate without a standard preset,
-// which leaves the bitrate as it is.
-function presetBitrates(res, frameRate, videoCodec, hdrMode, connectionType, caps) {
-  const limit = presetBitrateLimit(connectionType, caps);
-  const limited = function(mbps) {
-    const bitrate = sliderBitrate(mbps);
-    return limit && bitrate > limit.mbps ? limit.mbps : bitrate;
-  };
-  const standard = getStandardPresetBitrate(res, frameRate);
-  return {
-    standard: standard === null ? null : limited(standard),
-    optimized: limited(getOptimizedPresetBitrate(res, frameRate, videoCodec, hdrMode)),
-  };
+// Return the bitrate in Mbps that the bitrate presets set for a resolution and frame rate on this TV and network
+// connection, as the bitrate slider holds it: the recommended bitrate (recommendedBitrate()), which is already limited
+// for the 100 Mbps Ethernet port and the decoder cap of the TV. So a change of the resolution or frame rate gives the
+// same bitrate as the optimal streaming settings for it, e.g. 100 Mbps again after 4K at 60 FPS, 1440p and back on the
+// tested model over Wi-Fi.
+function presetBitrate(res, frameRate, connectionType, caps) {
+  return sliderBitrate(recommendedBitrate(res, frameRate, connectionType, caps));
 }
 
 // Return the default of the game mode (Ultra Low Latency mode of the WASM player) for a Tizen platform version and the
@@ -558,8 +541,8 @@ function isGameModeUnavailable(caps) {
 // - 'Unlock all frame rates' only for a tested profile with a high refresh rate panel, since most TVs show 60 Hz
 // - the game mode by Tizen version and by what the WASM player offers (getGameModeDefault()), with null meaning off,
 //   disabled and not stored
-// - frame pacing on, the limited color range (the standard for video, which keeps the detail in dark and bright areas),
-//   and the standard bitrate presets instead of the optimized ones, which aim for a lower bitrate
+// - frame pacing on and the limited color range (the standard for video, which keeps the detail in dark and bright
+//   areas)
 function deriveOptimalSettings(caps, connectionType) {
   const capabilities = caps || {};
   const profile = capabilities.profile || null;
@@ -575,7 +558,6 @@ function deriveOptimalSettings(caps, connectionType) {
     gameMode: getGameModeDefault(capabilities.platformVer, capabilities.wasmPlayer ? capabilities.wasmPlayer.ultraLowLatency : 'unknown'),
     framePacing: true,
     fullRange: false,
-    optimizeBitrate: false,
   };
 }
 
@@ -600,7 +582,7 @@ const VIDEO_WARNINGS = Object.freeze({
   HDR_NOT_REPORTED: 'hdrNotReported',
   // A bitrate above what the 100 Mbps Ethernet port that Samsung TVs usually have can carry (ETHERNET_MAX_BITRATE)
   ETHERNET_BITRATE: 'ethernetBitrate',
-  // A bitrate above the decoder cap of the TV (getDecoderCapMbps())
+  // A bitrate above the warning threshold of the TV (getBitrateWarningMbps()), its decoder cap on most TVs
   BITRATE_ABOVE_CAP: 'bitrateAboveCap',
   // H.264 above 1080p, which Samsung TVs generally can't decode
   H264_RESOLUTION: 'h264Resolution',
@@ -664,7 +646,8 @@ function hdrWarningKey(hdrMode, caps) {
 
 // Return the message key of the warning for a bitrate in Mbps on a TV with the network connection type (VIDEO_WARNINGS),
 // or null: above ETHERNET_MAX_BITRATE over Ethernet, the 100 Mbps port that Samsung TVs usually have, and otherwise above
-// the decoder cap of the TV (getDecoderCapMbps(), e.g. 100 Mbps for a tested model, 80 Mbps for other 4K and 8K TVs)
+// the warning threshold of the TV (getBitrateWarningMbps(), e.g. 150 Mbps on the tested model, 80 Mbps on other 4K and
+// 8K TVs)
 function bitrateWarningKey(bitrate, connectionType, caps) {
   const mbps = parseFloat(bitrate);
   if (!(mbps > 0)) {
@@ -673,7 +656,7 @@ function bitrateWarningKey(bitrate, connectionType, caps) {
   if (connectionType === 'ethernet' && mbps > ETHERNET_MAX_BITRATE) {
     return VIDEO_WARNINGS.ETHERNET_BITRATE;
   }
-  return mbps > getDecoderCapMbps(caps) ? VIDEO_WARNINGS.BITRATE_ABOVE_CAP : null;
+  return mbps > getBitrateWarningMbps(caps) ? VIDEO_WARNINGS.BITRATE_ABOVE_CAP : null;
 }
 
 // Return the message key of the warning for a video codec at a resolution (VIDEO_WARNINGS), or null: H.264 above 1080p,
@@ -775,6 +758,34 @@ function legacySettingsSnapshot(stored, caps, connectionType) {
   return snapshot;
 }
 
+// Return the settings that the one-time snapshot of settings schema 3 stores for an existing install of settings schema
+// 2 or older: the default of settings schema 2 (SCHEMA_2_DEFAULTS) for every setting whose default changed and that is
+// still unset, so that the install shows what it showed before. Stored values are never replaced.
+function schema2Snapshot(stored) {
+  const values = stored || {};
+  const snapshot = {};
+  Object.keys(SCHEMA_2_DEFAULTS).forEach(function(key) {
+    if (values[key] == null) {
+      snapshot[key] = SCHEMA_2_DEFAULTS[key];
+    }
+  });
+  return snapshot;
+}
+
+// Return what settings schema 3 stores for an existing install in place of the settings that it removed
+// (SCHEMA_3_REMOVED_KEYS): the optimized presets of 'Optimize bitrate presets' always followed the video settings, so an
+// install that had the switch on and never stored the state of the bitrate presets keeps following them, now with the
+// recommended bitrates (presetBitrate()). Its stored bitrate stays until the resolution or frame rate changes, and a
+// stored state of the bitrate presets is never replaced.
+function schema3Replacements(stored) {
+  const values = stored || {};
+  const replacements = {};
+  if (values.optimizeBitrate == true && values.autoAdjustBitrate == null) {
+    replacements.autoAdjustBitrate = true;
+  }
+  return replacements;
+}
+
 // Export the functions and constants for the unit tests in Node, where this file is loaded as a module
 if (typeof module === 'object' && module && module.exports) {
   module.exports = {
@@ -809,12 +820,11 @@ if (typeof module === 'object' && module && module.exports) {
     detectTvCapabilities: detectTvCapabilities,
     getStandardPresetBitrate: getStandardPresetBitrate,
     getDecoderCapMbps: getDecoderCapMbps,
+    getBitrateWarningMbps: getBitrateWarningMbps,
     recommendedBitrate: recommendedBitrate,
     bitrateRaiseLimit: bitrateRaiseLimit,
-    presetBitrateLimit: presetBitrateLimit,
     sliderBitrate: sliderBitrate,
-    getOptimizedPresetBitrate: getOptimizedPresetBitrate,
-    presetBitrates: presetBitrates,
+    presetBitrate: presetBitrate,
     getGameModeDefault: getGameModeDefault,
     isGameModeUnavailable: isGameModeUnavailable,
     deriveOptimalSettings: deriveOptimalSettings,
@@ -830,5 +840,9 @@ if (typeof module === 'object' && module && module.exports) {
     legacyDefaults: legacyDefaults,
     followsBitratePresets: followsBitratePresets,
     legacySettingsSnapshot: legacySettingsSnapshot,
+    SCHEMA_2_DEFAULTS: SCHEMA_2_DEFAULTS,
+    SCHEMA_3_REMOVED_KEYS: SCHEMA_3_REMOVED_KEYS,
+    schema2Snapshot: schema2Snapshot,
+    schema3Replacements: schema3Replacements,
   };
 }

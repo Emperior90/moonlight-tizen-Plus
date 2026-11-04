@@ -13,6 +13,9 @@ const Controller = (function() {
   // Number of characters of a gamepad id that the stream sees: the Emscripten event struct keeps 63 bytes of it, which
   // GetControllerType() in wasm/controller_type.hpp detects the controller type from
   const STREAM_ID_LENGTH = 63;
+  // How often the menus read the gamepads, in ms: about once per frame of the screen, which no real button press is
+  // shorter than. The held D-pad and stick repeat by time (index.js), so it doesn't change how fast they repeat.
+  const MENU_POLL_INTERVAL_MS = 16;
 
   class Button {
     constructor(button) {
@@ -282,7 +285,7 @@ const Controller = (function() {
     }
     if (!pollingInterval) {
       resetGamepads();
-      pollingInterval = setInterval(pollGamepads, 5);
+      pollingInterval = setInterval(pollGamepads, MENU_POLL_INTERVAL_MS);
       // The menus take over again: no rumble of a stream may go on here (the end of the stream already stopped them)
       Rumble.stopAll();
     }
@@ -350,7 +353,7 @@ const Rumble = (function() {
     }
     unsupportedNotices.add(id);
     const name = gamepad ? Controller.describeGamepad(gamepad).name : '';
-    snackbarLogLong('Gamepad %1$s (%2$s) does not support rumble on this TV.', index, name ? name : t('Unknown'));
+    snackbarLogLong('Controller %1$s (%2$s) does not support rumble on this TV.', index, name ? name : t('Unknown'));
   }
 
   function clearReplay(index) {

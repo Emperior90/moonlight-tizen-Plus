@@ -58,22 +58,22 @@ function clickElement(target) {
   // Prevent clicking if the element is disabled based on common disabled states
   if (element.disabled || element.getAttribute('aria-disabled') === 'true' || element.classList.contains('is-disabled')) {
     console.warn('%c[navigation.js, clickElement]', 'color: gray;', 'Cannot click the disabled target element:', element);
-    // Check if the disabled element is the Game Mode switch, which the WASM player says it can't support (see
+    // Check if the disabled element is the switch of the Ultra low latency mode (gameMode), which the WASM player says it can't support (see
     // detectWasmPlayerFeatures() in tv_profile.js), or which stays disabled on Tizen 5.5
     if (element.id === 'gameModeBtn' && typeof isGameModeUnavailable === 'function' && isGameModeUnavailable(tvCapabilities)) {
       setTimeout(() => {
         warningDialog(t('Unsupported Feature'),
-          t('The video player of this TV reports that it doesn\'t offer the Ultra Low Latency mode that Game Mode uses, so the stream uses the Low Latency mode.') + '<br><br>' +
-          t('Since the Game Mode cannot be enabled, you may experience slightly higher latency while streaming. To further reduce latency, it is highly recommended to open your TV\'s Picture Settings menu and disable post-processing features such as <b>Picture Clarity</b>, <b>Contrast Enhancer</b>, and other video enhancements.')
+          t('The video player of this TV reports that it doesn\'t offer the Ultra Low Latency mode, so the stream uses the Low Latency mode.') + '<br><br>' +
+          t('Since the Ultra low latency mode cannot be turned on, you may experience slightly higher latency while streaming. To further reduce latency, it is highly recommended to open your TV\'s Picture Settings menu and disable post-processing features such as <b>Picture Clarity</b>, <b>Contrast Enhancer</b>, and other video enhancements.')
         );
       }, 250);
     } else if (element.id === 'gameModeBtn' && parseFloat(platformVer) === 5.5) {
-      // Show a warning message when attempting to enable game mode on Tizen 5.5 platform
+      // Show a warning message when attempting to enable the Ultra low latency mode on Tizen 5.5 platform
       setTimeout(() => {
         warningDialog(t('Unsupported Feature'),
-          t('Game Mode (Ultra Low Latency) is not supported on Tizen %1$s due to platform limitations and lack of support from the WASM player.', platformVer) + 
+          t('The Ultra low latency mode is not supported on Tizen %1$s due to platform limitations and lack of support from the WASM player.', platformVer) + 
           t('Attempting to enable this option will have no effect, as the decoder will force a fallback to standard Low Latency mode to maintain streaming stability.<br><br>') + 
-          t('Since the Game Mode cannot be enabled, you may experience slightly higher latency while streaming. To further reduce latency, it is highly recommended to open your TV\'s Picture Settings menu and disable post-processing features such as <b>Picture Clarity</b>, <b>Contrast Enhancer</b>, and other video enhancements.')
+          t('Since the Ultra low latency mode cannot be turned on, you may experience slightly higher latency while streaming. To further reduce latency, it is highly recommended to open your TV\'s Picture Settings menu and disable post-processing features such as <b>Picture Clarity</b>, <b>Contrast Enhancer</b>, and other video enhancements.')
         );
       }, 250);
     }
@@ -168,9 +168,15 @@ function focusElement(target) {
     }
     return;
   }
-  // If the element supports focus, add focus to it
+  // If the element supports focus, add focus to it. A card of the host or app grid scrolls with its row
+  // (ListView.scrollToCardRow()): focusing it with a scroll of its own made the browser lay out the page in the middle
+  // of each step to jump to the card at once, before the smooth scroll of the row moved it again.
   if (typeof element.focus === 'function') {
-    element.focus();
+    if (element.closest && element.closest('#game-grid, #host-grid')) {
+      element.focus({ preventScroll: true });
+    } else {
+      element.focus();
+    }
   }
 }
 
@@ -472,7 +478,7 @@ const Views = {
           Navigation.change(Views.HostsMenuHighlight);
           focusElement(Views.HostsMenuHighlight.view.current());
         } else {
-          // Set focus on the first navigation item in HostsNav view when transitioning from Add Host container
+          // Set focus on the first navigation item in HostsNav view when transitioning from Add PC container
           Navigation.change(Views.HostsNav);
           focusElement(Views.HostsNav.view.current());
         }
@@ -494,9 +500,9 @@ const Views = {
     },
     accept: function() {
       const currentItem = resolveElement(this.view.current());
-      // Check if the current item is the Add Host container
+      // Check if the current item is the Add PC container
       if (currentItem && currentItem.id === 'addHostContainer') {
-        // Click the Add Host container itself to open the Add Host dialog
+        // Click the Add PC container itself to open the Add PC dialog
         clickElement(currentItem);
       } else {
         // If the current item has children, click the first child element (the host card)
@@ -510,7 +516,7 @@ const Views = {
     },
     press: function() {
       const currentItem = resolveElement(this.view.current());
-      // Check if the current item is not the Add Host container
+      // Check if the current item is not the Add PC container
       if (currentItem && currentItem.id !== 'addHostContainer') {
         // If the current item has children, set focus on the second child element (the menu button)
         const menuButton = currentItem.children ? currentItem.children[1] : null;
@@ -521,9 +527,9 @@ const Views = {
     },
     switch: function() {
       const currentItem = resolveElement(this.view.current());
-      // Check if the current item is the Add Host container
+      // Check if the current item is the Add PC container
       if (currentItem && currentItem.id === 'addHostContainer') {
-        // Set focus on the Add Host container itself
+        // Set focus on the Add PC container itself
         focusElement(currentItem);
       } else {
         // Scroll to the current Host card row to ensure is visible when switching back from another view
@@ -793,10 +799,9 @@ const Views = {
     },
   },
   HostMenuDialog: {
-    view: new ListView(() => {
-      const actions = ['refreshApps', 'wakeHost', 'deleteHost', 'viewDetails', 'closeHostMenu'];
-      return actions.map(action => action === 'closeHostMenu' ? action : action + '-' + Views.HostMenuDialog.hostname);
-    }),
+    // The ids of the entries that the open host menu shows, which hostMenuDialog() in index.js sets as it opens it
+    entries: [],
+    view: new ListView(() => Views.HostMenuDialog.entries),
     up: function() {
       this.view.prevOption();
       focusElement(this.view.current());
@@ -1020,8 +1025,8 @@ const Views = {
       'optimalSettingsBtn',
       'selectResolution',
       'selectFramerate',
-      'selectBitrate',
-      'framePacingBtn'
+      'unlockAllFpsBtn',
+      'selectBitrate'
     ]),
     up: function() {
       this.view.prevOption();
@@ -1126,7 +1131,7 @@ const Views = {
     view: new ListView(() => 
       document.getElementById('videoBitrateMenu')
       .parentNode.children[3].children[1].children),
-    // UP/DOWN change the bitrate in coarse steps, so that e.g. 95 -> 150 Mbps takes 11 presses instead of 110.
+    // UP/DOWN change the bitrate in coarse steps, so that e.g. 100 -> 250 Mbps takes 30 presses instead of 300.
     // The value is assigned directly, because the range input always clamps and snaps an assigned value.
     up: function() {
       bitrateSlider.value = Math.min(parseFloat(bitrateSlider.max), parseFloat(bitrateSlider.value) + BITRATE_COARSE_STEP);
@@ -1163,10 +1168,13 @@ const Views = {
       unmark(this.view.current());
     },
   },
+  // General (the section kept the id interfaceSettings of the UI Settings of earlier versions)
   InterfaceSettings: {
     view: new ListView(() => [
       'selectLanguage',
-      'ipAddressFieldModeBtn'
+      'selectSortAppsList',
+      'ipAddressFieldModeBtn',
+      'removeAllHostsBtn'
     ]),
     up: function() {
       this.view.prevOption();
@@ -1234,46 +1242,6 @@ const Views = {
       unmark(this.view.current());
     },
   },
-  HostSettings: {
-    view: new ListView(() => [
-      'selectSortAppsList',
-      'optimizeGamesBtn',
-      'removeAllHostsBtn'
-    ]),
-    up: function() {
-      this.view.prevOption();
-      focusElement(this.view.current());
-    },
-    down: function() {
-      this.view.nextOption();
-      focusElement(this.view.current());
-    },
-    left: function() {},
-    right: function() {},
-    accept: function() {
-      clickElement(this.view.current());
-    },
-    back: function() {
-      // Remove focus from the current element before changing the view
-      blurElement(this.view.current());
-      // Reset the current settings view before navigating to the next settings view
-      resetSettingsView();
-      // Navigate to the Settings view
-      Navigation.change(Views.Settings);
-      // Set focus on the category item in Settings view when transitioning from HostSettings view
-      focusElement(Views.Settings.view.current());
-    },
-    press: function() {},
-    switch: function() {
-      focusElement(this.view.current());
-    },
-    enter: function() {
-      mark(this.view.current());
-    },
-    leave: function() {
-      unmark(this.view.current());
-    },
-  },
   InputSettings: {
     view: new ListView(() => [
       'rumbleFeedbackBtn',
@@ -1324,9 +1292,7 @@ const Views = {
       // and neither is shown when the audio output is disabled
       isAudioOutputDisabled() ? null : isWebAudioBackendSelected() ? 'selectAudioJitter' : 'audioSyncBtn',
       isAudioOutputDisabled() || !isWebAudioBackendSelected() ? null : 'audioClockSyncBtn',
-      'playHostAudioBtn',
-      'continuousAudioBtn',
-      isAudioOutputDisabled() ? null : 'decryptHostAudioBtn'
+      'playHostAudioBtn'
     ].filter(Boolean)),
     up: function() {
       this.view.prevOption();
@@ -1496,10 +1462,8 @@ const Views = {
     view: new ListView(() => [
       'selectCodec',
       'hdrModeBtn',
-      'fullRangeBtn',
-      'gameModeBtn',
-      'refFrameInvalidationBtn',
-      'hdrMetadataBtn'
+      'framePacingBtn',
+      'gameModeBtn'
     ]),
     up: function() {
       this.view.prevOption();
@@ -1665,12 +1629,16 @@ const Views = {
   },
   AdvancedSettings: {
     view: new ListView(() => [
-      'unlockAllFpsBtn',
-      'optimizeBitrateBtn',
+      'optimizeGamesBtn',
+      'fullRangeBtn',
       'disableWarningsBtn',
       'selectPerformanceStats',
-      'selectStatsPosition'
-    ]),
+      'selectStatsPosition',
+      // The Experimental block, whose decryption of the audio doesn't apply when the audio output is disabled
+      'refFrameInvalidationBtn',
+      'hdrMetadataBtn',
+      isAudioOutputDisabled() ? null : 'decryptHostAudioBtn'
+    ].filter(Boolean)),
     up: function() {
       this.view.prevOption();
       focusElement(this.view.current());
@@ -1943,10 +1911,11 @@ const Views = {
     },
   },
   AppsNav: {
+    // The quit button shows only while an app runs on the host (updateQuitRunningAppButton() in index.js)
     view: new ListView(() => [
       'goBackBtn',
-      'quitRunningAppBtn'
-    ]),
+      $('#quitRunningAppBtn').css('display') !== 'none' ? 'quitRunningAppBtn' : null
+    ].filter(Boolean)),
     up: function() {},
     down: function() {
       // Navigate to the Apps view
@@ -2085,14 +2054,16 @@ const Views = {
   },
   StreamMenu: {
     // The entries of the Stream Menu that show (menus.js). Back closes it and resumes the stream, LEFT and RIGHT change
-    // the bitrate of the bitrate entry.
+    // the bitrate of the bitrate entry. UP and DOWN stop at the first and the last entry instead of wrapping around like
+    // the other menus: the menu opens on Resume, and the last entry quits the app on the PC without a question, so one
+    // UP too many must not select it.
     view: new ListView(() => getOverlayMenuItems('streamMenu')),
     up: function() {
-      this.view.prevOption();
+      this.view.prev();
       focusElement(this.view.current());
     },
     down: function() {
-      this.view.nextOption();
+      this.view.next();
       focusElement(this.view.current());
     },
     left: function() {
@@ -2231,15 +2202,31 @@ const Views = {
       focusElement(this.view.current());
     },
     enter: function() {
-      // Default to Continue button (index 0) when both buttons are visible
-      // Otherwise default to the only visible Close button (index 0)
-      this.view.index = 0;
+      // Open on the button that the dialog selected before it pushed this view with its buttons shown (index.js): Close,
+      // the only button of a warning, Continue of the Wake-on-LAN warning, or Cancel of the optimal settings dialog
+      // (pushConfirmationView()), so that the mark and the focus are on the button that OK presses
+      if (!this.view.current()) {
+        this.view.index = 0;
+      }
       mark(this.view.current());
-      setTimeout(() => focusElement(this.view.current()), 100);
+      // Focus it once the dialog shows, unless a quick second OK closed the dialog meanwhile: its buttons are hidden
+      // then, and focusing nothing would take the focus from the view below
+      setTimeout(() => {
+        const current = this.view.current();
+        if (current) {
+          focusElement(current);
+        }
+      }, 100);
     },
     leave: function() {
-      unmark(this.view.current());
-      setTimeout(() => blurElement(this.view.current()), 100);
+      // The dialog closes before its view leaves, so its hidden buttons are no longer in the list of the view: unmark
+      // both, so that no mark stays for the next dialog
+      unmark('continueWarning');
+      unmark('closeWarning');
+      setTimeout(() => {
+        blurElement('continueWarning');
+        blurElement('closeWarning');
+      }, 100);
     },
   },
   RestartMoonlightDialog: {

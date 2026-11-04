@@ -1,8 +1,8 @@
 // Diagnostics of Moonlight Plus: the report of the last session in System information, the diagnostic log of the current
 // and the previous session (Settings > About > Diagnostic log), and the heartbeat of a stream that tells at the next start
 // that the app ended during it. Everything stays on the TV: the log lives in memory only and is shown on the screen when
-// the user opens it, with the PIN, the remote input keys and the RTSP address hidden, and the heartbeat is a tiny record
-// in localStorage without any of them.
+// the user opens it, with the PIN, the remote input keys, the RTSP address, the public IP address and the MAC addresses
+// hidden, and the heartbeat is a tiny record in localStorage without any of them.
 // The report at the end of a stream comes from the fork of samirmartins (moonlight-tizen, 1d8f2e3 and bcdcda5,
 // diagnostics.js), in plain language instead of abbreviations. The log of the current and the previous session with the
 // native lines of a ring that never blocks (wasm/diagnostic_log.hpp), the redaction and the heartbeat come from the fork of
@@ -15,17 +15,32 @@
 // secrets, the private key of the client certificate, the unique ID of the client (in the query of a request, as a
 // 'name: value' pair, as 'client UID: …' of NvHTTP.toString(), as a JSON value of a stored setting or a host object, or
 // as the value of its stored key), and the RTSP session URL of a stream, which holds the address and the ports of the
-// host. Values that the app knows (hideDiagnosticValue()) are hidden wherever they appear.
+// host. Values that the app knows (hideDiagnosticValue()) are hidden wherever they appear. A JSON value that a cut left
+// without its closing quote is hidden up to the end of its line (a JSON string has no line break), so that the lines of
+// NvHTTP.toString() that a console call often adds after a host object stay.
+// Users post photos of the log on the public issue tracker, so it also hides what identifies their household on the
+// internet or their devices: the public (external) IP address that STUN or the host reports ('external IP: …' of
+// NvHTTP.toString(), a host object as JSON, <ExternalIP> of the server info, and its value wherever it appears once the
+// app knows it, e.g. in the URL of a request to a host that doesn't answer: hideDiagnosticAddress()) and every MAC
+// address. The all-zero MAC 00:00:00:00:00:00 stays, since it tells that a host never reported its MAC, which
+// Wake-on-LAN needs. The local addresses, the addresses that the user entered and the names of the PCs stay as well:
+// support needs them, and the bug form tells users to cover them.
 const REDACTED_TEXT = '<hidden>';
 const REDACTED_QUERY_KEYS = 'rikey|rikeyid|uniqueid|salt|clientcert|clientchallenge|serverchallengeresp|clientpairingsecret|pin';
+const MAC_ADDRESS_PATTERN = /\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b/g;
+const ZERO_MAC_ADDRESS_PATTERN = /^(?:00[:-]){5}00$/;
 function redactDiagnosticText(text) {
   return redactKnownValues(String(text === undefined || text === null ? '' : text)
     .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, REDACTED_TEXT)
     .replace(/rtsp(?:enc|ru)?:\/\/[^\s'"<>]*/gi, 'rtsp://' + REDACTED_TEXT)
     .replace(new RegExp('([?&;](?:' + REDACTED_QUERY_KEYS + ')=)[^&\\s\'"]*', 'gi'), '$1' + REDACTED_TEXT)
-    .replace(/(\\?"(?:rikey|rikeyid|uniqueid|clientUid|privateKey)\\?"\s*:\s*\\?")(?:\\\\|\\[^"]|[^"\\])*/gi, '$1' + REDACTED_TEXT)
+    .replace(/(\\?"(?:rikey|rikeyid|uniqueid|clientUid|privateKey|externalIP)\\?"\s*:\s*\\?")(?:\\\\|\\[^"\r\n]|[^"\\\r\n])*/gi, '$1' + REDACTED_TEXT)
     .replace(/(\b(?:rikey|rikeyid|uniqueid|pin)\b\s*(?:[:=]|is)\s*)[^\s,;&'"]+/gi, '$1' + REDACTED_TEXT)
     .replace(/(\bclient\s*UID\s*:\s*)[^\s,;&'"]+/gi, '$1' + REDACTED_TEXT)
+    .replace(/(\bexternal[ \t]*IP[ \t]*:[ \t]*)[^\s,;&'"<]+/gi, '$1' + REDACTED_TEXT)
+    .replace(/(\bexternal IPv4 address of [^\r\n]{0,80}? is\s+)[^\s,;&'"<]+/gi, '$1' + REDACTED_TEXT)
+    .replace(/(<ExternalIP>)[^<]*/gi, '$1' + REDACTED_TEXT)
+    .replace(MAC_ADDRESS_PATTERN, (mac) => (ZERO_MAC_ADDRESS_PATTERN.test(mac) ? mac : REDACTED_TEXT))
     .replace(/(\b(?:uniqueid|cert)\b\s+with\s+(?:values?|data)\s*:\s*).*/gi, '$1' + REDACTED_TEXT)
     .replace(/(\bpin\b\D{0,24}?)\b\d{4,8}\b/gi, '$1' + REDACTED_TEXT));
 }
@@ -40,10 +55,131 @@ function hideDiagnosticValue(name, value) {
     diagnosticKnownValues[name] = text;
   }
 }
+
+// The public IP addresses that STUN or a host reported, which redactDiagnosticText() hides wherever they appear, as
+// patterns by address (hideDiagnosticAddress()): the rules above find the address only by its label, not in a URL, e.g.
+// of a request to a host that doesn't answer. Only these addresses are hidden, not everything that looks like a public
+// address (a GFE version such as 3.23.0.74 does), and only as a whole, so that 203.0.113.7 leaves 203.0.113.70 alone.
+// A private, loopback or link-local address is never hidden, since support needs the local ones.
+const diagnosticKnownAddresses = {};
+const IPV4_ADDRESS_PATTERN = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+const IPV6_ADDRESS_PATTERN = /^(?=[0-9A-Fa-f:]*::|(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}$)[0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7}$/;
+const LOCAL_ADDRESS_PATTERN = /^(?:0|10|127)\.|^169\.254\.|^192\.168\.|^172\.(?:1[6-9]|2\d|3[01])\.|^(?:fe[89ab]|f[cd])|^::1?$/i;
+function hideDiagnosticAddress(address) {
+  const text = String(address === undefined || address === null ? '' : address).trim();
+  const ipv4 = IPV4_ADDRESS_PATTERN.test(text);
+  if ((!ipv4 && !IPV6_ADDRESS_PATTERN.test(text)) || LOCAL_ADDRESS_PATTERN.test(text) ||
+    Object.prototype.hasOwnProperty.call(diagnosticKnownAddresses, text)) {
+    return;
+  }
+  const escaped = text.replace(/[.]/g, '\\.');
+  diagnosticKnownAddresses[text] = ipv4 ? new RegExp('(?<![\\d.])' + escaped + '(?!\\d|\\.\\d)', 'g')
+    : new RegExp('(?<![0-9A-Fa-f:])' + escaped + '(?![0-9A-Fa-f]|:[0-9A-Fa-f:])', 'gi');
+}
+
 function redactKnownValues(text) {
-  return Object.keys(diagnosticKnownValues).reduce(function(result, name) {
+  const withoutValues = Object.keys(diagnosticKnownValues).reduce(function(result, name) {
     return result.split(diagnosticKnownValues[name]).join(REDACTED_TEXT);
   }, text);
+  return Object.keys(diagnosticKnownAddresses).reduce(function(result, address) {
+    return result.replace(diagnosticKnownAddresses[address], REDACTED_TEXT);
+  }, withoutValues);
+}
+
+// A line of the log keeps only the start of a long text, so only about that much of it is redacted: the rules ran over
+// the whole text before it was cut, e.g. over every character of a large object or message, on the main thread of the
+// TV, for each console call. A secret that the cut leaves half is no longer found by its rule, but it stays at the very
+// end of the redacted start, as nothing after it is left to change. So the start is redacted with REDACTION_CUT_GUARD
+// characters to spare (or more than the longest value of hideDiagnosticValue()), and taken again, four times as long,
+// while the redaction shortened it so much that its end would fall within the kept part (e.g. a private key of a few
+// hundred characters becomes '<hidden>'). redactDiagnosticStart(startOf, keep, finish) returns the redacted start (after
+// finish(), e.g. joining its lines), of which the first `keep` characters are the same as of the whole text redacted.
+// startOf(size) gives the first `size` characters of the text, or all of it when it is shorter. A start that ends in a
+// hidden value leaves no half secret behind, so a huge one (e.g. a private key of many KB) stops growing at
+// REDACTION_START_LIMIT, and the line ends with '<hidden>'.
+const REDACTION_CUT_GUARD = 256;
+const REDACTION_START_LIMIT = 16 * 1024;
+function redactDiagnosticStart(startOf, keep, finish) {
+  const longestValue = Object.keys(diagnosticKnownValues).reduce(function(longest, name) {
+    return Math.max(longest, diagnosticKnownValues[name].length);
+  }, 0);
+  const guard = Math.max(REDACTION_CUT_GUARD, longestValue + 1);
+  for (let size = keep + 2 * guard; ; size *= 4) {
+    const start = startOf(size);
+    const redacted = redactDiagnosticText(start);
+    const clean = finish ? finish(redacted) : redacted;
+    if (start.length < size || clean.length >= keep + guard ||
+      (size * 4 > REDACTION_START_LIMIT && clean.slice(-REDACTED_TEXT.length) === REDACTED_TEXT)) {
+      return clean;
+    }
+  }
+}
+
+// The first `limit` characters of JSON.stringify(value), or all of it when it is shorter, without turning the rest of a
+// large object into text: each property stops being written once the text is long enough, and a long string is written
+// only as far as it can show. A cycle on the way throws like JSON.stringify().
+function jsonStart(value, limit) {
+  let out = '';
+  const stack = [];
+  // Write the JSON of holder[key], or return false for a value that JSON leaves out (undefined, a function, a symbol)
+  const write = function(holder, key) {
+    let item = holder[key];
+    if (item !== null && typeof item === 'object' && typeof item.toJSON === 'function') {
+      item = item.toJSON(key);
+    }
+    const tag = item !== null && typeof item === 'object' ? Object.prototype.toString.call(item) : '';
+    if (tag === '[object Number]' || tag === '[object String]' || tag === '[object Boolean]') {
+      item = item.valueOf();
+    }
+    if (item === null || typeof item === 'boolean' || typeof item === 'number') {
+      out += JSON.stringify(item);
+      return true;
+    }
+    if (typeof item === 'string') {
+      const room = Math.max(0, limit - out.length);
+      out += JSON.stringify(item.length > room ? item.slice(0, room) : item);
+      return true;
+    }
+    if (typeof item !== 'object') {
+      return false;
+    }
+    if (stack.indexOf(item) >= 0) {
+      throw new TypeError('Converting circular structure to JSON');
+    }
+    stack.push(item);
+    if (Array.isArray(item)) {
+      out += '[';
+      for (let i = 0; i < item.length && out.length < limit; i++) {
+        out += i > 0 ? ',' : '';
+        if (!write(item, String(i))) {
+          out += 'null';
+        }
+      }
+      out += ']';
+    } else {
+      out += '{';
+      // The keys of a typed array (e.g. the bytes of box art) are its indexes, which Object.keys() would list in full
+      const typed = ArrayBuffer.isView(item) && tag !== '[object DataView]';
+      const keys = typed ? null : Object.keys(item);
+      const count = typed ? item.length : keys.length;
+      let written = 0;
+      for (let i = 0; i < count && out.length < limit; i++) {
+        const key = typed ? String(i) : keys[i];
+        const before = out.length;
+        out += (written > 0 ? ',' : '') + JSON.stringify(key) + ':';
+        if (write(item, key)) {
+          written++;
+        } else {
+          out = out.slice(0, before);
+        }
+      }
+      out += '}';
+    }
+    stack.pop();
+    return true;
+  };
+  write({ '': value }, '');
+  return out.length > limit ? out.slice(0, limit) : out;
 }
 
 // ===== The diagnostic log =====
@@ -52,6 +188,8 @@ const DiagnosticLog = (function() {
   // Lines kept per session (the oldest go first), and the characters of a line
   const MAX_LINES = 600;
   const MAX_LINE_LENGTH = 400;
+  // The characters of an object in a line, as JSON
+  const MAX_OBJECT_LENGTH = 200;
   // A line that repeats the one before within this time is counted instead of kept, like the native ring does
   const REPEAT_WINDOW_MS = 1000;
   // Messages of the module that come about once per second during a stream and only repeat the overlay: they would push
@@ -75,9 +213,18 @@ const DiagnosticLog = (function() {
     }
   }
 
-  // Keep a line of the app ('js') at the given time, redacted and cut, unless it repeats the one before
+  // One line of a text: its line breaks and tabs as spaces
+  function oneLine(text) {
+    return text.replace(/[\r\n\t]+/g, ' ').trim();
+  }
+
+  // Keep a line of the app ('js') at the given time, redacted and cut, unless it repeats the one before. Only the start
+  // of a long text is redacted, as much as the line keeps (redactDiagnosticStart()).
   function add(time, source, level, text) {
-    let clean = redactDiagnosticText(text).replace(/[\r\n\t]+/g, ' ').trim();
+    const full = text === undefined || text === null ? '' : String(text);
+    let clean = redactDiagnosticStart(function(size) {
+      return full.slice(0, size);
+    }, MAX_LINE_LENGTH, oneLine);
     if (clean.length > MAX_LINE_LENGTH) {
       clean = clean.slice(0, MAX_LINE_LENGTH - 1) + '…';
     }
@@ -110,7 +257,11 @@ const DiagnosticLog = (function() {
         return;
       }
       const time = Number(record.slice(0, tab));
-      let text = redactDiagnosticText(record.slice(tab + 1)).trim();
+      let text = redactDiagnosticStart(function(size) {
+        return record.slice(tab + 1, tab + 1 + size);
+      }, MAX_LINE_LENGTH, function(redacted) {
+        return redacted.trim();
+      });
       if (text.length > MAX_LINE_LENGTH) {
         text = text.slice(0, MAX_LINE_LENGTH - 1) + '…';
       }
@@ -154,7 +305,10 @@ const DiagnosticLog = (function() {
     current = newSession(reason);
   }
 
-  // The text of a console call: the style arguments of '%c' left out, an error as its message, an object as JSON
+  // The text of a console call: the style arguments of '%c' left out, an error as its message, an object as JSON. Only
+  // the start of the JSON of an object is made and redacted, as much as the line keeps of it (jsonStart(),
+  // redactDiagnosticStart()): a large object, e.g. the hosts or a host with its certificate, was turned into text and
+  // redacted as a whole for each console call.
   function formatConsoleArguments(args) {
     const parts = [];
     let skipStyles = 0;
@@ -175,11 +329,14 @@ const DiagnosticLog = (function() {
       } else if (value !== null && typeof value === 'object') {
         let json = '';
         try {
-          json = JSON.stringify(value);
+          json = redactDiagnosticStart(function(size) {
+            return jsonStart(value, size);
+          }, MAX_OBJECT_LENGTH);
         } catch (error) {
           json = '';
         }
-        parts.push(json && json !== '{}' ? json.slice(0, 200) : String(value));
+        // Hidden before it is cut, since a rule no longer finds a value that the cut leaves half, e.g. a MAC address
+        parts.push(json && json !== '{}' ? json.slice(0, MAX_OBJECT_LENGTH) : String(value));
       } else {
         parts.push(String(value));
       }
@@ -334,7 +491,7 @@ function getSessionReportHintText(hint) {
     case 'tv':
       return t('The TV could not keep up with the video: lower the bitrate, the resolution or the frame rate.');
     case 'keyframes':
-      return t('The PC often sent whole frames again after a loss: turn on Reference frame invalidation in the Video Settings.');
+      return t('The PC often sent whole frames again after a loss: turn on Reference frame invalidation in the Advanced Settings.');
     case 'fec':
       return t('Error correction repaired many lost packets: the network is near its limit, so a cable or a lower bitrate gives more headroom.');
     case 'memory':

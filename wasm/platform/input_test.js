@@ -126,7 +126,7 @@ const InputTest = (function() {
     card.className = 'pad-card';
     card.innerHTML = '<div class="pad-title"></div><div class="pad-meta"></div>' + PAD_SVG +
       '<div class="pad-readout pad-buttons"></div><div class="pad-readout pad-axes"></div>';
-    card.querySelector('.pad-title').textContent = t('Gamepad %1$s: %2$s', info.index, info.name || t('Unknown'));
+    card.querySelector('.pad-title').textContent = t('Controller %1$s: %2$s', info.index, info.name || t('Unknown'));
     card.querySelector('.pad-meta').textContent = (info.mapping === 'standard' ? t('standard layout') : t('non-standard layout')) +
       ' · ' + t('%1$s buttons, %2$s axes', info.buttons, info.axes);
     return { id: gamepad.id, card: card, svg: card.querySelector('svg') };

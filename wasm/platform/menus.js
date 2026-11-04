@@ -25,7 +25,7 @@
 var isStreamMenuOpen = false;
 // Whether the mouse emulation of the stream is on, from the 'mouseEmulationOn' and 'mouseEmulationOff' messages
 var streamMouseEmulationActive = false;
-// Whether the user chose 'Disconnect and quit the app on the PC', so the app is quit once the stream ended (messages.js)
+// Whether the user chose 'Quit app on the PC', so the app is quit once the stream ended (messages.js)
 var quitAppAfterStream = false;
 // Whether the stream had the pointer locked when the Stream Menu opened, so that Resume locks it again
 var streamMenuPointerWasLocked = false;
@@ -176,15 +176,17 @@ function reselectStreamMenuEntry(entry) {
   focusElement(entries[index]);
 }
 
-// The lowest and the highest bitrate of the bitrate entry of the Stream Menu in Mbps: 5 Mbps up to the decoder cap of
-// the TV (getDecoderCapMbps() in tv_profile.js)
+// The lowest and the highest bitrate of the bitrate entry of the Stream Menu in Mbps: 5 Mbps up to the end of the bitrate
+// slider (MAX_BITRATE_MBPS in tv_profile.js), so that the limit is the same in the settings and in a game. Above the
+// warning threshold of the TV (getBitrateWarningMbps() in tv_profile.js), OK gives the same warning as the slider
+// (warnBitrate() in index.js, through saveBitrate()).
 function getStreamMenuBitrateRange() {
-  return { min: STREAM_MENU_BITRATE_STEP, max: getDecoderCapMbps(tvCapabilities) };
+  return { min: STREAM_MENU_BITRATE_STEP, max: MAX_BITRATE_MBPS };
 }
 
 // The bitrate after a press of LEFT (direction -1) or RIGHT (1) on the bitrate entry: the next multiple of 5 Mbps within
-// the range. A bitrate above the range (chosen with the slider of the settings) only goes down, to the highest bitrate of
-// the range, and one below it only goes up.
+// the range. A bitrate below the range (chosen with the slider of the settings, which starts at 0.5 Mbps) only goes up,
+// and one above it only goes down, to the highest bitrate of the range.
 function stepStreamBitrate(mbps, direction, range) {
   const current = Number(mbps);
   if (direction > 0 ? current >= range.max : current <= range.min) {
@@ -214,7 +216,9 @@ function changeStreamMenuBitrate(direction) {
 }
 
 // Reconnect the stream with the bitrate of the bitrate entry, which becomes the bitrate setting, as if it was chosen with
-// the slider of the settings. Nothing happens to an unchanged bitrate except a hint how to change it.
+// the slider of the settings. That includes the bitrate warnings of the slider (warnBitrate() through saveBitrate()), once
+// per crossing of the warning threshold of the TV or the limit of the Ethernet port, which show over the launch screen
+// of the reconnect. Nothing happens to an unchanged bitrate except a hint how to change it.
 function applyStreamMenuBitrate() {
   const mbps = streamMenuBitrateMbps;
   if (mbps === streamBitrateMbps) {
@@ -442,7 +446,7 @@ function selectStreamTextItem(index) {
   focusElement(view.current());
 }
 
-// Let the field of the text panel take the text and open the keyboard of the TV for it, like the field of the Add Host
+// Let the field of the text panel take the text and open the keyboard of the TV for it, like the field of the Add PC
 // dialog (handleIpTextFieldState() in navigation.js): the keyboard of the TV opens for a focused field that is clicked
 function startStreamTextEditing() {
   const input = document.getElementById('streamTextInput');
@@ -677,6 +681,24 @@ function parseAppSortOrder(value) {
   return APP_SORT_ORDERS.indexOf(value) >= 0 ? value : APP_SORT_ORDERS[0];
 }
 
+// The comparison of app titles for orderAppList(): numbers by their value, case and accents ignored. One collator serves
+// every comparison: localeCompare() with options builds a new collator for each call, which made the sort of the app list
+// a long task on the TV each time the list opened (twice with Smart Hub). Without Intl, localeCompare() stays.
+let titleCollator = null;
+function getTitleCollator() {
+  if (!titleCollator) {
+    titleCollator = typeof Intl !== 'undefined' && typeof Intl.Collator === 'function'
+      ? new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare
+      : (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+  }
+  return titleCollator;
+}
+// The first collator loads the collation data of the language, a long task of its own on the TV: it is made while the
+// app idles after its start rather than in the task that builds the first app list
+if (typeof requestIdleCallback === 'function') {
+  requestIdleCallback(getTitleCollator, { timeout: 10000 });
+}
+
 // Order the apps of a host for the app grid and the Smart Hub tiles, as a new list: the favorites first, then the
 // other apps, each part in the order of the setting 'Sort the list of apps': 'az' or 'za' by title, 'recent' with the
 // recently played apps first (the latest first) and the others from A to Z, or 'host' as the list comes from the host.
@@ -688,7 +710,8 @@ function orderAppList(appList, sortOrder, favoriteApps, recentApps) {
   const order = parseAppSortOrder(sortOrder);
   const favorites = favoriteApps || [];
   const recent = recentApps || [];
-  const byTitle = (a, b) => String(a.title).localeCompare(String(b.title), undefined, { numeric: true, sensitivity: 'base' });
+  const compareTitles = getTitleCollator();
+  const byTitle = (a, b) => compareTitles(String(a.title), String(b.title));
   // The place of an app among the recently played apps, or the end for the others
   const recentRank = (app) => {
     const place = findAppEntry(recent, app, appList);
