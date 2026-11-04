@@ -115,11 +115,13 @@ test('the quit button of the header hides without its mark and tooltip after the
     const tile = await page.evaluate(() => Views.Apps.view.current().id);
     assert.deepEqual((await screenState(page)).marked, [tile]);
     await remoteKey(page, OK);
-    await page.waitForFunction(() => isInGame === true && window.__sunshine.starts.length === 1, null, { timeout: 5000 });
+    // The start waits behind the requests of the app list that the quit rebuilt, which takes a while on a slow test
+    // machine (the module has one HTTP thread)
+    await page.waitForFunction(() => isInGame === true && window.__sunshine.starts.length === 1, null, { timeout: 15000 });
     await page.waitForTimeout(400);
     await remoteKey(page, RED);
     await page.waitForFunction(() => isInGame === false && document.body.getAttribute('data-view') === 'apps' &&
-      $('#quitRunningAppBtn').css('display') !== 'none', null, { timeout: 5000 });
+      $('#quitRunningAppBtn').css('display') !== 'none', null, { timeout: 15000 });
     await page.waitForTimeout(300);
     state = await screenState(page);
     assert.deepEqual([state.marked, state.quitShown, state.tooltipActive], [[tile], true, false]);
