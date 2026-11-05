@@ -6,7 +6,8 @@
 // 1. above 60 FPS at any resolution without a tested 120 Hz profile: many Samsung TVs have 60 Hz panels
 // 2. above the luma sample rate of level 5.1 on a 4K TV without a tested 120 Hz profile: it needs a level 5.2 decoder
 //    (an 8K TV, whose decoder goes beyond level 5.2, gets the warning of case 1 there)
-// 3. above the luma sample rate of level 5.2 (4K at 144 FPS): a warning on every TV, today's text on the S90C
+// 3. above the luma sample rate of level 5.2: a warning on every TV, today's text on the S90C. No resolution and frame
+//    rate of the menus gets there since 2.2.1 removed 144 FPS, so the rule only guards against a faster stream.
 // 4. HDR switched on for a TV that doesn't report HDR
 // 5. the bitrate warning starts at the decoder cap of the TV instead of a fixed 100 Mbps, and on the S90C above the
 //    150 Mbps that it streams in daily use (an owner decision of 2.2.0), while its presets stay at 100 Mbps
@@ -27,7 +28,8 @@ const { INDEX_SCRIPTS, loadPlatformScripts, plain } = require('./helpers/platfor
 
 const W = profile.VIDEO_WARNINGS;
 const RESOLUTIONS = Object.keys(profile.STANDARD_BITRATE_PRESETS);
-const FRAME_RATES = [30, 60, 90, 120, 144];
+// The frame rates of the frame rate menu with 'Unlock all frame rates' on; 144 FPS is gone since 2.2.1
+const FRAME_RATES = [30, 60, 90, 120];
 const CONNECTIONS = ['ethernet', 'wifi', 'unknown'];
 
 // The capabilities of a simulated TV (see tests/browser/mocks/tv-mock.js)
@@ -91,17 +93,15 @@ describe('resolution and frame rate warnings', () => {
   test('case 1: above 60 FPS without a tested 120 Hz profile, at any resolution within level 5.1', () => {
     for (const tvName of Object.keys(GENERIC_TVS)) {
       const caps = GENERIC_TVS[tvName];
-      for (const [res, fps] of [['854:480', 90], ['1280:720', 120], ['1920:1080', 90], ['1920:1080', 120], ['1920:1080', 144],
+      for (const [res, fps] of [['854:480', 90], ['1280:720', 120], ['1920:1080', 90], ['1920:1080', 120],
         ['2560:1440', 90], ['2560:1440', 120], ['3200:1800', 90]]) {
         assert.equal(profile.resolutionFramerateWarningKey(res, fps, caps), W.FPS_ABOVE_60_HZ, tvName + ' ' + res + '@' + fps);
       }
-      // 1440p at 144 FPS is 530,841,600 luma samples per second, just within level 5.1
-      assert.equal(profile.resolutionFramerateWarningKey('2560:1440', 144, caps), W.FPS_ABOVE_60_HZ, tvName + ' 1440p144');
     }
   });
 
   test('case 2: above level 5.1 on a 4K TV without a tested 120 Hz profile needs a level 5.2 decoder', () => {
-    const LEVEL_52_STREAMS = [['3840:2160', 90], ['3840:2160', 120], ['3200:1800', 120], ['3200:1800', 144]];
+    const LEVEL_52_STREAMS = [['3840:2160', 90], ['3840:2160', 120], ['3200:1800', 120]];
     for (const tvName of ['uhd', 'fhd']) {
       const caps = GENERIC_TVS[tvName];
       for (const [res, fps] of LEVEL_52_STREAMS) {
@@ -117,12 +117,23 @@ describe('resolution and frame rate warnings', () => {
   });
 
   test('case 3: above level 5.2 warns on every TV, with the text of its tested decoder on the S90C', () => {
+    // 4K at 129 FPS is the first frame rate above level 5.2, which no frame rate of the menu reaches
     for (const tvName of Object.keys(GENERIC_TVS)) {
-      assert.equal(profile.resolutionFramerateWarningKey('3840:2160', 144, GENERIC_TVS[tvName]), W.EXCEEDS_LEVEL_52, tvName);
+      assert.equal(profile.resolutionFramerateWarningKey('3840:2160', 129, GENERIC_TVS[tvName]), W.EXCEEDS_LEVEL_52, tvName);
     }
-    assert.equal(profile.resolutionFramerateWarningKey('3840:2160', 144, S90C), W.EXCEEDS_TESTED_DECODER);
+    assert.equal(profile.resolutionFramerateWarningKey('3840:2160', 129, S90C), W.EXCEEDS_TESTED_DECODER);
     // Without any capabilities (e.g. before the detection) it's the generic warning
-    assert.equal(profile.resolutionFramerateWarningKey('3840:2160', 144, null), W.EXCEEDS_LEVEL_52);
+    assert.equal(profile.resolutionFramerateWarningKey('3840:2160', 129, null), W.EXCEEDS_LEVEL_52);
+    assert.equal(profile.resolutionFramerateWarningKey('3840:2160', 128, UHD), W.NEEDS_LEVEL_52);
+    // So no resolution and frame rate of the menus gets this warning, on any TV
+    for (const caps of [S90C, UHD, FHD, UHD_8K]) {
+      for (const res of RESOLUTIONS) {
+        for (const fps of FRAME_RATES) {
+          const key = profile.resolutionFramerateWarningKey(res, fps, caps);
+          assert.ok(key !== W.EXCEEDS_LEVEL_52 && key !== W.EXCEEDS_TESTED_DECODER, res + '@' + fps);
+        }
+      }
+    }
   });
 
   test('the limits themselves are within the level, one frame more is above it', () => {
@@ -142,7 +153,7 @@ describe('resolution and frame rate warnings', () => {
       }
     }
     // Also with the values as the menus store them (text)
-    assert.equal(profile.resolutionFramerateWarningKey('3840:2160', '144', S90C), W.EXCEEDS_TESTED_DECODER);
+    assert.equal(profile.resolutionFramerateWarningKey('3840:2160', '90', S90C), W.HIGH_RESOLUTION_FPS);
     assert.equal(profile.resolutionFramerateWarningKey('3840:2160', '120', S90C), W.HIGH_RESOLUTION_FPS);
   });
 
@@ -161,7 +172,7 @@ describe('resolution and frame rate warnings', () => {
   test('the 90 FPS cadence hint applies to every TV', () => {
     assert.equal(profile.framerateCadenceWarningKey(90), W.FPS_90_CADENCE);
     assert.equal(profile.framerateCadenceWarningKey('90'), W.FPS_90_CADENCE);
-    for (const fps of [30, 60, 120, 144, '60', null]) {
+    for (const fps of [30, 60, 120, '60', null]) {
       assert.equal(profile.framerateCadenceWarningKey(fps), null, String(fps));
     }
   });

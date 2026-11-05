@@ -72,17 +72,21 @@ test('the largest supported size follows the panel APIs', () => {
 test('the standard bitrate presets in Mbps', () => {
   const platform = onTv({ tv: 's90c' });
   assert.deepEqual(plain(platform.get('STANDARD_BITRATE_PRESETS')), {
-    '854:480': { 30: 2, 60: 4, 90: 5, 120: 6, 144: 8 },
-    '1280:720': { 30: 5, 60: 10, 90: 12, 120: 15, 144: 18 },
-    '1920:1080': { 30: 10, 60: 20, 90: 25, 120: 30, 144: 35 },
-    '2560:1440': { 30: 20, 60: 40, 90: 50, 120: 60, 144: 70 },
-    '3200:1800': { 30: 30, 60: 60, 90: 75, 120: 90, 144: 100 },
-    '3840:2160': { 30: 40, 60: 80, 90: 100, 120: 120, 144: 140 },
+    '854:480': { 30: 2, 60: 4, 90: 5, 120: 6 },
+    '1280:720': { 30: 5, 60: 10, 90: 12, 120: 15 },
+    '1920:1080': { 30: 10, 60: 20, 90: 25, 120: 30 },
+    '2560:1440': { 30: 20, 60: 40, 90: 50, 120: 60 },
+    '3200:1800': { 30: 30, 60: 60, 90: 75, 120: 90 },
+    '3840:2160': { 30: 40, 60: 80, 90: 100, 120: 120 },
   });
   const getStandardPresetBitrate = platform.get('getStandardPresetBitrate');
   assert.equal(getStandardPresetBitrate('3840:2160', 60), 80);
   assert.equal(getStandardPresetBitrate('1920:1080', '60'), 20);
   assert.equal(getStandardPresetBitrate('3840:2160', 75), null, 'a frame rate without a preset');
+  // 144 FPS is gone since 2.2.1; its presets of 2.2.0 only decide whether a stored bitrate came from them
+  assert.equal(getStandardPresetBitrate('3840:2160', 144), null, '144 FPS');
+  assert.deepEqual(plain(platform.get('LEGACY_144_FPS_PRESETS')),
+    { '854:480': 8, '1280:720': 18, '1920:1080': 35, '2560:1440': 70, '3200:1800': 100, '3840:2160': 140 });
   assert.equal(getStandardPresetBitrate('1000:1000', 60), 10, 'an unknown resolution falls back to 10 Mbps');
 });
 
