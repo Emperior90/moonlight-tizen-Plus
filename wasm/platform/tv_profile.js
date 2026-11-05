@@ -829,6 +829,7 @@ function schema3Replacements(stored) {
 //   (applyBitratePresets() in index.js) explains a change that the user made. An install that didn't store the state
 //   of the bitrate presets yet gets the decision that the last loader of loadStoredSettings() would make from the stored
 //   144 FPS (followsBitratePresets()) stored with it, since that loader would otherwise decide from the new frame rate.
+//   Like that loader, it decides from the stored resolution as the resolution loader replaces one above the menu.
 // `stored` holds the stored values of frameRate, unlockAllFps, resolution, bitrate, autoAdjustBitrate and optimizeBitrate
 // (null when unset), with what the snapshots of the earlier settings schemas store already applied.
 function frameRateReplacements(stored, caps, connectionType) {
@@ -843,21 +844,25 @@ function frameRateReplacements(stored, caps, connectionType) {
   const frameRates = offeredFrameRates(unlockAllFps);
   const replacements = { frameRate: frameRates[frameRates.length - 1] };
 
+  // The stored resolution as the resolution loader of loadStoredSettings() loads and stores it before the last loader
+  // reads it back: one wider than the resolution menu becomes 4K, or 1080p on a TV without a 4K panel
+  const maxWidth = caps ? caps.maxWidth : undefined;
+  let storedResolution = values.resolution != null ? String(values.resolution) : null;
+  if (storedResolution !== null && parseInt(storedResolution.split(':')[0], 10) > maxWidth) {
+    storedResolution = maxWidth >= 3840 ? '3840:2160' : '1920:1080';
+  }
+
   let followsPresets = values.autoAdjustBitrate == true;
   if (values.autoAdjustBitrate == null) {
     // Without a stored bitrate the bitrate loader shows the recommended bitrate of the new frame rate anyway
-    followsPresets = values.bitrate == null || followsBitratePresets(values, connectionType);
+    followsPresets = values.bitrate == null ||
+      followsBitratePresets(Object.assign({}, values, { resolution: storedResolution }), connectionType);
     replacements.autoAdjustBitrate = followsPresets;
   }
   if (followsPresets && values.bitrate != null) {
-    // The resolution that the settings show: the stored one, where one wider than the resolution menu becomes 4K or
-    // 1080p, or the default of the TV when unset
-    let resolution = values.resolution != null ? String(values.resolution) : optimalSettings.resolution;
-    const maxWidth = caps ? caps.maxWidth : undefined;
-    if (parseInt(resolution.split(':')[0], 10) > maxWidth) {
-      resolution = maxWidth >= 3840 ? '3840:2160' : '1920:1080';
-    }
-    // As text, like the bitrate slider stores it
+    // The preset at the resolution that the settings show, which is the default of the TV when none is stored. As text,
+    // like the bitrate slider stores it.
+    const resolution = storedResolution !== null ? storedResolution : optimalSettings.resolution;
     replacements.bitrate = String(presetBitrate(resolution, replacements.frameRate, connectionType, caps));
   }
   return replacements;

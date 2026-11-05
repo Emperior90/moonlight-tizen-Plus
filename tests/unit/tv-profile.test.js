@@ -759,9 +759,35 @@ describe('frameRateReplacements(): a stored 144 FPS', () => {
       { frameRate: 120, autoAdjustBitrate: true, bitrate: '100' });
     assert.deepEqual(profile.frameRateReplacements({ frameRate: 144, resolution: '3840:2160', bitrate: '100' }, s90c, 'wifi'),
       { frameRate: 120, autoAdjustBitrate: false });
+    // Over Ethernet the 144 FPS preset is limited to 75 Mbps, like the presets are
+    assert.deepEqual(profile.frameRateReplacements({ frameRate: 144, resolution: '3840:2160', bitrate: '75' }, s90c, 'ethernet'),
+      { frameRate: 120, autoAdjustBitrate: true, bitrate: '75' });
+    // A stored 4K on a Full HD TV is decided at 1080p, where the resolution loader puts it before the last loader reads
+    // it: the 1080p preset of 144 FPS in 2.2.0 (35 Mbps) follows the presets, the 4K one (140 Mbps) doesn't
+    for (const conn of ['wifi', 'unknown']) {
+      assert.deepEqual(profile.frameRateReplacements({ frameRate: 144, unlockAllFps: true, resolution: '3840:2160', bitrate: '35' }, fhd, conn),
+        { frameRate: 120, autoAdjustBitrate: true, bitrate: conn === 'wifi' ? '38' : '30' }, conn);
+      assert.deepEqual(profile.frameRateReplacements({ frameRate: 144, unlockAllFps: true, resolution: '3840:2160', bitrate: '140' }, fhd, conn),
+        { frameRate: 120, autoAdjustBitrate: false }, conn);
+    }
     // Without a stored bitrate the bitrate loader shows the recommended bitrate of the new frame rate
     assert.deepEqual(profile.frameRateReplacements({ frameRate: 144 }, s90c, 'wifi'), { frameRate: 120, autoAdjustBitrate: true });
     assert.deepEqual(profile.frameRateReplacements({ frameRate: 144, autoAdjustBitrate: true }, s90c, 'wifi'), { frameRate: 120 });
+  });
+
+  test('decides from what the snapshot of settings schema 1 stores, as migrateSettingsSchema() passes it', () => {
+    // An install of settings schema 1 on a generic 4K TV that picked 144 FPS and never touched 'Unlock all frame rates':
+    // the snapshot stores the switch on (the default of settings schema 1), so the menu offers 120 FPS, although the
+    // default of the switch for this TV is off now
+    const stored = { resolution: '3840:2160', frameRate: 144, bitrate: '140' };
+    const snapshot = profile.legacySettingsSnapshot(stored, uhd, 'wifi');
+    assert.deepEqual([snapshot.unlockAllFps, snapshot.autoAdjustBitrate], [true, true]);
+    assert.equal(profile.deriveOptimalSettings(uhd, 'wifi').unlockAllFps, false);
+    assert.deepEqual(profile.frameRateReplacements(Object.assign({}, stored, snapshot), uhd, 'wifi'), { frameRate: 120, bitrate: '80' });
+    // Only the frame rate stored: the snapshot decided that the bitrate of 100 Mbps doesn't follow the presets
+    const onlyFrameRate = { frameRate: 144 };
+    assert.deepEqual(profile.frameRateReplacements(Object.assign({}, onlyFrameRate, profile.legacySettingsSnapshot(onlyFrameRate, uhd, 'wifi')), uhd, 'wifi'),
+      { frameRate: 120 });
   });
 
   test('leaves every other frame rate as it is, also 90 and 120 FPS while the higher frame rates are locked', () => {

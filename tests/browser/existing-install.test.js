@@ -299,6 +299,34 @@ test('an install of settings schema 1 with 144 FPS: the snapshot still sees its 
   }
 });
 
+test('an install of settings schema 1 with 144 FPS on a generic 4K TV: the snapshot unlocks the frame rates, so it becomes 120 FPS', async () => {
+  // The install never touched 'Unlock all frame rates', whose default for this TV is off now, but the snapshot stores it
+  // on as settings schema 1 showed it, and the replacement decides from what the snapshot stores
+  const cases = [
+    // 140 Mbps is the 4K preset of 144 FPS in 2.2.0, so the bitrate follows the presets to 120 FPS (80 Mbps on this TV)
+    { stored: { resolution: '3840:2160', frameRate: 144, bitrate: '140' }, bitrate: '80', follows: true },
+    // Only the frame rate stored: the snapshot stores 4K and 100 Mbps, which it doesn't take for a preset
+    { stored: { frameRate: 144 }, bitrate: '100', follows: false },
+  ];
+  for (const entry of cases) {
+    const name = JSON.stringify(entry.stored);
+    const app = await openExisting({ tv: 'uhd', conn: 'wifi' }, entry.stored);
+    try {
+      const shown = await readVideoSettings(app.page);
+      assert.deepEqual([shown.resolution, shown.frameRate, shown.frameRateOptions, shown.unlockAllFps, shown.bitrate, shown.autoAdjustBitrate],
+        ['3840:2160', '120', ['30', '60', '90', '120'], true, entry.bitrate, entry.follows], name);
+      const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 3 && values.frameRate !== 144);
+      assert.deepEqual([stored.frameRate, stored.unlockAllFps, stored.bitrate, stored.autoAdjustBitrate], [120, true, entry.bitrate, entry.follows], name);
+      assert.equal(count(app, FRAME_RATE_REPLACED), 1, name);
+      assert.deepEqual(notices(app), [], name);
+      assert.equal(await startRequestFrameRate(app.page), '120', name);
+      assert.deepEqual(app.errors, [], name);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
 test('a partly customized existing install keeps its stored values, and only the unset ones are filled in', async () => {
   const app = await openExisting({ tv: 's90c', conn: 'ethernet' }, { videoCodec: 'H264', bitrate: '42', fullRange: true });
   try {
