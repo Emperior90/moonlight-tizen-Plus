@@ -13,6 +13,9 @@
 // switched it stores the earlier default (off) once, and the stored values of the removed switches 'Continuous audio
 // from the host' (tests/browser/continuous-audio.test.js) and 'Optimize bitrate presets' are dropped, so the snapshot of
 // settings schema 1 no longer stores the latter either.
+//
+// Since 2.2.1 the frame rates end at 120 FPS: a stored 144 FPS of 2.2.0 and earlier becomes 120 FPS, or 60 FPS where the
+// menu offers no 120 FPS, once and without a notice, and the bitrate follows it only when it followed the presets.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -136,9 +139,207 @@ test('a stored 120 FPS stays selected after the unlock default turned off', asyn
       const shown = await readVideoSettings(app.page);
       assert.equal(shown.unlockAllFps, true, tv);
       assert.equal(shown.frameRate, '120', tv);
-      assert.deepEqual(shown.frameRateOptions, ['30', '60', '90', '120', '144'], tv);
+      assert.deepEqual(shown.frameRateOptions, ['30', '60', '90', '120'], tv);
       const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 3);
       assert.deepEqual([stored.unlockAllFps, stored.frameRate], [true, 120], tv);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
+// 2.2.1 removed the 144 FPS of 2.2.0 and earlier, as upstream 7d8ab56 did, since the video player of Samsung TVs never
+// starts a stream at 144 FPS (upstream dd7dfdf). A stored 144 FPS becomes the highest frame rate below it that the menu
+// of the TV offers, once, before the settings load (frameRateReplacements() in tv_profile.js), and without a notice.
+const FRAME_RATE_REPLACED = 'Replacing the stored frame rate of 144 FPS';
+
+// The notices of the app: every notice goes through snackbarLog() or snackbarLogLong(), which log it
+const notices = (app) => app.logs.filter((line) => line.indexOf('[index.js, snackbarLog') >= 0);
+
+// Count the log lines that contain the text
+const count = (app, text) => app.logs.filter((line) => line.indexOf(text) >= 0).length;
+
+// The frame rate of the start request of app 8 on a host whose launch request succeeds at once. A start from a Smart Hub
+// tile goes through the same startGame(), which takes the video settings from the settings screen.
+function startRequestFrameRate(page) {
+  return page.evaluate(async () => {
+    showApps = () => Promise.resolve();
+    Module.stopStream = () => {
+      handleMessage('streamTerminated: 0');
+      return { type: 'resolve', ret: null };
+    };
+    window.__startStreamArgs = null;
+    startGame({
+      paired: true, serverUid: 'HOST1', hostname: 'GAMING-PC', address: '10.0.0.2', httpPort: 47989, currentGame: 0,
+      appVersion: '7.1.431.-1', gfeVersion: '', serverCodecModeSupport: 0x1F03, refreshServerInfo: () => Promise.resolve(),
+      getAppById: (id) => Promise.resolve({ id: id, title: 'Game ' + id }),
+      launchApp: () => Promise.resolve('<root status_code="200" status_message="OK"><sessionUrl0>rtsp://10.0.0.2:48010</sessionUrl0></root>'),
+    }, 8);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const args = window.__startStreamArgs;
+    Module.stopStream();
+    // The frame rate is the fifth argument (SyncFunctions.startRequest in messages.js)
+    return args ? args[4] : null;
+  });
+}
+
+test('a stored 144 FPS becomes 120 FPS on the S90C with the preset of 120 FPS, without a notice and only once', async () => {
+  // An install of 2.2.0 on the S90C over Wi-Fi at 1080p and 144 FPS, whose bitrate followed the presets (44 Mbps)
+  const app = await openExisting({ tv: 's90c', conn: 'wifi' }, {
+    settingsSchema: 3, resolution: '1920:1080', frameRate: 144, bitrate: '44', autoAdjustBitrate: true,
+  });
+  try {
+    const expected = ['120', ['30', '60', '90', '120'], true, '38', '38 Mbps', true];
+    const shownOf = (shown) => [shown.frameRate, shown.frameRateOptions, shown.unlockAllFps, shown.bitrate, shown.bitrateLabel, shown.autoAdjustBitrate];
+    // 25 % above the preset of 30 Mbps at 1080p and 120 FPS
+    assert.deepEqual(shownOf(await readVideoSettings(app.page)), expected, 'first start');
+    const stored = await waitForStorage(app.page, (values) => values.frameRate !== 144);
+    assert.deepEqual(pick(stored, VIDEO_KEYS), { resolution: '1920:1080', frameRate: 120, bitrate: '38', autoAdjustBitrate: true });
+    assert.deepEqual(notices(app), [], 'no notice, such as the one about a kept bitrate');
+    assert.equal(count(app, 'Keeping the bitrate of'), 0);
+    assert.equal(count(app, FRAME_RATE_REPLACED), 1);
+    await app.page.waitForTimeout(300);
+    const afterFirstStart = await readStorage(app.page);
+
+    // The next start loads 120 FPS as stored and replaces nothing
+    await reloadApp(app);
+    assert.deepEqual(shownOf(await readVideoSettings(app.page)), expected, 'second start');
+    await app.page.waitForTimeout(300);
+    assert.deepEqual(await readStorage(app.page), afterFirstStart, 'the second start stores nothing new');
+    assert.equal(count(app, FRAME_RATE_REPLACED), 1, 'replaced once');
+    assert.deepEqual(notices(app), []);
+    // And a stream starts at 120 FPS
+    assert.equal(await startRequestFrameRate(app.page), '120');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a stored 144 FPS keeps a bitrate picked by hand', async () => {
+  const app = await openExisting({ tv: 's90c', conn: 'ethernet' }, {
+    settingsSchema: 3, resolution: '3840:2160', frameRate: 144, bitrate: '42.5', autoAdjustBitrate: false,
+  });
+  try {
+    const shown = await readVideoSettings(app.page);
+    assert.deepEqual([shown.frameRate, shown.bitrate, shown.bitrateLabel, shown.autoAdjustBitrate], ['120', '42.5', '42.5 Mbps', false]);
+    const stored = await waitForStorage(app.page, (values) => values.frameRate !== 144);
+    assert.deepEqual(pick(stored, VIDEO_KEYS), { resolution: '3840:2160', frameRate: 120, bitrate: '42.5', autoAdjustBitrate: false });
+    assert.deepEqual(notices(app), [], 'no notice about the kept bitrate');
+    assert.equal(count(app, 'Keeping the bitrate of'), 0);
+    assert.equal(await startRequestFrameRate(app.page), '120');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a stored 144 FPS over Ethernet gets the Ethernet preset of 120 FPS, not the one of Wi-Fi', async () => {
+  // An install of 2.2.0 on the S90C over Ethernet at 4K and 144 FPS, whose bitrate followed the presets (75 Mbps, the
+  // limit of Ethernet). Over Wi-Fi the preset of 4K at 120 FPS would be 100 Mbps, so this pins that the replacement
+  // reads the connection of the TV
+  const app = await openExisting({ tv: 's90c', conn: 'ethernet' }, {
+    settingsSchema: 3, resolution: '3840:2160', frameRate: 144, bitrate: '75', autoAdjustBitrate: true,
+  });
+  try {
+    const shown = await readVideoSettings(app.page);
+    assert.deepEqual([shown.frameRate, shown.bitrate, shown.bitrateLabel, shown.autoAdjustBitrate], ['120', '75', '75 Mbps', true]);
+    const stored = await waitForStorage(app.page, (values) => values.frameRate !== 144);
+    assert.deepEqual(pick(stored, VIDEO_KEYS), { resolution: '3840:2160', frameRate: 120, bitrate: '75', autoAdjustBitrate: true });
+    assert.deepEqual(notices(app), []);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a stored 144 FPS becomes 60 FPS where the frame rate menu offers no 120 FPS', async () => {
+  const cases = [
+    // A 4K TV without a tested profile, whose higher frame rates are locked by default: the 4K preset of 60 FPS
+    { tv: 'uhd', stored: { resolution: '3840:2160', bitrate: '80', autoAdjustBitrate: true }, bitrate: '80' },
+    // The S90C with 'Unlock all frame rates' switched off: 25 % above the preset of 20 Mbps at 1080p and 60 FPS
+    { tv: 's90c', stored: { unlockAllFps: false, resolution: '1920:1080', bitrate: '44', autoAdjustBitrate: true }, bitrate: '25' },
+    // A Full HD TV with a bitrate picked by hand
+    { tv: 'fhd', stored: { bitrate: '33', autoAdjustBitrate: false }, bitrate: '33' },
+  ];
+  for (const entry of cases) {
+    const app = await openExisting({ tv: entry.tv, conn: 'wifi' }, Object.assign({ settingsSchema: 3, frameRate: 144 }, entry.stored));
+    try {
+      const shown = await readVideoSettings(app.page);
+      assert.deepEqual([shown.frameRate, shown.frameRateOptions, shown.unlockAllFps, shown.bitrate], ['60', ['30', '60'], false, entry.bitrate], entry.tv);
+      const stored = await waitForStorage(app.page, (values) => values.frameRate !== 144);
+      assert.deepEqual([stored.frameRate, stored.bitrate], [60, entry.bitrate], entry.tv);
+      assert.deepEqual(notices(app), [], entry.tv);
+      assert.equal(await startRequestFrameRate(app.page), '60', entry.tv);
+      assert.deepEqual(app.errors, [], entry.tv);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
+test('a stored 144 FPS without a stored state of the presets: the state decided from 144 FPS is stored, and the last loader keeps it', async () => {
+  // The last loader of the settings decides the state of the presets only when none is stored, and would compare the
+  // bitrate with the preset of 120 FPS (120 Mbps at 4K), so the replacement stores the decision it made from 144 FPS
+  for (const [bitrate, follows, shownBitrate] of [['140', true, '100'], ['100', false, '100']]) {
+    const app = await openExisting({ tv: 's90c', conn: 'wifi' }, { settingsSchema: 3, resolution: '3840:2160', frameRate: 144, bitrate });
+    try {
+      const shown = await readVideoSettings(app.page);
+      assert.deepEqual([shown.frameRate, shown.bitrate, shown.autoAdjustBitrate], ['120', shownBitrate, follows], bitrate);
+      const stored = await waitForStorage(app.page, (values) => values.frameRate !== 144);
+      assert.deepEqual([stored.frameRate, stored.bitrate, stored.autoAdjustBitrate], [120, shownBitrate, follows], bitrate);
+      assert.ok(app.logs.some((line) => line.indexOf('Auto adjust bitrate state: ' + follows) >= 0), bitrate);
+      assert.equal(count(app, 'Auto adjust bitrate state (first decision)'), 0, bitrate);
+      assert.deepEqual(notices(app), [], bitrate);
+      assert.deepEqual(app.errors, [], bitrate);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
+test('an install of settings schema 1 with 144 FPS: the snapshot still sees its preset, and the frame rate becomes 120 FPS', async () => {
+  // The snapshot decides whether the stored bitrate came from the presets with the 144 FPS presets of 2.2.0 and earlier
+  // (140 Mbps at 4K), as before, and then the bitrate follows the presets to 120 FPS (100 Mbps on the S90C over Wi-Fi)
+  for (const [bitrate, follows, shownBitrate] of [['140', true, '100'], ['100', false, '100'], ['42', false, '42']]) {
+    const app = await openExisting({ tv: 's90c', conn: 'wifi' }, { resolution: '3840:2160', frameRate: 144, bitrate });
+    try {
+      const shown = await readVideoSettings(app.page);
+      assert.deepEqual([shown.frameRate, shown.unlockAllFps, shown.bitrate, shown.autoAdjustBitrate], ['120', true, shownBitrate, follows], bitrate);
+      const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 3 && values.frameRate !== 144);
+      assert.deepEqual([stored.frameRate, stored.unlockAllFps, stored.bitrate, stored.autoAdjustBitrate], [120, true, shownBitrate, follows], bitrate);
+      assert.ok(app.logs.some((line) => line.indexOf('Existing install without a settings schema') >= 0 &&
+        line.indexOf('"autoAdjustBitrate":' + follows) >= 0), bitrate);
+      assert.deepEqual(notices(app), [], bitrate);
+      assert.deepEqual(app.errors, [], bitrate);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
+test('an install of settings schema 1 with 144 FPS on a generic 4K TV: the snapshot unlocks the frame rates, so it becomes 120 FPS', async () => {
+  // The install never touched 'Unlock all frame rates', whose default for this TV is off now, but the snapshot stores it
+  // on as settings schema 1 showed it, and the replacement decides from what the snapshot stores
+  const cases = [
+    // 140 Mbps is the 4K preset of 144 FPS in 2.2.0, so the bitrate follows the presets to 120 FPS (80 Mbps on this TV)
+    { stored: { resolution: '3840:2160', frameRate: 144, bitrate: '140' }, bitrate: '80', follows: true },
+    // Only the frame rate stored: the snapshot stores 4K and 100 Mbps, which it doesn't take for a preset
+    { stored: { frameRate: 144 }, bitrate: '100', follows: false },
+  ];
+  for (const entry of cases) {
+    const name = JSON.stringify(entry.stored);
+    const app = await openExisting({ tv: 'uhd', conn: 'wifi' }, entry.stored);
+    try {
+      const shown = await readVideoSettings(app.page);
+      assert.deepEqual([shown.resolution, shown.frameRate, shown.frameRateOptions, shown.unlockAllFps, shown.bitrate, shown.autoAdjustBitrate],
+        ['3840:2160', '120', ['30', '60', '90', '120'], true, entry.bitrate, entry.follows], name);
+      const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 3 && values.frameRate !== 144);
+      assert.deepEqual([stored.frameRate, stored.unlockAllFps, stored.bitrate, stored.autoAdjustBitrate], [120, true, entry.bitrate, entry.follows], name);
+      assert.equal(count(app, FRAME_RATE_REPLACED), 1, name);
+      assert.deepEqual(notices(app), [], name);
+      assert.equal(await startRequestFrameRate(app.page), '120', name);
+      assert.deepEqual(app.errors, [], name);
     } finally {
       await app.context.close();
     }

@@ -3,6 +3,8 @@
 // Checks statements of the documents that describe what the code does, against the code, so that a change of the rules
 // fails here until the documents follow (the table of recommended bitrates has its own test, guide-bitrate-table.test.js):
 // - the warnings that the TV classes of docs/GUIDE.md get above 60 FPS at 4K (resolutionFramerateWarningKey())
+// - 120 FPS as the highest frame rate since 2.2.1 removed 144 FPS, and what becomes of a stored 144 FPS
+//   (offeredFrameRates(), frameRateReplacements())
 // - the game mode on Tizen 5.5 with a WASM player that offers the Ultra Low Latency mode, and the switch that stays
 //   disabled on a TV whose WASM player doesn't offer it (getGameModeDefault())
 // - the bitrate presets, which give the recommended bitrate of every resolution and frame rate (presetBitrate())
@@ -58,20 +60,41 @@ test('the TV classes of the guide name the warnings that 4K above 60 FPS gets on
   }
   const row60Hz = tableRow('4K, 60 Hz panel')[1];
   assert.ok(row60Hz.indexOf(WARNING_WORDS[profile.VIDEO_WARNINGS.NEEDS_LEVEL_52]) >= 0, row60Hz);
-  assert.ok(row60Hz.indexOf('144 FPS exceeds Level 5.2') >= 0, row60Hz);
   assert.match(row60Hz, /60 Hz panels appears at lower resolutions above 60 FPS/);
-  // An 8K TV: the 60 Hz panel warning at 4K at 90 and 120 FPS, and still the warning above level 5.2 at 144 FPS
+  // An 8K TV: the 60 Hz panel warning at 4K at 90 and 120 FPS
   for (const fps of [90, 120]) {
     assert.equal(profile.resolutionFramerateWarningKey('3840:2160', fps, uhd8k), profile.VIDEO_WARNINGS.FPS_ABOVE_60_HZ);
   }
-  assert.equal(profile.resolutionFramerateWarningKey('3840:2160', 144, uhd8k), profile.VIDEO_WARNINGS.EXCEEDS_LEVEL_52);
   const row8k = tableRow('8K')[1];
   assert.match(row8k, /4K at 90 or 120 FPS gets the warning that many Samsung TVs have 60 Hz panels instead of the Level 5.2 warning/);
-  assert.match(row8k, /4K at 144 FPS still gets the warning that it exceeds Level 5.2/);
+  // No frame rate of the menu exceeds level 5.2 since 144 FPS is gone, so the TV classes don't name that warning
+  for (const caps of [uhd, uhd8k, capsOf({ tv: 's90c' })]) {
+    for (const fps of profile.offeredFrameRates(true)) {
+      const key = profile.resolutionFramerateWarningKey('3840:2160', fps, caps);
+      assert.ok(key !== profile.VIDEO_WARNINGS.EXCEEDS_LEVEL_52 && key !== profile.VIDEO_WARNINGS.EXCEEDS_TESTED_DECODER, String(fps));
+    }
+  }
+  for (const name of ['4K, 60 Hz panel', '4K, 120 Hz panel', '8K']) {
+    assert.doesNotMatch(tableRow(name)[1], /144 FPS|exceeds Level 5\.2/, name);
+  }
   // No document calls level 5.2 the highest level of all Samsung TVs any more
   for (const file of ['docs/GUIDE.md', 'docs/RELEASE_NOTES.md', 'docs/PATCH_NOTES.md', 'CHANGELOG.md', 'wasm/platform/tv_profile.js']) {
     assert.doesNotMatch(read(file), /highest (decoder )?level of Samsung TVs|Level 5\.2 on every Samsung TV/i, file);
   }
+});
+
+test('the guide names 120 FPS as the highest frame rate, and what becomes of a 144 FPS of an earlier version', () => {
+  const unlocked = profile.offeredFrameRates(true);
+  assert.equal(unlocked[unlocked.length - 1], 120);
+  const item = GUIDE.split('\n').find((line) => line.indexOf('- **Highest frame rate:**') === 0);
+  assert.ok(item, 'the item of the known limits');
+  assert.match(item, /^- \*\*Highest frame rate:\*\* 120 FPS\. Version 2\.2\.1 removed 144 FPS, because the video player of Samsung TVs doesn't start a stream at 144 FPS/);
+  const s90c = capsOf({ tv: 's90c' });
+  assert.equal(profile.frameRateReplacements({ frameRate: 144, unlockAllFps: true }, s90c, 'wifi').frameRate, 120);
+  assert.equal(profile.frameRateReplacements({ frameRate: 144, unlockAllFps: false }, s90c, 'wifi').frameRate, 60);
+  assert.match(item, /A 144 FPS set in an earlier version becomes 120 FPS, or 60 FPS while \*Unlock all frame rates\* is off\.$/);
+  // No other statement of the guide offers 144 FPS
+  assert.deepEqual(GUIDE.split('\n').filter((line) => /\b144 FPS/.test(line)), [item]);
 });
 
 test('the guide gives the game mode of Tizen 5.5 with the exception for a WASM player that offers the mode', () => {
@@ -93,14 +116,14 @@ test('the guide names the bitrates of the presets at other resolutions and frame
   const s90c = capsOf({ tv: 's90c' });
   assert.equal(profile.presetBitrate('2560:1440', 60, 'wifi', uhd), 50);
   assert.match(GUIDE, /every other resolution and frame rate gets its bitrate by the same rules, e\.g\. 50 Mbps for 2560 x 1440 at 60 FPS over Wi-Fi\./);
-  for (const fps of [90, 120, 144]) {
+  for (const fps of [90, 120]) {
     assert.equal(profile.presetBitrate('3840:2160', fps, 'wifi', s90c), 100, 'S90C at 4K and ' + fps + ' FPS');
   }
   assert.equal(profile.getDecoderCapMbps(s90c), 100);
   assert.equal(profile.getBitrateWarningMbps(s90c), 150);
   // The app names 150 Mbps as the recommendation for the decoder of the S90C in its warning, so the guide calls the
   // 100 Mbps the highest bitrate of the presets, not a decoder cap
-  assert.match(GUIDE, /On the tested S90C over Wi-Fi, 4K at 90, 120 or 144 FPS gets 100 Mbps, the highest bitrate its presets give \(the warning starts above 150 Mbps\);/);
+  assert.match(GUIDE, /On the tested S90C over Wi-Fi, 4K at 90 or 120 FPS gets 100 Mbps, the highest bitrate its presets give \(the warning starts above 150 Mbps\);/);
   assert.doesNotMatch(GUIDE, /gets 100 Mbps, its decoder cap/);
   // The presets are the bitrates that the optimal settings button applies for the same resolution and frame rate
   for (const conn of ['ethernet', 'wifi', 'unknown']) {

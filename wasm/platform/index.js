@@ -4600,7 +4600,7 @@ function warnResolutionFramerate() {
 
   // Video resolution and frame rate warning for what the TV can decode and show (resolutionFramerateWarningKey() in
   // tv_profile.js). It shows once per message, so a change to a selection with another message (e.g. from 4K at 120 FPS
-  // to 4K at 144 FPS) shows that one, and again after a selection without a warning.
+  // to 1080p at 120 FPS on a TV without a tested profile) shows that one, and again after a selection without a warning.
   const warningKey = resolutionFramerateWarningKey(chosenResolution, chosenFramerate, tvCapabilities);
   if (warningKey && warningKey !== resFpsWarning) {
     showVideoWarning(warningKey);
@@ -5046,26 +5046,27 @@ function handleUnlockAllFps() {
   var currentFps = $('#selectFramerate').data('value');
   const addFramerate = $('.videoFramerateMenu').find('li[data-value="60"]');
 
-  // Check if the Unlock all FPS switch is checked
+  // Check if the Unlock all FPS switch is checked. The higher frame rates are 90 and 120 FPS (UNLOCKED_FRAME_RATES in
+  // tv_profile.js): 144 FPS is gone, as upstream 7d8ab56 removed it, since the WASM player of Samsung TVs never starts
+  // it (upstream dd7dfdf), and a stored 144 FPS is replaced before the settings load (migrateSettingsSchema()).
   if ($('#unlockAllFpsSwitch').prop('checked')) {
-    console.log('%c[index.js, handleUnlockAllFps]', 'color: green;', 'Adding higher framerate options: 90, 120, 144 FPS');
+    console.log('%c[index.js, handleUnlockAllFps]', 'color: green;', 'Adding higher framerate options: 90, 120 FPS');
     // Check if any of the higher FPS options are absent to avoid duplicates
-    if (!$('.videoFramerateMenu').find('li[data-value="90"], li[data-value="120"], li[data-value="144"]').length) {
-      // Insert all higher FPS options in correct order (90, 120, 144)
+    if (!$('.videoFramerateMenu').find('li[data-value="90"], li[data-value="120"]').length) {
+      // Insert all higher FPS options in correct order (90, 120)
       addFramerate.after(`
         <li class="mdl-menu__item" data-value="90" data-i18n="90 FPS">90 FPS</li>
         <li class="mdl-menu__item" data-value="120" data-i18n="120 FPS">120 FPS</li>
-        <li class="mdl-menu__item" data-value="144" data-i18n="144 FPS">144 FPS</li>
       `);
       // Attach click listeners only to the newly added FPS options
-      $('.videoFramerateMenu li[data-value="90"], li[data-value="120"], li[data-value="144"]').on('click', saveFramerate);
+      $('.videoFramerateMenu li[data-value="90"], li[data-value="120"]').on('click', saveFramerate);
     }
   } else {
-    console.log('%c[index.js, handleUnlockAllFps]', 'color: green;', 'Removing higher framerate options: 90, 120, 144 FPS');
+    console.log('%c[index.js, handleUnlockAllFps]', 'color: green;', 'Removing higher framerate options: 90, 120 FPS');
     // If unchecked, remove the higher FPS options from the selection menu
-    $('.videoFramerateMenu li[data-value="90"], li[data-value="120"], li[data-value="144"]').remove();
+    $('.videoFramerateMenu li[data-value="90"], li[data-value="120"]').remove();
     // After removal, if a higher FPS option remains selected, then reset it to the default option
-    if (['90', '120', '144'].includes(String(currentFps))) {
+    if (['90', '120'].includes(String(currentFps))) {
       $('#selectFramerate').text('60 FPS').attr('data-value', '60').data('value', '60');
       console.log('%c[index.js, handleUnlockAllFps]', 'color: green;', 'Resetting framerate value to 60 FPS');
       storeData('frameRate', '60', null);
@@ -5774,7 +5775,9 @@ function loadUserDataCb() {
 // An existing install of settings schema 2 or older also stores the defaults of settings schema 2 that settings schema 3
 // changed (schema2Snapshot()) and what replaces the settings that settings schema 3 removed (schema3Replacements()),
 // and drops the stored values of those settings, which are logged first, so that the diagnostic log still says what was
-// set.
+// set. At every start, whatever the settings schema, a stored frame rate that the frame rate menu no longer offers (the
+// 144 FPS of 2.2.0 and earlier) is replaced as well (frameRateReplacements() in tv_profile.js), here where every value
+// it depends on has been read and before the loaders, which then load the replacement like any stored value.
 function migrateSettingsSchema(callbackFunction) {
   const keys = ['uniqueid', SETTINGS_SCHEMA_KEY].concat(LEGACY_SNAPSHOT_KEYS, Object.keys(SCHEMA_2_DEFAULTS), SCHEMA_3_REMOVED_KEYS)
     .filter(function(key, index, allKeys) {
@@ -5789,14 +5792,11 @@ function migrateSettingsSchema(callbackFunction) {
       return;
     }
     const storedSchema = storedValues[SETTINGS_SCHEMA_KEY];
-    if (storedSchema != null && storedSchema >= SETTINGS_SCHEMA_VERSION) {
-      console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Settings schema: ' + storedSchema);
-      callbackFunction();
-      return;
-    }
-
+    const isCurrentSchema = storedSchema != null && storedSchema >= SETTINGS_SCHEMA_VERSION;
     let migratedValues = {};
-    if (storedSchema == null && storedValues.uniqueid == null) {
+    if (isCurrentSchema) {
+      console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Settings schema: ' + storedSchema);
+    } else if (storedSchema == null && storedValues.uniqueid == null) {
       console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Fresh install, using the optimal streaming settings for this TV as the defaults.');
     } else {
       if (storedSchema == null) {
@@ -5822,8 +5822,18 @@ function migrateSettingsSchema(callbackFunction) {
         }
       });
     }
-    migratedValues[SETTINGS_SCHEMA_KEY] = SETTINGS_SCHEMA_VERSION;
-    storeMultipleData(migratedValues, null);
+    if (!isCurrentSchema) {
+      migratedValues[SETTINGS_SCHEMA_KEY] = SETTINGS_SCHEMA_VERSION;
+    }
+    // Replace a stored 144 FPS, from the stored values as the snapshots above complete them, without a notice
+    const frameRateValues = frameRateReplacements(Object.assign({}, storedValues, migratedValues), tvCapabilities, getActiveConnectionType());
+    if (Object.keys(frameRateValues).length > 0) {
+      console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Replacing the stored frame rate of ' + storedValues.frameRate + ' FPS, which the frame rate menu no longer offers: ' + JSON.stringify(frameRateValues));
+      Object.assign(migratedValues, frameRateValues);
+    }
+    if (Object.keys(migratedValues).length > 0) {
+      storeMultipleData(migratedValues, null);
+    }
     // Load the settings right away: IndexedDB runs the reading transactions of the loaders only after the writing
     // transaction above, which was created before them on the same store, has finished, so they see the stored values
     callbackFunction();
@@ -6918,4 +6928,19 @@ window.addEventListener('gamepaddisconnected', function(e) {
   if (!isInGame) {
     loadSystemInfo();
   }
+});
+
+// A controller that reports a timestamp of 0 (Tizen 5.5) counts only once its input changed (Controller.isRealGamepad()
+// in gamepad.js), which comes after its gamepadconnected event or without one. Then list it where the UI lists the
+// controllers: System information (as on gamepadconnected), the mouse emulation entry of an open Stream Menu and the
+// controllers of an open button mapping menu.
+window.addEventListener('gamepadvalidated', function(e) {
+  console.log('%c[index.js, gamepadvalidated]', 'color: green;', 'Gamepad ' + e.detail.gamepad + ' counts as a controller now, listing it.');
+  if (!isInGame) {
+    loadSystemInfo();
+  }
+  if (isStreamMenuOpen) {
+    updateStreamMenu();
+  }
+  ButtonMappingMenu.refreshControllers();
 });

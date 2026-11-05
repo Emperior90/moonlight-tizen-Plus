@@ -1,0 +1,40 @@
+# Frames of one gamepad slot, and whether the slot counts as a controller after each of them. Both rules read this
+# file: PollGamepads() with HasGamepadInputChanged() in wasm/gamepad.cpp, which decides what the stream announces to the
+# PC (tests/native/gamepad_evidence_test.cpp), and Controller.isRealGamepad() in wasm/platform/gamepad.js, which decides
+# what the menus, System information, the input test, the button mapping and the mask of a stream start count
+# (tests/unit/gamepad-js.test.js), so the two stay the same.
+# A slot counts with a positive timestamp, or once its input changed since it appeared: a button whose pressed state
+# flipped, or a button value or axis that moved more than 0.01 away from its first value. A static value never counts.
+# This tells the placeholder slots of Tizen, which report a timestamp of 0 and never change, from the controllers of
+# Tizen 5.5, which report a timestamp of 0 too (upstream fdf4fbe, PR #192 by podrezov).
+# Format: a name, a tab, one character per frame (1 if the slot counts after that frame, 0 if not), a tab, the frames
+# separated by spaces. A frame is timestamp/buttons/axes, or timestamp/buttons/axes/id: the buttons and the axes as
+# values separated by commas, a button with a * after its value when it is pressed, and nan for a value that is not a
+# number. The id is Pad unless a frame gives one. A frame of - is an empty slot.
+
+# A positive timestamp counts at once, and the evidence stays for the id
+a positive timestamp counts at once	11	5/0,0/0,0 6/0,0/0,0
+a timestamp that reads 0 later keeps the controller	1111	5/0,0/0,0 0/0,0/0,0 0/1*,0/0,0 0/0,0/0,0
+a negative or missing timestamp needs input like 0	001	-1/0,0/0,0 nan/0,0/0,0 nan/1*,0/0,0
+
+# Placeholders: a static slot never counts, also with a held button or an axis off-centre
+a static placeholder never counts	000000	0/0,0/0,0 0/0,0/0,0 0/0,0/0,0 0/0,0/0,0 0/0,0/0,0 0/0,0/0,0
+a placeholder with a held button and an axis at 0.3 never counts	00000	0/1*,0/0.3,0 0/1*,0/0.3,0 0/1*,0/0.3,0 0/1*,0/0.3,0 0/1*,0/0.3,0
+
+# The input of a controller with a timestamp of 0 counts, and the evidence stays while the id stays
+a press counts	00111	0/0,0/0,0 0/0,0/0,0 0/1*,0/0,0 0/0,0/0,0 0/0,0/0,0
+a pressed state that flips without a value change counts	01	0/0/0 0/0*/0
+a button held since the slot appeared counts on its release	0001	0/1*,0/0,0 0/1*,0/0,0 0/1*,0/0,0 0/0,0/0,0
+a stick move of more than 0.01 counts	0001	0/0/0,0 0/0/0.005,0 0/0/0,-0.008 0/0/0,-0.02
+a move of exactly 0.01 does not count, of a stick or a trigger	000	0/0/0 0/0/0.01 0/0.01/0.01
+jitter of 0.009 around the resting value doesn't count, 0.011 does	000001	0/0/0.3 0/0/0.309 0/0/0.291 0/0/0.309 0/0/0.291 0/0/0.311
+a slow move adds up against the first value	0001	0/0/0.3 0/0/0.304 0/0/0.308 0/0/0.312
+a trigger value counts without a pressed state	01	0/0,0/0 0/0,0.2/0
+a value that is not a number takes the first number as its baseline	00001	0/0/nan 0/0/nan 0/0/0.4 0/0/0.405 0/0/0.42
+a button value that is not a number does the same	001	0/nan/0 0/0.5/0 0/0.52/0
+another button or axis count takes a new baseline without counting	0001	0/0,0/0 0/1*,0,0/0 0/1*,0,0/0 0/0,0,0/0
+
+# Another controller in the slot, and a disconnect, need new evidence
+another id in the slot needs evidence of its own, measured from its first frame	0101	0/0/0 0/1*/0 0/1*/0/Other 0/0/0/Other
+another id with a positive timestamp counts at once	01	0/0/0 5/0/0/Other
+a disconnect forgets the evidence	010001	0/0/0 0/1*/0 - 0/1*/0 0/1*/0 0/0/0

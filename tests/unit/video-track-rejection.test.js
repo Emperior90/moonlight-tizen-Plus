@@ -78,7 +78,7 @@ test('the message of each rejected video format of the fixture names it and what
 test('H.264 within 1080p is not told to choose a resolution up to 1080p, which it already has', () => {
   for (const [format, advice] of [
     ['H.264,1920,1080,120', 'Choose HEVC as the video codec, or lower the frame rate.'],
-    ['H.264,1280,720,144', 'Choose HEVC as the video codec, or lower the frame rate.'],
+    ['H.264,1280,720,90', 'Choose HEVC as the video codec, or lower the frame rate.'],
     ['H.264,1920,1200,60', 'Choose HEVC as the video codec, or a resolution up to 1080p.'],
     ['H.264,2560,1080,60', 'Choose HEVC as the video codec, or a resolution up to 1080p.'],
   ]) {

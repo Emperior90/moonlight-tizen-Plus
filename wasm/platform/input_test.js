@@ -170,7 +170,9 @@ const InputTest = (function() {
     let holdingB = false;
     for (let i = 0; i < gamepads.length; i++) {
       const gamepad = gamepads[i];
-      if (!gamepad || !gamepad.connected || gamepad.timestamp === 0) {
+      // Not the placeholders of Tizen, but also a controller that reports a timestamp of 0 (Tizen 5.5) once its input
+      // changed, and one whose timestamp reads 0 later (Controller.isRealGamepad() in gamepad.js)
+      if (!Controller.isRealGamepad(gamepad, i)) {
         continue;
       }
       seen[i] = true;

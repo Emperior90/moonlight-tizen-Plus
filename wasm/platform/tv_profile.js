@@ -23,7 +23,9 @@
 // the previous version the same way. Version 3 turned the rumble on by default, so it stores the earlier default (off)
 // once for an existing install that never switched it (schema2Snapshot()), and it drops the stored values of the
 // switches 'Continuous audio from the host', which is gone since the host always keeps sending audio, and 'Optimize
-// bitrate presets', which is gone since the presets are the recommended bitrates (SCHEMA_3_REMOVED_KEYS).
+// bitrate presets', which is gone since the presets are the recommended bitrates (SCHEMA_3_REMOVED_KEYS). The 144 FPS
+// that 2.2.0 and earlier offered changed no default, so it needs no version of its own: a stored frame rate above the
+// frame rate menu is replaced at every start, whatever the version (frameRateReplacements()).
 const SETTINGS_SCHEMA_VERSION = 3;
 const SETTINGS_SCHEMA_KEY = 'settingsSchema';
 
@@ -65,16 +67,33 @@ const VERIFIED_PROFILES = Object.freeze([
   Object.freeze({ id: 'S90C', match: /S90C/i, unlockAllFps: true, decoderCapMbps: 100, warnAboveMbps: 150, refresh120: true }),
 ]);
 
-// Standard bitrate presets in Mbps by resolution and frame rate. 1800p is interpolated by pixel count between the
-// 1440p and 2160p presets.
+// The frame rates in FPS of the frame rate menu: 30 and 60 FPS on every TV (index.html), and 90 and 120 FPS more with
+// 'Unlock all frame rates' (handleUnlockAllFps() in index.js), so 120 FPS is the highest. 2.2.0 and earlier also
+// offered 144 FPS, which Moonlight Plus removed as upstream 7d8ab56 did: the WASM player of Samsung TVs (EMSS) never
+// opens the video track at 144 FPS (upstream dd7dfdf), so the stream ended after 5 seconds with error -200 or stayed
+// black, and no Samsung TV is known to start it. A stored 144 FPS is replaced at the start (frameRateReplacements()).
+const FRAME_RATES = Object.freeze([30, 60]);
+const UNLOCKED_FRAME_RATES = Object.freeze([90, 120]);
+
+// Standard bitrate presets in Mbps by resolution and frame rate (FRAME_RATES and UNLOCKED_FRAME_RATES). 1800p is
+// interpolated by pixel count between the 1440p and 2160p presets.
 var STANDARD_BITRATE_PRESETS = {
-  '854:480': { '30': 2, '60': 4, '90': 5, '120': 6, '144': 8 },
-  '1280:720': { '30': 5, '60': 10, '90': 12, '120': 15, '144': 18 },
-  '1920:1080': { '30': 10, '60': 20, '90': 25, '120': 30, '144': 35 },
-  '2560:1440': { '30': 20, '60': 40, '90': 50, '120': 60, '144': 70 },
-  '3200:1800': { '30': 30, '60': 60, '90': 75, '120': 90, '144': 100 },
-  '3840:2160': { '30': 40, '60': 80, '90': 100, '120': 120, '144': 140 },
+  '854:480': { '30': 2, '60': 4, '90': 5, '120': 6 },
+  '1280:720': { '30': 5, '60': 10, '90': 12, '120': 15 },
+  '1920:1080': { '30': 10, '60': 20, '90': 25, '120': 30 },
+  '2560:1440': { '30': 20, '60': 40, '90': 50, '120': 60 },
+  '3200:1800': { '30': 30, '60': 60, '90': 75, '120': 90 },
+  '3840:2160': { '30': 40, '60': 80, '90': 100, '120': 120 },
 };
+
+// Frozen copy of the standard bitrate presets in Mbps of the 144 FPS that 2.2.0 and earlier offered, by resolution.
+// Only followsBitratePresets() reads them, which decides from the stored values whether a stored bitrate came from the
+// presets (for the snapshot of settings schema 1, the first decision of the state of the bitrate presets and the
+// replacement of a stored 144 FPS), so that a bitrate stored next to 144 FPS still counts as the preset it was. Never
+// change these values: they describe what existing installs stored before, not what new installs should get.
+const LEGACY_144_FPS_PRESETS = Object.freeze({
+  '854:480': 8, '1280:720': 18, '1920:1080': 35, '2560:1440': 70, '3200:1800': 100, '3840:2160': 140,
+});
 
 // Frozen copy of the default bitrates in Mbps of settings schema 1, which ignored the resolution: 75 Mbps over Ethernet,
 // 100 Mbps over Wi-Fi (tuned for the decoder of the first tested model in VERIFIED_PROFILES) and 80 Mbps for an unknown
@@ -417,6 +436,11 @@ function detectTvCapabilities(apis) {
   };
 }
 
+// Return the frame rates in FPS that the frame rate menu offers, with or without 'Unlock all frame rates'
+function offeredFrameRates(unlockAllFps) {
+  return unlockAllFps ? FRAME_RATES.concat(UNLOCKED_FRAME_RATES) : FRAME_RATES.slice();
+}
+
 // Return the standard preset in Mbps for a resolution and frame rate, or null for a frame rate without a preset
 function getStandardPresetBitrate(res, frameRate) {
   var presets = STANDARD_BITRATE_PRESETS[res];
@@ -570,7 +594,9 @@ const VIDEO_WARNINGS = Object.freeze({
   // A stream above the luma sample rate of level 5.1 (e.g. 4K at 90 or 120 FPS) on a 4K TV without a tested 120 Hz
   // profile
   NEEDS_LEVEL_52: 'needsLevel52',
-  // A stream above the luma sample rate of level 5.2 (4K at 144 FPS), the highest level that the app asks the TV for
+  // A stream above the luma sample rate of level 5.2, the highest level that the app asks the TV for. No resolution and
+  // frame rate of the menus gets there since 144 FPS is gone (4K at 120 FPS is within level 5.2), so it only guards
+  // against a faster stream.
   EXCEEDS_LEVEL_52: 'exceedsLevel52',
   // The same on a TV with a tested 120 Hz profile, whose decoder handled 4K at up to 120 FPS in the tests
   EXCEEDS_TESTED_DECODER: 'exceedsTestedDecoder',
@@ -604,8 +630,8 @@ function hasTested120HzProfile(caps) {
 
 // Return the message key of the warning for a resolution and frame rate on a TV (VIDEO_WARNINGS), or null. It returns
 // one key, the first that applies:
-// - above the luma sample rate of level 5.2 (4K at 144 FPS), a warning on every TV, which on a TV with a tested 120 Hz
-//   profile names the 4K at 120 FPS that its decoder handled
+// - above the luma sample rate of level 5.2 (e.g. 4K above 128 FPS, which the menus no longer offer), a warning on every
+//   TV, which on a TV with a tested 120 Hz profile names the 4K at 120 FPS that its decoder handled
 // - without a tested 120 Hz profile: on a 4K TV above the luma sample rate of level 5.1 (e.g. 4K at 90 or 120 FPS), that
 //   it needs a level 5.2 decoder, and otherwise above 60 FPS at any resolution, that many Samsung TVs have 60 Hz panels.
 //   So a 4K stream above 60 FPS gets the level 5.2 warning, and the 60 Hz panel warning appears for lower resolutions
@@ -722,13 +748,18 @@ function legacyDefaults(caps, connectionType, storedVideoCodec) {
 // Decide whether a stored bitrate came from the bitrate presets, which earlier versions applied on every resolution and
 // frame rate change, so that it keeps following the video settings. The optimized presets always follow them. A stored
 // bitrate that differs from the standard preset of the stored resolution and frame rate (limited to 75 Mbps over
-// Ethernet, like the presets are) was picked by hand or set by the optimal streaming settings, and is kept.
+// Ethernet, like the presets are) was picked by hand or set by the optimal streaming settings, and is kept. A stored
+// 144 FPS is compared with its preset of 2.2.0 and earlier (LEGACY_144_FPS_PRESETS), so that the decision stays what it
+// was before 144 FPS was removed.
 // `stored` holds the stored values of bitrate, resolution, frameRate and optimizeBitrate (null when unset).
 function followsBitratePresets(stored, connectionType) {
   const values = stored || {};
   let followsPresets = values.optimizeBitrate == true;
   if (!followsPresets && values.bitrate != null && values.resolution != null && values.frameRate != null) {
     let preset = getStandardPresetBitrate(values.resolution, values.frameRate);
+    if (preset === null && String(values.frameRate) === '144' && Object.prototype.hasOwnProperty.call(LEGACY_144_FPS_PRESETS, values.resolution)) {
+      preset = LEGACY_144_FPS_PRESETS[values.resolution];
+    }
     if (preset !== null && preset > RECOMMENDED_ETHERNET_BITRATE && connectionType === 'ethernet') {
       preset = RECOMMENDED_ETHERNET_BITRATE;
     }
@@ -786,6 +817,57 @@ function schema3Replacements(stored) {
   return replacements;
 }
 
+// Return what replaces a stored frame rate above the highest one of the frame rate menu (offeredFrameRates()), i.e. the
+// 144 FPS of 2.2.0 and earlier, or an empty object for any other stored value. migrateSettingsSchema() in index.js
+// applies it at every start before the stored settings are loaded, so a stored 144 FPS is replaced once and never
+// reaches the frame rate menu or the start request:
+// - The frame rate becomes the highest one below it that the frame rate menu of this TV offers: 120 FPS with 'Unlock all
+//   frame rates' on (as stored, or the default of the TV when unset, like loadStoredSettings() in index.js shows it),
+//   otherwise 60 FPS. A stored 90 or 120 FPS stays as it is, also while the higher frame rates are locked.
+// - A bitrate that follows the presets gets the preset of the new frame rate at the resolution that the settings show
+//   (presetBitrate()), and a bitrate picked by hand stays. Neither shows a notice: the notice about a kept bitrate
+//   (applyBitratePresets() in index.js) explains a change that the user made. An install that didn't store the state
+//   of the bitrate presets yet gets the decision that the last loader of loadStoredSettings() would make from the stored
+//   144 FPS (followsBitratePresets()) stored with it, since that loader would otherwise decide from the new frame rate.
+//   Like that loader, it decides from the stored resolution as the resolution loader replaces one above the menu.
+// `stored` holds the stored values of frameRate, unlockAllFps, resolution, bitrate, autoAdjustBitrate and optimizeBitrate
+// (null when unset), with what the snapshots of the earlier settings schemas store already applied.
+function frameRateReplacements(stored, caps, connectionType) {
+  const values = stored || {};
+  const highestFrameRate = UNLOCKED_FRAME_RATES[UNLOCKED_FRAME_RATES.length - 1];
+  const storedFrameRate = parseInt(values.frameRate, 10);
+  if (!(storedFrameRate > highestFrameRate)) {
+    return {};
+  }
+  const optimalSettings = deriveOptimalSettings(caps, connectionType);
+  const unlockAllFps = values.unlockAllFps == null ? optimalSettings.unlockAllFps : values.unlockAllFps != false;
+  const frameRates = offeredFrameRates(unlockAllFps);
+  const replacements = { frameRate: frameRates[frameRates.length - 1] };
+
+  // The stored resolution as the resolution loader of loadStoredSettings() loads and stores it before the last loader
+  // reads it back: one wider than the resolution menu becomes 4K, or 1080p on a TV without a 4K panel
+  const maxWidth = caps ? caps.maxWidth : undefined;
+  let storedResolution = values.resolution != null ? String(values.resolution) : null;
+  if (storedResolution !== null && parseInt(storedResolution.split(':')[0], 10) > maxWidth) {
+    storedResolution = maxWidth >= 3840 ? '3840:2160' : '1920:1080';
+  }
+
+  let followsPresets = values.autoAdjustBitrate == true;
+  if (values.autoAdjustBitrate == null) {
+    // Without a stored bitrate the bitrate loader shows the recommended bitrate of the new frame rate anyway
+    followsPresets = values.bitrate == null ||
+      followsBitratePresets(Object.assign({}, values, { resolution: storedResolution }), connectionType);
+    replacements.autoAdjustBitrate = followsPresets;
+  }
+  if (followsPresets && values.bitrate != null) {
+    // The preset at the resolution that the settings show, which is the default of the TV when none is stored. As text,
+    // like the bitrate slider stores it.
+    const resolution = storedResolution !== null ? storedResolution : optimalSettings.resolution;
+    replacements.bitrate = String(presetBitrate(resolution, replacements.frameRate, connectionType, caps));
+  }
+  return replacements;
+}
+
 // Export the functions and constants for the unit tests in Node, where this file is loaded as a module
 if (typeof module === 'object' && module && module.exports) {
   module.exports = {
@@ -801,7 +883,10 @@ if (typeof module === 'object' && module && module.exports) {
     LEVEL_52_MAX_LUMA_SAMPLE_RATE: LEVEL_52_MAX_LUMA_SAMPLE_RATE,
     VERIFIED_PROFILES: VERIFIED_PROFILES,
     VIDEO_WARNINGS: VIDEO_WARNINGS,
+    FRAME_RATES: FRAME_RATES,
+    UNLOCKED_FRAME_RATES: UNLOCKED_FRAME_RATES,
     STANDARD_BITRATE_PRESETS: STANDARD_BITRATE_PRESETS,
+    LEGACY_144_FPS_PRESETS: LEGACY_144_FPS_PRESETS,
     LEGACY_DEFAULT_BITRATES: LEGACY_DEFAULT_BITRATES,
     LEGACY_SNAPSHOT_KEYS: LEGACY_SNAPSHOT_KEYS,
     EMSS_API_NAME: EMSS_API_NAME,
@@ -818,6 +903,7 @@ if (typeof module === 'object' && module && module.exports) {
     getVideoDecoderSupport: getVideoDecoderSupport,
     isAv1ReportedUnsupported: isAv1ReportedUnsupported,
     detectTvCapabilities: detectTvCapabilities,
+    offeredFrameRates: offeredFrameRates,
     getStandardPresetBitrate: getStandardPresetBitrate,
     getDecoderCapMbps: getDecoderCapMbps,
     getBitrateWarningMbps: getBitrateWarningMbps,
@@ -844,5 +930,6 @@ if (typeof module === 'object' && module && module.exports) {
     SCHEMA_3_REMOVED_KEYS: SCHEMA_3_REMOVED_KEYS,
     schema2Snapshot: schema2Snapshot,
     schema3Replacements: schema3Replacements,
+    frameRateReplacements: frameRateReplacements,
   };
 }

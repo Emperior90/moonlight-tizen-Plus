@@ -4,7 +4,9 @@
 // cover: the warnings that must still appear on the S90C, the ForceGM detection in the dialog, and that the applied
 // settings are what the next start loads. The S90C has to behave exactly like this after every later change. Only
 // the wording of the warnings may be more general: since 1.19.100 the Ethernet warning names the 100 Mbps port
-// that Samsung TVs usually have, still above 80 Mbps, and the 4K warning above 120 FPS keeps its text on the S90C.
+// that Samsung TVs usually have, still above 80 Mbps. The one change on purpose: 2.2.1 removed 144 FPS, which the video
+// player of Samsung TVs doesn't start (upstream 7d8ab56), so the S90C offers frame rates up to 120 FPS, and its 4K
+// warning above 120 FPS has nothing left to warn about.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -61,14 +63,25 @@ test('S90C over Wi-Fi: no Ethernet warning at 90 Mbps', async () => {
   }
 });
 
-test('S90C: 4K above 120 FPS warns about the decoder', async () => {
+test('S90C: the frame rates go up to 120 FPS, without 144 FPS, and 4K at 120 FPS gets no decoder warning', async () => {
   const app = await openApp(harness, { tv: Object.assign({ conn: 'wifi' }, S90C) });
   try {
+    const options = () => app.page.evaluate(() => $('.videoFramerateMenu li').map(function() {
+      return [[String($(this).data('value')), $(this).text().trim()]];
+    }).get());
+    assert.deepEqual(await options(), [['30', '30 FPS'], ['60', '60 FPS'], ['90', '90 FPS'], ['120', '120 FPS']]);
     await app.page.evaluate(() => saveFramerate.call($('.videoFramerateMenu li[data-value="120"]')[0]));
     assert.equal(count(app, DECODER_4K_WARNING), 0, 'no decoder warning at 4K 120 FPS');
-    // Since 1.19.100 a selection with another warning shows it right away, without waiting for a selection without one
-    await app.page.evaluate(() => saveFramerate.call($('.videoFramerateMenu li[data-value="144"]')[0]));
-    assert.equal(count(app, DECODER_4K_WARNING), 1);
+    // Switched off and on again like the user does: 120 FPS goes back to 60 FPS as before, and 144 FPS never appears
+    for (const state of ['off', 'on']) {
+      await app.page.evaluate((switchState) => {
+        document.querySelector('#unlockAllFpsBtn').MaterialSwitch[switchState]();
+        handleUnlockAllFps();
+      }, state);
+      assert.deepEqual((await options()).map((option) => option[0]), state === 'off' ? ['30', '60'] : ['30', '60', '90', '120'], state);
+    }
+    assert.equal((await readVideoSettings(app.page)).frameRate, '60');
+    assert.equal(count(app, DECODER_4K_WARNING), 0);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

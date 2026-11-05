@@ -347,9 +347,11 @@ function cryptoRand(upper_bound) {
   return array[0] % upper_bound;
 }
 
-// This map tracks gamepad IDs for each browser slot to avoid false
-// positives from placeholder gamepads that report as "connected"
-// but have never sent any input (timestamp = 0).
+// This map tracks the gamepad ID of each browser slot that reported a
+// positive timestamp, to avoid false positives from the placeholder
+// gamepads that Tizen reports as "connected" with a timestamp of 0. Since
+// Tizen 5.5 reports a timestamp of 0 for real controllers too, a slot also
+// counts by its input (Controller.isRealGamepad() in gamepad.js).
 var _realGamepads = new Map();
 
 // Returns a bitmask representing the connected gamepads in the browser
@@ -363,6 +365,15 @@ function getConnectedGamepadMask() {
   for (var i = 0; i < 16; i++) {
     var gamepad = gamepads[i];
 
+    // A controller that reports a timestamp of 0 (Tizen 5.5) counts once its input changed, by the evidence that
+    // Controller.isRealGamepad() (gamepad.js) gathers while the menus poll, with the rule of PollGamepads() in
+    // gamepad.cpp (as upstream fdf4fbe). It is asked for every slot, so an empty one forgets its evidence. Without
+    // gamepad.js (as in some unit tests) only a positive timestamp counts. So the mask counts what the menus counted,
+    // plus a slot whose id showed a positive timestamp before, which _realGamepads keeps (as in 2.2.0).
+    // The stream gathers its own evidence and announces such a controller with its first input in the stream; the PC
+    // doesn't create controllers from this mask (Sunshine only passes it to the app as SUNSHINE_CLIENT_GCMAP).
+    var validated = typeof Controller !== 'undefined' && Controller.isRealGamepad(gamepad, i);
+
     // Ignore empty or disconnected gamepads and clear any previous tracking for that slot
     if (!gamepad || !gamepad.connected) {
       _realGamepads.delete(i);
@@ -371,21 +382,22 @@ function getConnectedGamepadMask() {
 
     // Check if the gamepad slot is occupied
     if (gamepad) {
-      // See matching logic in "[gamepad.cpp] PollGamepads()" – these must stay in sync!
+      // See the matching rule of Controller.isRealGamepad() in gamepad.js and PollGamepads() in gamepad.cpp
+      // (tests/fixtures/gamepad-evidence.tsv) – these must stay in sync!
 
       // If the gamepad ID changed, treat it as a new one in this slot
       if (_realGamepads.get(i) !== gamepad.id) {
         _realGamepads.delete(i);
       }
 
-      // Remember any pad that has ever reported a non-zero timestamp
-      if (gamepad.timestamp !== 0) {
+      // Remember any pad that has ever reported a positive timestamp
+      if (typeof gamepad.timestamp === 'number' && isFinite(gamepad.timestamp) && gamepad.timestamp > 0) {
         _realGamepads.set(i, gamepad.id);
       }
 
       // Tizen often returns "connected" placeholder gamepads whose timestamp stays
       // at zero. Ignore them until they become real gamepads that report input.
-      if (gamepad.timestamp === 0 && !_realGamepads.has(i)) {
+      if (!_realGamepads.has(i) && !validated) {
         continue;
       }
 

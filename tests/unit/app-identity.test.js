@@ -91,7 +91,7 @@ test('config.xml has a numeric x.y.z version that Tizen accepts', () => {
   assert.ok(match, 'version ' + version + ' is not x.y.z');
   // The limits believed to apply to Tizen widget versions: x and y up to 255, z up to 65535
   assert.ok(Number(match[1]) <= 255 && Number(match[2]) <= 255 && Number(match[3]) <= 65535, version);
-  assert.equal(version, '2.2.0');
+  assert.equal(version, '2.2.1');
 });
 
 test('the header of the app shows the display name of config.xml, translated through its own locale key', () => {
@@ -124,6 +124,21 @@ test('the simulated TV of the tests reports the IDs, name and version of config.
   assert.equal(appInfo.packageId, xmlAttribute(xml, 'tizen:application', 'package'));
   assert.equal(appInfo.name, xmlText(xml, 'name'));
   assert.equal(appInfo.version, xmlAttribute(xml, 'widget', 'version'));
+});
+
+test('the browser tests expect the version of config.xml wherever they name the app with its version', () => {
+  // A new version changes res/config.xml, the simulated TV and these expectations together (2.2.1 missed two files)
+  const version = xmlAttribute(read('res/config.xml'), 'widget', 'version');
+  const browserDir = path.join(REPO_ROOT, 'tests', 'browser');
+  const files = fs.readdirSync(browserDir).filter((name) => name.endsWith('.js'));
+  let found = 0;
+  files.forEach((name) => {
+    (read(path.join('tests', 'browser', name)).match(/Moonlight Plus v\d+\.\d+\.\d+/g) || []).forEach((match) => {
+      found++;
+      assert.equal(match, 'Moonlight Plus v' + version, name);
+    });
+  });
+  assert.ok(found > 0, 'the browser tests check the app version in System information');
 });
 
 // The support path of the fork: the Support dialog and the help texts of the app lead to
