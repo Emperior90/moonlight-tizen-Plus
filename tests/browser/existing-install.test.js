@@ -234,6 +234,25 @@ test('a stored 144 FPS keeps a bitrate picked by hand', async () => {
   }
 });
 
+test('a stored 144 FPS over Ethernet gets the Ethernet preset of 120 FPS, not the one of Wi-Fi', async () => {
+  // An install of 2.2.0 on the S90C over Ethernet at 4K and 144 FPS, whose bitrate followed the presets (75 Mbps, the
+  // limit of Ethernet). Over Wi-Fi the preset of 4K at 120 FPS would be 100 Mbps, so this pins that the replacement
+  // reads the connection of the TV
+  const app = await openExisting({ tv: 's90c', conn: 'ethernet' }, {
+    settingsSchema: 3, resolution: '3840:2160', frameRate: 144, bitrate: '75', autoAdjustBitrate: true,
+  });
+  try {
+    const shown = await readVideoSettings(app.page);
+    assert.deepEqual([shown.frameRate, shown.bitrate, shown.bitrateLabel, shown.autoAdjustBitrate], ['120', '75', '75 Mbps', true]);
+    const stored = await waitForStorage(app.page, (values) => values.frameRate !== 144);
+    assert.deepEqual(pick(stored, VIDEO_KEYS), { resolution: '3840:2160', frameRate: 120, bitrate: '75', autoAdjustBitrate: true });
+    assert.deepEqual(notices(app), []);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
 test('a stored 144 FPS becomes 60 FPS where the frame rate menu offers no 120 FPS', async () => {
   const cases = [
     // A 4K TV without a tested profile, whose higher frame rates are locked by default: the 4K preset of 60 FPS

@@ -2,6 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
+- [2.2.1](#221): pre-release, no more 144 FPS, and controllers that work on 2020 TVs
 - [2.2.0](#220): 2026-11-03, a tidier app with fixes and a smaller download
 - [2.1.0](#210): 2026-10-30, five languages and new tools in the Stream Menu
 - [2.0.0](#200): pre-release only, its changes come with 2.1.0
@@ -13,6 +14,28 @@ What changed in each version of Moonlight Plus, in short, newest first.
 **Which file?** `Moonlight-ForceGM.wgt` on Tizen 9 and newer, `Moonlight.wgt` on Tizen 5.5 to 8.
 
 **TV refuses an update?** If the author certificate doesn't match, uninstall the old app first; this loses its settings and pairing.
+
+## 2.2.1
+
+*Pre-release, in testing.* Ends the 144 FPS that no Samsung TV could start, and fixes controllers on TVs from 2020.
+
+> **Install:** by hand over 2.2.0 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
+>
+> **Tested:** with simulated TVs, hosts and controllers only; the controllers on Tizen 5.5 still need a test on such a TV.
+
+### Changed
+
+- A 144 FPS set before becomes 120 FPS, or 60 FPS with *Unlock all frame rates* off; a preset bitrate follows
+- The README credits Moonlight Tizen, its maintainer and its contributors, as its README asks
+
+### Removed
+
+- 144 FPS, which the video player of Samsung TVs never starts: the stream stopped after 5 s or stayed black
+
+### Fixed
+
+- Some controllers on Tizen 5.5 TVs (2020) did nothing in a game; now they work after one press or stick move
+- Such controllers were also missing in System information, the input test and the button mapping
 
 ## 2.2.0
 
