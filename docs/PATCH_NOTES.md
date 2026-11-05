@@ -2,7 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
-- [2.2.1](#221): pre-release, no more 144 FPS, and controllers that work on 2020 TVs
+- [2.2.1](#221): 2026-11-05, no more 144 FPS, and controllers that work on 2020 TVs
 - [2.2.0](#220): 2026-11-03, a tidier app with fixes and a smaller download
 - [2.1.0](#210): 2026-10-30, five languages and new tools in the Stream Menu
 - [2.0.0](#200): pre-release only, its changes come with 2.1.0
@@ -17,7 +17,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ## 2.2.1
 
-*Pre-release, in testing.* Ends the 144 FPS that no Samsung TV could start, and fixes controllers on TVs from 2020.
+*2026-11-05.* Ends the 144 FPS that no Samsung TV could start, and fixes controllers on TVs from 2020.
 
 > **Install:** by hand over 2.2.0 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >

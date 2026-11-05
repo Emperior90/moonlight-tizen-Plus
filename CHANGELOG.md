@@ -2,7 +2,7 @@
 
 All notable changes to Moonlight Plus, by version, newest first. Each version lists what is new since the version before it; the [patch notes](docs/PATCH_NOTES.md) sum them up for users.
 
-## 2.2.1 (unreleased)
+## 2.2.1 (2026-11-05)
 
 ### Added
 - Added tests for the controllers that report a timestamp of 0 and for the end of 144 FPS: one table of input cases (`tests/fixtures/gamepad-evidence.tsv`) that the C++ rule of the stream (`tests/native/gamepad_evidence_test.cpp`) and the JavaScript rule of the menus (`tests/unit/gamepad-js.test.js`) must both decide the same way, browser tests for System information, the input test, the button mapping and the Stream Menu with such a controller, and browser and unit tests for the frame rate menus without 144 FPS, the replacement of a stored 144 FPS on the S90C, a generic 4K TV and a Full HD TV, over Wi-Fi and Ethernet, and the unchanged decision of the settings snapshot of settings schema 1
