@@ -73,16 +73,61 @@ enum GamepadAxis {
   RightY = 3,
 };
 
-// Per-slot state used for Tizen placeholder filtering, id tracking and arrival announcements
+// Per-slot state used for Tizen placeholder filtering, id tracking and arrival announcements. A slot that the browser
+// reports as connected counts as a controller once it showed a positive timestamp or a change of its input since it
+// appeared (see PollGamepads()).
 struct ControllerSlotState {
-  bool seenTimestamp = false; // true once a non-zero timestamp was observed for this id
+  // true once this id showed a positive timestamp or an input change against its baseline. It stays for the id, also
+  // when its timestamp reads 0 later (the Tizen bug behind upstream f1a4691), and across streams.
+  bool validated = false;
   bool announced = false; // true after LiSendControllerArrivalEvent succeeded
+  bool hasBaseline = false; // true once the input of the slot was recorded while it didn't count yet
   std::string id; // last known Gamepad.id (used to detect replacements)
   uint8_t type = LI_CTYPE_UNKNOWN; // controller type announced to the host (detected or from the setting)
   int mapping = -1; // index of the mapping of this controller in controllerMappings, or -1 for none
+  EmscriptenGamepadEvent baseline{}; // the input of the slot when it appeared, which an input change is measured from
 };
 
 static ControllerSlotState slotState[kMaxControllers];
+
+// Smallest move of an analog button or axis away from the baseline that counts as input (isRealGamepad() in
+// wasm/platform/gamepad.js uses the same)
+static constexpr double kInputChangeStep = 0.01;
+
+// Check if the input of a slot changed since it appeared, which a static placeholder never does: a digital button that
+// flipped, or an analog button or axis that moved more than kInputChangeStep away from the baseline. The baseline stays,
+// so a slow move adds up, while a static value is no evidence, also a button held since the slot appeared (its release
+// counts) or a stick that rests off-centre. A value that wasn't finite in the baseline takes the first finite one.
+// Rule of upstream Moonlight Tizen 1.20.0, PR #192 by podrezov (fdf4fbe), GPL-3.0. The tracker of isRealGamepad() in
+// wasm/platform/gamepad.js applies it in the menus (tests/fixtures/gamepad-evidence.tsv keeps both the same).
+static bool HasGamepadInputChanged(const EmscriptenGamepadEvent& gamepad, EmscriptenGamepadEvent& baseline) {
+  for (int i = 0; i < gamepad.numButtons && i < 64; ++i) {
+    if ((gamepad.digitalButton[i] == EM_TRUE) != (baseline.digitalButton[i] == EM_TRUE)) {
+      return true;
+    }
+    const double value = gamepad.analogButton[i];
+    if (std::isfinite(value)) {
+      if (std::isfinite(baseline.analogButton[i]) && std::abs(value - baseline.analogButton[i]) > kInputChangeStep) {
+        return true;
+      }
+      if (!std::isfinite(baseline.analogButton[i])) {
+        baseline.analogButton[i] = value;
+      }
+    }
+  }
+  for (int i = 0; i < gamepad.numAxes && i < 64; ++i) {
+    const double value = gamepad.axis[i];
+    if (std::isfinite(value)) {
+      if (std::isfinite(baseline.axis[i]) && std::abs(value - baseline.axis[i]) > kInputChangeStep) {
+        return true;
+      }
+      if (!std::isfinite(baseline.axis[i])) {
+        baseline.axis[i] = value;
+      }
+    }
+  }
+  return false;
+}
 
 // Controller state last sent to the host per slot. Many polls read the same state again (buttons
 // and sticks at rest, or no new report from the controller yet), and those can skip sending
@@ -632,8 +677,9 @@ static void SendScroll(double speedX, double speedY, uint64_t nowMs) {
 
 // Called at the start of every stream with its gamepad settings, before the input polling starts (the native tests also
 // call it to change a setting). It clears the announced flags so arrival is re-sent with updated data, and starts the
-// stream without the mouse emulation, held combos and mouse buttons of the previous stream. The button mapping comes as
-// the text of controller_mapping.hpp.
+// stream without the mouse emulation, held combos and mouse buttons of the previous stream. The evidence that a slot
+// holds a controller stays, so a controller with a timestamp of 0 is announced at once in the next stream. The button
+// mapping comes as the text of controller_mapping.hpp.
 void MoonlightInstance::HandleGamepadInputState(bool rumbleFeedback, bool mouseEmulation, const std::string& buttonMappings,
                                                 uint8_t controllerType) {
   // Force re-announce on next poll so the host gets the updated button map / capabilities
@@ -666,7 +712,8 @@ void MoonlightInstance::PollGamepads() {
   EmscriptenGamepadEvent events[kMaxControllers]{};
   int slotPresent[kMaxControllers] = { 0 };
 
-  // See matching logic in "[utils.js] getConnectedGamepadMask()" – these must stay in sync!
+  // See the matching rule of isRealGamepad() in wasm/platform/gamepad.js, which getConnectedGamepadMask() in utils.js
+  // uses too – these must stay in sync (tests/fixtures/gamepad-evidence.tsv)!
 
   // Read every browser slot once so later logic can work from a stable snapshot
   const int limit = ReadGamepadSlots(events, slotPresent);
@@ -688,9 +735,18 @@ void MoonlightInstance::PollGamepads() {
     const double timestamp = connected ? events[i].timestamp : 0.0; // current timestamp (0 if disconnected)
     const bool sameDevice = (state.id == currentId); // true when the id has not changed
 
-    // Real = connected and (non-zero timestamp, or previously seen real with same id)
-    // This keeps the Tizen placeholder workaround while detecting replacements
-    const bool real = connected && (timestamp != 0.0 || (sameDevice && state.seenTimestamp));
+    // Real = connected and (a positive timestamp, or the same id that counted before or whose input changed since the
+    // slot appeared). Tizen reports placeholder slots as connected whose timestamp stays 0 and whose input never
+    // changes; the rule to skip a slot until it shows a non-zero timestamp comes from moonlight-chrome. But Tizen 5.5
+    // reports a timestamp of 0 for real controllers too, so their input never reached the host. A change of the input
+    // counts as well now, as upstream fdf4fbe (PR #192 by podrezov) does, compared only with a baseline of the same
+    // button and axis count.
+    const bool positiveTimestamp = std::isfinite(timestamp) && timestamp > 0.0;
+    const bool sameLayout = state.hasBaseline && state.baseline.numButtons == events[i].numButtons &&
+      state.baseline.numAxes == events[i].numAxes;
+    const bool validatedByInput = connected && !positiveTimestamp && sameDevice && !state.validated && sameLayout &&
+      HasGamepadInputChanged(events[i], state.baseline);
+    const bool real = connected && (positiveTimestamp || (sameDevice && (state.validated || validatedByInput)));
 
     // Previously announced but gone or replaced → queue removal
     if (state.announced && (!real || !sameDevice)) {
@@ -698,15 +754,37 @@ void MoonlightInstance::PollGamepads() {
       state.announced = false;
     }
 
-    // Not a real controller (placeholder or disconnected) → clear state and skip
-    if (!real) {
-      state = {}; // clear so a future different device starts fresh
+    // Disconnected → clear state, so the slot needs new evidence
+    if (!connected) {
+      state = {};
       continue;
     }
 
-    // Record identity and mark this physical bit in the active mask
+    // Another device in the slot (a different id) → start fresh, so it needs evidence of its own
+    if (!sameDevice) {
+      state = {};
+    }
     state.id = currentId;
-    state.seenTimestamp = true;
+
+    // Not a controller yet (a placeholder, or a controller with a timestamp of 0 that sent no input yet) → record the
+    // input of the slot when it appeared, or again when its button or axis count changed, and skip it
+    if (!real) {
+      if (!state.hasBaseline || !sameLayout) {
+        state.baseline = events[i];
+        state.hasBaseline = true;
+      }
+      continue;
+    }
+
+    // Say in the log why a controller without a positive timestamp counts, which a support log of such a TV needs, with
+    // the timestamp as it reads (0 on Tizen 5.5; isRealGamepad() in wasm/platform/gamepad.js logs the same)
+    if (validatedByInput) {
+      MoonlightInstance::ClLogMessage(
+        "Controller %d reports a timestamp of %g and counts as a controller since its input changed\n", i, timestamp);
+    }
+
+    // Record the evidence and mark this physical bit in the active mask
+    state.validated = true;
     activeGamepadMask |= static_cast<short>(1 << i);
 
     // Queue an arrival event if we have not announced this device yet

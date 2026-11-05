@@ -6929,3 +6929,18 @@ window.addEventListener('gamepaddisconnected', function(e) {
     loadSystemInfo();
   }
 });
+
+// A controller that reports a timestamp of 0 (Tizen 5.5) counts only once its input changed (Controller.isRealGamepad()
+// in gamepad.js), which comes after its gamepadconnected event or without one. Then list it where the UI lists the
+// controllers: System information (as on gamepadconnected), the mouse emulation entry of an open Stream Menu and the
+// controllers of an open button mapping menu.
+window.addEventListener('gamepadvalidated', function(e) {
+  console.log('%c[index.js, gamepadvalidated]', 'color: green;', 'Gamepad ' + e.detail.gamepad + ' counts as a controller now, listing it.');
+  if (!isInGame) {
+    loadSystemInfo();
+  }
+  if (isStreamMenuOpen) {
+    updateStreamMenu();
+  }
+  ButtonMappingMenu.refreshControllers();
+});

@@ -157,23 +157,28 @@ function getPerformanceStatsLevelName(level) {
   return level === 2 ? t('Full') : level === 1 ? t('Compact') : t('Off');
 }
 
-// Select an entry of the Stream Menu again after the entries that show changed while it is open, or the last entry
-// before it that shows when it doesn't show any more. Otherwise the index of the selection would point at the entry
-// after it, which OK presses without it being marked.
-function reselectStreamMenuEntry(entry) {
-  const entries = getOverlayMenuItems('streamMenu');
+// Select an entry of an overlay menu (its id and the ListView of its view) again after the entries that show changed
+// while it is open, or the last entry before it that shows when it doesn't show any more. Otherwise the index of the
+// selection would point at another entry, which OK presses without it being marked.
+function reselectOverlayMenuItem(menuId, view, entry) {
+  const entries = getOverlayMenuItems(menuId);
   let index = entries.indexOf(entry);
   if (index < 0) {
     const before = entries.filter((item) => entry.compareDocumentPosition(item) & Node.DOCUMENT_POSITION_PRECEDING);
     index = Math.max(0, before.length - 1);
   }
-  if (Views.StreamMenu.view.index === index && entries[index] === entry) {
+  if (view.index === index && entries[index] === entry) {
     return;
   }
   unmark(entry);
-  Views.StreamMenu.view.index = index;
+  view.index = index;
   mark(entries[index]);
   focusElement(entries[index]);
+}
+
+// Select an entry of the Stream Menu again after the entries that show changed while it is open
+function reselectStreamMenuEntry(entry) {
+  reselectOverlayMenuItem('streamMenu', Views.StreamMenu.view, entry);
 }
 
 // The lowest and the highest bitrate of the bitrate entry of the Stream Menu in Mbps: 5 Mbps up to the end of the bitrate

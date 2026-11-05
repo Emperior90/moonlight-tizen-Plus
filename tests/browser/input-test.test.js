@@ -4,7 +4,8 @@
 // with the remote and a gamepad: every key shows with its name, key code and how long it was held, also a held key with
 // its repeats, and no key reaches the menus or does its usual action (RED, DOWN); RETURN shows and then leaves the test;
 // each simulated controller is drawn live (pressed buttons, the bar of a trigger, the dot of a stick, the readout of its
-// buttons and axes); a hold of B for 2 seconds leaves it; the media keys of the TV are listed as registered or left to
+// buttons and axes), also one that reports a timestamp of 0 once its input changed (Tizen 5.5); a hold of B for 2
+// seconds leaves it; the media keys of the TV are listed as registered or left to
 // the TV; the controllers are read only while it is open; and it registers no keys.
 
 const { test, before, after } = require('node:test');
@@ -215,6 +216,35 @@ test('each controller is drawn live, a hold of B leaves, and the controllers are
     await app.page.evaluate(() => window.__setButton(0, 2, true));
     await app.page.waitForTimeout(150);
     assert.equal(await app.page.evaluate(() => document.querySelector('#inputTestPads .pad-card [data-b="2"]').classList.contains('on')), false);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a controller with a timestamp of 0 (Tizen 5.5) is drawn once its input changed, and one whose timestamp drops to 0 stays', async () => {
+  const app = await openApp(harness, { tv: { tv: 'fhd', conn: 'wifi' }, initScripts: [simulatedGamepads] });
+  try {
+    await app.page.evaluate((id) => window.__connectPad(0, id), XBOX_ID);
+    await openInputTest(app.page);
+    // A controller in slot 1 that reports a timestamp of 0 and fired no gamepadconnected event, at rest, and the first
+    // controller, whose timestamp reads 0 from now on
+    await app.page.evaluate((id) => {
+      window.__pads[1] = {
+        index: 1, id, mapping: 'standard', connected: true, timestamp: 0, vibrationActuator: null,
+        buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })), axes: [0, 0, 0, 0],
+      };
+      window.__pads[0].timestamp = 0;
+    }, XBOX_ID);
+    await app.page.waitForTimeout(200);
+    const titles = () => app.page.evaluate(() => Array.prototype.map.call(document.querySelectorAll('#inputTestPads .pad-card .pad-title'),
+      (title) => title.textContent));
+    assert.deepEqual(await titles(), ['Controller 0: Xbox Wireless Controller']);
+    // Its first press draws it
+    await app.page.evaluate(() => window.__setButton(1, 2, true));
+    await app.page.waitForTimeout(200);
+    assert.deepEqual(await titles(), ['Controller 0: Xbox Wireless Controller', 'Controller 1: Xbox Wireless Controller']);
+    assert.equal(await app.page.evaluate(() => document.querySelectorAll('#inputTestPads .pad-card')[1].querySelector('.pad-buttons').textContent), 'Buttons: X');
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
