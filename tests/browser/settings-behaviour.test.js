@@ -3,7 +3,8 @@
 // Pins how the video settings react to changes on the settings screen (from the earlier rounds of fixes): the bitrate
 // presets, which are the recommended bitrates since 2.2.0, and when they follow the resolution and frame rate, the 5 /
 // 0.5 Mbps steps of the bitrate menu up to 250 Mbps and a stored bitrate up there, the Ethernet limit of the presets,
-// and the one-shot hints and warnings (90 FPS, H.264 above 1080p, codec fallbacks, AV1).
+// the frame rates up to 120 FPS (without the 144 FPS that 2.2.1 removed), and the one-shot hints and warnings (90 FPS,
+// H.264 above 1080p, codec fallbacks, AV1).
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -173,16 +174,53 @@ test('on a TV without a tested profile a preset stays within the decoder cap and
       await pickFrameRate(app.page, 90);
       let shown = await readVideoSettings(app.page);
       assert.deepEqual([shown.bitrate, shown.frameRate], ['80', '90'], conn + ': the 4K 90 FPS preset of 100 Mbps is limited to the decoder cap');
-      await pickFrameRate(app.page, 144);
+      await pickFrameRate(app.page, 120);
       await pickResolution(app.page, '3200:1800');
       shown = await readVideoSettings(app.page);
-      assert.deepEqual([shown.bitrate, shown.resolution], ['80', '3200:1800'], conn + ': 1800p at 144 FPS');
+      // 1800p at 120 FPS: 25 % above the standard preset of 90 Mbps over Wi-Fi, and the preset itself without a detected
+      // connection, both limited to the cap
+      assert.deepEqual([shown.bitrate, shown.resolution], ['80', '3200:1800'], conn + ': 1800p at 120 FPS');
       await pickResolution(app.page, '2560:1440');
-      // 1440p at 144 FPS: 25 % above the standard preset of 70 Mbps over Wi-Fi, up to the cap, and the preset itself
-      // without a detected connection
-      assert.equal((await readVideoSettings(app.page)).bitrate, conn === 'wifi' ? '80' : '70', conn + ': the 1440p 144 FPS preset');
+      // 1440p at 120 FPS: 25 % above the standard preset of 60 Mbps over Wi-Fi, and the preset itself without a detected
+      // connection, both within the cap
+      assert.equal((await readVideoSettings(app.page)).bitrate, conn === 'wifi' ? '75' : '60', conn + ': the 1440p 120 FPS preset');
       assert.equal(count(app, 'has been limited to'), 0, conn);
       assert.equal(count(app, 'exceed what is recommended for the video decoder of this TV'), 0, conn + ': no bitrate warning');
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
+test('the frame rate menu never offers 144 FPS: 90 and 120 FPS with the switch on, on the S90C and on TVs without a tested profile', async () => {
+  // 2.2.1 removed 144 FPS, as upstream 7d8ab56 did, since the video player of Samsung TVs never starts it (upstream dd7dfdf)
+  const options = (page) => page.evaluate(() => $('.videoFramerateMenu li').map(function() {
+    return String($(this).data('value'));
+  }).get());
+  const unlock = (page, state) => page.evaluate((switchState) => {
+    document.querySelector('#unlockAllFpsBtn').MaterialSwitch[switchState]();
+    saveUnlockAllFps();
+    handleUnlockAllFps();
+  }, state);
+  for (const [tv, unlockedByDefault] of [['s90c', true], ['uhd', false], ['fhd', false]]) {
+    const app = await openApp(harness, { tv: { tv, conn: 'wifi' } });
+    try {
+      assert.deepEqual(await options(app.page), unlockedByDefault ? ['30', '60', '90', '120'] : ['30', '60'], tv + ': default');
+      for (const [state, expected] of [['on', ['30', '60', '90', '120']], ['off', ['30', '60']], ['on', ['30', '60', '90', '120']], ['on', ['30', '60', '90', '120']]]) {
+        await unlock(app.page, state);
+        assert.deepEqual(await options(app.page), expected, tv + ': ' + state);
+      }
+      // 120 FPS is the highest, and the switch turned off goes back to 60 FPS from it, as before
+      await pickFrameRate(app.page, 120);
+      assert.equal((await readVideoSettings(app.page)).frameRate, '120', tv);
+      await unlock(app.page, 'off');
+      assert.equal((await readVideoSettings(app.page)).frameRate, '60', tv);
+      // The optimal settings button sets 60 FPS and the switch of the TV
+      await app.page.evaluate(() => $('#optimalSettingsBtn').trigger('click'));
+      await app.page.evaluate(() => $('#continueWarning').trigger('click'));
+      const shown = await readVideoSettings(app.page);
+      assert.deepEqual([shown.frameRate, shown.frameRateOptions], ['60', unlockedByDefault ? ['30', '60', '90', '120'] : ['30', '60']], tv + ': optimal');
       assert.deepEqual(app.errors, []);
     } finally {
       await app.context.close();

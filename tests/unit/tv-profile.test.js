@@ -7,6 +7,8 @@
 //   Ethernet / Wi-Fi / unknown connection, checked against expectations written out here, not computed by the same rules
 // - the golden S90C values, which must stay as they are, and that no result for a Full HD TV is above 50 Mbps
 // - the frozen defaults of settings schema 1 and 2 and the one-time snapshots for existing installs
+// - the frame rates of the frame rate menu, which lost 144 FPS in 2.2.1, the replacement of a stored 144 FPS, and the
+//   decision on a bitrate stored next to 144 FPS, which stays as it was
 // - that index.html loads the file before index.js and that the build copies it into the widget
 
 const { describe, test } = require('node:test');
@@ -21,7 +23,8 @@ const CONNECTIONS = ['ethernet', 'wifi', 'unknown'];
 const TIZEN_VERSIONS = ['5.5', '6.0', '6.5', '7.0', '8.0', '9.0'];
 const PANELS = ['fhd', '4k', '8k'];
 const RESOLUTIONS = Object.keys(profile.STANDARD_BITRATE_PRESETS);
-const FRAME_RATES = [30, 60, 90, 120, 144];
+// The frame rates of the frame rate menu with 'Unlock all frame rates' on; 144 FPS is gone since 2.2.1
+const FRAME_RATES = [30, 60, 90, 120];
 
 // The simulated product APIs of a TV (see tests/browser/mocks/tv-mock.js), without a screen object
 function apisFor(tvOptions) {
@@ -357,8 +360,8 @@ describe('the bitrate presets', () => {
   test('stay within 75 Mbps over Ethernet, 80 Mbps for an unknown connection and the decoder cap of every TV', () => {
     const at = (res, fps, caps) => CONNECTIONS.map((conn) => profile.presetBitrate(res, fps, conn, caps));
     // The S90C at 4K above 60 FPS: its decoder cap of 100 Mbps over Wi-Fi, which the standard presets of 2.1.0 went past
-    // (120 Mbps at 120 FPS, 140 Mbps at 144 FPS)
-    for (const fps of ['90', '120', '144']) {
+    // (120 Mbps at 120 FPS)
+    for (const fps of ['90', '120']) {
       assert.deepEqual(at('3840:2160', fps, detect({ tv: 's90c' })), [75, 100, 80], 'S90C at 4K and ' + fps + ' FPS');
     }
     assert.deepEqual(at('3840:2160', '120', detect({ tv: 'uhd' })), [75, 80, 80], '4K TV at 4K and 120 FPS');
@@ -511,6 +514,70 @@ describe('followsBitratePresets()', () => {
       assert.equal(profile.followsBitratePresets(stored, conn), expected, JSON.stringify([stored, conn]));
     }
   });
+
+  // Frozen copy of the standard bitrate presets of 2.2.0, with the 144 FPS that 2.2.1 removed, and of
+  // followsBitratePresets() of 2.2.0, which read them
+  const PRESETS_2_2_0 = {
+    '854:480': { 30: 2, 60: 4, 90: 5, 120: 6, 144: 8 },
+    '1280:720': { 30: 5, 60: 10, 90: 12, 120: 15, 144: 18 },
+    '1920:1080': { 30: 10, 60: 20, 90: 25, 120: 30, 144: 35 },
+    '2560:1440': { 30: 20, 60: 40, 90: 50, 120: 60, 144: 70 },
+    '3200:1800': { 30: 30, 60: 60, 90: 75, 120: 90, 144: 100 },
+    '3840:2160': { 30: 40, 60: 80, 90: 100, 120: 120, 144: 140 },
+  };
+  function followsBitratePresetsOf220(stored, conn) {
+    const values = stored || {};
+    let follows = values.optimizeBitrate == true;
+    if (!follows && values.bitrate != null && values.resolution != null && values.frameRate != null) {
+      const presets = PRESETS_2_2_0[values.resolution];
+      let preset = presets ? presets[String(values.frameRate)] : 10;
+      if (preset === undefined) {
+        preset = null;
+      }
+      if (preset !== null && preset > 75 && conn === 'ethernet') {
+        preset = 75;
+      }
+      follows = preset !== null && parseFloat(values.bitrate) === preset;
+    }
+    return follows;
+  }
+
+  test('the 144 FPS presets are gone from the presets, and a bitrate stored next to 144 FPS is decided as in 2.2.0', () => {
+    // The presets offer the frame rates of the menu only, and the presets of 144 FPS stay as frozen data of the decision
+    for (const res of Object.keys(PRESETS_2_2_0)) {
+      assert.deepEqual(Object.keys(profile.STANDARD_BITRATE_PRESETS[res]), ['30', '60', '90', '120'], res);
+      assert.equal(profile.LEGACY_144_FPS_PRESETS[res], PRESETS_2_2_0[res][144], res);
+    }
+    assert.deepEqual(Object.keys(profile.LEGACY_144_FPS_PRESETS), Object.keys(PRESETS_2_2_0));
+    assert.ok(Object.isFrozen(profile.LEGACY_144_FPS_PRESETS));
+    // Every stored resolution, frame rate (also as text) and bitrate near a preset gets the decision of 2.2.0
+    const bitrates = [0.5, 8, 18, 35, 44, 70, 75, 80, 100, 120, 140, '140', '140.0', '75'];
+    let checked = 0;
+    for (const res of Object.keys(PRESETS_2_2_0).concat(['1000:1000'])) {
+      for (const frameRate of [30, 60, 90, 120, 144, '144', '120', 75]) {
+        for (const conn of CONNECTIONS) {
+          for (const bitrate of bitrates.concat(Object.values(PRESETS_2_2_0[res] || {}))) {
+            for (const optimizeBitrate of [null, false, true]) {
+              const stored = { bitrate: String(bitrate), resolution: res, frameRate, optimizeBitrate };
+              assert.equal(profile.followsBitratePresets(stored, conn), followsBitratePresetsOf220(stored, conn), JSON.stringify([stored, conn]));
+              checked++;
+            }
+          }
+        }
+      }
+    }
+    assert.ok(checked > 5000);
+    // So the snapshot of settings schema 1 decides as before for an install with 144 FPS and its preset of 2.2.0:
+    // 140 Mbps at 4K (75 Mbps over Ethernet) and 35 Mbps at 1080p follow the presets, any other bitrate was picked by hand
+    const s90c = detect({ tv: 's90c' });
+    const snapshot = (stored, conn) => profile.legacySettingsSnapshot(stored, s90c, conn).autoAdjustBitrate;
+    assert.equal(snapshot({ resolution: '3840:2160', frameRate: 144, bitrate: '140' }, 'wifi'), true);
+    assert.equal(snapshot({ resolution: '3840:2160', frameRate: 144, bitrate: '75' }, 'ethernet'), true);
+    assert.equal(snapshot({ resolution: '1920:1080', frameRate: 144, bitrate: '35' }, 'unknown'), true);
+    assert.equal(snapshot({ resolution: '3840:2160', frameRate: 144, bitrate: '100' }, 'wifi'), false);
+    assert.equal(snapshot({ resolution: '3840:2160', frameRate: 144, bitrate: '120' }, 'wifi'), false, 'the 120 FPS preset at 144 FPS');
+    assert.equal(snapshot({ resolution: '1920:1080', frameRate: 144, bitrate: '44' }, 'wifi'), false);
+  });
 });
 
 describe('legacySettingsSnapshot(): the one-time snapshot of an existing install', () => {
@@ -612,6 +679,113 @@ describe('the frozen defaults of settings schema 2 and the snapshot of settings 
     assert.deepEqual(profile.schema3Replacements({ optimizeBitrate: false }), {});
     assert.deepEqual(profile.schema3Replacements({}), {});
     assert.deepEqual(profile.schema3Replacements(null), {});
+  });
+});
+
+describe('the frame rates of the frame rate menu', () => {
+  test('are 30 and 60 FPS, and 90 and 120 FPS more with the higher frame rates unlocked, without 144 FPS', () => {
+    assert.deepEqual(profile.offeredFrameRates(false), [30, 60]);
+    assert.deepEqual(profile.offeredFrameRates(true), FRAME_RATES);
+    assert.ok(Object.isFrozen(profile.FRAME_RATES) && Object.isFrozen(profile.UNLOCKED_FRAME_RATES));
+    // A changed list doesn't change the constants
+    profile.offeredFrameRates(false).push(144);
+    assert.deepEqual(profile.offeredFrameRates(false), [30, 60]);
+    // index.html offers the first two, handleUnlockAllFps() in index.js adds the others
+    const read = (relativePath) => fs.readFileSync(path.join(REPO_ROOT, relativePath), 'utf8');
+    const menu = /<ul class="videoFramerateMenu[^>]*>([\s\S]*?)<\/ul>/.exec(read('wasm/index.html'));
+    assert.ok(menu, 'the frame rate menu in index.html');
+    assert.deepEqual(Array.from(menu[1].matchAll(/data-value="(\d+)"/g), (match) => Number(match[1])), [30, 60]);
+    const unlock = /function handleUnlockAllFps\(\) \{[\s\S]*?\n\}\n/.exec(read('wasm/platform/index.js'));
+    assert.ok(unlock, 'handleUnlockAllFps() in index.js');
+    assert.deepEqual(Array.from(new Set(Array.from(unlock[0].matchAll(/data-value="(\d+)"/g), (match) => Number(match[1])))), [60, 90, 120]);
+    assert.doesNotMatch(unlock[0], /'144'/);
+  });
+
+  test('the optimal settings pick a frame rate that the menu of the TV offers', () => {
+    for (const tv of ['s90c', 'uhd', 'fhd', '8k']) {
+      const optimal = profile.deriveOptimalSettings(detect({ tv }), 'wifi');
+      assert.ok(profile.offeredFrameRates(optimal.unlockAllFps).indexOf(optimal.frameRate) >= 0, tv);
+    }
+  });
+});
+
+describe('frameRateReplacements(): a stored 144 FPS', () => {
+  const s90c = detect({ tv: 's90c' });
+  const uhd = detect({ tv: 'uhd' });
+  const fhd = detect({ tv: 'fhd' });
+
+  test('becomes 120 FPS on the S90C, whose higher frame rates are unlocked, with the 120 FPS preset when the bitrate follows the presets', () => {
+    // 1080p at 120 FPS over Wi-Fi: 25 % above the preset of 30 Mbps
+    assert.deepEqual(profile.frameRateReplacements({ frameRate: 144, resolution: '1920:1080', bitrate: '44', autoAdjustBitrate: true }, s90c, 'wifi'),
+      { frameRate: 120, bitrate: '38' });
+    // Also with the switch stored on, the frame rate stored as text, and over Ethernet at 4K (75 Mbps)
+    assert.deepEqual(profile.frameRateReplacements({ frameRate: '144', unlockAllFps: true, resolution: '3840:2160', bitrate: '75', autoAdjustBitrate: true }, s90c, 'ethernet'),
+      { frameRate: 120, bitrate: '75' });
+    // Without a stored resolution the bitrate follows the default of the TV (4K: 100 Mbps over Wi-Fi)
+    assert.deepEqual(profile.frameRateReplacements({ frameRate: 144, bitrate: '44', autoAdjustBitrate: true }, s90c, 'wifi'),
+      { frameRate: 120, bitrate: '100' });
+  });
+
+  test('keeps a bitrate picked by hand', () => {
+    for (const conn of CONNECTIONS) {
+      assert.deepEqual(profile.frameRateReplacements({ frameRate: 144, resolution: '3840:2160', bitrate: '42.5', autoAdjustBitrate: false }, s90c, conn),
+        { frameRate: 120 }, conn);
+    }
+  });
+
+  test('becomes 60 FPS where the frame rate menu offers no 120 FPS', () => {
+    // The switch stored off on the S90C, and a generic 4K TV, whose higher frame rates are locked by default
+    assert.deepEqual(profile.frameRateReplacements({ frameRate: 144, unlockAllFps: false, resolution: '1920:1080', bitrate: '44', autoAdjustBitrate: true }, s90c, 'wifi'),
+      { frameRate: 60, bitrate: '25' });
+    assert.deepEqual(profile.frameRateReplacements({ frameRate: 144, resolution: '3840:2160', bitrate: '80', autoAdjustBitrate: true }, uhd, 'wifi'),
+      { frameRate: 60, bitrate: '80' });
+    assert.deepEqual(profile.frameRateReplacements({ frameRate: 144, bitrate: '33', autoAdjustBitrate: false }, uhd, 'unknown'), { frameRate: 60 });
+    // The same 4K TV with the switch stored on offers 120 FPS
+    assert.deepEqual(profile.frameRateReplacements({ frameRate: 144, unlockAllFps: true, resolution: '3840:2160', bitrate: '80', autoAdjustBitrate: true }, uhd, 'wifi'),
+      { frameRate: 120, bitrate: '80' });
+    // Without any capabilities (e.g. before the detection) the default of the switch is off
+    assert.deepEqual(profile.frameRateReplacements({ frameRate: 144, autoAdjustBitrate: false }, null, 'wifi'), { frameRate: 60 });
+  });
+
+  test('gives the preset of the resolution that the settings show, for a stored resolution above the panel', () => {
+    // 4K on a Full HD TV is shown as 1080p: 25 % above the 120 FPS preset of 30 Mbps, within the 50 Mbps of the decoder
+    assert.deepEqual(profile.frameRateReplacements({ frameRate: 144, unlockAllFps: true, resolution: '3840:2160', bitrate: '50', autoAdjustBitrate: true }, fhd, 'wifi'),
+      { frameRate: 120, bitrate: '38' });
+  });
+
+  test('stores the state of the bitrate presets that it decided from the stored 144 FPS, when none is stored', () => {
+    // The 4K preset of 144 FPS in 2.2.0 (140 Mbps) follows the presets, 100 Mbps doesn't (LEGACY_144_FPS_PRESETS)
+    assert.deepEqual(profile.frameRateReplacements({ frameRate: 144, resolution: '3840:2160', bitrate: '140' }, s90c, 'wifi'),
+      { frameRate: 120, autoAdjustBitrate: true, bitrate: '100' });
+    assert.deepEqual(profile.frameRateReplacements({ frameRate: 144, resolution: '3840:2160', bitrate: '100' }, s90c, 'wifi'),
+      { frameRate: 120, autoAdjustBitrate: false });
+    // Without a stored bitrate the bitrate loader shows the recommended bitrate of the new frame rate
+    assert.deepEqual(profile.frameRateReplacements({ frameRate: 144 }, s90c, 'wifi'), { frameRate: 120, autoAdjustBitrate: true });
+    assert.deepEqual(profile.frameRateReplacements({ frameRate: 144, autoAdjustBitrate: true }, s90c, 'wifi'), { frameRate: 120 });
+  });
+
+  test('leaves every other frame rate as it is, also 90 and 120 FPS while the higher frame rates are locked', () => {
+    for (const caps of [s90c, uhd, fhd, null]) {
+      for (const unlockAllFps of [true, false, null]) {
+        for (const frameRate of [30, 60, 90, 120, '120', '60', null, undefined, '', 'x', 0]) {
+          const stored = { frameRate, unlockAllFps, resolution: '3840:2160', bitrate: '42', autoAdjustBitrate: true };
+          assert.deepEqual(profile.frameRateReplacements(stored, caps, 'wifi'), {}, JSON.stringify(stored));
+        }
+      }
+    }
+    assert.deepEqual(profile.frameRateReplacements({}, s90c, 'wifi'), {});
+    assert.deepEqual(profile.frameRateReplacements(null, s90c, 'wifi'), {});
+  });
+
+  test('replaces once: the replaced settings need no replacement', () => {
+    for (const caps of [s90c, uhd, fhd]) {
+      for (const stored of [{ frameRate: 144, resolution: '1920:1080', bitrate: '44' }, { frameRate: 144, unlockAllFps: true, autoAdjustBitrate: true, bitrate: '1' }]) {
+        const replaced = Object.assign({}, stored, profile.frameRateReplacements(stored, caps, 'wifi'));
+        assert.ok(profile.offeredFrameRates(replaced.unlockAllFps == null ? profile.deriveOptimalSettings(caps, 'wifi').unlockAllFps : replaced.unlockAllFps)
+          .indexOf(replaced.frameRate) >= 0, JSON.stringify(replaced));
+        assert.deepEqual(profile.frameRateReplacements(replaced, caps, 'wifi'), {}, JSON.stringify(replaced));
+      }
+    }
   });
 });
 

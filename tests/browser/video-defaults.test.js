@@ -31,7 +31,7 @@ const TVS = {
     resolutionLabel: '3840 x 2160 (4K)',
     hdr: true,
     unlockAllFps: true,
-    frameRateOptions: ['30', '60', '90', '120', '144'],
+    frameRateOptions: ['30', '60', '90', '120'],
     gameMode: false,
     gameModeDisabled: false,
     storedGameMode: false,

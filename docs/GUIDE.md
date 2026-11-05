@@ -141,9 +141,9 @@ The app asks the TV for its panel resolution (Full HD, 4K or 8K), HDR support, T
 | TV class | What the app does |
 |---|---|
 | Full HD | Streams 1080p at 60 FPS by default. The resolution menu marks the resolutions above the panel as unsupported. |
-| 4K, 60 Hz panel | Streams 4K at 60 FPS by default. Frame rates above 60 FPS stay locked. If you unlock them, the app can't tell a 60 Hz panel from a 120 Hz one, so it shows the warnings of the next row: at 4K, 90 and 120 FPS need a Level 5.2 decoder and 144 FPS exceeds Level 5.2. The warning that many Samsung TVs have 60 Hz panels appears at lower resolutions above 60 FPS (up to 1440p, or 1800p at 90 FPS). |
-| 4K, 120 Hz panel | Same defaults as a 60 Hz panel. You can unlock 90, 120 and 144 FPS yourself (Settings → Basic Settings → *Unlock all frame rates*, right below the frame rate). 4K above 60 FPS needs an HEVC or AV1 Level 5.2 decoder, which most Samsung TVs with a 120 Hz panel have, and the app warns about that. 4K at 144 FPS exceeds Level 5.2, the highest level that the app asks the TV for, and gets its own warning. Untested on any 120 Hz TV except the S90C. |
-| 8K | The highest stream resolution is 4K, so an 8K TV gets the same defaults and bitrates as a 4K TV. Its decoder handles 8K at 60 FPS, beyond Level 5.2, so 4K at 90 or 120 FPS gets the warning that many Samsung TVs have 60 Hz panels instead of the Level 5.2 warning. 4K at 144 FPS still gets the warning that it exceeds Level 5.2. Untested. |
+| 4K, 60 Hz panel | Streams 4K at 60 FPS by default. Frame rates above 60 FPS stay locked. If you unlock them, the app can't tell a 60 Hz panel from a 120 Hz one, so it shows the warnings of the next row: at 4K, 90 and 120 FPS need a Level 5.2 decoder. The warning that many Samsung TVs have 60 Hz panels appears at lower resolutions above 60 FPS (up to 1440p, or 1800p at 90 FPS). |
+| 4K, 120 Hz panel | Same defaults as a 60 Hz panel. You can unlock 90 and 120 FPS yourself (Settings → Basic Settings → *Unlock all frame rates*, right below the frame rate). 4K above 60 FPS needs an HEVC or AV1 Level 5.2 decoder, which most Samsung TVs with a 120 Hz panel have, and the app warns about that. Untested on any 120 Hz TV except the S90C. |
+| 8K | The highest stream resolution is 4K, so an 8K TV gets the same defaults and bitrates as a 4K TV. Its decoder handles 8K at 60 FPS, beyond Level 5.2, so 4K at 90 or 120 FPS gets the warning that many Samsung TVs have 60 Hz panels instead of the Level 5.2 warning. Untested. |
 | Tested profile (Samsung S90C) | The 4K values with a higher bitrate over Wi-Fi (100 Mbps), and the higher frame rates unlocked from the start, because they were tested on this model. The bitrate warning starts above 150 Mbps, which this model streams over 5 GHz Wi-Fi. |
 
 ### Recommended bitrates
@@ -155,7 +155,7 @@ The bitrate starts from the standard preset of the resolution and frame rate (20
 - **Connection not detected:** the preset, but at most 80 Mbps.
 - None of them goes above the decoder cap of the TV class, where the bitrate warning starts (on the S90C only above 150 Mbps).
 
-When the bitrate follows the video settings, every other resolution and frame rate gets its bitrate by the same rules, e.g. 50 Mbps for 2560 x 1440 at 60 FPS over Wi-Fi. On the tested S90C over Wi-Fi, 4K at 90, 120 or 144 FPS gets 100 Mbps, the highest bitrate its presets give (the warning starts above 150 Mbps); to go higher, raise the bitrate by hand as [Finding your bitrate](#finding-your-bitrate) describes.
+When the bitrate follows the video settings, every other resolution and frame rate gets its bitrate by the same rules, e.g. 50 Mbps for 2560 x 1440 at 60 FPS over Wi-Fi. On the tested S90C over Wi-Fi, 4K at 90 or 120 FPS gets 100 Mbps, the highest bitrate its presets give (the warning starts above 150 Mbps); to go higher, raise the bitrate by hand as [Finding your bitrate](#finding-your-bitrate) describes.
 
 This table shows what the button applies. A test checks it against the code of the app (`wasm/platform/tv_profile.js`).
 
@@ -468,7 +468,8 @@ Settings → About → *Diagnostic log* shows the log of the app for this sessio
 
 - **Ethernet port:** most Samsung TVs have a 100 Mbps Ethernet port. The bitrate presets stop at 75 Mbps over Ethernet, and the app warns above 80 Mbps. To avoid packet loss from the traffic bursts of the much faster host PC, set the network adapter of the host to 100 Mbps full duplex or enable flow control on your switch. For higher bitrates, use 5 GHz Wi-Fi.
 - **60 Hz panels:** many Samsung TVs have 60 Hz panels, and Tizen apps often show only about 60 FPS. Frame rates above 60 FPS then cost bitrate without looking smoother. 90 FPS divides neither a 60 Hz nor a 120 Hz output evenly.
-- **Decoder levels:** 4K above 60 FPS needs an HEVC or AV1 Level 5.2 decoder, which most 4K TVs with a 120 Hz panel have. 4K at 144 FPS exceeds Level 5.2, the highest level that the app asks the TV for, so it may stutter or fail even on a TV whose decoder goes further, such as an 8K TV.
+- **Decoder levels:** 4K above 60 FPS needs an HEVC or AV1 Level 5.2 decoder, which most 4K TVs with a 120 Hz panel have.
+- **Highest frame rate:** 120 FPS. Version 2.2.1 removed 144 FPS, because the video player of Samsung TVs doesn't start a stream at 144 FPS: it ended after 5 seconds with an error, or the picture stayed black. A 144 FPS set in an earlier version becomes 120 FPS, or 60 FPS while *Unlock all frame rates* is off.
 - **H.264:** Samsung TVs generally decode H.264 only up to 1080p. Use HEVC or AV1 for higher resolutions.
 - **AV1:** support on older TVs is uncertain. Samsung announced AV1 for its 2020 and 2021 4K and 8K TVs ([Samsung Poland](https://news.samsung.com/pl/telewizory-samsung-z-kodekiem-av1-pelna-lista-modeli)), while streaming services list only some of these models ([9to5Google on Netflix](https://9to5google.com/2021/11/10/netflix-av1-tv-support/)). The decoder check in System information shows what the browser of the TV answers, but it was not verified on real TVs. If the TV rejects AV1, the app names the format and recommends HEVC.
 - **8K:** the highest stream resolution is 4K.
