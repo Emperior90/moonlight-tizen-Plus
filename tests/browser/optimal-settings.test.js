@@ -270,6 +270,7 @@ test('a TV whose product APIs fail still starts, with the defaults of a Full HD 
       'Ultra Low Latency mode (Game mode): Unknown',
       'WASM player API levels: Unknown',
       'Video decoders (MediaSource check): H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
+      'Video decoders at level 5.1 (H.264 above 1080p): H.264: Yes',
       'Video decoders at level 5.2 (4K above 60 FPS): HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
       'Controllers: None',
       // The report of the last stream, after an empty line (diagnostics.js)
@@ -289,7 +290,7 @@ test('a TV whose product APIs fail still starts, with the defaults of a Full HD 
     await restoreDefaults(app.page);
     const stored = await waitForStorage(app.page, (values) => values.resolution === '1920:1080' && values.bitrate === '25');
     assert.deepEqual([stored.hdrMode, stored.unlockAllFps], [false, false]);
-    assert.equal((await readStorage(app.page)).settingsSchema, 3);
+    assert.equal((await readStorage(app.page)).settingsSchema, 4);
   } finally {
     await app.context.close();
   }

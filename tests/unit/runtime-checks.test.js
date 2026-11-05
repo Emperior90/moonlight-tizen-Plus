@@ -234,9 +234,9 @@ describe('the game mode with the answer of the WASM player', () => {
   test('the S90C keeps its optimal settings with every answer, and the game mode stays off', () => {
     const caps = profile.detectTvCapabilities(Object.assign(tvMock.createTizenApis(tvMock.parseConfig('', { tv: 's90c' }), (callback) => callback()), { tizentvwasm: null, mediaSource: null }));
     const golden = {
-      ethernet: { resolution: '3840:2160', frameRate: 60, videoCodec: 'HEVC', hdrMode: true, bitrate: 75, unlockAllFps: true, gameMode: false, framePacing: true, fullRange: false },
-      wifi: { resolution: '3840:2160', frameRate: 60, videoCodec: 'HEVC', hdrMode: true, bitrate: 100, unlockAllFps: true, gameMode: false, framePacing: true, fullRange: false },
-      unknown: { resolution: '3840:2160', frameRate: 60, videoCodec: 'HEVC', hdrMode: true, bitrate: 80, unlockAllFps: true, gameMode: false, framePacing: true, fullRange: false },
+      ethernet: { resolution: '3840:2160', frameRate: 60, videoCodec: 'HEVC', hdrMode: true, bitrate: 75, unlockAllFps: true, gameMode: false, framePacing: true, fullRange: false, optimizeGames: true },
+      wifi: { resolution: '3840:2160', frameRate: 60, videoCodec: 'HEVC', hdrMode: true, bitrate: 100, unlockAllFps: true, gameMode: false, framePacing: true, fullRange: false, optimizeGames: true },
+      unknown: { resolution: '3840:2160', frameRate: 60, videoCodec: 'HEVC', hdrMode: true, bitrate: 80, unlockAllFps: true, gameMode: false, framePacing: true, fullRange: false, optimizeGames: true },
     };
     for (const mode of ['none', 'ull', 'disagree']) {
       const withPlayer = Object.assign({}, caps, { wasmPlayer: profile.detectWasmPlayerFeatures(wasmPlayerOf(mode)) });
@@ -274,6 +274,7 @@ describe('probeVideoDecoders()', () => {
       noLevel52: {
         reliable: true, reason: 'ok', answers: Object.assign(allCodecs('yes'), { 'HEVC 5.2': 'no', 'HEVC Main10 5.2': 'no', 'AV1 5.2': 'no', 'AV1 Main10 5.2': 'no' }),
       },
+      noH264Level51: { reliable: true, reason: 'ok', answers: Object.assign(allCodecs('yes'), { 'H.264 5.1': 'no' }) },
       acceptsBogus: { reliable: false, reason: 'bogusAccepted', answers: allCodecs('unknown') },
       noH264: { reliable: false, reason: 'h264Rejected', answers: allCodecs('unknown') },
       throws: { reliable: false, reason: 'controlFailed', answers: allCodecs('unknown') },
@@ -295,7 +296,7 @@ describe('probeVideoDecoders()', () => {
 
   test('asks once per MIME type, and an answer that fails or is no boolean counts as unknown', () => {
     const table = {
-      'avc1.64002A': true, 'hev1.1.6.L153.B0': true, 'hev1.1.6.L156.B0': 'probably', 'hev1.2.4.L153.B0': true,
+      'avc1.64002A': true, 'avc1.640033': false, 'hev1.1.6.L153.B0': true, 'hev1.1.6.L156.B0': 'probably', 'hev1.2.4.L153.B0': true,
       'hev1.2.4.L156.B0': new Error('Simulated failure'), 'av01.0.13M.08': false, 'av01.0.14M.08': false,
       'av01.0.13M.10': false, 'av01.0.14M.10': undefined, 'bogus.0.0': false,
     };
@@ -303,7 +304,7 @@ describe('probeVideoDecoders()', () => {
     const { result, warnings } = withWarnings(() => profile.probeVideoDecoders(mediaSource));
     assert.equal(result.reliable, true);
     assert.deepEqual(answersByCodec(result), {
-      'H.264 4.2': 'yes', 'HEVC 5.1': 'yes', 'HEVC 5.2': 'unknown', 'HEVC Main10 5.1': 'yes', 'HEVC Main10 5.2': 'unknown',
+      'H.264 4.2': 'yes', 'H.264 5.1': 'no', 'HEVC 5.1': 'yes', 'HEVC 5.2': 'unknown', 'HEVC Main10 5.1': 'yes', 'HEVC Main10 5.2': 'unknown',
       'AV1 5.1': 'no', 'AV1 5.2': 'no', 'AV1 Main10 5.1': 'no', 'AV1 Main10 5.2': 'unknown',
     });
     // The H.264 probe is also the check that H.264 is accepted, and still asked only once
@@ -314,7 +315,7 @@ describe('probeVideoDecoders()', () => {
 
   test('a check that fails or answers no boolean makes every answer unknown', () => {
     const base = {
-      'avc1.64002A': true, 'hev1.1.6.L153.B0': true, 'hev1.1.6.L156.B0': true, 'hev1.2.4.L153.B0': true, 'hev1.2.4.L156.B0': true,
+      'avc1.64002A': true, 'avc1.640033': true, 'hev1.1.6.L153.B0': true, 'hev1.1.6.L156.B0': true, 'hev1.2.4.L153.B0': true, 'hev1.2.4.L156.B0': true,
       'av01.0.13M.08': false, 'av01.0.14M.08': false, 'av01.0.13M.10': false, 'av01.0.14M.10': false, 'bogus.0.0': false,
     };
     for (const change of [{ 'bogus.0.0': new Error('Simulated failure') }, { 'bogus.0.0': 'no' }, { 'avc1.64002A': new Error('Simulated failure') }, { 'avc1.64002A': 'maybe' }]) {
@@ -344,14 +345,15 @@ describe('probeVideoDecoders()', () => {
   test('getVideoDecoderSupport() answers unknown for a codec or level that is not probed', () => {
     const probe = profile.probeVideoDecoders(mediaSourceOf('all'));
     assert.equal(profile.getVideoDecoderSupport(probe, 'HEVC Main10', '5.1'), 'yes');
-    assert.equal(profile.getVideoDecoderSupport(probe, 'H.264', '5.1'), 'unknown');
+    assert.equal(profile.getVideoDecoderSupport(probe, 'H.264', '5.1'), 'yes');
+    assert.equal(profile.getVideoDecoderSupport(probe, 'H.264', '5.2'), 'unknown');
     assert.equal(profile.getVideoDecoderSupport(probe, 'VP9', '5.1'), 'unknown');
     assert.equal(profile.getVideoDecoderSupport(null, 'HEVC', '5.1'), 'unknown');
   });
 
   test('the AV1 note needs counting answers and a no for AV1 in 8 and in 10 bits', () => {
     const noteFor = (mode) => profile.isAv1ReportedUnsupported(withWarnings(() => profile.probeVideoDecoders(mediaSourceOf(mode))).result);
-    const expected = { all: false, noAv1: true, noAv1Main10: false, noLevel52: false, acceptsBogus: false, noH264: false, throws: false, none: false };
+    const expected = { all: false, noAv1: true, noAv1Main10: false, noLevel52: false, noH264Level51: false, acceptsBogus: false, noH264: false, throws: false, none: false };
     for (const mode of tvMock.CODEC_MODES) {
       assert.equal(noteFor(mode), expected[mode], mode);
     }
@@ -386,6 +388,15 @@ describe('the codecs of the checks and of the native code', () => {
     assert.deepEqual(offered.sort((a, b) => sortKey(a).localeCompare(sortKey(b))), plainProbes.sort((a, b) => sortKey(a).localeCompare(sortKey(b))));
     assert.ok(profile.VIDEO_DECODER_PROBES.some((entry) => entry.mimeType === profile.H264_CONTROL_PROBE));
     assert.ok(!profile.VIDEO_DECODER_PROBES.some((entry) => entry.mimeType === profile.BOGUS_CODEC_PROBE));
+  });
+
+  test('wasmplayer.cpp offers H.264 at level 5.1 first only for streams above level 4.2, with the limits of tv_profile.js', () => {
+    const source = fs.readFileSync(path.join(REPO_ROOT, 'wasm', 'wasmplayer.cpp'), 'utf8');
+    assert.match(source, /if \(ExceedsH264Level42\(width, height, redrawRate\)\) \{\s+videoProfiles\.push_back\(\{"video\/mp4; codecs=\\"avc1\.640033\\"", "H\.264 High Level Profile 5\.1"\}\);\s+\}\s+videoProfiles\.push_back\(\{"video\/mp4; codecs=\\"avc1\.64002A\\"", "H\.264 High Level Profile 4\.2"\}\);/);
+    const header = fs.readFileSync(path.join(REPO_ROOT, 'wasm', 'video_config.hpp'), 'utf8');
+    const constant = (name) => Number(new RegExp('constexpr uint32_t ' + name + ' = (\\d+);').exec(header)[1]);
+    assert.deepEqual({ maxFrameMacroblocks: constant('kH264Level42MaxFrameMacroblocks'), maxMacroblocksPerSecond: constant('kH264Level42MaxMacroblocksPerSecond') },
+      Object.assign({}, profile.H264_LEVEL_LIMITS['4.2']));
   });
 
   test('System information and the message of a rejected video track use the same codec names', () => {

@@ -25,8 +25,10 @@
 // switches 'Continuous audio from the host', which is gone since the host always keeps sending audio, and 'Optimize
 // bitrate presets', which is gone since the presets are the recommended bitrates (SCHEMA_3_REMOVED_KEYS). The 144 FPS
 // that 2.2.0 and earlier offered changed no default, so it needs no version of its own: a stored frame rate above the
-// frame rate menu is replaced at every start, whatever the version (frameRateReplacements()).
-const SETTINGS_SCHEMA_VERSION = 3;
+// frame rate menu is replaced at every start, whatever the version (frameRateReplacements()). Version 4 turned 'Optimize
+// game settings' on by default, so it stores the earlier default (off) once for an existing install that never switched
+// it (schema3Snapshot()).
+const SETTINGS_SCHEMA_VERSION = 4;
 const SETTINGS_SCHEMA_KEY = 'settingsSchema';
 
 const RECOMMENDED_ETHERNET_BITRATE = 75; // Highest recommended bitrate in Mbps over the 100 Mbps Ethernet port of Samsung TVs, leaving headroom for FEC, network overhead and larger frames
@@ -49,6 +51,16 @@ const MAX_BITRATE_MBPS = 250;
 // that the app asks the TV for.
 const LEVEL_51_MAX_LUMA_SAMPLE_RATE = 534773760;
 const LEVEL_52_MAX_LUMA_SAMPLE_RATE = 1069547520;
+
+// The limits of H.264 levels 4.2 and 5.1 (Table A-1 of ITU-T H.264): the largest frame in macroblocks of 16 x 16 pixels
+// (maxFrameMacroblocks) and the most macroblocks per second (maxMacroblocksPerSecond). Level 4.2 covers 1080p at up to
+// 60 FPS, and level 5.1, which Samsung specifies for the H.264 decoder of its UHD TVs, 1440p at up to 60 FPS and 4K at
+// up to 30 FPS. The level 4.2 values are the same as in wasm/video_config.hpp, which offers level 5.1 to the TV first for
+// an H.264 stream above level 4.2.
+const H264_LEVEL_LIMITS = Object.freeze({
+  '4.2': Object.freeze({ maxFrameMacroblocks: 8704, maxMacroblocksPerSecond: 522240 }),
+  '5.1': Object.freeze({ maxFrameMacroblocks: 36864, maxMacroblocksPerSecond: 983040 }),
+});
 
 // TV models whose settings were tested on the real TV. A profile is selected by its regular expression, which is
 // tested against the model name and the model series, and overrides what the TV can't report through its APIs:
@@ -110,6 +122,11 @@ const LEGACY_SNAPSHOT_KEYS = Object.freeze(['resolution', 'unlockAllFps', 'frame
 // switched it on. Never change these values: they describe what existing installs showed before the snapshot of
 // settings schema 3, not what new installs should get.
 const SCHEMA_2_DEFAULTS = Object.freeze({ rumbleFeedback: false });
+
+// Frozen copy of the defaults of settings schema 3 that settings schema 4 changed: 'Optimize game settings' was off
+// until the user switched it on. Never change these values: they describe what existing installs showed before the
+// snapshot of settings schema 4, not what new installs should get.
+const SCHEMA_3_DEFAULTS = Object.freeze({ optimizeGames: false });
 
 // The stored keys of the settings that settings schema 3 removed: the switch 'Continuous audio from the host' of an
 // A/B test, since the launch and resume requests always ask for audio during silence now, and the switch 'Optimize
@@ -268,11 +285,13 @@ function detectWasmPlayerFeatures(tizentvwasmObject) {
 }
 
 // The video codecs that wasmplayer.cpp offers to the TV when it adds the video track (the MIME types of
-// StartupVidDecSetup()), which the decoder check asks the TV about: H.264 at level 4.2, and HEVC and AV1 at level 5.1
-// and, for streams above the luma sample rate of level 5.1 (e.g. 4K at 90 or 120 FPS), at level 5.2.
+// StartupVidDecSetup()), which the decoder check asks the TV about: H.264 at level 4.2 and, for streams above level 4.2
+// (e.g. 1440p at 60 FPS or 4K at 30 FPS), at level 5.1, and HEVC and AV1 at level 5.1 and, for streams above the luma
+// sample rate of level 5.1 (e.g. 4K at 90 or 120 FPS), at level 5.2.
 // tests/unit/runtime-checks.test.js checks that they are exactly the ones of wasmplayer.cpp.
 const VIDEO_DECODER_PROBES = Object.freeze([
   Object.freeze({ codec: 'H.264', level: '4.2', mimeType: 'video/mp4; codecs="avc1.64002A"' }),
+  Object.freeze({ codec: 'H.264', level: '5.1', mimeType: 'video/mp4; codecs="avc1.640033"' }),
   Object.freeze({ codec: 'HEVC', level: '5.1', mimeType: 'video/mp4; codecs="hev1.1.6.L153.B0"' }),
   Object.freeze({ codec: 'HEVC', level: '5.2', mimeType: 'video/mp4; codecs="hev1.1.6.L156.B0"' }),
   Object.freeze({ codec: 'HEVC Main10', level: '5.1', mimeType: 'video/mp4; codecs="hev1.2.4.L153.B0"' }),
@@ -567,6 +586,10 @@ function isGameModeUnavailable(caps) {
 //   disabled and not stored
 // - frame pacing on and the limited color range (the standard for video, which keeps the detail in dark and bright
 //   areas)
+// - 'Optimize game settings' on, as in moonlight-qt and moonlight-android: with the display device configuration of
+//   Sunshine, the host then renders at the resolution of the stream instead of scaling every frame of its own display
+//   to it, and without that configuration Sunshine does nothing with it (GeForce Experience gets it only where it is
+//   safe, see getGameOptimizationsRequest() in index.js)
 function deriveOptimalSettings(caps, connectionType) {
   const capabilities = caps || {};
   const profile = capabilities.profile || null;
@@ -582,6 +605,7 @@ function deriveOptimalSettings(caps, connectionType) {
     gameMode: getGameModeDefault(capabilities.platformVer, capabilities.wasmPlayer ? capabilities.wasmPlayer.ultraLowLatency : 'unknown'),
     framePacing: true,
     fullRange: false,
+    optimizeGames: true,
   };
 }
 
@@ -610,8 +634,12 @@ const VIDEO_WARNINGS = Object.freeze({
   ETHERNET_BITRATE: 'ethernetBitrate',
   // A bitrate above the warning threshold of the TV (getBitrateWarningMbps()), its decoder cap on most TVs
   BITRATE_ABOVE_CAP: 'bitrateAboveCap',
-  // H.264 above 1080p, which Samsung TVs generally can't decode
+  // H.264 above 1080p that the TV may not decode: the decoder check says that it rejects level 5.1, or the stream is
+  // above level 5.1 (e.g. 4K at 60 FPS), the highest level that Samsung specifies for H.264
   H264_RESOLUTION: 'h264Resolution',
+  // H.264 above 60 FPS, which failed to start on a Samsung TV at levels 5.1, 5.2 and 6.0 (brightcraft/moonlight-tizen
+  // discussion 166)
+  H264_FRAME_RATE: 'h264FrameRate',
 });
 
 // Return the width and height in pixels of a resolution value of the resolution menu (e.g. '3840:2160'), or null
@@ -685,11 +713,36 @@ function bitrateWarningKey(bitrate, connectionType, caps) {
   return mbps > getBitrateWarningMbps(caps) ? VIDEO_WARNINGS.BITRATE_ABOVE_CAP : null;
 }
 
-// Return the message key of the warning for a video codec at a resolution (VIDEO_WARNINGS), or null: H.264 above 1080p,
-// which Samsung TVs generally decode only up to level 4.2 (1080p)
-function h264ResolutionWarningKey(videoCodec, res) {
+// Whether an H.264 stream of a width, height and frame rate is above a level of H264_LEVEL_LIMITS ('4.2' or '5.1')
+function exceedsH264Level(width, height, frameRate, level) {
+  const limits = H264_LEVEL_LIMITS[level];
+  const frameMacroblocks = Math.ceil(width / 16) * Math.ceil(height / 16);
+  return frameMacroblocks > limits.maxFrameMacroblocks || frameMacroblocks * frameRate > limits.maxMacroblocksPerSecond;
+}
+
+// Return the message key of the warning for the H.264 codec at a resolution and frame rate on a TV (VIDEO_WARNINGS), or
+// null. The app offers H.264 at level 5.1 to the TV for a stream above level 4.2 (wasmplayer.cpp), so it returns one key,
+// the first that applies:
+// - above 60 FPS, which failed to start on a Samsung TV at levels 5.1, 5.2 and 6.0 (discussion 166), also at 1080p
+// - above 1080p, when the decoder check says that the TV rejects H.264 at level 5.1, or when the stream is above level
+//   5.1 (1800p or 4K at 60 FPS), which no answer of the TV covers. An answer of the check that doesn't count gives no
+//   warning within level 5.1, since Samsung specifies level 5.1 for its UHD TVs.
+function h264WarningKey(videoCodec, res, frameRate, caps) {
   const size = parseResolution(res);
-  return videoCodec === 'H264' && size && size.width > 1920 ? VIDEO_WARNINGS.H264_RESOLUTION : null;
+  const fps = parseInt(frameRate, 10);
+  if (videoCodec !== 'H264' || !size) {
+    return null;
+  }
+  if (fps > 60) {
+    return VIDEO_WARNINGS.H264_FRAME_RATE;
+  }
+  if (size.width > 1920) {
+    const rejectsLevel51 = getVideoDecoderSupport(caps ? caps.videoDecoders : null, 'H.264', '5.1') === 'no';
+    if (rejectsLevel51 || (fps > 0 && exceedsH264Level(size.width, size.height, fps, '5.1'))) {
+      return VIDEO_WARNINGS.H264_RESOLUTION;
+    }
+  }
+  return null;
 }
 
 // Frozen copy of the default resolution of settings schema 1: the highest resolution of the menu up to 4K, including
@@ -803,6 +856,20 @@ function schema2Snapshot(stored) {
   return snapshot;
 }
 
+// Return the settings that the one-time snapshot of settings schema 4 stores for an existing install of settings schema
+// 3 or older: the default of settings schema 3 (SCHEMA_3_DEFAULTS) for every setting whose default changed and that is
+// still unset, so that the install shows what it showed before. Stored values are never replaced.
+function schema3Snapshot(stored) {
+  const values = stored || {};
+  const snapshot = {};
+  Object.keys(SCHEMA_3_DEFAULTS).forEach(function(key) {
+    if (values[key] == null) {
+      snapshot[key] = SCHEMA_3_DEFAULTS[key];
+    }
+  });
+  return snapshot;
+}
+
 // Return what settings schema 3 stores for an existing install in place of the settings that it removed
 // (SCHEMA_3_REMOVED_KEYS): the optimized presets of 'Optimize bitrate presets' always followed the video settings, so an
 // install that had the switch on and never stored the state of the bitrate presets keeps following them, now with the
@@ -881,6 +948,7 @@ if (typeof module === 'object' && module && module.exports) {
     MAX_BITRATE_MBPS: MAX_BITRATE_MBPS,
     LEVEL_51_MAX_LUMA_SAMPLE_RATE: LEVEL_51_MAX_LUMA_SAMPLE_RATE,
     LEVEL_52_MAX_LUMA_SAMPLE_RATE: LEVEL_52_MAX_LUMA_SAMPLE_RATE,
+    H264_LEVEL_LIMITS: H264_LEVEL_LIMITS,
     VERIFIED_PROFILES: VERIFIED_PROFILES,
     VIDEO_WARNINGS: VIDEO_WARNINGS,
     FRAME_RATES: FRAME_RATES,
@@ -920,7 +988,8 @@ if (typeof module === 'object' && module && module.exports) {
     framerateCadenceWarningKey: framerateCadenceWarningKey,
     hdrWarningKey: hdrWarningKey,
     bitrateWarningKey: bitrateWarningKey,
-    h264ResolutionWarningKey: h264ResolutionWarningKey,
+    exceedsH264Level: exceedsH264Level,
+    h264WarningKey: h264WarningKey,
     legacyOptimalResolution: legacyOptimalResolution,
     legacyLoadedResolution: legacyLoadedResolution,
     legacyDefaults: legacyDefaults,
@@ -928,7 +997,9 @@ if (typeof module === 'object' && module && module.exports) {
     legacySettingsSnapshot: legacySettingsSnapshot,
     SCHEMA_2_DEFAULTS: SCHEMA_2_DEFAULTS,
     SCHEMA_3_REMOVED_KEYS: SCHEMA_3_REMOVED_KEYS,
+    SCHEMA_3_DEFAULTS: SCHEMA_3_DEFAULTS,
     schema2Snapshot: schema2Snapshot,
+    schema3Snapshot: schema3Snapshot,
     schema3Replacements: schema3Replacements,
     frameRateReplacements: frameRateReplacements,
   };

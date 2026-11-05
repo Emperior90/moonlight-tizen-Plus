@@ -410,6 +410,8 @@ describe('deriveOptimalSettings() over FHD / UHD / 8K x HDR x Tizen 5.5 to 9.0 x
               gameMode: EXPECTED_GAME_MODE[tizen],
               framePacing: true,
               fullRange: false,
+              // On since settings schema 4, as in moonlight-qt and moonlight-android
+              optimizeGames: true,
             }, conn);
           }
         });
@@ -420,7 +422,7 @@ describe('deriveOptimalSettings() over FHD / UHD / 8K x HDR x Tizen 5.5 to 9.0 x
   test('without any capabilities, the defaults of a Full HD TV', () => {
     assert.deepEqual(profile.deriveOptimalSettings(null, undefined), {
       resolution: '1920:1080', frameRate: 60, videoCodec: 'HEVC', hdrMode: false, bitrate: 20, unlockAllFps: false, gameMode: true,
-      framePacing: true, fullRange: false,
+      framePacing: true, fullRange: false, optimizeGames: true,
     });
   });
 });
@@ -441,6 +443,7 @@ describe('the golden S90C values', () => {
         gameMode: false,
         framePacing: true,
         fullRange: false,
+        optimizeGames: true,
       });
     });
   }
@@ -647,8 +650,8 @@ describe('legacySettingsSnapshot(): the one-time snapshot of an existing install
     assert.ok(Object.isFrozen(profile.LEGACY_SNAPSHOT_KEYS));
   });
 
-  test('the settings schema is version 3', () => {
-    assert.equal(profile.SETTINGS_SCHEMA_VERSION, 3);
+  test('the settings schema is version 4', () => {
+    assert.equal(profile.SETTINGS_SCHEMA_VERSION, 4);
     assert.equal(profile.SETTINGS_SCHEMA_KEY, 'settingsSchema');
   });
 });
@@ -679,6 +682,28 @@ describe('the frozen defaults of settings schema 2 and the snapshot of settings 
     assert.deepEqual(profile.schema3Replacements({ optimizeBitrate: false }), {});
     assert.deepEqual(profile.schema3Replacements({}), {});
     assert.deepEqual(profile.schema3Replacements(null), {});
+  });
+});
+
+describe('the frozen defaults of settings schema 3 and the snapshot of settings schema 4', () => {
+  test('\'Optimize game settings\' was off, and the snapshot stores that only when it is unset', () => {
+    assert.deepEqual(profile.SCHEMA_3_DEFAULTS, { optimizeGames: false });
+    assert.ok(Object.isFrozen(profile.SCHEMA_3_DEFAULTS));
+    assert.deepEqual(profile.schema3Snapshot({ uniqueid: 'x', settingsSchema: 3 }), { optimizeGames: false });
+    assert.deepEqual(profile.schema3Snapshot({ optimizeGames: null }), { optimizeGames: false });
+    assert.deepEqual(profile.schema3Snapshot(null), { optimizeGames: false });
+    // A stored value is never replaced
+    assert.deepEqual(profile.schema3Snapshot({ optimizeGames: true }), {});
+    assert.deepEqual(profile.schema3Snapshot({ optimizeGames: false }), {});
+  });
+
+  test('new installs, Restore Defaults and the optimal settings get it on, while the frozen default stays off', () => {
+    for (const tv of ['s90c', 'uhd', 'fhd', '8k']) {
+      for (const conn of CONNECTIONS) {
+        assert.equal(profile.deriveOptimalSettings(detect({ tv, conn }), conn).optimizeGames, true, tv + ' ' + conn);
+      }
+    }
+    assert.notEqual(profile.SCHEMA_3_DEFAULTS.optimizeGames, profile.deriveOptimalSettings(null, 'wifi').optimizeGames);
   });
 });
 

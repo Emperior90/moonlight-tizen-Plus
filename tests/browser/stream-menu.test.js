@@ -168,7 +168,7 @@ test('Play/Pause opens the Stream Menu over the stream, the remote moves in it, 
     let state = await menuState(app.page);
     assert.deepEqual(state, {
       open: true, shown: 'flex', focused: 'streamMenuResume', subtitle: 'Game 8 · GAMING-PC',
-      entries: ['streamMenuResume', 'streamMenuStats', 'streamMenuBitrate', 'streamMenuText', 'streamMenuKeyWin', 'streamMenuKeyAltTab',
+      entries: ['streamMenuResume', 'streamMenuStats', 'streamMenuBitrate', 'streamMenuRefresh', 'streamMenuText', 'streamMenuKeyWin', 'streamMenuKeyAltTab',
         'streamMenuKeyAltF4', 'streamMenuKeyEsc', 'streamMenuKeyAltEnter', 'streamMenuDisconnect', 'streamMenuQuit'],
     });
     assert.deepEqual(await moduleCalls(app.page), ['setStreamMenuOpen true'], 'the module stops the controller input of the PC');
@@ -178,6 +178,7 @@ test('Play/Pause opens the Stream Menu over the stream, the remote moves in it, 
     // The arrow keys and OK stay in the menu
     await remoteKey(app.page, ...DOWN);
     assert.equal((await menuState(app.page)).focused, 'streamMenuStats');
+    await remoteKey(app.page, ...DOWN);
     await remoteKey(app.page, ...DOWN);
     await remoteKey(app.page, ...DOWN);
     await remoteKey(app.page, ...DOWN);
@@ -331,7 +332,7 @@ test('the Stream Menu stays inside the safe area of the screen', async () => {
       return { entries: getOverlayMenuItems('streamMenu').length, note: $('#streamMenuBitrateNote').text() !== '',
         scrollHeight: menu.scrollHeight, clientHeight: menu.clientHeight };
     });
-    assert.equal(fit.entries, 12);
+    assert.equal(fit.entries, 13);
     assert.equal(fit.note, true);
     assert.ok(fit.scrollHeight <= fit.clientHeight, JSON.stringify(fit));
     assert.ok(box.top >= box.height * 0.05 && box.bottom <= box.height * 0.95, JSON.stringify(box));
@@ -614,6 +615,7 @@ test('when the mouse emulation entry goes under the selection, the entry before 
     // DOWN goes on to the bitrate entry, the entry after the statistics now, and on to the Windows key
     await remoteKey(app.page, ...DOWN);
     assert.deepEqual(await selection(), { focused: 'streamMenuBitrate', current: 'streamMenuBitrate', marked: ['streamMenuBitrate'] });
+    await remoteKey(app.page, ...DOWN);
     await remoteKey(app.page, ...DOWN);
     await remoteKey(app.page, ...DOWN);
     assert.deepEqual(await selection(), { focused: 'streamMenuKeyWin', current: 'streamMenuKeyWin', marked: ['streamMenuKeyWin'] });

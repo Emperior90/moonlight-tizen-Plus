@@ -4,7 +4,7 @@
 // presets, which are the recommended bitrates since 2.2.0, and when they follow the resolution and frame rate, the 5 /
 // 0.5 Mbps steps of the bitrate menu up to 250 Mbps and a stored bitrate up there, the Ethernet limit of the presets,
 // the frame rates up to 120 FPS (without the 144 FPS that 2.2.1 removed), and the one-shot hints and warnings (90 FPS,
-// H.264 above 1080p, codec fallbacks, AV1).
+// H.264 above 1080p and above 60 FPS, codec fallbacks, AV1).
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -348,10 +348,15 @@ test('re-selecting the current resolution keeps the bitrate, and the preset stat
   }
 });
 
-test('H.264 above 1080p warns, and the warning fires again after the optimal settings button reset the codec', async () => {
+// The H.264 warnings (h264WarningKey() in tv_profile.js)
+const H264_RESOLUTION_WARNING = 'This TV may not decode H.264 at this resolution and frame rate';
+const H264_FRAME_RATE_WARNING = 'H.264 above 60 FPS may fail to start on Samsung TVs';
+
+test('H.264 above level 5.1 warns, and the warning fires again after the optimal settings button reset the codec', async () => {
+  // 4K at 60 FPS, the default of the S90C, is above H.264 level 5.1, the highest that the app offers to the TV
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
   try {
-    const warnings = () => count(app, 'decode H.264 only up to 1080p');
+    const warnings = () => count(app, H264_RESOLUTION_WARNING);
     await app.page.evaluate(() => updateVideoCodec('#h264', 'H264'));
     assert.equal(warnings(), 1);
     await app.page.evaluate(() => $('#optimalSettingsBtn').trigger('click'));
@@ -371,7 +376,55 @@ test('a stored H.264 codec meets the 4K default: warning at startup, and HDR sta
   try {
     const shown = await readVideoSettings(app.page);
     assert.deepEqual([shown.codec, shown.resolution, shown.hdr], ['H264', '3840:2160', false]);
-    assert.equal(count(app, 'decode H.264 only up to 1080p'), 1);
+    assert.equal(count(app, H264_RESOLUTION_WARNING), 1);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('H.264 above 1080p warns only where the TV rejects level 5.1, which the app offers to the TV since 2.3.0', async () => {
+  // The decoder check of the TV accepts H.264 at level 5.1 (codecs 'all'), or rejects it ('noH264Level51')
+  for (const [codecs, expected] of [['all', 0], ['noH264Level51', 1]]) {
+    const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi', codecs } });
+    try {
+      await pickResolution(app.page, '2560:1440');
+      await app.page.evaluate(() => updateVideoCodec('#h264', 'H264'));
+      // 1440p and 4K at 30 FPS are within level 5.1
+      await pickFrameRate(app.page, 30);
+      await pickResolution(app.page, '3840:2160');
+      assert.equal(count(app, H264_RESOLUTION_WARNING), expected, codecs);
+      // 4K at 60 FPS is above it on every TV, also where the TV accepts level 5.1
+      await pickFrameRate(app.page, 60);
+      assert.equal(count(app, H264_RESOLUTION_WARNING), codecs === 'all' ? 1 : expected, codecs);
+      // Up to 1080p nothing warns
+      await pickResolution(app.page, '1920:1080');
+      assert.equal(count(app, H264_FRAME_RATE_WARNING), 0, codecs);
+      assert.deepEqual(app.errors, [], codecs);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
+test('H.264 above 60 FPS warns at any resolution, also when the frame rate changes after the codec', async () => {
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
+  try {
+    await pickResolution(app.page, '1280:720');
+    await app.page.evaluate(() => updateVideoCodec('#h264', 'H264'));
+    assert.equal(count(app, H264_FRAME_RATE_WARNING), 0);
+    await pickFrameRate(app.page, 120);
+    assert.equal(count(app, H264_FRAME_RATE_WARNING), 1);
+    // Once per message: another frame rate above 60 FPS doesn't repeat it, and after 60 FPS it shows again
+    await pickFrameRate(app.page, 90);
+    assert.equal(count(app, H264_FRAME_RATE_WARNING), 1);
+    await pickFrameRate(app.page, 60);
+    await pickFrameRate(app.page, 120);
+    assert.equal(count(app, H264_FRAME_RATE_WARNING), 2);
+    // HEVC never warns
+    await app.page.evaluate(() => updateVideoCodec('#hevc', 'HEVC'));
+    await pickFrameRate(app.page, 90);
+    assert.equal(count(app, H264_FRAME_RATE_WARNING), 2);
+    assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
   }

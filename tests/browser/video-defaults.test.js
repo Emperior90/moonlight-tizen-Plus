@@ -18,8 +18,8 @@ const {
   VIDEO_KEYS, openApp, pick, readOtherSettings, readStorage, readVideoSettings, startHarness, waitForStorage,
 } = require('./harness');
 
-const SETTINGS_LINE_UNLOCKED = 'Video frame pacing on, limited color range, unlock all frame rates on';
-const SETTINGS_LINE_LOCKED = 'Video frame pacing on, limited color range, unlock all frame rates off';
+const SETTINGS_LINE_UNLOCKED = 'Video frame pacing on, limited color range, unlock all frame rates on, optimize game settings on';
+const SETTINGS_LINE_LOCKED = 'Video frame pacing on, limited color range, unlock all frame rates off, optimize game settings on';
 
 // Per simulated TV (tests/browser/mocks/tv-mock.js): the resolution, HDR, frame rates, game mode and bitrate per
 // connection it gets, and the dialog lines
@@ -121,7 +121,7 @@ const CUSTOMIZED_SETTINGS = {
   autoAdjustBitrate: true,
   ipAddressFieldMode: false,
   sortAppsList: 'recent',
-  optimizeGames: true,
+  optimizeGames: false,
   rumbleFeedback: false,
   mouseEmulation: true,
   controllerMappings: {
@@ -154,7 +154,8 @@ const CUSTOMIZED_SETTINGS = {
 const DEFAULT_OTHER_SETTINGS = {
   ipAddressFieldMode: true,
   sortAppsList: 'az',
-  optimizeGames: false,
+  // On since settings schema 4, as part of the optimal settings
+  optimizeGames: true,
   // On since settings schema 3
   rumbleFeedback: true,
   mouseEmulation: false,
@@ -246,7 +247,7 @@ for (const tvName of Object.keys(TVS)) {
           // change of a default is covered by the settings schema
           await app.page.waitForTimeout(300);
           assert.deepEqual(Object.keys(await readStorage(app.page)).sort(), ['autoAdjustBitrate', 'cert', 'settingsSchema', 'uniqueid']);
-          assert.equal(stored.settingsSchema, 3);
+          assert.equal(stored.settingsSchema, 4);
           // Plan D9: the bitrate of a fresh install follows the resolution and frame rate until the user picks one
           assert.equal(stored.autoAdjustBitrate, true);
           // The other settings show their defaults without being stored, e.g. the rumble on (settings schema 3)

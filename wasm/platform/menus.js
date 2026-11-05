@@ -17,9 +17,10 @@
 // buildKeyComboEvents()); the menus, the gamepad combo and the handling of the input here are new.
 //
 // Its bitrate entry changes the bitrate in steps of 5 Mbps with LEFT and RIGHT, and OK reconnects the stream with it
-// (restartStreamWithBitrate() in index.js), as StreamLight does for its stream settings. 'Type text…' opens a text field
-// for the keyboard of the TV, whose text goes to the PC as Unicode (sendText() of wasm/input.cpp), like the keyboard of
-// the game menu of Artemis and of StreamLight 8.0.0.
+// (restartStreamWithBitrate() in index.js), as StreamLight does for its stream settings. 'Refresh picture' asks the host
+// for a keyframe (requestStreamKeyframe()), like 'Reset Decoder' of the stream page of moonlight-xbox. 'Type text…' opens
+// a text field for the keyboard of the TV, whose text goes to the PC as Unicode (sendText() of wasm/input.cpp), like the
+// keyboard of the game menu of Artemis and of StreamLight 8.0.0.
 
 // Whether the Stream Menu is open
 var isStreamMenuOpen = false;
@@ -363,6 +364,17 @@ function toggleStreamMenu() {
   }
 }
 
+// Ask the host for a keyframe ('Refresh picture'): Sunshine sends one only when frames were lost, so a corruption that
+// no loss caused (e.g. of the encoder, or of the decoder after a recovery frame of the reference frame invalidation)
+// stays on the picture until then. The keyframe replaces the whole picture without ending the stream. The module asks
+// for it like the other keyframes that the app requests, so the performance statistics don't count it as a recovery
+// (RefreshPicture() in wasm/wasmplayer.cpp), and it answers false when no stream runs.
+function requestStreamKeyframe() {
+  const requested = typeof Module.requestIdrFrame === 'function' && Module.requestIdrFrame() === true;
+  console.log('%c[menus.js, requestStreamKeyframe]', 'color: teal;', requested ? 'Refresh picture: asked the host for a keyframe.' :
+    'Refresh picture: no keyframe requested, because the module has no running stream.');
+}
+
 // Run the action of an entry of the Stream Menu
 function runStreamMenuAction(id) {
   if (!isStreamMenuOpen) {
@@ -383,6 +395,10 @@ function runStreamMenuAction(id) {
     }
   } else if (id === 'streamMenuBitrate') {
     applyStreamMenuBitrate();
+  } else if (id === 'streamMenuRefresh') {
+    // Back to the stream, where the new keyframe shows
+    closeStreamMenu(true);
+    requestStreamKeyframe();
   } else if (id === 'streamMenuText') {
     openStreamText();
   } else if (STREAM_MENU_KEYS[id]) {

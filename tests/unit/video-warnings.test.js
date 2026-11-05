@@ -12,7 +12,10 @@
 // 5. the bitrate warning starts at the decoder cap of the TV instead of a fixed 100 Mbps, and on the S90C above the
 //    150 Mbps that it streams in daily use (an owner decision of 2.2.0), while its presets stay at 100 Mbps
 // 6. the Ethernet warning names the 100 Mbps port that Samsung TVs usually have, above 80 Mbps as before
-// 7. the H.264 warning above 1080p stays as it is
+// 7. H.264: since 2.3.0 the app offers level 5.1 to the TV for an H.264 stream above level 4.2, so above 1080p it warns
+//    only where the decoder check says that the TV rejects level 5.1, or where the stream is above level 5.1 (1800p or
+//    4K at 60 FPS); and above 60 FPS it warns on every TV, since such streams failed to start on a Samsung TV at levels
+//    5.1, 5.2 and 6.0 (brightcraft/moonlight-tizen discussion 166)
 // The expectations are written out here. The S90C rows are also compared with a copy of the rules before 1.19.100, so that
 // every resolution and frame rate of the menus keeps the warning it had, and every bitrate except those from 100.5 to
 // 150 Mbps, which no longer warn on the S90C since 2.2.0.
@@ -234,16 +237,85 @@ describe('bitrate warnings (cases 5 and 6)', () => {
   });
 });
 
-describe('H.264 warning (case 7)', () => {
-  test('H.264 above 1080p warns, other codecs and 1080p do not', () => {
-    for (const res of ['2560:1440', '3200:1800', '3840:2160']) {
-      assert.equal(profile.h264ResolutionWarningKey('H264', res), W.H264_RESOLUTION, res);
-      assert.equal(profile.h264ResolutionWarningKey('HEVC', res), null, res);
-      assert.equal(profile.h264ResolutionWarningKey('AV1', res), null, res);
+describe('H.264 warnings (case 7)', () => {
+  // The capabilities of a simulated TV with the answers of a codecs mode of its decoder check (tv-mock.js)
+  const capsWithCodecs = (tv, codecs) => profile.detectTvCapabilities(Object.assign(
+    tvMock.createTizenApis(tvMock.parseConfig('', { tv }), (callback) => callback()), { mediaSource: tvMock.createMediaSource(codecs) }));
+  // The resolutions and frame rates within level 5.1 (above 1080p only up to 60 FPS, see the header of the test)
+  const WITHIN_LEVEL_51 = ['2560:1440@30', '2560:1440@60', '3200:1800@30', '3840:2160@30'];
+  const ABOVE_LEVEL_51 = ['3200:1800@60', '3840:2160@60'];
+  const keyOf = (entry, caps, codec) => profile.h264WarningKey(codec || 'H264', entry.split('@')[0], entry.split('@')[1], caps);
+
+  test('the levels of H.264: 4.2 up to 1080p at 60 FPS, 5.1 up to 1440p at 60 FPS and 4K at 30 FPS', () => {
+    const exceeds = (res, fps, level) => profile.exceedsH264Level(profile.parseResolution(res).width, profile.parseResolution(res).height, fps, level);
+    assert.deepEqual(['1920:1080', '1280:720', '854:480'].map((res) => exceeds(res, 60, '4.2')), [false, false, false]);
+    // 720p stays within level 4.2 up to 120 FPS, 1080p only up to 60 FPS
+    assert.deepEqual([exceeds('1280:720', 120, '4.2'), exceeds('1920:1080', 90, '4.2'), exceeds('1920:1080', 120, '4.2')], [false, true, true]);
+    for (const entry of WITHIN_LEVEL_51) {
+      const [res, fps] = entry.split('@');
+      assert.deepEqual([exceeds(res, Number(fps), '4.2'), exceeds(res, Number(fps), '5.1')], [true, false], entry);
     }
-    for (const res of ['854:480', '1280:720', '1920:1080']) {
-      assert.equal(profile.h264ResolutionWarningKey('H264', res), null, res);
+    for (const entry of ABOVE_LEVEL_51) {
+      const [res, fps] = entry.split('@');
+      assert.equal(exceeds(res, Number(fps), '5.1'), true, entry);
     }
+    assert.ok(Object.isFrozen(profile.H264_LEVEL_LIMITS) && Object.isFrozen(profile.H264_LEVEL_LIMITS['5.1']));
+  });
+
+  test('above 60 FPS H.264 warns on every TV at every resolution, whatever the decoder check says', () => {
+    for (const tv of ['s90c', 'uhd', 'fhd', '8k']) {
+      for (const codecs of ['all', 'noH264Level51', 'none']) {
+        const caps = capsWithCodecs(tv, codecs);
+        for (const res of RESOLUTIONS) {
+          for (const fps of [90, 120]) {
+            assert.equal(profile.h264WarningKey('H264', res, fps, caps), W.H264_FRAME_RATE, tv + ' ' + codecs + ' ' + res + '@' + fps);
+            assert.equal(profile.h264WarningKey('HEVC', res, fps, caps), null);
+            assert.equal(profile.h264WarningKey('AV1', res, fps, caps), null);
+          }
+        }
+      }
+    }
+  });
+
+  test('up to 1080p at 60 FPS H.264 never warns', () => {
+    for (const codecs of ['all', 'noH264Level51', 'none']) {
+      const caps = capsWithCodecs('uhd', codecs);
+      for (const res of ['854:480', '1280:720', '1920:1080']) {
+        for (const fps of [30, 60]) {
+          assert.equal(profile.h264WarningKey('H264', res, fps, caps), null, codecs + ' ' + res + '@' + fps);
+        }
+      }
+    }
+  });
+
+  test('above 1080p H.264 warns where the TV rejects level 5.1 or the stream is above level 5.1', () => {
+    for (const tv of ['s90c', 'uhd', '8k']) {
+      // The TV accepts level 5.1: only the streams above it warn
+      const accepts = capsWithCodecs(tv, 'all');
+      assert.equal(profile.getVideoDecoderSupport(accepts.videoDecoders, 'H.264', '5.1'), 'yes');
+      WITHIN_LEVEL_51.forEach((entry) => assert.equal(keyOf(entry, accepts), null, tv + ' ' + entry));
+      ABOVE_LEVEL_51.forEach((entry) => assert.equal(keyOf(entry, accepts), W.H264_RESOLUTION, tv + ' ' + entry));
+      // The TV rejects level 5.1: every stream above 1080p warns
+      const rejects = capsWithCodecs(tv, 'noH264Level51');
+      assert.equal(profile.getVideoDecoderSupport(rejects.videoDecoders, 'H.264', '5.1'), 'no');
+      WITHIN_LEVEL_51.concat(ABOVE_LEVEL_51).forEach((entry) => assert.equal(keyOf(entry, rejects), W.H264_RESOLUTION, tv + ' ' + entry));
+      // Answers that don't count, or none: Samsung specifies level 5.1 for its UHD TVs, so only the streams above it warn
+      for (const codecs of ['none', 'acceptsBogus', 'throws']) {
+        const unknown = capsWithCodecs(tv, codecs);
+        assert.equal(profile.getVideoDecoderSupport(unknown.videoDecoders, 'H.264', '5.1'), 'unknown');
+        WITHIN_LEVEL_51.forEach((entry) => assert.equal(keyOf(entry, unknown), null, tv + ' ' + codecs + ' ' + entry));
+        ABOVE_LEVEL_51.forEach((entry) => assert.equal(keyOf(entry, unknown), W.H264_RESOLUTION, tv + ' ' + codecs + ' ' + entry));
+      }
+      // Without capabilities, like the answers that don't count
+      WITHIN_LEVEL_51.forEach((entry) => assert.equal(keyOf(entry, null), null, entry));
+      ABOVE_LEVEL_51.forEach((entry) => assert.equal(keyOf(entry, null), W.H264_RESOLUTION, entry));
+      // Other codecs never warn
+      WITHIN_LEVEL_51.concat(ABOVE_LEVEL_51).forEach((entry) => {
+        assert.equal(keyOf(entry, rejects, 'HEVC'), null, entry);
+        assert.equal(keyOf(entry, rejects, 'AV1'), null, entry);
+      });
+    }
+    assert.equal(profile.h264WarningKey('H264', 'nonsense', 60, null), null);
   });
 });
 
@@ -312,8 +384,11 @@ describe('the texts of the message keys (showVideoWarning() in index.js)', () =>
       [['Warning: This resolution and frame rate may not perform well on lower-end devices or slower connections!']]);
     assert.deepEqual(shownFor({ tv: 's90c' }, W.FPS_90_CADENCE).shown,
       [['Warning: 90 FPS does not divide a 60 or 120 Hz output evenly, so motion may be less smooth than at 60 or 120 FPS!']]);
+    // Changed on purpose in 2.3.0: the S90C may decode H.264 up to level 5.1 now, which the app offers to the TV
     assert.deepEqual(shownFor({ tv: 's90c' }, W.H264_RESOLUTION).shown,
-      [['Warning: Samsung TVs generally decode H.264 only up to 1080p, so use HEVC or AV1 for higher resolutions!']]);
+      [['Warning: This TV may not decode H.264 at this resolution and frame rate, so use HEVC or AV1 for resolutions above 1080p!']]);
+    assert.deepEqual(shownFor({ tv: 's90c' }, W.H264_FRAME_RATE).shown,
+      [['Warning: H.264 above 60 FPS may fail to start on Samsung TVs, so use HEVC or AV1 for higher frame rates!']]);
   });
 
   test('the bitrate texts name the limit: 80 Mbps for the Ethernet port, and the warning threshold of the TV', () => {

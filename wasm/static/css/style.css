@@ -2084,12 +2084,12 @@ dialog::backdrop {
   margin-right: var(--safe-x);
 }
 /* The Stream Menu has the most entries: a little tighter, so that all of them and the hint fit the safe area of the
-   screen also with the mouse emulation entry */
+   screen also with the mouse emulation entry and 'Refresh picture' (13 entries) */
 .stream-menu .overlay-menu-header {
   padding-bottom: 12px;
 }
 .stream-menu .overlay-menu-item {
-  min-height: 56px;
+  min-height: 50px;
   margin-bottom: 2px;
   padding-top: 8px;
   padding-bottom: 8px;
