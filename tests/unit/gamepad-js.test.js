@@ -8,7 +8,10 @@
 // controllers for the log, the notice about a non-standard layout and System information. Since 2.2.1 a controller that
 // reports a timestamp of 0 (Tizen 5.5) counts once its input changed, with the rule of PollGamepads() in
 // wasm/gamepad.cpp (tests/fixtures/gamepad-evidence.tsv), which Controller.isRealGamepad() gives the input test and the
-// mask of a stream start (utils.js), and a 'gamepadvalidated' event tells the UI.
+// mask of a stream start (utils.js), and a 'gamepadvalidated' event tells the UI. Since 2.3.0 that event comes before the
+// input that made the controller count reaches the menus, a gamepad that doesn't count yet gets no snapshot when it
+// takes the slot of a known one, so the menus get no press or stick move from a slot that doesn't count, and a stick
+// value that is not a number moves nothing.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -445,6 +448,124 @@ test('the slots of tests/fixtures/gamepad-evidence.tsv count as controllers as P
   });
 });
 
+test('the menus get no press or stick move from a slot of tests/fixtures/gamepad-evidence.tsv that does not count yet', () => {
+  const cases = fs.readFileSync(path.join(REPO_ROOT, 'tests', 'fixtures', 'gamepad-evidence.tsv'), 'utf8').split('\n')
+    .filter((line) => line && line[0] !== '#')
+    .map((line) => line.split('\t'))
+    .map((fields) => ({ name: fields[0], expected: fields[1], frames: fields[2].split(' ').filter(Boolean) }));
+  assert.ok(cases.length >= 15, 'cases: ' + cases.length);
+  cases.forEach((entry) => {
+    const pads = loadController();
+    pads.controller.startWatching();
+    entry.frames.forEach((frame, i) => {
+      const before = pads.changes.length;
+      pads.slots[0] = fixtureFramePad(frame);
+      pads.poll();
+      // A release, or a stick back at rest, only ends input that the menus took before, which can't move them
+      if (entry.expected[i] === '0') {
+        const moved = pads.changes.slice(before).filter((change) => change.pressed === true || (change.type === 'axis' && change.value !== 0));
+        assert.deepEqual(moved, [], entry.name + ', frame ' + (i + 1));
+      }
+    });
+  });
+});
+
+// Record the 'gamepadvalidated' and 'gamepadinputchanged' events of Controller in the order in which the UI gets them
+function recordEventOrder(pads) {
+  const order = [];
+  pads.platform.context.addEventListener('gamepadvalidated', (event) => order.push('validated ' + event.detail.gamepad));
+  pads.platform.context.addEventListener('gamepadinputchanged', (event) => event.detail.changes.forEach((change) => {
+    order.push(change.type + ' ' + change.index + (change.type === 'button' ? (change.pressed ? '+' : '-') : '=' + change.value));
+  }));
+  return order;
+}
+
+test('the UI hears that a controller with a timestamp of 0 counts before the input that made it count reaches the menus', () => {
+  // Without and with a gamepadconnected event: the first D-pad press of such a controller moves the selection at once,
+  // so the entry that the controller brings (Mouse emulation in the Stream Menu, Calibrate the sticks in the button
+  // mapping) has to show before it
+  [false, true].forEach((connected) => {
+    const pads = loadController();
+    const order = recordEventOrder(pads);
+    pads.controller.startWatching();
+    const pad = makePad(1, 17, 4, [], null, { timestamp: 0 });
+    if (connected) {
+      pads.connect(pad);
+    } else {
+      pads.slots[1] = pad;
+    }
+    pads.poll(3);
+    assert.deepEqual(order, [], 'connected: ' + connected);
+    pads.slots[1] = makePad(1, 17, 4, [13], null, { timestamp: 0 });
+    pads.poll();
+    assert.deepEqual(order, ['validated 1', 'button 13+'], 'connected: ' + connected);
+    pads.slots[1] = makePad(1, 17, 4, [], null, { timestamp: 0 });
+    pads.poll(3);
+    assert.deepEqual(order, ['validated 1', 'button 13+', 'button 13-'], 'connected: ' + connected);
+  });
+});
+
+test('another gamepad with a timestamp of 0 that takes the slot of a known controller presses nothing until it counts', () => {
+  const pads = loadController();
+  const order = recordEventOrder(pads);
+  pads.controller.startWatching();
+  pads.connect(makePad(0, 17, 4));
+  pads.slots[0] = makePad(0, 17, 4, [13]);
+  pads.poll();
+  // A DualSense that holds A replaces the Xbox controller in the slot before any connection event arrives
+  const dualSense = 'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)';
+  pads.slots[0] = makePad(0, 17, 4, [0], null, { timestamp: 0, id: dualSense });
+  pads.poll(3);
+  // The held D-pad of the old controller ends, and the A of the new one is no press
+  assert.deepEqual(order, ['button 13+', 'button 13-']);
+  assert.deepEqual(plain(pads.controller.getConnectedGamepads()), []);
+  assert.equal(pads.logs('Gamepad 0 changed its layout or was replaced, dropping its snapshot until it counts as a controller: id="' + dualSense + '"').length, 1);
+  assert.equal(pads.logs('taking a new snapshot').length, 0);
+  // Its release makes it count, which ends a repeat at most, and its next press moves the menus
+  pads.slots[0] = makePad(0, 17, 4, [], null, { timestamp: 0, id: dualSense });
+  pads.poll();
+  pads.slots[0] = makePad(0, 17, 4, [1], null, { timestamp: 0, id: dualSense });
+  pads.poll();
+  assert.deepEqual(order, ['button 13+', 'button 13-', 'validated 0', 'button 0-', 'button 1+']);
+  assert.equal(pads.errors().length, 0);
+});
+
+test('a stick that is not a number when the controller appears takes its first number as its resting position', () => {
+  // Without and with a gamepadconnected event, a controller with a timestamp of 0 whose second stick axis reads NaN at
+  // first and rests at 0.6, past the move threshold, once it reads a number
+  [false, true].forEach((connected) => {
+    const pads = loadController();
+    pads.controller.startWatching();
+    const pad = makePad(0, 17, 4, [], [0, NaN, 0, 0], { timestamp: 0 });
+    if (connected) {
+      pads.connect(pad);
+    } else {
+      pads.slots[0] = pad;
+    }
+    pads.poll(3);
+    pads.slots[0] = makePad(0, 17, 4, [0], [0, 0.6, 0, 0], { timestamp: 0 });
+    pads.poll();
+    pads.slots[0] = makePad(0, 17, 4, [], [0, 0.6, 0, 0], { timestamp: 0 });
+    pads.poll(3);
+    assert.deepEqual(pads.changes, [{ type: 'button', index: 0, pressed: true }, { type: 'button', index: 0, pressed: false }], 'connected: ' + connected);
+    // A later move from there is reported
+    pads.slots[0] = makePad(0, 17, 4, [], [0, -0.8, 0, 0], { timestamp: 0 });
+    pads.poll();
+    assert.deepEqual(pads.changes.slice(2), [{ type: 'axis', index: 1, value: -0.8 }], 'connected: ' + connected);
+  });
+});
+
+test('a stick value that is not a number in a read moves nothing, and a held stick keeps its position', () => {
+  const pads = loadController();
+  pads.controller.startWatching();
+  pads.connect(makePad(0, 17, 4));
+  [[0, 0.8, 0, 0], [0, NaN, 0, 0], [0, 0.8, 0, 0], [0, 0, 0, 0]].forEach((axes) => {
+    pads.slots[0] = makePad(0, 17, 4, [], axes);
+    pads.poll();
+  });
+  assert.deepEqual(pads.changes, [{ type: 'axis', index: 1, value: 0.8 }, { type: 'axis', index: 1, value: 0 }]);
+});
+
 test('a controller with a timestamp of 0 and no gamepadconnected event moves the menus with its first press, and is listed then', () => {
   const pads = loadController();
   const validated = recordValidated(pads);
@@ -573,6 +694,23 @@ test('a slot that another reader validated is told to the UI by the next poll of
   assert.equal(pads.controller.isRealGamepad(null, 3), false);
   pads.slots[3] = makePad(3, 17, 4, [1], null, { timestamp: 0 });
   assert.equal(pads.controller.isRealGamepad(pads.slots[3], 3), false);
+});
+
+test('a slot below 0 never counts, and asking for one leaves the evidence of the slots alone', () => {
+  const pads = loadController();
+  pads.controller.startWatching();
+  pads.slots[0] = makePad(0, 17, 4, [], null, { timestamp: 0 });
+  pads.poll(3);
+  pads.slots[0] = makePad(0, 17, 4, [0], null, { timestamp: 0 });
+  pads.poll();
+  assert.equal(pads.controller.isRealGamepad(null), false);
+  assert.equal(pads.controller.isRealGamepad(undefined), false);
+  // Not even with a positive timestamp: the browser has no such slot
+  assert.equal(pads.controller.isRealGamepad(makePad(-1, 17, 4, [], null, { timestamp: 5 })), false);
+  assert.equal(pads.controller.isRealGamepad(makePad(0, 17, 4, [], null, { timestamp: 5 }), -1), false);
+  assert.equal(pads.controller.isRealGamepad(makePad(0, 17, 4, [], null, { timestamp: 0 })), true, 'slot 0 still counts');
+  assert.deepEqual(plain(pads.controller.getConnectedGamepads()).map((info) => info.index), [0]);
+  assert.equal(pads.errors().length, 0);
 });
 
 test('the mask of a stream start includes a controller with a timestamp of 0 once its input changed', () => {

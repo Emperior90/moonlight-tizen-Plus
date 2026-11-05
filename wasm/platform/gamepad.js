@@ -83,6 +83,19 @@ const Controller = (function() {
       for (let i = 0; i < newAxes.length; i++) {
         const value = restZoneValue(newAxes[i]);
         const previous = this.axes[i];
+        // A value that is not a number is no stick position (the Gamepad API types the axes as doubles, which excludes
+        // NaN, so this only guards against a broken report): one in a read is skipped and the axis keeps its last
+        // position, and one in the snapshot (taken when the gamepad appeared, or from the baseline of its evidence) takes
+        // the first number as the resting position without a move, as hasInputChanged() does for the evidence.
+        // Otherwise the first number of a stick that rests past AXIS_MOVE_THRESHOLD would be reported as a move, and the
+        // menus would keep scrolling while it rests there.
+        if (!isFiniteNumber(value)) {
+          continue;
+        }
+        if (!isFiniteNumber(previous)) {
+          this.axes[i] = value;
+          continue;
+        }
         if (Math.abs(value - previous) >= AXIS_CHANGE_STEP || moveZone(value) !== moveZone(previous)) {
           changes.push({
             type: 'axis',
@@ -187,6 +200,10 @@ const Controller = (function() {
   // polling of the menus gathers the evidence. The index defaults to that of the gamepad.
   function isRealGamepad(gamepad, index) {
     const slot = index === undefined ? (gamepad ? gamepad.index : -1) : index;
+    // No slot of the browser is below 0 (e.g. null without an index), so there is no evidence to record or forget
+    if (slot < 0) {
+      return false;
+    }
     if (!gamepad || !gamepad.connected) {
       delete evidence[slot];
       return false;
@@ -223,8 +240,11 @@ const Controller = (function() {
 
   // Tell the UI about the slots that counted by a change of their input with a 'gamepadvalidated' event for each, so it
   // lists them: System information, the Stream Menu and the controllers of the button mapping (index.js). The polling
-  // of the menus sends them after reading every slot, also for a slot that another reader validated before (e.g. the
-  // input test), so a listener never runs inside a reader such as getConnectedGamepads().
+  // of the menus sends them once it gathered the evidence of every slot and before the menus get the input of that
+  // poll, so the entry that such a controller brings (Mouse emulation in the Stream Menu, Calibrate the sticks in the
+  // button mapping) already shows when the press that made it count moves the selection. It also sends them for a slot
+  // that another reader validated before (e.g. the input test), and a listener never runs inside a reader such as
+  // getConnectedGamepads(). With nothing pending it returns at once.
   function reportValidatedGamepads() {
     if (validatedByInput.length === 0) {
       return;
@@ -354,11 +374,21 @@ const Controller = (function() {
     let pGamepad = gamepads[index];
 
     if (pGamepad && !pGamepad.matches(gamepad)) {
-      // Another controller in the same slot, or one whose button or axis count changed (e.g. a Tizen placeholder replaced
-      // by the real controller, or a controller switched to another mode), so take a fresh snapshot instead of rejecting
-      // every later one
-      console.log('%c[gamepad.js, analyzeGamepad]', 'color: gray;', 'Gamepad ' + index + ' changed its layout or was replaced, taking a new snapshot: ' + formatGamepadInfo(describeGamepad(gamepad)));
+      // A controller whose button or axis count changed (e.g. one switched to another mode), or another gamepad in the
+      // slot that the polling reads before the browser's events for the change (Chromium M69 of Tizen 5.5 queues the
+      // disconnect and connect events for a new id after the read; newer versions send them inside getGamepads()). The
+      // input that the old snapshot holds ends, and a fresh snapshot replaces it instead of rejecting every later one,
+      // but only for a gamepad that counts as a controller: one that doesn't yet (e.g. one with a timestamp of 0 that
+      // sent no input of its own, see isRealGamepad()) gets none, so a button it holds is no press in the menus. Once it
+      // counts, the branch below takes it like a controller found without a connection event.
+      const counts = isRealGamepad(gamepad);
+      console.log('%c[gamepad.js, analyzeGamepad]', 'color: gray;', 'Gamepad ' + index + ' changed its layout or was replaced, ' +
+        (counts ? 'taking a new snapshot: ' : 'dropping its snapshot until it counts as a controller: ') + formatGamepadInfo(describeGamepad(gamepad)));
       endHeldInput(index);
+      if (!counts) {
+        delete gamepads[index];
+        return;
+      }
       pGamepad = gamepads[index] = new Gamepad(gamepad, true);
     } else if (!pGamepad && isRealGamepad(gamepad)) {
       // A controller that never fired a gamepadconnected event, e.g. one that was announced before the listener was
@@ -384,11 +414,16 @@ const Controller = (function() {
     // Gather the evidence of every slot, also of a controller that the menus know from its connection event, so that
     // System information, the button mapping and the mask of a stream start count it
     observeGamepads(connectedGamepads);
+    // Before the menus get the input, so the UI lists a controller that counts by this input before it moves the
+    // selection (see reportValidatedGamepads())
+    reportValidatedGamepads();
     for (let i = 0; i < connectedGamepads.length; i++) {
       if (connectedGamepads[i]) {
         analyzeGamepad(connectedGamepads[i]);
       }
     }
+    // A slot that analyzeGamepad() validated, which only a gamepad whose index differs from its slot in the read can
+    // lead to, is told now rather than a poll later
     reportValidatedGamepads();
   }
 
