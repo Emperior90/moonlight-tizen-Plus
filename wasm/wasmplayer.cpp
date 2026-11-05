@@ -64,6 +64,22 @@ static std::vector<unsigned char> s_DecodeBuffer;
 static TimeStamp s_frameDuration;
 static TimeStamp s_pktPts;
 
+// The capture time of the host (decodeUnit->presentationTimeMs) is the 90 kHz RTP timestamp divided by 90 and rounded
+// down to whole milliseconds, so it takes the values 0 to 47,721,858 and wraps after 2^32 / 90 ms, about 13.3 hours
+// after the stream started
+static constexpr uint32_t kHostTimeWrapMs = 47721859;
+
+// A capture time more than this ahead of the previous one, or behind it, is a break in the stream (e.g. the frames
+// discarded while the video track was closed), after which the presentation timestamps go on by one frame duration
+static constexpr uint32_t kHostTimeMaxStepMs = 1000;
+
+// The presentation timestamps that follow the capture times of the host (see UpdatePresentationTimestamp): the latest
+// capture time, the time the host has advanced since the first frame of the stream, and the timestamp, in milliseconds
+static bool s_HaveHostTime = false;
+static uint32_t s_LastHostTimeMs = 0;
+static double s_HostElapsedMs = 0;
+static double s_PtsMs = 0;
+
 static TimeStamp s_ptsDiff;
 static TimeStamp s_lastSec;
 
@@ -118,6 +134,9 @@ static constexpr int kAppendResultIgnored = 31;
 static constexpr int kAppendResultInvalidTrackState = 35;
 static constexpr int kAppendResultInvalidVideoParameters = 36;
 static constexpr int kAppendResultCodes = 64;
+
+// Shortest time that a frame is retried for while the buffer of the player is full (see VidDecSubmitDecodeUnit)
+static constexpr uint32_t kAppendBufferFullMinRetryMs = 16;
 
 // Rejected frames of the session by kind for the overlay, and by result code for the log
 static uint32_t s_AppendBufferFull = 0;
@@ -608,6 +627,30 @@ static bool IsRejectedModeResult(int code) {
   return code == kAppendResultInvalidVideoParameters || code == kAppendResultInvalidResolution || code == kAppendResultInvalidFramerate;
 }
 
+// Start the presentation timestamps and the frame pacer of a new stream, without anything of a previous one
+static void ResetFramePacer() {
+  // Initialize packet timestamp to zero, and start following the capture times of the host with the first frame
+  s_pktPts = 0s;
+  s_HaveHostTime = false;
+  s_LastHostTimeMs = 0;
+  s_HostElapsedMs = 0;
+  s_PtsMs = 0;
+
+  // Flag indicating whether this is the first frame of video to be decoded
+  s_hasFirstFrame = false;
+
+  // Initialize the last second timestamp to zero
+  s_lastSec = 0s;
+
+  // Initialize the timestamp difference to zero
+  s_ptsDiff = 0s;
+  s_lastWindowOffset = 0s;
+
+  // Clear the frame arrival times of the pacing window from a previous stream
+  s_PacingLateness.clear();
+  s_PacingLateness.reserve(256);
+}
+
 int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int redrawRate, void* context, int drFlags) {
   ClLogMessage("Video decoding setup has started.\n");
 
@@ -626,22 +669,8 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
   // Calculate frame duration from the frame rate
   s_frameDuration = TimeStamp(1.0 / (float)redrawRate);
 
-  // Initialize packet timestamp to zero
-  s_pktPts = 0s;
-
-  // Flag indicating whether this is the first frame of video to be decoded
-  s_hasFirstFrame = false;
-
-  // Initialize the last second timestamp to zero
-  s_lastSec = 0s;
-
-  // Initialize the timestamp difference to zero
-  s_ptsDiff = 0s;
-  s_lastWindowOffset = 0s;
-
-  // Clear the frame arrival times of the pacing window from a previous stream
-  s_PacingLateness.clear();
-  s_PacingLateness.reserve(256);
+  // Start the presentation timestamps and the frame pacer afresh
+  ResetFramePacer();
 
   // Set the frame pacing flag based on instance configuration
   s_FramePacingEnabled = g_Instance->m_FramePacingEnabled;
@@ -839,6 +868,57 @@ static size_t WriteHdrMetadataSei(unsigned char* out, const SS_HDR_METADATA& met
   return size;
 }
 
+// Set the presentation timestamp of a frame (s_pktPts) from the time the host captured it. The frame pacer releases each
+// frame at its timestamp plus the usual arrival delay, so the timestamps have to advance as far as the host did.
+// Advancing them by one frame duration per frame made a frame lost on the network, or a host that sends fewer frames
+// than the stream rate (a game at 50 FPS in a 60 FPS stream, 80 FPS in a 120 FPS stream, a host display at 59.94 Hz),
+// look like frames that arrive later and later, so the pacer passed every frame straight through: for 1.5 to 2.4 s
+// after each loss, and for good below the stream rate.
+// The capture times come in whole milliseconds, though, and taking them as they are would add up to 1 ms of jitter
+// that makes a steady stream less even. So an interval within 1 ms of a whole number of frame durations advances the
+// timestamp by exactly that many frame durations (a steady host advances exactly as before, a lost frame by its own
+// duration), any other interval by itself, and the timestamp never strays more than 1 ms from the capture times. Each
+// step is at least 1 ms, so that the timestamps keep rising.
+static void UpdatePresentationTimestamp(uint32_t hostTimeMs) {
+  const double frameMs = s_frameDuration.count() * 1000.0;
+  if (!s_HaveHostTime) {
+    s_HaveHostTime = true;
+    s_LastHostTimeMs = hostTimeMs;
+    s_HostElapsedMs = 0;
+    s_PtsMs = 0;
+  } else {
+    // The time the host advanced since the latest capture time, also across a wrap of the RTP timestamp
+    int64_t stepMs;
+    if (hostTimeMs >= s_LastHostTimeMs) {
+      stepMs = hostTimeMs - s_LastHostTimeMs;
+    } else if (s_LastHostTimeMs - hostTimeMs > kHostTimeWrapMs / 2) {
+      stepMs = (int64_t)hostTimeMs + kHostTimeWrapMs - s_LastHostTimeMs;
+    } else {
+      stepMs = -(int64_t)(s_LastHostTimeMs - hostTimeMs);
+    }
+    if (stepMs > kHostTimeMaxStepMs || stepMs < -(int64_t)kHostTimeMaxStepMs) {
+      // A break in the stream: go on by one frame duration from the new capture time, as the timestamps did before
+      // they followed the host, instead of jumping by the length of the break
+      s_PtsMs += frameMs;
+      s_HostElapsedMs = s_PtsMs;
+      s_LastHostTimeMs = hostTimeMs;
+    } else {
+      // A capture time that repeats or steps back counts as 1 ms and keeps the later one: a frame that the host encoded
+      // again from the previous image is stamped with the time it was sent, which can be later than the capture time
+      // of the next new image
+      const double hostStepMs = (double)std::max<int64_t>(stepMs, 1);
+      if (stepMs > 0) {
+        s_LastHostTimeMs = hostTimeMs;
+      }
+      s_HostElapsedMs += hostStepMs;
+      const double frames = std::round(hostStepMs / frameMs);
+      const double ptsStepMs = frames >= 1 && std::abs(hostStepMs - frames * frameMs) <= 1.0 ? frames * frameMs : hostStepMs;
+      s_PtsMs = std::clamp(s_PtsMs + ptsStepMs, s_HostElapsedMs - 1.0, s_HostElapsedMs + 1.0);
+    }
+  }
+  s_pktPts = TimeStamp(s_PtsMs / 1000.0);
+}
+
 // Calculate the time difference that the frame pacer releases the frames at, relative to their presentation
 // timestamps, from the arrival times of the frames in the last time window. It covers the usual arrival jitter
 // (the median plus three standard deviations, estimated from the median absolute deviation, so that a few
@@ -1002,10 +1082,17 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     }
   }
 
+  // The presentation timestamp of this frame, from the capture time of the host
+  UpdatePresentationTimestamp(decodeUnit->presentationTimeMs);
+
   // Calculate the start of the pacing duration in milliseconds
   uint32_t pacingStart = LiGetMillis();
 
-  // Check if the frame pacing is enabled
+  // Check if the frame pacing is enabled. The video player of the TV shows a frame as soon as it is appended, in both
+  // latency modes that the app uses: Samsung's elementary_media_stream_source.h says of kLow that packets "are rendered
+  // as soon as possible, so fps is dependent entirely on when packets are appended", and that kUltraLow "works in the
+  // same way as low-latency mode"; the timestamps only set the time of the media element. So pacing by the moment of
+  // the append is the design: it is the only thing that evens out the arrival jitter of the network.
   if (s_FramePacingEnabled) {
     // Calculate the time elapsed since the first frame
     TimeStamp fromStart = now - s_firstAppend;
@@ -1013,7 +1100,16 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     // rather than the time this thread got to it, so that the delay the pacer adds to the previous frames
     // doesn't feed back into the pace of the next ones.
     uint64_t queuedMs = dequeueMs > decodeUnit->enqueueTimeMs ? dequeueMs - decodeUnit->enqueueTimeMs : 0;
-    s_PacingLateness.push_back((fromStart - TimeStamp(queuedMs / 1000.0) - s_pktPts).count());
+    const TimeStamp lateness = fromStart - TimeStamp(queuedMs / 1000.0) - s_pktPts;
+    s_PacingLateness.push_back(lateness.count());
+    // A frame that arrived more than two frame durations earlier than the time difference expects shows that the
+    // arrival time dropped, e.g. when the latency of a congested network fell back. Follow such a drop at once instead
+    // of at the end of the window: until then, every frame was held back by the old latency for up to a second and
+    // piled up in the decode unit queue, which holds 15 frames (125 ms at 120 FPS) and is flushed with a keyframe
+    // request when it overflows. One frame duration would also catch the usual jitter at 120 FPS.
+    if (s_ptsDiff - lateness > 2 * s_frameDuration) {
+      s_ptsDiff = lateness;
+    }
     // Wait until the packet timestamp is within the frame time margin
     while (s_pktPts > fromStart - s_ptsDiff + kFrameTimeMargin) {
       // Calculate the remaining wait time until the packet timestamp is within the frame time margin
@@ -1036,8 +1132,10 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
       // Update the time difference from the arrival times of the frames in the last time window. A rise is only
       // followed as far as the previous window supports it too, because the burst of frames delivered after a
       // network stall raises the offset of the window it lands in, which would hold back every frame of the next
-      // window (and overflow the decode unit queue at 120 FPS). A permanent rise, e.g. after frames were lost,
-      // shows up in two consecutive windows and is followed by the second one. A drop takes effect right away.
+      // window (and overflow the decode unit queue at 120 FPS). A permanent rise, e.g. a network latency that stays
+      // higher, shows up in two consecutive windows and is followed by the second one (frames lost on the network
+      // no longer raise it, since the timestamps follow the capture times). A drop takes effect right away, and a drop
+      // of more than two frame durations already with the frame that shows it (see above).
       const TimeStamp windowOffset = CalculatePacingOffset(s_PacingLateness);
       if (windowOffset > s_ptsDiff) {
         s_ptsDiff = std::max(s_ptsDiff, std::min(windowOffset, s_lastWindowOffset));
@@ -1198,11 +1296,15 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
   constexpr int kAppendSuccess = static_cast<int>(samsung::wasm::OperationResult::kSuccess);
   int appendResult = appendPacket();
 
-  // The buffer of the player is full: retry the same frame for up to about one frame duration, since the player
-  // only has to take the frames it holds. The wait counts into the average rendering time.
+  // The buffer of the player is full: retry the same frame, since the player only has to take the frames it holds, and
+  // Samsung's operation_result.h says that such a packet "should be sent again". A frame that isn't appended breaks the
+  // references of the frames after it, so giving up means a reset of the video pipeline and a keyframe. The retry lasts
+  // one frame duration, but at least kAppendBufferFullMinRetryMs, so that 120 FPS (8 ms per frame) tolerates the same
+  // stall as 60 FPS. The wait counts into the average rendering time.
   if (appendResult == kAppendResultBufferFull) {
     s_AppendBufferFull++;
-    const uint64_t deadline = LiGetMillis() + std::max<uint32_t>(2, 1000 / std::max<uint32_t>(1, s_Framerate));
+    const uint64_t deadline = LiGetMillis() +
+      std::max<uint32_t>(kAppendBufferFullMinRetryMs, 1000 / std::max<uint32_t>(1, s_Framerate));
     while (appendResult == kAppendResultBufferFull && g_Instance->m_VideoStarted && LiGetMillis() < deadline) {
       usleep(1000);
       appendResult = appendPacket();
@@ -1215,8 +1317,6 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
   if (appendResult == kAppendSuccess) {
     // Calculate time after rendering
     uint32_t afterRender = LiGetMillis();
-    // Increment packet timestamp for next frame
-    s_pktPts += s_frameDuration;
     // Track total render time and count rendered frames
     m_ActiveWndVideoStats.totalRenderTime += afterRender - beforeRender;
     m_ActiveWndVideoStats.renderedFrames++;
