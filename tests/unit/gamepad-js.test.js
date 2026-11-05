@@ -15,7 +15,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { REPO_ROOT } = require('../lib/dev-modules');
-const { INDEX_SCRIPTS, loadPlatformScripts, plain } = require('./helpers/platform-loader');
+const { INDEX_SCRIPTS, createPlatformContext, loadPlatformScripts, plain } = require('./helpers/platform-loader');
 
 const XBOX_ID = 'Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)';
 
@@ -436,7 +436,9 @@ test('the slots of tests/fixtures/gamepad-evidence.tsv count as controllers as P
     entry.frames.forEach((frame) => {
       pads.slots[0] = fixtureFramePad(frame);
       pads.poll();
-      actual += pads.controller.getConnectedGamepads().length === 1 ? '1' : '0';
+      // An empty slot never counts. It isn't read again here, since getConnectedGamepads() itself forgets the evidence of
+      // an empty slot, which would hide whether the poll of the menus did.
+      actual += pads.slots[0] && pads.controller.getConnectedGamepads().length === 1 ? '1' : '0';
     });
     assert.equal(actual, entry.expected, entry.name);
     assert.equal(pads.errors().length, 0, entry.name);
@@ -465,6 +467,17 @@ test('a controller with a timestamp of 0 and no gamepadconnected event moves the
   assert.equal(pads.controller.isRealGamepad(pads.slots[1]), true);
 });
 
+test('the log line names the timestamp that the slot reports, like PollGamepads() of wasm/gamepad.cpp', () => {
+  const pads = loadController();
+  pads.controller.startWatching();
+  pads.slots[0] = makePad(0, 17, 4, [], null, { timestamp: -1 });
+  pads.poll(3);
+  pads.slots[0] = makePad(0, 17, 4, [0], null, { timestamp: -1 });
+  pads.poll();
+  assert.equal(pads.logs('Gamepad 0 reports a timestamp of -1 and counts as a controller since its input changed: id="' + XBOX_ID + '"').length, 1);
+  assert.equal(pads.logs('reports a timestamp of 0').length, 0);
+});
+
 test('a stick move of a controller with a timestamp of 0 moves the menus, from the position at which it appeared', () => {
   const pads = loadController();
   pads.controller.startWatching();
@@ -475,7 +488,7 @@ test('a stick move of a controller with a timestamp of 0 moves the menus, from t
   assert.deepEqual(pads.changes, [{ type: 'axis', index: 1, value: 0.8 }]);
 });
 
-test('a controller with a timestamp of 0 whose button is held since it appeared counts on the release, which reports nothing', () => {
+test('a controller with a timestamp of 0 whose button is held since it appeared counts on the release, which is no press', () => {
   const pads = loadController();
   const validated = recordValidated(pads);
   pads.controller.startWatching();
@@ -485,10 +498,30 @@ test('a controller with a timestamp of 0 whose button is held since it appeared 
   pads.slots[0] = makePad(0, 17, 4, [], null, { timestamp: 0 });
   pads.poll();
   assert.deepEqual(validated, [0]);
-  assert.deepEqual(pads.changes, [], 'no release of a press that the menus never got');
+  // The menus get only the release, which ends a repeat at most (handleGamepadMenuInput() in index.js)
+  assert.deepEqual(pads.changes, [{ type: 'button', index: 13, pressed: false }]);
   pads.slots[0] = makePad(0, 17, 4, [12], null, { timestamp: 0 });
   pads.poll();
-  assert.deepEqual(pads.changes, [{ type: 'button', index: 12, pressed: true }]);
+  assert.deepEqual(pads.changes.slice(1), [{ type: 'button', index: 12, pressed: true }]);
+});
+
+test('a restart takes held input of a controller with a timestamp of 0 that the menus never saw as its resting state too', () => {
+  const pads = loadController();
+  pads.controller.startWatching();
+  pads.poll(3);
+  pads.controller.stopWatching();
+  // A controller turned on during the stream holds the stop combo when it ends, and releases LB first: that release
+  // makes it count, while Select, Start and RB are still held
+  pads.slots[0] = makePad(0, 17, 4, [4, 5, 8, 9], null, { timestamp: 0 });
+  pads.controller.startWatching();
+  pads.poll(3);
+  pads.slots[0] = makePad(0, 17, 4, [5, 8, 9], null, { timestamp: 0 });
+  pads.poll(2);
+  assert.equal(pads.controller.isRealGamepad(pads.slots[0]), true);
+  pads.slots[0] = makePad(0, 17, 4, [], null, { timestamp: 0 });
+  pads.poll(2);
+  assert.deepEqual(pads.changes.filter((change) => change.pressed), [], 'Select, Start and RB are not replayed as presses');
+  assert.deepEqual(pads.changes.map((change) => change.index).sort((a, b) => a - b), [4, 5, 8, 9]);
 });
 
 test('a static placeholder with a held A and an axis at 0.3 is never listed and never moves the menus', () => {
@@ -561,4 +594,26 @@ test('the mask of a stream start includes a controller with a timestamp of 0 onc
   assert.equal(getConnectedGamepadMask(), 0);
   pads.slots[1] = makePad(1, 17, 4, [], null, { timestamp: 0 });
   assert.equal(getConnectedGamepadMask(), 0);
+  // A negative or missing timestamp is no evidence either, as in the stream
+  pads.slots[2] = makePad(2, 17, 4, [], null, { timestamp: -1 });
+  pads.slots[3] = makePad(3, 17, 4, [], null, { timestamp: undefined });
+  pads.poll(3);
+  assert.equal(getConnectedGamepadMask(), 0);
+});
+
+test('the mask of a stream start counts by the timestamp alone when gamepad.js is not loaded', () => {
+  const slots = [null, null, null, null];
+  const platform = createPlatformContext({ globals: { navigator: { getGamepads: () => slots } } });
+  platform.load('wasm/static/js/utils.js');
+  const getConnectedGamepadMask = platform.get('getConnectedGamepadMask');
+  slots[0] = makePad(0, 17, 4, [], null, { timestamp: 0 });
+  slots[1] = makePad(1, 17, 4, [], null, { timestamp: 5 });
+  slots[2] = makePad(2, 17, 4, [], null, { timestamp: NaN });
+  assert.equal(getConnectedGamepadMask(), 2);
+  // A controller whose timestamp reads 0 later stays, until another one is in its slot
+  slots[1] = makePad(1, 17, 4, [], null, { timestamp: 0 });
+  assert.equal(getConnectedGamepadMask(), 2);
+  slots[1] = makePad(1, 17, 4, [], null, { timestamp: 0, id: 'Other' });
+  assert.equal(getConnectedGamepadMask(), 0);
+  assert.deepEqual(platform.consoleMessages.filter((message) => message.level === 'error'), []);
 });

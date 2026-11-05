@@ -776,9 +776,11 @@ void MoonlightInstance::PollGamepads() {
       continue;
     }
 
-    // Say in the log why a controller with a timestamp of 0 counts, which a support log of such a TV needs
+    // Say in the log why a controller without a positive timestamp counts, which a support log of such a TV needs, with
+    // the timestamp as it reads (0 on Tizen 5.5; isRealGamepad() in wasm/platform/gamepad.js logs the same)
     if (validatedByInput) {
-      MoonlightInstance::ClLogMessage("Controller %d reports a timestamp of 0 and counts as a controller since its input changed\n", i);
+      MoonlightInstance::ClLogMessage(
+        "Controller %d reports a timestamp of %g and counts as a controller since its input changed\n", i, timestamp);
     }
 
     // Record the evidence and mark this physical bit in the active mask

@@ -4,7 +4,8 @@
 // with the remote and a gamepad: every key shows with its name, key code and how long it was held, also a held key with
 // its repeats, and no key reaches the menus or does its usual action (RED, DOWN); RETURN shows and then leaves the test;
 // each simulated controller is drawn live (pressed buttons, the bar of a trigger, the dot of a stick, the readout of its
-// buttons and axes); a hold of B for 2 seconds leaves it; the media keys of the TV are listed as registered or left to
+// buttons and axes), also one that reports a timestamp of 0 once its input changed (Tizen 5.5); a hold of B for 2
+// seconds leaves it; the media keys of the TV are listed as registered or left to
 // the TV; the controllers are read only while it is open; and it registers no keys.
 
 const { test, before, after } = require('node:test');

@@ -183,6 +183,19 @@ static void TestFirstPressReachesTheHost() {
   CHECK_EQ(CountLogs(kTimestampLog), 1);
 }
 
+// The log line names the timestamp as the slot reports it, so a support log doesn't say 0 for another value
+static void TestLogNamesTheTimestamp() {
+  harness::Reset();
+  ConnectWithoutTimestamp(0);
+  harness::slots[0].timestamp = -1.0;
+  Poll();
+  SetButton(0, kButtonA, true);
+  Poll();
+  CHECK_EQ(harness::arrivals.size(), 1u);
+  CHECK_EQ(CountLogs("Controller 0 reports a timestamp of -1 and counts as a controller since its input changed"), 1);
+  CHECK_EQ(CountLogs(kTimestampLog), 0);
+}
+
 // A stick move of more than 0.01 counts and is sent on the same poll; a jitter of 0.009 around a resting value of 0.3
 // never counts, however long it goes on, while one of 0.011 does
 static void TestStickMoveAndJitter() {
@@ -330,6 +343,7 @@ int main() {
   harness::Install();
   test_support::RunTest("the frames of tests/fixtures/gamepad-evidence.tsv", TestFixtureFrames);
   test_support::RunTest("the first press of a controller with a timestamp of 0 announces it and reaches the host", TestFirstPressReachesTheHost);
+  test_support::RunTest("the log line names the timestamp that the slot reports", TestLogNamesTheTimestamp);
   test_support::RunTest("a stick move counts, a jitter of 0.009 never does, one of 0.011 does", TestStickMoveAndJitter);
   test_support::RunTest("a button held since the slot appeared counts on its release", TestHeldButtonCountsOnRelease);
   test_support::RunTest("a value that is not a number takes the first number as its baseline", TestValueThatIsNotANumber);

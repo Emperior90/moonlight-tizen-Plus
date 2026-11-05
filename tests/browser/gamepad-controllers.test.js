@@ -4,7 +4,8 @@
 // a non-standard one (an 8BitDo in D-input mode, a DualShock 4 with the raw layout of its driver). The page logs what a
 // controller reports as separate fields, shows a notice once per controller id when its layout is not the standard one,
 // lists the connected controllers in System information (with the controller type that the stream announces), and the
-// menus work with controllers that woke up with a press, never fired gamepadconnected, or changed their layout.
+// menus work with controllers that woke up with a press, never fired gamepadconnected, report a timestamp of 0 until
+// their input changes (Tizen 5.5), or changed their layout.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');

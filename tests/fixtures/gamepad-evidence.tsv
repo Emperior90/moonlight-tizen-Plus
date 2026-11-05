@@ -23,8 +23,10 @@ a placeholder with a held button and an axis at 0.3 never counts	00000	0/1*,0/0.
 
 # The input of a controller with a timestamp of 0 counts, and the evidence stays while the id stays
 a press counts	00111	0/0,0/0,0 0/0,0/0,0 0/1*,0/0,0 0/0,0/0,0 0/0,0/0,0
+a pressed state that flips without a value change counts	01	0/0/0 0/0*/0
 a button held since the slot appeared counts on its release	0001	0/1*,0/0,0 0/1*,0/0,0 0/1*,0/0,0 0/0,0/0,0
 a stick move of more than 0.01 counts	0001	0/0/0,0 0/0/0.005,0 0/0/0,-0.008 0/0/0,-0.02
+a move of exactly 0.01 does not count, of a stick or a trigger	000	0/0/0 0/0/0.01 0/0.01/0.01
 jitter of 0.009 around the resting value doesn't count, 0.011 does	000001	0/0/0.3 0/0/0.309 0/0/0.291 0/0/0.309 0/0/0.291 0/0/0.311
 a slow move adds up against the first value	0001	0/0/0.3 0/0/0.304 0/0/0.308 0/0/0.312
 a trigger value counts without a pressed state	01	0/0,0/0 0/0,0.2/0

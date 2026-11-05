@@ -216,7 +216,8 @@ const Controller = (function() {
     state.validated = true;
     state.byInput = true;
     validatedByInput.push(slot);
-    console.log('%c[gamepad.js, isRealGamepad]', 'color: gray;', 'Gamepad ' + slot + ' reports a timestamp of 0 and counts as a controller since its input changed: ' + formatGamepadInfo(describeGamepad(gamepad)));
+    // The timestamp as it reads, which is 0 on Tizen 5.5 (the log line of PollGamepads() in wasm/gamepad.cpp names it too)
+    console.log('%c[gamepad.js, isRealGamepad]', 'color: gray;', 'Gamepad ' + slot + ' reports a timestamp of ' + gamepad.timestamp + ' and counts as a controller since its input changed: ' + formatGamepadInfo(describeGamepad(gamepad)));
     return true;
   }
 
@@ -358,14 +359,16 @@ const Controller = (function() {
       pGamepad = gamepads[index] = new Gamepad(gamepad, true);
     } else if (!pGamepad && isRealGamepad(gamepad)) {
       // A controller that never fired a gamepadconnected event, e.g. one that was announced before the listener was
-      // added. One that counted by a change of its input (a timestamp of 0, see isRealGamepad()) starts from the sticks
-      // of its baseline, so the stick move that made it count moves the menus, like the press that did. A press held
-      // since the slot appeared is no evidence, so such a controller counts on its release, which reports nothing; its
-      // next press does.
+      // added. One that counted by a change of its input (a timestamp of 0, see isRealGamepad()) starts from its
+      // baseline, the buttons and sticks as the menus first saw them, so the press or stick move that made it count
+      // moves the menus. A button held since then (e.g. a combo held when the stream ended, see resetGamepads()) is no
+      // evidence and no new press: such a controller counts on its release, which the menus only take as the end of a
+      // repeat, and its next press moves them.
       console.log('%c[gamepad.js, analyzeGamepad]', 'color: gray;', 'Found gamepad ' + index + ' without a connection event: ' + formatGamepadInfo(describeGamepad(gamepad)));
       const state = evidence[index];
       const baseline = state && state.byInput ? state.baseline : null;
-      pGamepad = gamepads[index] = new Gamepad(baseline ? { id: gamepad.id, buttons: baseline.buttons, axes: baseline.axes } : gamepad, true);
+      pGamepad = gamepads[index] = baseline ? new Gamepad({ id: gamepad.id, buttons: baseline.buttons, axes: baseline.axes }, false) :
+        new Gamepad(gamepad, true);
     }
 
     if (pGamepad) {
