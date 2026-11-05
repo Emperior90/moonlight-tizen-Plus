@@ -124,10 +124,126 @@ const Controller = (function() {
     return (navigator.getGamepads && navigator.getGamepads()) || [];
   }
 
-  // Check if a slot holds a controller, and not one of the placeholders that Tizen reports as connected but whose
-  // timestamp stays 0 until they send input (see getConnectedGamepadMask() in utils.js and PollGamepads() in gamepad.cpp)
-  function isRealGamepad(gamepad) {
-    return !!gamepad && !!gamepad.connected && gamepad.timestamp !== 0;
+  // Smallest move of an analog button or axis away from the baseline that counts as input (kInputChangeStep in
+  // wasm/gamepad.cpp)
+  const INPUT_CHANGE_STEP = 0.01;
+  // Evidence per slot index that it holds a controller: { id, validated, byInput, baseline: { buttons, axes } }
+  const evidence = {};
+  // Slots that counted by a change of their input since the last 'gamepadvalidated' event
+  let validatedByInput = [];
+
+  function isFiniteNumber(value) {
+    return typeof value === 'number' && isFinite(value);
+  }
+
+  // The input of a gamepad as the baseline that a change is measured from
+  function recordBaseline(buttons, axes) {
+    return {
+      buttons: Array.prototype.map.call(buttons, (button) => ({ pressed: !!button.pressed, value: button.value })),
+      axes: Array.prototype.slice.call(axes),
+    };
+  }
+
+  // Check if the input of a slot changed since it appeared, as HasGamepadInputChanged() in wasm/gamepad.cpp does: a
+  // button whose pressed state flipped, or a button value or axis that moved more than INPUT_CHANGE_STEP away from the
+  // baseline. A value that wasn't finite in the baseline takes the first finite one.
+  function hasInputChanged(buttons, axes, baseline) {
+    for (let i = 0; i < buttons.length; i++) {
+      const button = buttons[i];
+      const base = baseline.buttons[i];
+      if (!!button.pressed !== base.pressed) {
+        return true;
+      }
+      if (isFiniteNumber(button.value)) {
+        if (isFiniteNumber(base.value) && Math.abs(button.value - base.value) > INPUT_CHANGE_STEP) {
+          return true;
+        }
+        if (!isFiniteNumber(base.value)) {
+          base.value = button.value;
+        }
+      }
+    }
+    for (let i = 0; i < axes.length; i++) {
+      if (isFiniteNumber(axes[i])) {
+        if (isFiniteNumber(baseline.axes[i]) && Math.abs(axes[i] - baseline.axes[i]) > INPUT_CHANGE_STEP) {
+          return true;
+        }
+        if (!isFiniteNumber(baseline.axes[i])) {
+          baseline.axes[i] = axes[i];
+        }
+      }
+    }
+    return false;
+  }
+
+  // Check if a slot holds a controller, and not one of the placeholders that Tizen reports as connected, and record what
+  // it shows now as evidence. The rule is the one of PollGamepads() in wasm/gamepad.cpp (tests/fixtures/
+  // gamepad-evidence.tsv keeps both the same): a slot counts with a positive timestamp, or once its input changed since
+  // it appeared, since Tizen 5.5 reports a timestamp of 0 for real controllers too (upstream fdf4fbe, PR #192 by
+  // podrezov, GPL-3.0). A static value never counts, also a button held since the slot appeared (its release does) or a
+  // stick that rests off-centre. The evidence stays while the same id is in the slot, also when its timestamp reads 0
+  // later; an empty slot (no gamepad) forgets it. The menus, the input test, System information, the button mapping,
+  // the Stream Menu and the mask of a stream start (getConnectedGamepadMask() in utils.js) all count with this, and the
+  // polling of the menus gathers the evidence. The index defaults to that of the gamepad.
+  function isRealGamepad(gamepad, index) {
+    const slot = index === undefined ? (gamepad ? gamepad.index : -1) : index;
+    if (!gamepad || !gamepad.connected) {
+      delete evidence[slot];
+      return false;
+    }
+    let state = evidence[slot];
+    if (!state || state.id !== gamepad.id) {
+      state = evidence[slot] = { id: gamepad.id, validated: false, byInput: false, baseline: null };
+    }
+    if (state.validated) {
+      return true;
+    }
+    if (isFiniteNumber(gamepad.timestamp) && gamepad.timestamp > 0) {
+      state.validated = true;
+      return true;
+    }
+    // The input is compared only with a baseline of the same button and axis count; another count takes a new baseline
+    const buttons = gamepad.buttons || [];
+    const axes = gamepad.axes || [];
+    const baseline = state.baseline;
+    if (!baseline || baseline.buttons.length !== buttons.length || baseline.axes.length !== axes.length) {
+      state.baseline = recordBaseline(buttons, axes);
+      return false;
+    }
+    if (!hasInputChanged(buttons, axes, baseline)) {
+      return false;
+    }
+    state.validated = true;
+    state.byInput = true;
+    validatedByInput.push(slot);
+    console.log('%c[gamepad.js, isRealGamepad]', 'color: gray;', 'Gamepad ' + slot + ' reports a timestamp of 0 and counts as a controller since its input changed: ' + formatGamepadInfo(describeGamepad(gamepad)));
+    return true;
+  }
+
+  // Tell the UI about the slots that counted by a change of their input with a 'gamepadvalidated' event for each, so it
+  // lists them: System information, the Stream Menu and the controllers of the button mapping (index.js). The polling
+  // of the menus sends them after reading every slot, also for a slot that another reader validated before (e.g. the
+  // input test), so a listener never runs inside a reader such as getConnectedGamepads().
+  function reportValidatedGamepads() {
+    const slots = validatedByInput;
+    validatedByInput = [];
+    slots.forEach((index) => {
+      window.dispatchEvent(new CustomEvent('gamepadvalidated', { detail: { gamepad: index } }));
+    });
+  }
+
+  // Record the evidence of every slot of a read of the gamepads: an empty slot forgets its evidence
+  function observeGamepads(connectedGamepads) {
+    Object.keys(evidence).forEach((index) => {
+      if (!connectedGamepads[index]) {
+        delete evidence[index];
+      }
+    });
+    for (let i = 0; i < connectedGamepads.length; i++) {
+      if (connectedGamepads[i]) {
+        isRealGamepad(connectedGamepads[i], i);
+      }
+    }
   }
 
   // Read the USB vendor id from a lower-cased gamepad id, in the format of Chromium on Linux ('... (STANDARD GAMEPAD
@@ -204,9 +320,10 @@ const Controller = (function() {
   // Describe the controllers that are connected now
   function getConnectedGamepads() {
     const connectedGamepads = readGamepads();
+    observeGamepads(connectedGamepads);
     const result = [];
     for (let i = 0; i < connectedGamepads.length; i++) {
-      if (isRealGamepad(connectedGamepads[i])) {
+      if (isRealGamepad(connectedGamepads[i], i)) {
         result.push(describeGamepad(connectedGamepads[i]));
       }
     }
@@ -240,9 +357,15 @@ const Controller = (function() {
       endHeldInput(index);
       pGamepad = gamepads[index] = new Gamepad(gamepad, true);
     } else if (!pGamepad && isRealGamepad(gamepad)) {
-      // A controller that never fired a gamepadconnected event, e.g. one that was announced before the listener was added
+      // A controller that never fired a gamepadconnected event, e.g. one that was announced before the listener was
+      // added. One that counted by a change of its input (a timestamp of 0, see isRealGamepad()) starts from the sticks
+      // of its baseline, so the stick move that made it count moves the menus, like the press that did. A press held
+      // since the slot appeared is no evidence, so such a controller counts on its release, which reports nothing; its
+      // next press does.
       console.log('%c[gamepad.js, analyzeGamepad]', 'color: gray;', 'Found gamepad ' + index + ' without a connection event: ' + formatGamepadInfo(describeGamepad(gamepad)));
-      pGamepad = gamepads[index] = new Gamepad(gamepad, true);
+      const state = evidence[index];
+      const baseline = state && state.byInput ? state.baseline : null;
+      pGamepad = gamepads[index] = new Gamepad(baseline ? { id: gamepad.id, buttons: baseline.buttons, axes: baseline.axes } : gamepad, true);
     }
 
     if (pGamepad) {
@@ -252,11 +375,15 @@ const Controller = (function() {
 
   function pollGamepads() {
     const connectedGamepads = readGamepads();
+    // Gather the evidence of every slot, also of a controller that the menus know from its connection event, so that
+    // System information, the button mapping and the mask of a stream start count it
+    observeGamepads(connectedGamepads);
     for (let i = 0; i < connectedGamepads.length; i++) {
       if (connectedGamepads[i]) {
         analyzeGamepad(connectedGamepads[i]);
       }
     }
+    reportValidatedGamepads();
   }
 
   // Take a fresh snapshot of every known or connected gamepad without reporting any changes, so input that happened
@@ -305,6 +432,7 @@ const Controller = (function() {
     formatGamepadInfo,
     getConnectedGamepads,
     getControllerType,
+    isRealGamepad,
   };
 })();
 

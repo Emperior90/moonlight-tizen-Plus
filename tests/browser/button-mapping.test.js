@@ -255,6 +255,37 @@ test('a connected controller gets a mapping of its own, its sticks a calibration
   }
 });
 
+test('a controller with a timestamp of 0 (Tizen 5.5) joins the open menu once its input changed, so its sticks can be calibrated', async () => {
+  const app = await openApp(harness, {
+    tv: { tv: 'fhd', conn: 'wifi' },
+    initScripts: [simulatedGamepads],
+    stored: { controllerMappings: { version: 1, controllers: { [XBOX_STREAM_ID]: { name: 'Xbox Wireless Controller', buttons: IDENTITY.slice(0, 15).concat([14]) } } } },
+  });
+  try {
+    // The controller with a mapping of its own is in slot 0, but reports a timestamp of 0 and sent no input yet
+    await app.page.evaluate((id) => {
+      window.__pads[0] = {
+        index: 0, id, mapping: 'standard', connected: true, timestamp: 0, vibrationActuator: null,
+        buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })), axes: [0, 0, 0, 0],
+      };
+    }, XBOX_ID);
+    await openMapping(app.page);
+    await remoteKey(app.page, ...RIGHT);
+    let menu = await readMenu(app.page);
+    assert.deepEqual([menu.controller, menu.subtitle, menu.calibrate], ['Xbox Wireless Controller', 'Own buttons', false]);
+    // A small move of a stick, which doesn't move the menu, makes it count: the menu shows it as connected
+    await app.page.evaluate(() => {
+      window.__pads[0].axes = [0.05, 0, 0, 0];
+    });
+    await app.page.waitForTimeout(150);
+    menu = await readMenu(app.page);
+    assert.deepEqual([menu.focus, menu.controller, menu.subtitle, menu.calibrate], ['buttonMappingSelect', 'Xbox Wireless Controller', 'Own buttons', true]);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
 test('a calibration needs sticks that moved far enough, and RETURN cancels it', async () => {
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, initScripts: [simulatedGamepads] });
   try {

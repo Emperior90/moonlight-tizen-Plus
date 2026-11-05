@@ -476,6 +476,45 @@ test('the gamepad combo opens the Stream Menu, the gamepad moves in it without t
   }
 });
 
+test('a controller with a timestamp of 0 (Tizen 5.5) that the menus never saw shows the mouse emulation entry once the combo is released', async () => {
+  const app = await openStreaming();
+  try {
+    // The stream took the controller by its input (wasm/gamepad.cpp), and its Select + Start opened the menu: the menus
+    // see it first with the combo held, which is no evidence on its own
+    await app.page.evaluate((id) => {
+      window.__pads[0] = {
+        index: 0, id, mapping: 'standard', connected: true, timestamp: 0, vibrationActuator: null,
+        buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })), axes: [0, 0, 0, 0],
+      };
+      window.__setButton(0, 8, true);
+      window.__setButton(0, 9, true);
+      handleMessage('streamMenuRequested');
+    }, XBOX_ID);
+    let state = await menuState(app.page);
+    assert.equal(state.open, true);
+    assert.equal(state.entries.includes('streamMenuMouse'), false);
+    // The release makes it count, which shows the entry, and presses nothing in the menu
+    await app.page.evaluate(() => {
+      window.__setButton(0, 8, false);
+      window.__setButton(0, 9, false);
+    });
+    await app.page.waitForTimeout(AFTER_DELAY_MS);
+    state = await menuState(app.page);
+    assert.deepEqual(state.entries.slice(0, 3), ['streamMenuResume', 'streamMenuStats', 'streamMenuMouse']);
+    assert.equal(state.focused, 'streamMenuResume');
+    assert.deepEqual(await moduleCalls(app.page), ['setStreamMenuOpen true']);
+    // Its D-pad moves in the menu
+    await app.page.evaluate(() => window.__setButton(0, 13, true));
+    await app.page.waitForTimeout(50);
+    await app.page.evaluate(() => window.__setButton(0, 13, false));
+    await app.page.waitForTimeout(50);
+    assert.equal((await menuState(app.page)).focused, 'streamMenuStats');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
 test('the mouse emulation entry asks the module and shows its answer, the key entries release every key and resume', async () => {
   const app = await openStreaming({ gamepad: true });
   try {

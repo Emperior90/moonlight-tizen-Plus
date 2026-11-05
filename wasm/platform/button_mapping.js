@@ -352,6 +352,15 @@ const ButtonMappingMenu = (function() {
     Navigation.switch();
   }
 
+  // Show the controllers again while the rows of the mapping show, e.g. for a controller that counts only once its input
+  // changed (a timestamp of 0, Controller.isRealGamepad() in gamepad.js), so it can be chosen without reopening the menu.
+  // The calibration renders the rows when it ends.
+  function refreshControllers() {
+    if (!calibration && $('#buttonMappingOverlay').css('display') !== 'none') {
+      render();
+    }
+  }
+
   // LEFT or RIGHT on a row: the next controller, or the next target of a button
   function step(item, direction) {
     const id = item ? item.id : '';
@@ -513,6 +522,7 @@ const ButtonMappingMenu = (function() {
   return {
     open: open,
     close: close,
+    refreshControllers: refreshControllers,
     step: step,
     reset: reset,
     startCalibration: startCalibration,

@@ -247,6 +247,63 @@ test('a controller that never fired gamepadconnected works in the menus and is l
   }
 });
 
+test('a controller with a timestamp of 0 (Tizen 5.5) and no gamepadconnected event works in the menus once it sends input, and is listed then', async () => {
+  const app = await openWithGamepads();
+  const { page } = app;
+  try {
+    // A static placeholder in slot 0 and a controller in slot 1 that sent no input yet, both with a timestamp of 0
+    await setPad(page, 0, xbox(0, { timestamp: 0, pressed: [0], axisValues: [0.3, 0, 0, 0] }));
+    await setPad(page, 1, xbox(1, { timestamp: 0 }));
+    await page.waitForTimeout(AFTER_DELAY_MS);
+    assert.deepEqual(await operations(page), []);
+    assert.deepEqual(await readGamepadLines(page), ['Controllers: None']);
+    // Its first press moves the menus, and System information lists it without a refresh of its own
+    await setPad(page, 1, xbox(1, { timestamp: 0, pressed: [13] }));
+    await page.waitForTimeout(50);
+    await setPad(page, 1, xbox(1, { timestamp: 0 }));
+    await page.waitForTimeout(AFTER_DELAY_MS);
+    assert.deepEqual(await operations(page), ['down']);
+    assert.deepEqual(await readGamepadLines(page), ['Controller 1: Xbox Wireless Controller (standard layout, 17 buttons, 4 axes, rumble: No, type: Xbox)']);
+    assert.ok(app.logs.some((line) => line.indexOf('Gamepad 1 reports a timestamp of 0 and counts as a controller since its input changed: id="' + XBOX_ID + '"') >= 0));
+    // The placeholder stays out
+    await page.waitForTimeout(AFTER_DELAY_MS);
+    await page.evaluate(() => loadSystemInfo());
+    assert.equal((await readGamepadLines(page)).length, 1);
+    assert.deepEqual(await operations(page), ['down']);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a controller with a timestamp of 0 that woke with a held press is listed once it is released, and one whose timestamp drops to 0 stays', async () => {
+  const app = await openWithGamepads();
+  const { page } = app;
+  try {
+    // The connection event comes with the press that woke it, which is no evidence on its own (a placeholder can hold a
+    // button), so it is listed on the release
+    await connect(page, 0, xbox(0, { timestamp: 0, pressed: [0] }));
+    await page.waitForTimeout(AFTER_DELAY_MS);
+    assert.deepEqual(await operations(page), ['accept']);
+    assert.deepEqual(await readGamepadLines(page), ['Controllers: None']);
+    await setPad(page, 0, xbox(0, { timestamp: 0 }));
+    await page.waitForTimeout(AFTER_DELAY_MS);
+    assert.deepEqual(await readGamepadLines(page), ['Controller 0: Xbox Wireless Controller (standard layout, 17 buttons, 4 axes, rumble: No, type: Xbox)']);
+    // A controller whose timestamp reads 0 after a positive one stays listed
+    await connect(page, 1, eightBitDo());
+    await setPad(page, 1, eightBitDo({ timestamp: 0 }));
+    await page.waitForTimeout(AFTER_DELAY_MS);
+    await page.evaluate(() => loadSystemInfo());
+    assert.deepEqual(await readGamepadLines(page), [
+      'Controller 0: Xbox Wireless Controller (standard layout, 17 buttons, 4 axes, rumble: No, type: Xbox)',
+      'Controller 1: 8BitDo SN30 Pro (non-standard layout, 16 buttons, 6 axes, rumble: No, type: Xbox)',
+    ]);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
 test('a controller whose layout changes keeps working in the menus without errors', async () => {
   const app = await openWithGamepads();
   const { page } = app;

@@ -221,6 +221,35 @@ test('each controller is drawn live, a hold of B leaves, and the controllers are
   }
 });
 
+test('a controller with a timestamp of 0 (Tizen 5.5) is drawn once its input changed, and one whose timestamp drops to 0 stays', async () => {
+  const app = await openApp(harness, { tv: { tv: 'fhd', conn: 'wifi' }, initScripts: [simulatedGamepads] });
+  try {
+    await app.page.evaluate((id) => window.__connectPad(0, id), XBOX_ID);
+    await openInputTest(app.page);
+    // A controller in slot 1 that reports a timestamp of 0 and fired no gamepadconnected event, at rest, and the first
+    // controller, whose timestamp reads 0 from now on
+    await app.page.evaluate((id) => {
+      window.__pads[1] = {
+        index: 1, id, mapping: 'standard', connected: true, timestamp: 0, vibrationActuator: null,
+        buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })), axes: [0, 0, 0, 0],
+      };
+      window.__pads[0].timestamp = 0;
+    }, XBOX_ID);
+    await app.page.waitForTimeout(200);
+    const titles = () => app.page.evaluate(() => Array.prototype.map.call(document.querySelectorAll('#inputTestPads .pad-card .pad-title'),
+      (title) => title.textContent));
+    assert.deepEqual(await titles(), ['Controller 0: Xbox Wireless Controller']);
+    // Its first press draws it
+    await app.page.evaluate(() => window.__setButton(1, 2, true));
+    await app.page.waitForTimeout(200);
+    assert.deepEqual(await titles(), ['Controller 0: Xbox Wireless Controller', 'Controller 1: Xbox Wireless Controller']);
+    assert.equal(await app.page.evaluate(() => document.querySelectorAll('#inputTestPads .pad-card')[1].querySelector('.pad-buttons').textContent), 'Buttons: X');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
 test('the input test opens with a gamepad and names a missing controller', async () => {
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi', locale: 'de_DE' }, initScripts: [simulatedGamepads] });
   try {
