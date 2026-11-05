@@ -9,9 +9,9 @@
       "track": "branch",
       "branch": "master",
       "vendored": "v1.19.0 (4bb3134), the base version of Moonlight Plus",
-      "reviewed_through": "584f1cc7e724ecc6a50cea64ccaf9108ea5be435",
-      "reviewed_on": "2026-10-30",
-      "note": "The app this fork is based on. Its maintainer announced that 2026 is most likely the last year of maintenance, and it still vendors moonlight-common-c 8599b60.",
+      "reviewed_through": "ce18df896ff7c8b4aa4962274479acc2e167ab01",
+      "reviewed_on": "2026-11-05",
+      "note": "The app this fork is based on. Its maintainer announced with 1.20.0 that 2026 is the final year of its active development, with a final update and a final announcement perhaps in December, and it still vendors moonlight-common-c 8599b60.",
       "decisions": [
         {
           "commits": ["1abfbf1", "d8d4ae4", "0ffd692"],
@@ -45,6 +45,38 @@
           "commits": ["a185247", "b6b6af2"],
           "decision": "skipped",
           "why": "The README and the issue template of Moonlight Tizen; Moonlight Plus has its own."
+        },
+        {
+          "commits": ["7d8ab56"],
+          "decision": "taken",
+          "in": "2.2.1",
+          "why": "Removes the frame rate of 144 FPS, whose video track the player of the TV never opens (the stream ends with error -200 or stays black). Moonlight Plus also moves a stored 144 FPS to 120 or 60 FPS and keeps the old presets of 144 FPS only for the detection of existing installs."
+        },
+        {
+          "commits": ["fdf4fbe", "4535d48", "59846c4"],
+          "decision": "taken",
+          "in": "2.2.1",
+          "why": "Controllers that always report the timestamp 0 (Tizen 5.5) count as connected once their input changes (pull request #192 by podrezov). Moonlight Plus takes the baseline of a replaced controller at once and applies the same rule to the menus, System information, the button mapping and the input test."
+        },
+        {
+          "commits": ["488c97d", "65c049d"],
+          "decision": "skipped",
+          "why": "An optional setting that quits the app on the PC after every stream. Its stopGame() leaves a blank screen without navigation when the app has already ended, and it quits after a failed start and when the TV sends the app to the background. Moonlight Plus quits for one stream through the Stream Menu; a setting that quits only when the stream was ended on the TV may come later."
+        },
+        {
+          "commits": ["b32a14a"],
+          "decision": "skipped",
+          "why": "Turns off the Game Mode switch in the ForceGM variant. Its Restore Defaults tests a function reference that is always true, so the switch no longer comes back on Tizen 6.0 to 8.0, and on Tizen 9 the check never runs. Moonlight Plus already has the switch off by default on Tizen 9 and later, where the ForceGM variant is meant for, and warns when it is turned on there."
+        },
+        {
+          "commits": ["d79aae1"],
+          "decision": "skipped",
+          "why": "Stops a stream when the app goes to the background. Moonlight Plus has done this since 1.19.0-s90c.1, with a delay of 60 seconds and the end of a stream whose video track the TV closed."
+        },
+        {
+          "commits": ["045b144", "70c2dd6", "ce18df8"],
+          "decision": "skipped",
+          "why": "The README, the changelog and the version 1.20.0 of Moonlight Tizen. The README asks forks to credit the original project, its maintainer and its contributors, which the README of Moonlight Plus does."
         }
       ]
     },
