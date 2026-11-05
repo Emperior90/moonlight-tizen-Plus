@@ -2,6 +2,7 @@
 #include "audio_stream_stats.hpp"
 #include "compact_stats.hpp"
 #include "frame_intervals.hpp"
+#include "player_errors.hpp"
 #include "session_report.hpp"
 #include "video_track_rejection.hpp"
 
@@ -164,6 +165,8 @@ static uint32_t s_HostRateLastPts = 0;
 static int s_HostRateStartFrame = 0;
 static int s_HostRateRepeats = 0;
 static float s_HostFrameRate = 0.0f;
+// The highest host frame rate of a completed window of the stream, for the report of the session (session_report.hpp)
+static float s_HostFrameRateBest = 0.0f;
 static std::atomic<bool> s_ExpectedIdrFrame{false};
 
 // The text of the full statistics, formatted on the video decoder thread only
@@ -219,6 +222,27 @@ void MoonlightInstance::SourceListener::OnSourceClosed() {
   std::unique_lock<std::mutex> lock(m_Instance->m_Mutex);
   m_Instance->m_EmssReadyState = EmssReadyState::kClosed;
   m_Instance->m_EmssStateChanged.notify_all();
+}
+
+// An error of the media pipeline of the TV. It is only logged, with its text copied at once (player_errors.hpp): what
+// the stream does about a failed player stays with the track close (VideoTrackListener::OnTrackClosed()) and the
+// results of AppendPacket, until the logs show whether this error comes without them.
+void MoonlightInstance::SourceListener::OnPipelineError(samsung::wasm::MediaPipelineError error, const char* message) {
+  const int code = static_cast<int>(error);
+  ClLogMessage("%s", FormatPlayerErrorLog("EMSS::OnPipelineError", code, MediaPipelineErrorName(code), message,
+    m_Instance->m_Running).c_str());
+}
+
+MoonlightInstance::MediaElementListener::MediaElementListener(
+  MoonlightInstance* instance
+) : m_Instance(instance) {}
+
+// An error of the HTML media element, which is only logged as well. It also comes while the app detaches the player
+// at the end of a stream, which the line tells apart.
+void MoonlightInstance::MediaElementListener::OnError(samsung::html::MediaError error, const char* message) {
+  const int code = static_cast<int>(error);
+  ClLogMessage("%s", FormatPlayerErrorLog("HTMLMediaElement::OnError", code, MediaElementErrorName(code), message,
+    m_Instance->m_Running).c_str());
 }
 
 MoonlightInstance::AudioTrackListener::AudioTrackListener(
@@ -555,6 +579,7 @@ static void UpdateHostFrameRate(int frameNumber, uint32_t pts, uint16_t hostProc
   const uint32_t elapsed = pts - s_HostRateStartPts;
   if (elapsed >= kHostFrameRateWindowMs) {
     s_HostFrameRate = (frameNumber - s_HostRateStartFrame - s_HostRateRepeats) * 1000.0f / elapsed;
+    s_HostFrameRateBest = std::max(s_HostFrameRateBest, s_HostFrameRate);
     s_HostRateStartPts = pts;
     s_HostRateStartFrame = frameNumber;
     s_HostRateRepeats = 0;
@@ -709,6 +734,7 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
   s_HostRateWindowOpen = false;
   s_HostRateRepeats = 0;
   s_HostFrameRate = 0.0f;
+  s_HostFrameRateBest = 0.0f;
 
   // Ensure that StartupVidDecSetup is called every time when VidDecSetup is invoked to reinitialize the media pipeline
   int initVidDec = StartupVidDecSetup(videoFormat, width, height, redrawRate, context, drFlags);
@@ -756,6 +782,12 @@ void MoonlightInstance::VidDecCleanup(void) {
   report.heapTopMb = (uint32_t)(heapTop >> 20);
   report.heapTotalMb = kWasmMemoryMb;
   report.heapGrowthMb = heapGrowthMb;
+  // The refresh rate of the display of the host shows in its best window, and whether its encoder kept up in the
+  // average time it needed for a frame (getSessionReportHints() in wasm/platform/diagnostics.js)
+  report.hostFrameRateX100 = (uint32_t)std::lround(s_HostFrameRateBest * 100.0f);
+  report.hostProcessingLatencyX10 = totals.framesWithHostProcessingLatency > 0 ?
+    (uint32_t)(((uint64_t)totals.totalHostProcessingLatency + totals.framesWithHostProcessingLatency / 2) /
+      totals.framesWithHostProcessingLatency) : 0;
   const std::string reportMessage = FormatSessionReportMessage(report);
   if (!reportMessage.empty()) {
     PostToJsAsync(reportMessage);

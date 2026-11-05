@@ -136,12 +136,14 @@ static void StartStream(int level) {
   (g_Instance->*Pointer(StreamConfigMember())).bitrate = 75000;
   s_HostRateWindowOpen = false;
   s_HostFrameRate = 0.0f;
+  s_HostFrameRateBest = 0.0f;
   s_TerminatingStream = false;
 }
 
-// Submit one frame of 100 KB that the host captured at captureMs, or encoded again without a new image (a repeat: no
-// host processing latency, and a send time instead of a capture time)
-static void SubmitFrame(int frameNumber, unsigned int captureMs, bool repeat) {
+// Submit one frame of 100 KB that the host captured at captureMs in hostLatency tenths of a millisecond (4 ms by
+// default), or encoded again without a new image (a repeat: no host processing latency, and a send time instead of a
+// capture time)
+static void SubmitFrame(int frameNumber, unsigned int captureMs, bool repeat, uint16_t hostLatency = 40) {
   static char data[100000];
   LENTRY entry = {};
   entry.data = data;
@@ -150,7 +152,7 @@ static void SubmitFrame(int frameNumber, unsigned int captureMs, bool repeat) {
   DECODE_UNIT unit = {};
   unit.frameNumber = frameNumber;
   unit.frameType = frameNumber == 1 ? FRAME_TYPE_IDR : FRAME_TYPE_PFRAME;
-  unit.frameHostProcessingLatency = repeat ? 0 : 40;
+  unit.frameHostProcessingLatency = repeat ? 0 : hostLatency;
   unit.presentationTimeMs = captureMs;
   // The last packet came 1 ms after the first, and the frame waited 2 ms for the decoder thread
   unit.receiveTimeMs = nowMs - 3;
@@ -340,6 +342,50 @@ static void TheEndOfTheStreamSendsTheSessionReport() {
   if (!postedAsync.empty() && postedAsync.back().compare(0, expected.size(), expected) != 0) {
     std::printf("  # got %s\n  # expected %s...\n", postedAsync.back().c_str(), expected.c_str());
   }
+  // No 30 s window of the host frame rate was completed in 2 seconds; each frame took the host 4 ms
+  const std::string end = ",\"hostFrameRateX100\":0,\"hostProcessingLatencyX10\":40}";
+  CHECK(!postedAsync.empty() && postedAsync.back().size() > end.size() &&
+    postedAsync.back().compare(postedAsync.back().size() - end.size(), end.size(), end) == 0);
+}
+
+// The number after "key": in a message of JSON figures, or -1
+static long JsonNumber(const std::string& message, const std::string& key) {
+  const size_t position = message.find("\"" + key + "\":");
+  return position == std::string::npos ? -1 : std::strtol(message.c_str() + position + key.size() + 3, nullptr, 10);
+}
+
+static void TheSessionReportHasTheBestHostFrameRateAndTheHostLatency() {
+  // A host display at 59.94 Hz for 70 s, then a static scene at 30 FPS for 70 s, in which the host repeats every 5th
+  // frame, and the host needs 4 or 6 ms per new image: the report keeps the best 30 s window, so the 59.94 Hz of the
+  // display still shows, and the average host processing latency leaves out the repeats, which carry none
+  StartStream(kPerformanceStatsOff);
+  int frameNumber = 1;
+  double captureMs = 1000.0;
+  for (; captureMs < 71000.0; frameNumber++, captureMs += 1001.0 / 60) {
+    nowMs = 100000 + (uint64_t)captureMs;
+    SubmitFrame(frameNumber, (unsigned int)std::lround(captureMs), false, frameNumber % 2 == 0 ? 40 : 60);
+  }
+  for (; captureMs < 141000.0; frameNumber++, captureMs += 1000.0 / 30) {
+    nowMs = 100000 + (uint64_t)captureMs;
+    const bool repeat = frameNumber % 5 == 0;
+    SubmitFrame(frameNumber, (unsigned int)std::lround(captureMs) + (repeat ? 5 : 0), repeat, frameNumber % 2 == 0 ? 40 : 60);
+  }
+  postedAsync.clear();
+  MoonlightInstance::VidDecCleanup();
+  CHECK_EQ(postedAsync.size(), 1u);
+  const std::string report = postedAsync.empty() ? std::string() : postedAsync.back();
+  const long hostFrameRate = JsonNumber(report, "hostFrameRateX100");
+  CHECK(hostFrameRate >= 5993 && hostFrameRate <= 5995);
+  CHECK_EQ(JsonNumber(report, "hostProcessingLatencyX10"), 50L);
+  if (hostFrameRate < 5993 || hostFrameRate > 5995) {
+    std::printf("  # got %s\n", report.c_str());
+  }
+  // A 60 Hz display reads 60.00 in its best window
+  StartStream(kPerformanceStatsOff);
+  nextFrame = 1;
+  SubmitFrames(60 * 65);
+  MoonlightInstance::VidDecCleanup();
+  CHECK_EQ(JsonNumber(postedAsync.empty() ? std::string() : postedAsync.back(), "hostFrameRateX100"), 6000L);
 }
 
 int main() {
@@ -351,5 +397,7 @@ int main() {
   test_support::RunTest("the frame intervals cover the last two stats windows", TheIntervalWindowsFollowTheStatsWindows);
   test_support::RunTest("the point of the graph counts the frames lost in the last window", TheGraphPointCountsTheFramesLostInTheLastWindow);
   test_support::RunTest("the end of the stream sends the totals of the session", TheEndOfTheStreamSendsTheSessionReport);
+  test_support::RunTest("the report of the session has the best host frame rate and the average host latency",
+    TheSessionReportHasTheBestHostFrameRateAndTheHostLatency);
   return test_support::Summary();
 }

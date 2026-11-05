@@ -10,6 +10,8 @@ namespace samsung { namespace wasm {
 using Seconds = std::chrono::duration<double>;
 using SessionId = uint32_t;
 enum class OperationResult { kSuccess, kFailed };
+// The errors of the media pipeline of SDK 1.39.4.7 (OnPipelineError), in the order of MediaPipelineError of its glue
+enum class MediaPipelineError { kConfigError, kDrmError, kGeneralError, kOutOfMemory, kUnknownError };
 enum class DecodingMode { kHardware, kSoftware };
 enum class SampleFormat { kS16 };
 enum class ChannelLayout { kStereo, k5_1, k7_1 };
@@ -41,6 +43,7 @@ class ElementaryMediaStreamSourceListener {
   virtual void OnSourceOpen() {}
   virtual void OnSourceOpenPending() {}
   virtual void OnSourceClosed() {}
+  virtual void OnPipelineError(MediaPipelineError, const char*) {}
 };
 class ElementaryMediaStreamSource {
  public:

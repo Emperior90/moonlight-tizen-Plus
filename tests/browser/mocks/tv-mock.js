@@ -11,6 +11,7 @@
 // `window.__MOCK_CONFIG__`, which a test can set with an init script and which wins over the query string:
 // - tv: one of the presets below (default 's90c'), which sets model, series, modelCode, panel, hdr and tizen
 // - model, series, modelCode: what getRealModel(), getModel() and getModelCode() return
+// - firmware: what getFirmware() returns; buildString: the build string of tizen.systeminfo.getCapability()
 // - panel: 'fhd', '4k' or '8k'; hdr: true/false (or 1/0); tizen: the platform version, e.g. '9.0'
 // - conn: 'ethernet', 'wifi' or 'unknown' ('none' is accepted as unknown, 'error' makes the API throw)
 // - wifiSignal: the Wi-Fi signal strength from 0 to 1, or 'nan' for the NaN that some TVs report
@@ -19,7 +20,7 @@
 //   A function throws when called, any other object (e.g. 'webapis.avinfo') is removed.
 // - wasmStartMs: how long the stub of the WebAssembly module takes to start, in milliseconds (default 50)
 // - wasmPlayer: the `tizentvwasm` object of the WASM player (see createWasmPlayerApi() below): 'none' (default, no
-//   tizentvwasm as in a desktop browser), 'ull', 'noUll', 'apiLevels', 'legacy', 'disagree' or 'throws'
+//   tizentvwasm as in a desktop browser), 'ull', 'noUll', 'noFeatures', 'apiLevels', 'legacy', 'disagree' or 'throws'
 // - codecs: what MediaSource.isTypeSupported() answers (see createMediaSource() below): 'all' (default), 'noAv1',
 //   'noAv1Main10', 'noLevel52', 'acceptsBogus', 'noH264', 'throws' or 'none' (no MediaSource)
 // - locale: the language of the TV that tizen.systeminfo.getPropertyValue('LOCALE') reports, in the (LANGUAGE)_(REGION)
@@ -32,13 +33,13 @@
 
   var TV_PRESETS = {
     // The tested Samsung S90C (55-inch OLED, 2023) after its update to Tizen 9.0: 4K panel with HDR
-    s90c: { model: 'QE55S90CAT', series: '23_PONTUSM_OLED', modelCode: '23_PONTUSM', panel: '4k', hdr: true, tizen: '9.0' },
+    s90c: { model: 'QE55S90CAT', series: '23_PONTUSM_OLED', modelCode: '23_PONTUSM', panel: '4k', hdr: true, tizen: '9.0', firmware: 'T-INFOLINK2023-1020' },
     // A generic 2022 UHD TV with HDR on Tizen 6.5
-    uhd: { model: 'QE55Q80BAT', series: '22_PONTUSM_QTV', modelCode: '22_PONTUSM', panel: '4k', hdr: true, tizen: '6.5' },
+    uhd: { model: 'QE55Q80BAT', series: '22_PONTUSM_QTV', modelCode: '22_PONTUSM', panel: '4k', hdr: true, tizen: '6.5', firmware: 'T-INFOLINK2022-1030' },
     // A 2020 Full HD TV without HDR on Tizen 5.5, the oldest platform the app installs on
-    fhd: { model: 'UE43T5300AU', series: '20_KANTM2_FHD', modelCode: '20_KANTM2', panel: 'fhd', hdr: false, tizen: '5.5' },
+    fhd: { model: 'UE43T5300AU', series: '20_KANTM2_FHD', modelCode: '20_KANTM2', panel: 'fhd', hdr: false, tizen: '5.5', firmware: 'T-INFOLINK2020-1050' },
     // A 2022 8K TV with HDR on Tizen 6.5
-    '8k': { model: 'QE65QN900BT', series: '22_PONTUSM_8K', modelCode: '22_PONTUSM', panel: '8k', hdr: true, tizen: '6.5' }
+    '8k': { model: 'QE65QN900BT', series: '22_PONTUSM_8K', modelCode: '22_PONTUSM', panel: '8k', hdr: true, tizen: '6.5', firmware: 'T-INFOLINK2022-1030' }
   };
 
   var DEFAULTS = {
@@ -54,11 +55,12 @@
     wasmStartMs: 50,
     wasmPlayer: 'none',
     codecs: 'all',
-    locale: ''
+    locale: '',
+    buildString: 'tizen-build-1.0'
   };
 
   var BOOLEAN_KEYS = ['hdr', 'forceGM'];
-  var CONFIG_KEYS = ['tv', 'model', 'series', 'modelCode', 'panel', 'hdr', 'tizen', 'conn', 'wifiSignal', 'forceGM', 'appVersion', 'ip', 'subnetMask', 'failApis', 'wasmStartMs', 'wasmPlayer', 'codecs', 'locale'];
+  var CONFIG_KEYS = ['tv', 'model', 'series', 'modelCode', 'panel', 'hdr', 'tizen', 'conn', 'wifiSignal', 'forceGM', 'appVersion', 'ip', 'subnetMask', 'failApis', 'wasmStartMs', 'wasmPlayer', 'codecs', 'locale', 'firmware', 'buildString'];
 
   // Convert a query string value to a boolean, accepting 1/0, true/false, yes/no and on/off
   function toBoolean(value) {
@@ -133,7 +135,7 @@
     return config;
   }
 
-  var WASM_PLAYER_MODES = ['none', 'ull', 'noUll', 'apiLevels', 'legacy', 'disagree', 'throws'];
+  var WASM_PLAYER_MODES = ['none', 'ull', 'noUll', 'noFeatures', 'apiLevels', 'legacy', 'disagree', 'throws'];
   var CODEC_MODES = ['all', 'noAv1', 'noAv1Main10', 'noLevel52', 'acceptsBogus', 'noH264', 'throws', 'none'];
 
   // Create the `tizentvwasm` object of the WASM player in the shapes that the glue code of Samsung's Emscripten SDK
@@ -141,6 +143,7 @@
   // illustrative, not read from real devices:
   // - 'ull': availableApis and isApiFeatureSupported(), with the feature 'ultra-low-latency'
   // - 'noUll': the same without that feature
+  // - 'noFeatures': the same with an empty list of features
   // - 'apiLevels': availableApis with API levels only and no isApiFeatureSupported(), as on older players
   // - 'legacy': only the classes of the player, without availableApis, from which the glue code derives API level 0
   //   (its media track has no session ID)
@@ -169,11 +172,11 @@
       api.availableApis = [sockets, { name: 'ElementaryMediaStreamSource', version: '1.1', apiLevels: [0, 1, 2, 3] }];
       return api;
     }
-    var features = ['base-emss', 'video-texture', 'software-decoding', 'construct-with-modes'];
+    var features = mode === 'noFeatures' ? [] : ['base-emss', 'video-texture', 'software-decoding', 'construct-with-modes'];
     if (mode === 'ull' || mode === 'disagree') {
       features.push('ultra-low-latency');
     }
-    var emss = { name: 'ElementaryMediaStreamSource', version: '1.4', apiLevels: mode === 'noUll' ? [0, 1, 2, 3, 4] : [0, 1, 2, 3, 4, 5], features: features };
+    var emss = { name: 'ElementaryMediaStreamSource', version: '1.4', apiLevels: mode === 'noUll' || mode === 'noFeatures' ? [0, 1, 2, 3, 4] : [0, 1, 2, 3, 4, 5], features: features };
     api.availableApis = [sockets, emss];
     api.isApiFeatureSupported = function(apiName, feature) {
       if (mode === 'disagree') {
@@ -291,6 +294,9 @@
         getModelCode: function() {
           return config.modelCode;
         },
+        getFirmware: function() {
+          return config.firmware;
+        },
         isUdPanelSupported: function() {
           return config.panel === '4k' || config.panel === '8k';
         },
@@ -370,6 +376,9 @@
       },
       systeminfo: {
         getCapability: function(key) {
+          if (key === 'http://tizen.org/system/build.string') {
+            return config.buildString;
+          }
           return String(key).indexOf('platform.version') >= 0 ? config.tizen : null;
         },
         getPropertyValue: function(property, onSuccess, onError) {

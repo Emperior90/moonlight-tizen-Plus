@@ -267,6 +267,90 @@ function detectWasmPlayerFeatures(tizentvwasmObject) {
   return result;
 }
 
+// The features of the WASM player that the glue code of Samsung's Emscripten SDK (in the built moonlight-wasm.js) knows
+const WASM_PLAYER_FEATURE_NAMES = Object.freeze(['base-emss', 'legacy-emss', 'video-texture', 'software-decoding',
+  ULTRA_LOW_LATENCY_FEATURE, 'construct-with-modes', 'hardware-with-fallback']);
+
+// The report of the WASM player for System information and the diagnostic log, so that a report of a problem names the
+// player of the TV. It's only shown and never decides a setting (detectWasmPlayerFeatures() decides the Ultra Low
+// Latency mode). The tizentvwasm object can be passed in for the tests, otherwise the global one of the TV is used.
+// Returns:
+// - version: the version of the ElementaryMediaStreamSource entry of tizentvwasm.availableApis, or null (no entry, or an
+//   older player without availableApis)
+// - features: the features as the glue code sees them, or null when it can't tell: the list of the entry; without
+//   isApiFeatureSupported() the ones that the glue code derives from the API levels instead ('base-emss', with
+//   'video-texture' from level 2 and 'software-decoding' from level 3); for an older player without availableApis
+//   'base-emss' or 'legacy-emss' (getLegacyApis() of the glue code, by the session ID of its media track)
+// - supported: what isApiFeatureSupported() answers for each feature of WASM_PLAYER_FEATURE_NAMES (true, false, or null
+//   when the call fails), or null without the function, for the log
+function detectWasmPlayerReport(tizentvwasmObject) {
+  const wasmApi = tizentvwasmObject !== undefined ? tizentvwasmObject : getTvGlobal('tizentvwasm');
+  const report = { version: null, features: null, supported: null };
+  if (!wasmApi || (typeof wasmApi !== 'object' && typeof wasmApi !== 'function')) {
+    return report;
+  }
+  try {
+    if (wasmApi.availableApis === undefined) {
+      if (wasmApi.ElementaryMediaStreamSource) {
+        const track = wasmApi.ElementaryMediaTrack;
+        const hasSessionId = !!(track && track.prototype && Object.prototype.hasOwnProperty.call(track.prototype, 'sessionId'));
+        report.features = [hasSessionId ? 'base-emss' : 'legacy-emss'];
+      }
+      return report;
+    }
+    const emssInfo = (toArrayOrNull(wasmApi.availableApis) || []).find(function(apiInfo) {
+      return apiInfo && apiInfo.name === EMSS_API_NAME;
+    });
+    if (emssInfo && (typeof emssInfo.version === 'string' || typeof emssInfo.version === 'number')) {
+      report.version = String(emssInfo.version);
+    }
+    if (wasmApi.isApiFeatureSupported === undefined) {
+      // The glue code replaces the features of the entry with ones derived from its API levels
+      const apiLevels = emssInfo ? toArrayOrNull(emssInfo.apiLevels) : null;
+      if (apiLevels) {
+        report.features = ['base-emss'].concat(apiLevels.indexOf(2) >= 0 ? ['video-texture'] : [],
+          apiLevels.indexOf(3) >= 0 ? ['software-decoding'] : []);
+      }
+      return report;
+    }
+    const features = emssInfo ? toArrayOrNull(emssInfo.features) : null;
+    report.features = features ? features.map(String) : null;
+    if (typeof wasmApi.isApiFeatureSupported === 'function') {
+      report.supported = {};
+      WASM_PLAYER_FEATURE_NAMES.forEach(function(feature) {
+        const answer = safeTvCall('support of the feature ' + feature + ' of the WASM player', function() {
+          return wasmApi.isApiFeatureSupported(EMSS_API_NAME, feature);
+        }, null);
+        report.supported[feature] = typeof answer === 'boolean' ? answer : null;
+      });
+    }
+  } catch (error) {
+    console.warn('%c[tv_profile.js, detectWasmPlayerReport]', 'color: purple;', 'Warning: Failed to read the report of the WASM player: ' + (error && error.message ? error.message : error));
+  }
+  return report;
+}
+
+// The firmware version of the TV, so that System information and the diagnostic log tie a report to a software update
+// of Samsung (the Ultra Low Latency mode, freezes and picture faults differ between firmware versions of one model).
+// It comes from webapis.productinfo.getFirmware(), or, where that fails, from the build string of the Tizen platform
+// (tizen.systeminfo). The API objects can be passed in for the tests. Returns { version, source }: the version, or null
+// when neither can be read, and where it came from: 'productinfo', 'build' or null.
+function detectFirmwareVersion(webApi, tizenApi) {
+  const text = function(value) {
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+  };
+  const firmware = text(safeTvCall('TV firmware version', function() {
+    return webApi.productinfo.getFirmware();
+  }, null));
+  if (firmware) {
+    return { version: firmware, source: 'productinfo' };
+  }
+  const build = text(safeTvCall('Tizen build string', function() {
+    return tizenApi.systeminfo.getCapability('http://tizen.org/system/build.string');
+  }, null));
+  return build ? { version: build, source: 'build' } : { version: null, source: null };
+}
+
 // The video codecs that wasmplayer.cpp offers to the TV when it adds the video track (the MIME types of
 // StartupVidDecSetup()), which the decoder check asks the TV about: H.264 at level 4.2, and HEVC and AV1 at level 5.1
 // and, for streams above the luma sample rate of level 5.1 (e.g. 4K at 90 or 120 FPS), at level 5.2.
@@ -371,6 +455,8 @@ function isAv1ReportedUnsupported(probe) {
 // - profile: the tested profile of this model (VERIFIED_PROFILES), or null
 // - modelYearHint: the model year suggested by the model code, or null (only shown, never used for a decision)
 // - wasmPlayer: whether the WASM player offers the Ultra Low Latency mode (detectWasmPlayerFeatures())
+// - wasmPlayerReport: the version and features of the WASM player (detectWasmPlayerReport()), only shown
+// - firmware: the firmware version of the TV and where it came from (detectFirmwareVersion()), only shown
 // - videoDecoders: the answers of the decoder check (probeVideoDecoders()), only shown and used for hints
 function detectTvCapabilities(apis) {
   const given = apis || {};
@@ -432,6 +518,8 @@ function detectTvCapabilities(apis) {
     profile: findVerifiedProfile(modelName, modelSeries),
     modelYearHint: getModelYearHint(modelCode),
     wasmPlayer: detectWasmPlayerFeatures(given.tizentvwasm),
+    wasmPlayerReport: detectWasmPlayerReport(given.tizentvwasm),
+    firmware: detectFirmwareVersion(webApi, tizenApi),
     videoDecoders: probeVideoDecoders(given.mediaSource),
   };
 }
@@ -891,6 +979,7 @@ if (typeof module === 'object' && module && module.exports) {
     LEGACY_SNAPSHOT_KEYS: LEGACY_SNAPSHOT_KEYS,
     EMSS_API_NAME: EMSS_API_NAME,
     ULTRA_LOW_LATENCY_FEATURE: ULTRA_LOW_LATENCY_FEATURE,
+    WASM_PLAYER_FEATURE_NAMES: WASM_PLAYER_FEATURE_NAMES,
     VIDEO_DECODER_PROBES: VIDEO_DECODER_PROBES,
     BOGUS_CODEC_PROBE: BOGUS_CODEC_PROBE,
     H264_CONTROL_PROBE: H264_CONTROL_PROBE,
@@ -899,6 +988,8 @@ if (typeof module === 'object' && module && module.exports) {
     findVerifiedProfile: findVerifiedProfile,
     getModelYearHint: getModelYearHint,
     detectWasmPlayerFeatures: detectWasmPlayerFeatures,
+    detectWasmPlayerReport: detectWasmPlayerReport,
+    detectFirmwareVersion: detectFirmwareVersion,
     probeVideoDecoders: probeVideoDecoders,
     getVideoDecoderSupport: getVideoDecoderSupport,
     isAv1ReportedUnsupported: isAv1ReportedUnsupported,
