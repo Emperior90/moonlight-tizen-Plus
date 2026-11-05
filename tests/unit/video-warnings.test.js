@@ -126,6 +126,7 @@ describe('resolution and frame rate warnings', () => {
     assert.equal(profile.resolutionFramerateWarningKey('3840:2160', 129, null), W.EXCEEDS_LEVEL_52);
     assert.equal(profile.resolutionFramerateWarningKey('3840:2160', 128, UHD), W.NEEDS_LEVEL_52);
     // So no resolution and frame rate of the menus gets this warning, on any TV
+    assert.deepEqual(FRAME_RATES, profile.offeredFrameRates(true), 'the frame rates of the menu');
     for (const caps of [S90C, UHD, FHD, UHD_8K]) {
       for (const res of RESOLUTIONS) {
         for (const fps of FRAME_RATES) {

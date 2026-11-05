@@ -126,6 +126,21 @@ test('the simulated TV of the tests reports the IDs, name and version of config.
   assert.equal(appInfo.version, xmlAttribute(xml, 'widget', 'version'));
 });
 
+test('the browser tests expect the version of config.xml wherever they name the app with its version', () => {
+  // A new version changes res/config.xml, the simulated TV and these expectations together (2.2.1 missed two files)
+  const version = xmlAttribute(read('res/config.xml'), 'widget', 'version');
+  const browserDir = path.join(REPO_ROOT, 'tests', 'browser');
+  const files = fs.readdirSync(browserDir).filter((name) => name.endsWith('.js'));
+  let found = 0;
+  files.forEach((name) => {
+    (read(path.join('tests', 'browser', name)).match(/Moonlight Plus v\d+\.\d+\.\d+/g) || []).forEach((match) => {
+      found++;
+      assert.equal(match, 'Moonlight Plus v' + version, name);
+    });
+  });
+  assert.ok(found > 0, 'the browser tests check the app version in System information');
+});
+
 // The support path of the fork: the Support dialog and the help texts of the app lead to
 // the guide and the issue tracker of Moonlight Plus, not to the wiki of upstream Moonlight Tizen
 const FORK_GUIDE_URL = 'https://github.com/Emperior90/moonlight-tizen-Plus/blob/HEAD/docs/GUIDE.md';

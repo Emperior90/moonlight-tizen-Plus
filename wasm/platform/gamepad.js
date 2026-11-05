@@ -226,6 +226,9 @@ const Controller = (function() {
   // of the menus sends them after reading every slot, also for a slot that another reader validated before (e.g. the
   // input test), so a listener never runs inside a reader such as getConnectedGamepads().
   function reportValidatedGamepads() {
+    if (validatedByInput.length === 0) {
+      return;
+    }
     const slots = validatedByInput;
     validatedByInput = [];
     slots.forEach((index) => {

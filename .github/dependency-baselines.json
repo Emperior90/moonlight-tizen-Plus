@@ -56,7 +56,7 @@
           "commits": ["fdf4fbe", "4535d48", "59846c4"],
           "decision": "taken",
           "in": "2.2.1",
-          "why": "Controllers that always report the timestamp 0 (Tizen 5.5) count as connected once their input changes (pull request #192 by podrezov). Moonlight Plus takes the baseline of a replaced controller at once and applies the same rule to the menus, System information, the button mapping and the input test."
+          "why": "Controllers that always report the timestamp 0 (Tizen 5.5) count as connected once their input changes (pull request #192 by podrezov). Moonlight Plus applies the same rule to the menus, System information, the button mapping and the input test."
         },
         {
           "commits": ["488c97d", "65c049d"],

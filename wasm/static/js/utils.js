@@ -368,7 +368,8 @@ function getConnectedGamepadMask() {
     // A controller that reports a timestamp of 0 (Tizen 5.5) counts once its input changed, by the evidence that
     // Controller.isRealGamepad() (gamepad.js) gathers while the menus poll, with the rule of PollGamepads() in
     // gamepad.cpp (as upstream fdf4fbe). It is asked for every slot, so an empty one forgets its evidence. Without
-    // gamepad.js (as in some unit tests) only a positive timestamp counts. So the mask counts what the menus counted.
+    // gamepad.js (as in some unit tests) only a positive timestamp counts. So the mask counts what the menus counted,
+    // plus a slot whose id showed a positive timestamp before, which _realGamepads keeps (as in 2.2.0).
     // The stream gathers its own evidence and announces such a controller with its first input in the stream; the PC
     // doesn't create controllers from this mask (Sunshine only passes it to the app as SUNSHINE_CLIENT_GCMAP).
     var validated = typeof Controller !== 'undefined' && Controller.isRealGamepad(gamepad, i);
