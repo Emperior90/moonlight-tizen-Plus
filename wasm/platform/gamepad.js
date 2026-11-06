@@ -427,8 +427,9 @@ const Controller = (function() {
         analyzeGamepad(connectedGamepads[i]);
       }
     }
-    // A slot that analyzeGamepad() validated, which only a gamepad whose index differs from its slot in the read can
-    // lead to, is told now rather than a poll later
+    // A slot validated after the report above (by a listener of that report or of the input that reads the gamepads
+    // again through getConnectedGamepads(), whose read can be newer, or by a gamepad whose index differs from its slot
+    // in the read) is told now rather than a poll later
     reportValidatedGamepads();
   }
 

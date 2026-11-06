@@ -98,7 +98,7 @@
   "Remove all PCs": "Remove all PCs",
   "Remove all saved PCs from the list": "Remove all saved PCs from the list",
   "Optimize game settings": "Optimize game settings",
-  "- Lets Sunshine switch the display of the PC to the stream resolution, so games render at it instead of being scaled. Does nothing while its display device configuration is off.": "- Lets Sunshine switch the display of the PC to the stream resolution, so games render at it instead of being scaled. Does nothing while its display device configuration is off.",
+  "- Lets Sunshine switch the display of the PC to the stream resolution, so games render at it instead of being scaled. Without its display device configuration, only app scripts can read it.": "- Lets Sunshine switch the display of the PC to the stream resolution, so games render at it instead of being scaled. Without its display device configuration, only app scripts can read it.",
   "Full color range": "Full color range",
   "- Keep it off: TVs expect the limited range, otherwise detail in dark and bright areas is lost. With HDR on, the stream always uses the limited range.": "- Keep it off: TVs expect the limited range, otherwise detail in dark and bright areas is lost. With HDR on, the stream always uses the limited range.",
   "Hide connection warnings": "Hide connection warnings",

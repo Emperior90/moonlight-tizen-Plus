@@ -33,7 +33,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 ### Changed
 
 - *Optimize game settings* is on for new installs, so games can render at the stream resolution
-- H.264 above 1080p asks the TV for level 5.1 first; the app warns before H.264 above 60 FPS
+- H.264 above 1080p at 60 FPS asks the TV for level 5.1 first; the app warns before H.264 above 60 FPS
 - With HDR on, the stream always uses the limited color range
 - The guide covers TV picture settings, HDR calibration, the network, error correction (FEC) and encoder settings
 
@@ -42,7 +42,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 - Smoother motion after packet loss, in games below the stream rate and with a PC display at 59.94 Hz
 - After a congested network recovers, the picture catches up at once instead of lagging for up to a second
 - When the PC ends a stream, its reason (e.g. an encoder error) is kept more often
-- On Tizen 5.5 TVs (2020), the first D-pad press no longer skips *Mouse emulation* or *Calibrate the sticks*
+- On Tizen 5.5 (2020), the first D-pad press of a controller that is already connected no longer skips a menu entry
 
 ## 2.2.1
 

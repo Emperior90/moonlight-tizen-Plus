@@ -111,12 +111,15 @@ function getSurroundAudioInfo(audioConfig) {
 const GFE_GAME_OPTIMIZATION_RESOLUTIONS = Object.freeze(['1280x720', '1920x1080', '3840x2160']);
 
 // The sops value of the launch and resume requests (1 or 0) for the setting 'Optimize game settings', the host and the
-// resolution and frame rate of the stream. Sunshine and the hosts based on it only use it to switch the display of the
-// host to the stream (display device configuration), and ignore it while that is off. GeForce Experience rewrites the
-// settings of the game instead, and sets them to 720p at 60 FPS when it doesn't know the resolution or gets more than
-// 60 FPS, which stays in the game after the stream. So, like moonlight-qt (session.cpp) and moonlight-android
-// (NvHTTP.java), the app asks GeForce Experience for it only at 720p, 1080p or 4K, at up to 60 FPS, and only at a
-// resolution among the display modes that the host lists, when it lists any.
+// resolution and frame rate of the stream. Sunshine and the hosts based on it only use it themselves to switch the
+// display of the host to the stream (display device configuration) and do nothing with it while that is off, but they
+// pass it to the commands of the app they start as SUNSHINE_CLIENT_ENABLE_SOPS (Apollo also as
+// APOLLO_CLIENT_ENABLE_SOPS). GeForce Experience rewrites the settings of the game instead, and sets them to 720p at
+// 60 FPS when it doesn't know the resolution or gets more than 60 FPS, which stays in the game after the stream. So,
+// combining the checks of moonlight-qt (a listed display mode, session.cpp) and moonlight-android (720p, 1080p or 4K,
+// NvHTTP.java), the app asks GeForce Experience for it only at 720p, 1080p or 4K, and only at a resolution among the
+// display modes that the host lists, when it lists any. Above 60 FPS, where those clients send a frame rate of 0, the
+// app turns it off.
 function getGameOptimizationsRequest(host, width, height, frameRate, enabled) {
   if (!enabled) {
     return 0;
@@ -5678,7 +5681,7 @@ function describeCheckAnswer(answer) {
 // Describe the answers of the decoder check (probeVideoDecoders() in tv_profile.js) as the lines of System information:
 // the codecs at the level that streams up to 1080p at 60 FPS with H.264 and up to 4K at 60 FPS with the other codecs use,
 // e.g. 'H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: No, AV1 Main10: No', H.264 at level 5.1, which H.264 streams above
-// 1080p use, and the codecs at level 5.2, which faster 4K streams use. Answers that don't count give one line.
+// 1080p at 60 FPS use, and the codecs at level 5.2, which faster 4K streams use. Answers that don't count give one line.
 function describeVideoDecoderProbe() {
   if (!videoDecoderProbe.reliable) {
     return [t('Video decoders (MediaSource check): %1$s', videoDecoderProbe.reason === 'unavailable'
