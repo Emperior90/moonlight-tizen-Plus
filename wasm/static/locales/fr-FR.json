@@ -44,7 +44,7 @@
   "Video bitrate": "Débit vidéo",
   "- Increase for better image quality or decrease to improve performance on slower connections.": "- Augmentez le débit pour améliorer la qualité d’image, ou réduisez-le pour de meilleures performances sur les connexions lentes.",
   "Video codec": "Codec vidéo",
-  "- HEVC suits Samsung TVs. H.264 only up to 1080p. AV1 needs an AV1 GPU and an AV1 TV.": "- Le HEVC convient aux téléviseurs Samsung. Le H.264 seulement jusqu’en 1080p. L’AV1 nécessite un GPU et un téléviseur compatibles AV1.",
+  "- HEVC suits Samsung TVs. H.264 above 1080p only up to 1440p at 60 FPS or 4K at 30 FPS, where the TV decodes level 5.1. AV1 needs an AV1 GPU and an AV1 TV.": "- Le HEVC convient aux téléviseurs Samsung. Le H.264 au-delà de 1080p seulement jusqu’en 1440p à 60 FPS ou en 4K à 30 FPS, si le téléviseur décode le niveau 5.1. L’AV1 nécessite un GPU et un téléviseur compatibles AV1.",
   "H.264": "H.264",
   "HEVC": "HEVC",
   "AV1": "AV1",

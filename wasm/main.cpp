@@ -483,7 +483,7 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
     // Offer HEVC with the same bit depth as a fallback. The negotiation checks AV1 first, so AV1 still wins
     // whenever the host offers it. Without this, a host that can't encode AV1 (or that re-probed its encoders
     // after the server info was fetched) would get a 4K H.264 stream without HDR, which the TV likely can't
-    // decode, because Samsung TVs generally decode H.264 only up to 1080p.
+    // decode, because Samsung TVs decode H.264 at most at level 5.1, which ends at 4K at 30 FPS.
     m_StreamConfig.supportedVideoFormats |= hdrMode ? VIDEO_FORMAT_H265_MAIN10 : VIDEO_FORMAT_H265;
     PostToJs(hdrMode ? "Selecting the fallback video format to: VIDEO_FORMAT_H265_MAIN10" : "Selecting the fallback video format to: VIDEO_FORMAT_H265");
   } else { // Unknown

@@ -430,6 +430,32 @@ test('H.264 above 60 FPS warns at any resolution, also when the frame rate chang
   }
 });
 
+test('H.264 at 4K shows the resolution warning once the frame rate goes back to 60 FPS, also through the unlock switch', async () => {
+  // The warning shows once per message: from 4K at 120 FPS (frame rate warning) to 4K at 60 FPS, which is above level
+  // 5.1, the resolution warning follows, whether 60 FPS is picked or 'Unlock all frame rates' is switched off
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
+  try {
+    const warnings = () => [count(app, H264_FRAME_RATE_WARNING), count(app, H264_RESOLUTION_WARNING)];
+    await pickFrameRate(app.page, 120);
+    await app.page.evaluate(() => updateVideoCodec('#h264', 'H264'));
+    assert.deepEqual(warnings(), [1, 0]);
+    await pickFrameRate(app.page, 60);
+    assert.deepEqual(warnings(), [1, 1]);
+    await pickFrameRate(app.page, 120);
+    assert.deepEqual(warnings(), [2, 1]);
+    await app.page.evaluate(() => {
+      document.querySelector('#unlockAllFpsBtn').MaterialSwitch.off();
+      handleUnlockAllFps();
+    });
+    const shown = await readVideoSettings(app.page);
+    assert.deepEqual([shown.codec, shown.resolution, shown.frameRate], ['H264', '3840:2160', '60']);
+    assert.deepEqual(warnings(), [2, 2]);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
 test('codec fallbacks of the module show a notice, and AV1 shows its reworded warning', async () => {
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
   try {

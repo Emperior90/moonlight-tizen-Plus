@@ -262,6 +262,31 @@ describe('H.264 warnings (case 7)', () => {
     assert.ok(Object.isFrozen(profile.H264_LEVEL_LIMITS) && Object.isFrozen(profile.H264_LEVEL_LIMITS['5.1']));
   });
 
+  test('the help text of the video codec names the H.264 limits of the warnings, and no longer ends H.264 at 1080p', () => {
+    const html = fs.readFileSync(path.join(REPO_ROOT, 'wasm', 'index.html'), 'utf8');
+    const help = /<label data-i18n="Video codec">Video codec<\/label>\s*<span class="mdl-list__item-text-body" data-i18n="([^"]+)">/.exec(html);
+    assert.ok(help, 'the help text of the video codec');
+    assert.ok(help[1].indexOf('H.264 above 1080p only up to 1440p at 60 FPS or 4K at 30 FPS, where the TV decodes level 5.1.') >= 0, help[1]);
+    assert.doesNotMatch(help[1], /only up to 1080p/);
+    // The limits that the text names: within level 5.1 up to 1440p at 60 FPS and 4K at 30 FPS, above it at 4K at 60 FPS
+    const exceeds51 = (width, height, fps) => profile.exceedsH264Level(width, height, fps, '5.1');
+    assert.deepEqual([exceeds51(2560, 1440, 60), exceeds51(3840, 2160, 30), exceeds51(3840, 2160, 60)], [false, false, true]);
+  });
+
+  test('a stream exactly at a limit of a level is within it, one macroblock more is above it', () => {
+    const cases = [
+      // Level 4.2: 8704 macroblocks per frame (128 x 68), 522240 per second (1080p, 8160 macroblocks, at 64 FPS)
+      [2048, 1088, 30, '4.2', false], [2064, 1088, 30, '4.2', true],
+      [1920, 1080, 64, '4.2', false], [1920, 1080, 65, '4.2', true],
+      // Level 5.1: 36864 macroblocks per frame (256 x 144), 983040 per second (10240 macroblocks at 96 FPS)
+      [4096, 2304, 26, '5.1', false], [4112, 2304, 26, '5.1', true],
+      [2048, 1280, 96, '5.1', false], [2048, 1280, 97, '5.1', true],
+    ];
+    for (const [width, height, fps, level, expected] of cases) {
+      assert.equal(profile.exceedsH264Level(width, height, fps, level), expected, width + 'x' + height + '@' + fps + ' ' + level);
+    }
+  });
+
   test('above 60 FPS H.264 warns on every TV at every resolution, whatever the decoder check says', () => {
     for (const tv of ['s90c', 'uhd', 'fhd', '8k']) {
       for (const codecs of ['all', 'noH264Level51', 'none']) {

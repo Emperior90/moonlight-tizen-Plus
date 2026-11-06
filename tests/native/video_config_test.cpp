@@ -33,6 +33,15 @@ static void LargerOrFasterStreamsAreAboveLevel42() {
   CHECK_EQ(kH264Level42MaxMacroblocksPerSecond, 522240u);
 }
 
+static void TheLimitsOfLevel42ThemselvesStayAtLevel42() {
+  // A frame of exactly 8704 macroblocks (128 x 68) is within level 4.2, one more column of macroblocks is above it
+  CHECK(!ExceedsH264Level42(2048, 1088, 30));
+  CHECK(ExceedsH264Level42(2064, 1088, 30));
+  // 1080p (8160 macroblocks) at 64 FPS is exactly 522240 macroblocks per second, at 65 FPS it is above
+  CHECK(!ExceedsH264Level42(1920, 1080, 64));
+  CHECK(ExceedsH264Level42(1920, 1080, 65));
+}
+
 static void InvalidValuesAreNotAboveLevel42() {
   CHECK(!ExceedsH264Level42(0, 1080, 60));
   CHECK(!ExceedsH264Level42(3840, 0, 60));
@@ -46,10 +55,13 @@ static void FullRangeAppliesOnlyWhileHdrIsOff() {
   CHECK_EQ(GetStreamColorRange(true, false, VIDEO_FORMAT_H264), COLOR_RANGE_FULL);
   CHECK_EQ(GetStreamColorRange(true, false, VIDEO_FORMAT_AV1_MAIN8 | VIDEO_FORMAT_H265), COLOR_RANGE_FULL);
   CHECK_EQ(GetStreamColorRange(false, false, VIDEO_FORMAT_H265), COLOR_RANGE_LIMITED);
+  CHECK_EQ(GetStreamColorRange(true, false, VIDEO_FORMAT_H265_MAIN10), COLOR_RANGE_FULL);
+  CHECK_EQ(GetStreamColorRange(true, false, VIDEO_FORMAT_AV1_MAIN10 | VIDEO_FORMAT_H265_MAIN10), COLOR_RANGE_FULL);
+  CHECK_EQ(GetStreamColorRange(false, false, VIDEO_FORMAT_H265_MAIN10), COLOR_RANGE_LIMITED);
   // HDR on with a 10-bit format, also with the HEVC Main10 fallback of AV1: always the limited range
   CHECK_EQ(GetStreamColorRange(true, true, VIDEO_FORMAT_H265_MAIN10), COLOR_RANGE_LIMITED);
   CHECK_EQ(GetStreamColorRange(true, true, VIDEO_FORMAT_AV1_MAIN10 | VIDEO_FORMAT_H265_MAIN10), COLOR_RANGE_LIMITED);
-  CHECK_EQ(GetStreamColorRange(true, true, VIDEO_FORMAT_H265_MAIN10), COLOR_RANGE_LIMITED);
+  CHECK_EQ(GetStreamColorRange(true, true, VIDEO_FORMAT_AV1_MAIN10), COLOR_RANGE_LIMITED);
   CHECK_EQ(GetStreamColorRange(false, true, VIDEO_FORMAT_AV1_MAIN10), COLOR_RANGE_LIMITED);
   // HDR on without a 10-bit format (H.264, which has no HDR): the switch decides, as before
   CHECK_EQ(GetStreamColorRange(true, true, VIDEO_FORMAT_H264), COLOR_RANGE_FULL);
@@ -59,6 +71,7 @@ static void FullRangeAppliesOnlyWhileHdrIsOff() {
 int main() {
   test_support::RunTest("H.264 streams up to 1080p at 60 FPS stay at level 4.2", StreamsUpTo1080pAt60FpsStayAtLevel42);
   test_support::RunTest("larger or faster H.264 streams are above level 4.2", LargerOrFasterStreamsAreAboveLevel42);
+  test_support::RunTest("a stream exactly at a limit of level 4.2 stays at level 4.2", TheLimitsOfLevel42ThemselvesStayAtLevel42);
   test_support::RunTest("invalid sizes and frame rates are not above level 4.2", InvalidValuesAreNotAboveLevel42);
   test_support::RunTest("Full color range applies only while HDR is off", FullRangeAppliesOnlyWhileHdrIsOff);
   return test_support::Summary();

@@ -6158,7 +6158,8 @@ function loadStoredSettings() {
         }
       });
     } else {
-      // Set the default state to HEVC, because Samsung TVs generally decode H.264 only up to 1080p
+      // Set the default state to HEVC, because Samsung TVs decode H.264 above 1080p only at level 5.1, which ends at
+      // 1440p at 60 FPS or 4K at 30 FPS, and only where the TV decodes level 5.1 at all
       $('#selectCodec').text($('#hevc').text()).attr('data-value', optimalSettings.videoCodec).data('value', optimalSettings.videoCodec);
     }
     // Warn when a previously stored H.264 codec meets a resolution or frame rate that the TV may not decode with it, which
