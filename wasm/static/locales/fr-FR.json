@@ -98,7 +98,7 @@
   "Remove all PCs": "Supprimer tous les PC",
   "Remove all saved PCs from the list": "Supprimer de la liste tous les PC enregistrés",
   "Optimize game settings": "Optimiser les paramètres des jeux",
-  "- Lets Sunshine switch the display of the PC to the stream resolution, so games render at it instead of being scaled. Without its display device configuration, only app scripts can read it.": "- Permet à Sunshine de passer l’écran du PC à la résolution du streaming, pour que les jeux s’y affichent au lieu d’être mis à l’échelle. Sans sa configuration du périphérique d’affichage, seuls les scripts d’applications lisent ce paramètre.",
+  "- Lets Sunshine switch the display of the PC to the stream resolution, so games render at it instead of being scaled. Without its display device configuration, only app scripts can read it.": "- Permet à Sunshine de passer l’écran du PC à la résolution du streaming, pour que les jeux s’y affichent au lieu d’être mis à l’échelle. Sans sa configuration du périphérique d’affichage, seuls les scripts d’applications peuvent lire ce paramètre.",
   "Full color range": "Plage de couleurs complète",
   "- Keep it off: TVs expect the limited range, otherwise detail in dark and bright areas is lost. With HDR on, the stream always uses the limited range.": "- Laissez-la désactivée : les téléviseurs attendent la plage limitée, sinon des détails se perdent dans les zones sombres et claires. Avec le HDR activé, le streaming utilise toujours la plage limitée.",
   "Hide connection warnings": "Masquer les avertissements de connexion",

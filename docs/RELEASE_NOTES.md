@@ -1,5 +1,5 @@
 **New since 2.2.1:**
-- Smoother motion over Wi-Fi, also after packet loss and in games below the stream rate
+- Smoother motion after packet loss and in games below the stream rate
 - *Refresh picture* in the Stream Menu clears a broken picture
 - Better H.264 above 1080p; System information shows the TV firmware
 - A longer guide: TV picture, HDR calibration, network and FEC

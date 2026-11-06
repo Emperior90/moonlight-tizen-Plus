@@ -18,7 +18,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ## 2.3.0
 
-*Pre-release, in testing.* Smoother motion over Wi-Fi, a way to refresh a broken picture, and a guide for the best picture.
+*Pre-release, in testing.* Smoother motion after packet loss, a way to refresh a broken picture, and a guide for the best picture.
 
 > **Install:** by hand over 2.2.1 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >

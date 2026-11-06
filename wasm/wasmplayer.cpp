@@ -172,15 +172,15 @@ static constexpr int kArrivalHistory = 16;
 // A frame whose capture time repeats the one before, or steps back, and that arrives more than
 // kRepeatedStampEarlyFrames frame durations earlier than the usual arrival time for its frame duration is the same
 // image encoded again, sent right after it: it takes 1 ms instead of a frame duration (another frame on its tick takes
-// a frame duration, as a single frame taken for 1 ms would make every later frame look late by a frame duration). So
-// does a frame after frames lost on the network whose capture time adds less than half a frame duration to the lost
-// frames and that arrives that much earlier than the usual arrival time for its timestamp, or that is a keyframe
-// whenever it arrives: the keyframe that a host without the duplicate mark of Sunshine (no host processing latency)
-// encodes again from the previous image after a loss, stamped with the end of the send of the frame before (a keyframe
-// of a new image adds about a frame duration). It is a duplicate, and the frames lost before it count for the next
-// frame (taken for a frame of the grid, it put the timestamps a frame ahead of the host after every loss: 17 instead
-// of 1.5 per 1000 frames off their refresh at 60 FPS with 1% lost; a large keyframe that came late held every later
-// frame a frame duration longer until the next window, 20 instead of 10 per 1000).
+// a frame duration, as a single frame taken for 1 ms would make every later frame look late by a frame duration). Much
+// the same goes for a frame after frames lost on the network whose capture time adds less than half a frame duration
+// to the lost frames and that arrives that much earlier than the usual arrival time for its timestamp, or that is a
+// keyframe whenever it arrives: the keyframe that a host without the duplicate mark of Sunshine (no host processing
+// latency) encodes again from the previous image after a loss, stamped with the end of the send of the frame before (a
+// keyframe of a new image adds about a frame duration). It is a duplicate: it takes only the frames lost before it,
+// without a frame duration of its own (taken for a frame of the grid, it put the timestamps a frame ahead of the host
+// after every loss: 17 instead of 1.5 per 1000 frames off their refresh at 60 FPS with 1% lost; a large keyframe that
+// came late held every later frame a frame duration longer until the next window, 20 instead of 10 per 1000).
 static constexpr double kRepeatedStampEarlyFrames = 0.6;
 // Capture times more than kHostOffsetResetFrames frame durations below the top of the range: the timestamps ran ahead
 // of the host by whole frames (e.g. an earlier frame encoded again was lost, or the clock of the host stepped back), so
@@ -1160,9 +1160,9 @@ static double ArrivalReferenceMs() {
 // the stream): the timestamps then follow them directly, kHostTimeLeadMs behind them, counting only the whole frame
 // durations of each interval, until an interval brings them back onto the grid. The range follows a host display at
 // 59.94 Hz, and at 60.06 Hz in a 120 FPS stream. A capture time that repeats the one before or steps back, from a frame
-// that arrives right after it, is the same image encoded again and takes 1 ms; a duplicate of Sunshine, or an unmarked
-// one after frames lost on the network (see kRepeatedStampEarlyFrames), takes 1 ms, and the next frame goes on from the
-// frame before it.
+// that arrives right after it, is the same image encoded again and takes 1 ms; a duplicate of Sunshine takes 1 ms, and
+// one after frames lost on the network (also an unmarked one, see kRepeatedStampEarlyFrames) only the lost frames,
+// without a frame duration of its own; the next frame goes on from it by one frame duration.
 // Returns whether the arrival time of the frame counts for the window of the frame pacer: not when the frame isn't a
 // new image on the grid (a duplicate, or a capture time less than half a frame duration after the one before) and
 // arrived more than half a frame duration later than the usual arrival time for its timestamp, e.g. a duplicate that
@@ -1211,10 +1211,10 @@ static bool UpdatePresentationTimestamp(uint32_t hostTimeMs, uint32_t missingFra
       ResetHostOffset();
       referenceMs = 0;
     } else if (duplicate) {
-      // A duplicate isn't a frame of the grid: 1 ms after the timestamp before, and the frames lost before it count
-      // for the next frame. Its capture time is ignored. The offset stays as it is: the capture time of the next frame
-      // already contains the lost frames, and a lower offset (the reference of the range while the timestamps follow
-      // the capture times) counted them a second time, as ticks the host skipped.
+      // A duplicate isn't a frame of the grid: it takes the frames lost before it, or 1 ms where none were lost, and no
+      // frame duration of its own. Its capture time is ignored. The offset stays as it is: the capture time of the next
+      // frame already contains the lost frames, and a lower offset (the reference of the range while the timestamps
+      // follow the capture times) counted them a second time, as ticks the host skipped.
       s_GridPtsMs += lostMs;
       s_PtsMs = std::max(s_PtsMs + 1.0, s_GridPtsMs);
     } else {
