@@ -2,6 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
+- [2.3.0](#230): pre-release, smoother motion, a picture refresh in the Stream Menu and a longer guide
 - [2.2.1](#221): 2026-11-05, no more 144 FPS, and controllers that work on 2020 TVs
 - [2.2.0](#220): 2026-11-03, a tidier app with fixes and a smaller download
 - [2.1.0](#210): 2026-10-30, five languages and new tools in the Stream Menu
@@ -14,6 +15,35 @@ What changed in each version of Moonlight Plus, in short, newest first.
 **Which file?** `Moonlight-ForceGM.wgt` on Tizen 9 and newer, `Moonlight.wgt` on Tizen 5.5 to 8.
 
 **TV refuses an update?** If the author certificate doesn't match, uninstall the old app first; this loses its settings and pairing.
+
+## 2.3.0
+
+*Pre-release, in testing.* Smoother motion after packet loss, a way to refresh a broken picture, and a guide for the best picture.
+
+> **Install:** by hand over 2.2.1 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
+>
+> **Tested:** with simulated TVs, hosts and controllers only; the new frame pacing still needs a test on a TV.
+
+### New
+
+- *Refresh picture* in the Stream Menu clears a broken picture with one new keyframe, without ending the stream
+- System information shows the TV firmware and the version of its video player
+- The last-session report adds the PC frame rate and encode time, with hints for 59.94 Hz or a slow encoder
+
+### Changed
+
+- *Optimize game settings* is on for new installs, so games can render at the stream resolution
+- H.264 above 1080p at 60 FPS asks the TV for level 5.1 first; the app warns before H.264 above 60 FPS
+- With HDR on, the stream always uses the limited color range
+- The guide covers TV picture settings, HDR calibration, the network, error correction (FEC) and encoder settings
+
+### Fixed
+
+- Smoother motion after packet loss, in games below the stream rate and with a PC display at 59.94 Hz
+- After a network delay at 120 FPS, the picture no longer freezes briefly while it catches up
+- When the PC ends a stream, its reason (e.g. an encoder error) is kept more often
+- At 90 and 120 FPS, a short stall of the TV player no longer costs a keyframe
+- On Tizen 5.5 (2020), the first D-pad press of a controller that is already connected no longer skips a menu entry
 
 ## 2.2.1
 

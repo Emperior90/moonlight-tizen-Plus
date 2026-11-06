@@ -90,6 +90,7 @@ describe('detectWasmPlayerFeatures()', () => {
       none: { ultraLowLatency: 'unknown', source: 'none', apiLevels: null },
       ull: { ultraLowLatency: 'yes', source: 'features', apiLevels: [0, 1, 2, 3, 4, 5] },
       noUll: { ultraLowLatency: 'no', source: 'features', apiLevels: [0, 1, 2, 3, 4] },
+      noFeatures: { ultraLowLatency: 'no', source: 'features', apiLevels: [0, 1, 2, 3, 4] },
       // Without isApiFeatureSupported() the glue code derives features from the API levels, never the Ultra Low Latency mode
       apiLevels: { ultraLowLatency: 'no', source: 'apiLevels', apiLevels: [0, 1, 2, 3] },
       // An older player without availableApis: the glue code describes it by its classes (API level 0 without the session
@@ -202,6 +203,95 @@ describe('detectWasmPlayerFeatures()', () => {
   });
 });
 
+describe('detectWasmPlayerReport()', () => {
+  // What isApiFeatureSupported() of the simulated player answers for the features of the glue code
+  const supported = (listed) => Object.fromEntries(profile.WASM_PLAYER_FEATURE_NAMES.map((name) => [name, listed.indexOf(name) >= 0]));
+
+  test('reports the version and the features of the WASM player the way its glue code sees them', () => {
+    const base = ['base-emss', 'video-texture', 'software-decoding', 'construct-with-modes'];
+    const expected = {
+      none: { version: null, features: null, supported: null },
+      ull: { version: '1.4', features: base.concat('ultra-low-latency'), supported: supported(base.concat('ultra-low-latency')) },
+      noUll: { version: '1.4', features: base, supported: supported(base) },
+      noFeatures: { version: '1.4', features: [], supported: supported([]) },
+      // Without isApiFeatureSupported() the glue code derives the features from the API levels (0 to 3)
+      apiLevels: { version: '1.1', features: ['base-emss', 'video-texture', 'software-decoding'], supported: null },
+      // An older player without availableApis: the feature that the glue code gives it by its classes
+      legacy: { version: null, features: ['legacy-emss'], supported: null },
+      // The list names the Ultra Low Latency mode while isApiFeatureSupported() denies every feature, which the log shows
+      disagree: { version: '1.4', features: base.concat('ultra-low-latency'), supported: supported([]) },
+      throws: { version: null, features: null, supported: null },
+    };
+    assert.deepEqual(Object.keys(expected).sort(), tvMock.WASM_PLAYER_MODES.slice().sort());
+    for (const mode of Object.keys(expected)) {
+      const { result, warnings } = withWarnings(() => profile.detectWasmPlayerReport(wasmPlayerOf(mode)));
+      assert.deepEqual(result, expected[mode], mode);
+      assert.equal(warnings.length, mode === 'throws' ? 1 : 0, mode + ': ' + JSON.stringify(warnings));
+    }
+    assert.ok(profile.WASM_PLAYER_FEATURE_NAMES.every((name) => typeof name === 'string'));
+    assert.ok(Object.isFrozen(profile.WASM_PLAYER_FEATURE_NAMES));
+  });
+
+  test('handles the other shapes of the player of a TV', () => {
+    // An older player whose media track has a session ID is API level 1 with 'base-emss'
+    const ElementaryMediaTrack = function() {};
+    ElementaryMediaTrack.prototype.sessionId = 0;
+    assert.deepEqual(profile.detectWasmPlayerReport({ ElementaryMediaStreamSource: function() {}, ElementaryMediaTrack }),
+      { version: null, features: ['base-emss'], supported: null });
+    // Without the media source class it can't stream, and nothing is known
+    assert.deepEqual(profile.detectWasmPlayerReport({}), { version: null, features: null, supported: null });
+    // Array-like lists and a numeric version, and a check that throws for one feature
+    const arrayLike = {
+      availableApis: { length: 1, 0: { name: 'ElementaryMediaStreamSource', version: 2, apiLevels: [1], features: { length: 1, 0: 'base-emss' } } },
+      isApiFeatureSupported: (api, feature) => {
+        if (feature === 'video-texture') {
+          throw new Error('Simulated failure');
+        }
+        return feature === 'base-emss';
+      },
+    };
+    const { result, warnings } = withWarnings(() => profile.detectWasmPlayerReport(arrayLike));
+    assert.equal(result.version, '2');
+    assert.deepEqual(result.features, ['base-emss']);
+    assert.equal(result.supported['base-emss'], true);
+    assert.equal(result.supported['video-texture'], null);
+    assert.equal(result.supported['ultra-low-latency'], false);
+    assert.equal(warnings.length, 1);
+    // Without isApiFeatureSupported() each feature that the glue code derives needs its own API level: 'video-texture'
+    // level 2 and 'software-decoding' level 3, while levels 0 and 1 only give 'base-emss'
+    const levels = (apiLevels) => profile.detectWasmPlayerReport({ availableApis: [{ name: 'ElementaryMediaStreamSource', version: '1.0', apiLevels }] });
+    assert.deepEqual(levels([0, 1]).features, ['base-emss']);
+    assert.deepEqual(levels([0, 1, 2]).features, ['base-emss', 'video-texture']);
+    assert.deepEqual(levels([1, 3]).features, ['base-emss', 'software-decoding']);
+    // An answer of isApiFeatureSupported() that is no boolean is unknown in the log, not taken as it is
+    for (const answer of ['yes', 1, 0, undefined, {}]) {
+      const strange = profile.detectWasmPlayerReport({ availableApis: [{ name: 'ElementaryMediaStreamSource', version: '1.4', apiLevels: [1], features: ['base-emss'] }],
+        isApiFeatureSupported: () => answer });
+      assert.deepEqual(strange.supported, Object.fromEntries(profile.WASM_PLAYER_FEATURE_NAMES.map((name) => [name, null])), String(answer));
+    }
+    // An entry without features, and a list without the entry of the WASM player
+    assert.deepEqual(profile.detectWasmPlayerReport({ availableApis: [{ name: 'ElementaryMediaStreamSource', version: '1.0', apiLevels: [1] }], isApiFeatureSupported: 1 }),
+      { version: '1.0', features: null, supported: null });
+    assert.deepEqual(profile.detectWasmPlayerReport({ availableApis: [{ name: 'TizenSockets', version: '1.0', apiLevels: [1], features: [] }] }),
+      { version: null, features: null, supported: null });
+    // The list of the TV stays as it is
+    const player = wasmPlayerOf('ull');
+    const before = JSON.stringify(player.availableApis);
+    profile.detectWasmPlayerReport(player).features.push('extra');
+    assert.equal(JSON.stringify(player.availableApis), before);
+  });
+
+  test('is only shown: the game mode and the optimal settings are the same with any report', () => {
+    const apis = tvMock.createTizenApis(tvMock.parseConfig('', { tv: 's90c' }), (callback) => callback());
+    const caps = profile.detectTvCapabilities(Object.assign({}, apis, { tizentvwasm: wasmPlayerOf('ull'), mediaSource: null }));
+    const withoutReport = Object.assign({}, caps, { wasmPlayerReport: { version: null, features: null, supported: null } });
+    for (const conn of CONNECTIONS) {
+      assert.deepEqual(profile.deriveOptimalSettings(caps, conn), profile.deriveOptimalSettings(withoutReport, conn), conn);
+    }
+    assert.equal(profile.isGameModeUnavailable(caps), profile.isGameModeUnavailable(withoutReport));
+  });
+});
+
 describe('the game mode with the answer of the WASM player', () => {
   test('getGameModeDefault() keeps the rules by Tizen version unless the WASM player says it clearly', () => {
     const expected = {
@@ -234,9 +324,9 @@ describe('the game mode with the answer of the WASM player', () => {
   test('the S90C keeps its optimal settings with every answer, and the game mode stays off', () => {
     const caps = profile.detectTvCapabilities(Object.assign(tvMock.createTizenApis(tvMock.parseConfig('', { tv: 's90c' }), (callback) => callback()), { tizentvwasm: null, mediaSource: null }));
     const golden = {
-      ethernet: { resolution: '3840:2160', frameRate: 60, videoCodec: 'HEVC', hdrMode: true, bitrate: 75, unlockAllFps: true, gameMode: false, framePacing: true, fullRange: false },
-      wifi: { resolution: '3840:2160', frameRate: 60, videoCodec: 'HEVC', hdrMode: true, bitrate: 100, unlockAllFps: true, gameMode: false, framePacing: true, fullRange: false },
-      unknown: { resolution: '3840:2160', frameRate: 60, videoCodec: 'HEVC', hdrMode: true, bitrate: 80, unlockAllFps: true, gameMode: false, framePacing: true, fullRange: false },
+      ethernet: { resolution: '3840:2160', frameRate: 60, videoCodec: 'HEVC', hdrMode: true, bitrate: 75, unlockAllFps: true, gameMode: false, framePacing: true, fullRange: false, optimizeGames: true },
+      wifi: { resolution: '3840:2160', frameRate: 60, videoCodec: 'HEVC', hdrMode: true, bitrate: 100, unlockAllFps: true, gameMode: false, framePacing: true, fullRange: false, optimizeGames: true },
+      unknown: { resolution: '3840:2160', frameRate: 60, videoCodec: 'HEVC', hdrMode: true, bitrate: 80, unlockAllFps: true, gameMode: false, framePacing: true, fullRange: false, optimizeGames: true },
     };
     for (const mode of ['none', 'ull', 'disagree']) {
       const withPlayer = Object.assign({}, caps, { wasmPlayer: profile.detectWasmPlayerFeatures(wasmPlayerOf(mode)) });
@@ -274,6 +364,7 @@ describe('probeVideoDecoders()', () => {
       noLevel52: {
         reliable: true, reason: 'ok', answers: Object.assign(allCodecs('yes'), { 'HEVC 5.2': 'no', 'HEVC Main10 5.2': 'no', 'AV1 5.2': 'no', 'AV1 Main10 5.2': 'no' }),
       },
+      noH264Level51: { reliable: true, reason: 'ok', answers: Object.assign(allCodecs('yes'), { 'H.264 5.1': 'no' }) },
       acceptsBogus: { reliable: false, reason: 'bogusAccepted', answers: allCodecs('unknown') },
       noH264: { reliable: false, reason: 'h264Rejected', answers: allCodecs('unknown') },
       throws: { reliable: false, reason: 'controlFailed', answers: allCodecs('unknown') },
@@ -295,7 +386,7 @@ describe('probeVideoDecoders()', () => {
 
   test('asks once per MIME type, and an answer that fails or is no boolean counts as unknown', () => {
     const table = {
-      'avc1.64002A': true, 'hev1.1.6.L153.B0': true, 'hev1.1.6.L156.B0': 'probably', 'hev1.2.4.L153.B0': true,
+      'avc1.64002A': true, 'avc1.640033': false, 'hev1.1.6.L153.B0': true, 'hev1.1.6.L156.B0': 'probably', 'hev1.2.4.L153.B0': true,
       'hev1.2.4.L156.B0': new Error('Simulated failure'), 'av01.0.13M.08': false, 'av01.0.14M.08': false,
       'av01.0.13M.10': false, 'av01.0.14M.10': undefined, 'bogus.0.0': false,
     };
@@ -303,7 +394,7 @@ describe('probeVideoDecoders()', () => {
     const { result, warnings } = withWarnings(() => profile.probeVideoDecoders(mediaSource));
     assert.equal(result.reliable, true);
     assert.deepEqual(answersByCodec(result), {
-      'H.264 4.2': 'yes', 'HEVC 5.1': 'yes', 'HEVC 5.2': 'unknown', 'HEVC Main10 5.1': 'yes', 'HEVC Main10 5.2': 'unknown',
+      'H.264 4.2': 'yes', 'H.264 5.1': 'no', 'HEVC 5.1': 'yes', 'HEVC 5.2': 'unknown', 'HEVC Main10 5.1': 'yes', 'HEVC Main10 5.2': 'unknown',
       'AV1 5.1': 'no', 'AV1 5.2': 'no', 'AV1 Main10 5.1': 'no', 'AV1 Main10 5.2': 'unknown',
     });
     // The H.264 probe is also the check that H.264 is accepted, and still asked only once
@@ -314,7 +405,7 @@ describe('probeVideoDecoders()', () => {
 
   test('a check that fails or answers no boolean makes every answer unknown', () => {
     const base = {
-      'avc1.64002A': true, 'hev1.1.6.L153.B0': true, 'hev1.1.6.L156.B0': true, 'hev1.2.4.L153.B0': true, 'hev1.2.4.L156.B0': true,
+      'avc1.64002A': true, 'avc1.640033': true, 'hev1.1.6.L153.B0': true, 'hev1.1.6.L156.B0': true, 'hev1.2.4.L153.B0': true, 'hev1.2.4.L156.B0': true,
       'av01.0.13M.08': false, 'av01.0.14M.08': false, 'av01.0.13M.10': false, 'av01.0.14M.10': false, 'bogus.0.0': false,
     };
     for (const change of [{ 'bogus.0.0': new Error('Simulated failure') }, { 'bogus.0.0': 'no' }, { 'avc1.64002A': new Error('Simulated failure') }, { 'avc1.64002A': 'maybe' }]) {
@@ -344,14 +435,15 @@ describe('probeVideoDecoders()', () => {
   test('getVideoDecoderSupport() answers unknown for a codec or level that is not probed', () => {
     const probe = profile.probeVideoDecoders(mediaSourceOf('all'));
     assert.equal(profile.getVideoDecoderSupport(probe, 'HEVC Main10', '5.1'), 'yes');
-    assert.equal(profile.getVideoDecoderSupport(probe, 'H.264', '5.1'), 'unknown');
+    assert.equal(profile.getVideoDecoderSupport(probe, 'H.264', '5.1'), 'yes');
+    assert.equal(profile.getVideoDecoderSupport(probe, 'H.264', '5.2'), 'unknown');
     assert.equal(profile.getVideoDecoderSupport(probe, 'VP9', '5.1'), 'unknown');
     assert.equal(profile.getVideoDecoderSupport(null, 'HEVC', '5.1'), 'unknown');
   });
 
   test('the AV1 note needs counting answers and a no for AV1 in 8 and in 10 bits', () => {
     const noteFor = (mode) => profile.isAv1ReportedUnsupported(withWarnings(() => profile.probeVideoDecoders(mediaSourceOf(mode))).result);
-    const expected = { all: false, noAv1: true, noAv1Main10: false, noLevel52: false, acceptsBogus: false, noH264: false, throws: false, none: false };
+    const expected = { all: false, noAv1: true, noAv1Main10: false, noLevel52: false, noH264Level51: false, acceptsBogus: false, noH264: false, throws: false, none: false };
     for (const mode of tvMock.CODEC_MODES) {
       assert.equal(noteFor(mode), expected[mode], mode);
     }
@@ -386,6 +478,15 @@ describe('the codecs of the checks and of the native code', () => {
     assert.deepEqual(offered.sort((a, b) => sortKey(a).localeCompare(sortKey(b))), plainProbes.sort((a, b) => sortKey(a).localeCompare(sortKey(b))));
     assert.ok(profile.VIDEO_DECODER_PROBES.some((entry) => entry.mimeType === profile.H264_CONTROL_PROBE));
     assert.ok(!profile.VIDEO_DECODER_PROBES.some((entry) => entry.mimeType === profile.BOGUS_CODEC_PROBE));
+  });
+
+  test('wasmplayer.cpp offers H.264 at level 5.1 first only for streams above level 4.2, with the limits of tv_profile.js', () => {
+    const source = fs.readFileSync(path.join(REPO_ROOT, 'wasm', 'wasmplayer.cpp'), 'utf8');
+    assert.match(source, /if \(ExceedsH264Level42\(width, height, redrawRate\)\) \{\s+videoProfiles\.push_back\(\{"video\/mp4; codecs=\\"avc1\.640033\\"", "H\.264 High Level Profile 5\.1"\}\);\s+\}\s+videoProfiles\.push_back\(\{"video\/mp4; codecs=\\"avc1\.64002A\\"", "H\.264 High Level Profile 4\.2"\}\);/);
+    const header = fs.readFileSync(path.join(REPO_ROOT, 'wasm', 'video_config.hpp'), 'utf8');
+    const constant = (name) => Number(new RegExp('constexpr uint32_t ' + name + ' = (\\d+);').exec(header)[1]);
+    assert.deepEqual({ maxFrameMacroblocks: constant('kH264Level42MaxFrameMacroblocks'), maxMacroblocksPerSecond: constant('kH264Level42MaxMacroblocksPerSecond') },
+      Object.assign({}, profile.H264_LEVEL_LIMITS['4.2']));
   });
 
   test('System information and the message of a rejected video track use the same codec names', () => {

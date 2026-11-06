@@ -2,6 +2,7 @@
 #include "compact_stats.hpp"
 #include "controller_type.hpp"
 #include "diagnostic_log.hpp"
+#include "video_config.hpp"
 #include "wake_on_lan.hpp"
 
 #include <algorithm>
@@ -62,6 +63,7 @@ MoonlightInstance::MoonlightInstance()
     m_VideoStarted(false),
     m_AudioSessionId(0),
     m_VideoSessionId(0),
+    m_MediaElementListener(this),
     m_MediaElement("wasm_module"),
     m_Source(nullptr),
     m_SourceListener(this),
@@ -75,6 +77,11 @@ MoonlightInstance::MoonlightInstance()
     m_SourceClosed(false),
     m_SourceAttached(false) {
       m_Dispatcher.start();
+      // Log the errors of the media element that the stream plays in (player_errors.hpp). The element stays for the life
+      // of the module, so the listener is set once.
+      if (!m_MediaElement.SetListener(&m_MediaElementListener)) {
+        ClLogMessage("Setting the listener of the media element failed, so its errors are not logged\n");
+      }
     }
 
 MoonlightInstance::~MoonlightInstance() { 
@@ -482,7 +489,7 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
     // Offer HEVC with the same bit depth as a fallback. The negotiation checks AV1 first, so AV1 still wins
     // whenever the host offers it. Without this, a host that can't encode AV1 (or that re-probed its encoders
     // after the server info was fetched) would get a 4K H.264 stream without HDR, which the TV likely can't
-    // decode, because Samsung TVs generally decode H.264 only up to 1080p.
+    // decode, because Samsung TVs decode H.264 at most at level 5.1, which ends at 4K at 30 FPS.
     m_StreamConfig.supportedVideoFormats |= hdrMode ? VIDEO_FORMAT_H265_MAIN10 : VIDEO_FORMAT_H265;
     PostToJs(hdrMode ? "Selecting the fallback video format to: VIDEO_FORMAT_H265_MAIN10" : "Selecting the fallback video format to: VIDEO_FORMAT_H265");
   } else { // Unknown
@@ -505,10 +512,12 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
     m_RequestedVideoFormat = VIDEO_FORMAT_H264;
   }
 
-  // Initialize the color range with default value
-  m_StreamConfig.colorRange = 0;
-  // Apply the desired color range ​based on the toggle switch state
-  m_StreamConfig.colorRange |= fullRange ? COLOR_RANGE_FULL : COLOR_RANGE_LIMITED;
+  // Apply the color range of the toggle switch, which a stream with HDR on leaves at the limited range of HDR10 (see
+  // GetStreamColorRange() in video_config.hpp)
+  m_StreamConfig.colorRange = GetStreamColorRange(fullRange, hdrMode, m_StreamConfig.supportedVideoFormats);
+  if (fullRange && m_StreamConfig.colorRange == COLOR_RANGE_LIMITED) {
+    PostToJs("Selecting the color range to: COLOR_RANGE_LIMITED, because a stream with HDR on uses the limited range whatever the Full color range switch says");
+  }
 
   // Request the Rec. 709 colorspace, which is the standard for HD and 4K video that the TV expects, instead
   // of the default Rec. 601 for SD video, which shifts the colors when the TV doesn't follow the stream's
@@ -752,6 +761,12 @@ void toggleStats() {
   g_Instance->TogglePerformanceStats();
 }
 
+// Called by 'Refresh picture' of the Stream Menu on the main thread (wasm/platform/menus.js): asks the host for a
+// keyframe, and answers whether it did, which it doesn't without a running stream (RefreshPicture() in wasmplayer.cpp)
+bool requestIdrFrame() {
+  return g_Instance->RefreshPicture();
+}
+
 // Called by the front end on the main thread for the diagnostic log (wasm/platform/diagnostics.js): the lines that the
 // module logged since the last call, one per line as "<time in ms>\t<text>" (diagnostic_log.hpp)
 std::string takeDiagnosticLog() {
@@ -838,6 +853,7 @@ EMSCRIPTEN_BINDINGS(handle_message) {
   emscripten::function("toggleStats", &toggleStats);
   emscripten::function("setStreamMenuOpen", &setStreamMenuOpen);
   emscripten::function("toggleMouseEmulation", &toggleMouseEmulation);
+  emscripten::function("requestIdrFrame", &requestIdrFrame);
   emscripten::function("takeDiagnosticLog", &takeDiagnosticLog);
   emscripten::function("stun", &stun);
   emscripten::function("pair", &pair);

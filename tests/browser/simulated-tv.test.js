@@ -155,8 +155,9 @@ test('System information shows the app, the model strings and what the app detec
     {
       tv: { tv: 's90c', conn: 'ethernet' },
       lines: [
-        'App Version: Moonlight Plus v2.2.1',
+        'App Version: Moonlight Plus v2.3.0',
         'Platform Version: Tizen 9.0',
+        'TV Firmware Version: T-INFOLINK2023-1020',
         'TV Model Series: 23_PONTUSM_OLED',
         'TV Model Name: QE55S90CAT',
         'TV Model Group: 23_PONTUSM (model year 2023)',
@@ -166,7 +167,9 @@ test('System information shows the app, the model strings and what the app detec
         'Tested Profile: S90C',
         'Ultra Low Latency mode (Game mode): Unknown',
         'WASM player API levels: Unknown',
+        'WASM player version: Unknown, features: Unknown',
         'Video decoders (MediaSource check): H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
+        'Video decoders at level 5.1 (H.264 above 1080p): H.264: Yes',
         'Video decoders at level 5.2 (4K above 60 FPS): HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
         'Controllers: None',
         '',
@@ -176,8 +179,9 @@ test('System information shows the app, the model strings and what the app detec
     {
       tv: { tv: 'fhd', conn: 'wifi' },
       lines: [
-        'App Version: Moonlight Plus v2.2.1',
+        'App Version: Moonlight Plus v2.3.0',
         'Platform Version: Tizen 5.5',
+        'TV Firmware Version: T-INFOLINK2020-1050',
         'TV Model Series: 20_KANTM2_FHD',
         'TV Model Name: UE43T5300AU',
         'TV Model Group: 20_KANTM2 (model year 2020)',
@@ -187,7 +191,9 @@ test('System information shows the app, the model strings and what the app detec
         'Tested Profile: None',
         'Ultra Low Latency mode (Game mode): Unknown',
         'WASM player API levels: Unknown',
+        'WASM player version: Unknown, features: Unknown',
         'Video decoders (MediaSource check): H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
+        'Video decoders at level 5.1 (H.264 above 1080p): H.264: Yes',
         'Video decoders at level 5.2 (4K above 60 FPS): HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
         'Controllers: None',
         '',
@@ -197,8 +203,9 @@ test('System information shows the app, the model strings and what the app detec
     {
       tv: { tv: '8k', conn: 'unknown', modelCode: 'NOYEAR' },
       lines: [
-        'App Version: Moonlight Plus v2.2.1',
+        'App Version: Moonlight Plus v2.3.0',
         'Platform Version: Tizen 6.5',
+        'TV Firmware Version: T-INFOLINK2022-1030',
         'TV Model Series: 22_PONTUSM_8K',
         'TV Model Name: QE65QN900BT',
         'TV Model Group: NOYEAR',
@@ -208,7 +215,9 @@ test('System information shows the app, the model strings and what the app detec
         'Tested Profile: None',
         'Ultra Low Latency mode (Game mode): Unknown',
         'WASM player API levels: Unknown',
+        'WASM player version: Unknown, features: Unknown',
         'Video decoders (MediaSource check): H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
+        'Video decoders at level 5.1 (H.264 above 1080p): H.264: Yes',
         'Video decoders at level 5.2 (4K above 60 FPS): HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
         'Controllers: None',
         '',
@@ -221,6 +230,33 @@ test('System information shows the app, the model strings and what the app detec
     try {
       assert.equal(await readSystemInfo(app.page), entry.lines.join('\n'), JSON.stringify(entry.tv));
       assert.deepEqual(app.errors, []);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
+test('System information shows the firmware of the TV, from the build string of Tizen where the product API fails, and the log names it once', async () => {
+  const cases = [
+    { tv: { tv: 's90c' }, line: 'TV Firmware Version: T-INFOLINK2023-1020', log: 'TV firmware: T-INFOLINK2023-1020 (productinfo)' },
+    { tv: { tv: 'fhd', failApis: 'webapis.productinfo.getFirmware', buildString: 'T-KANTM2-1234.5' },
+      line: 'TV Firmware Version: T-KANTM2-1234.5', log: 'TV firmware: T-KANTM2-1234.5 (build)' },
+    { tv: { tv: 'uhd', firmware: '', buildString: '' }, line: 'TV Firmware Version: Unknown', log: 'TV firmware: Unknown' },
+  ];
+  for (const entry of cases) {
+    const label = JSON.stringify(entry.tv);
+    const app = await openApp(harness, { tv: entry.tv });
+    try {
+      const lines = (await readSystemInfo(app.page)).split('\n');
+      // Under the Tizen version
+      assert.equal(lines[2], entry.line, label);
+      assert.ok(lines[1].indexOf('Platform Version: Tizen ') === 0, label);
+      // Once per start, with the report of the WASM player, and not again when System information is built again
+      await app.page.evaluate(() => loadSystemInfo());
+      const logged = app.logs.filter((line) => line.indexOf('TV firmware: ') >= 0);
+      assert.equal(logged.length, 1, label + ' ' + JSON.stringify(logged));
+      assert.ok(logged[0].indexOf(entry.log + ', WASM player: {"version":null,"features":null,"supported":null}') >= 0, logged[0]);
+      assert.deepEqual(app.errors, [], label);
     } finally {
       await app.context.close();
     }

@@ -40,8 +40,8 @@ static void TestFixtureMessages() {
       continue;
     }
     const std::vector<std::string> fields = SplitTabs(line);
-    if (fields.size() != 19) {
-      test_support::Check(false, "fixture line \"" + line + "\"", "expected 19 fields", __FILE__, __LINE__);
+    if (fields.size() != 21) {
+      test_support::Check(false, "fixture line \"" + line + "\"", "expected 21 fields", __FILE__, __LINE__);
       continue;
     }
     SessionReport report;
@@ -61,11 +61,13 @@ static void TestFixtureMessages() {
     report.heapTopMb = Number(fields[14]);
     report.heapTotalMb = Number(fields[15]);
     report.heapGrowthMb = Number(fields[16]);
+    report.hostFrameRateX100 = Number(fields[17]);
+    report.hostProcessingLatencyX10 = Number(fields[18]);
     const std::string message = FormatSessionReportMessage(report);
-    CHECK_EQ(message, fields[17]);
+    CHECK_EQ(message, fields[19]);
     checked++;
   }
-  CHECK_EQ(checked, 7);
+  CHECK_EQ(checked, 15);
 }
 
 static void TestVideoFormatNames() {

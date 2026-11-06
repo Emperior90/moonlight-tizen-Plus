@@ -13,7 +13,13 @@ var maxSupportedWidth = tvCapabilities.maxWidth; // Width of the highest resolut
 var maxSupportedHeight = tvCapabilities.maxHeight; // Height of the highest resolution the resolution menu offers
 var isHdrCapable = tvCapabilities.isHdr; // Whether the device supports HDR
 var wasmPlayerFeatures = tvCapabilities.wasmPlayer; // Whether the WASM player offers the Ultra Low Latency mode that the game mode asks for
+var wasmPlayerReport = tvCapabilities.wasmPlayerReport; // Version and features of the WASM player, only shown
+var tvFirmware = tvCapabilities.firmware; // Firmware version of the TV and where it came from, only shown
 var videoDecoderProbe = tvCapabilities.videoDecoders; // Answers of the browser about the video codecs of the WASM player, only shown and used for hints
+// Log the firmware of the TV and the report of its WASM player once per start, so that the diagnostic log ties a problem
+// to a software version of the TV (System information shows both as well)
+console.log('%c[index.js]', 'color: green;', 'TV firmware: ' + (tvFirmware.version ? tvFirmware.version + ' (' + tvFirmware.source + ')' : 'Unknown') +
+  ', WASM player: ' + JSON.stringify(wasmPlayerReport));
 var hosts = {}; // Hosts is an associative array of NvHTTP objects, keyed by server UID
 var isHostOpening = false; // Prevents concurrent hostChosen executions, initial value is false
 var isHostsLoaded = false; // Indicates if IndexedDB has finished loading hosts
@@ -51,7 +57,7 @@ var bitrateWarning = false; // Flag indicating whether the warning about a bitra
 var audioWarning = false; // Flag indicating whether the audio configuration warning message has shown, initial value is false
 var codecWarning = false; // Flag indicating whether the video codec warning message has shown, initial value is false
 var ethernetBitrateWarning = false; // Flag indicating whether the Ethernet bitrate warning message has shown, initial value is false
-var h264ResolutionWarning = false; // Flag indicating whether the H.264 resolution warning message has shown, initial value is false
+var h264Warning = false; // The message key of the H.264 warning that has shown (h264WarningKey() in tv_profile.js), or false
 var autoAdjustBitrate = false; // Flag indicating whether resolution and frame rate changes apply the bitrate presets, which stops once the bitrate is picked by hand, initial value is false
 var keptBitrateNotice = false; // Flag indicating whether the notice about a kept hand-picked bitrate has shown, initial value is false
 var tvScreenSaverEnabled = null; // Last screensaver state requested from the TV, initial value is null (never requested)
@@ -98,6 +104,37 @@ const SURROUND_AUDIO_INFO = Object.freeze({ 'Stereo': 0x030002, '51Surround': 0x
 // unknown one, which the module streams in stereo as well (wasm/main.cpp)
 function getSurroundAudioInfo(audioConfig) {
   return Object.prototype.hasOwnProperty.call(SURROUND_AUDIO_INFO, audioConfig) ? SURROUND_AUDIO_INFO[audioConfig] : SURROUND_AUDIO_INFO.Stereo;
+}
+
+// The resolutions whose game settings GeForce Experience knows for 'Optimize game settings', as moonlight-android
+// (NvHTTP.java) lists them
+const GFE_GAME_OPTIMIZATION_RESOLUTIONS = Object.freeze(['1280x720', '1920x1080', '3840x2160']);
+
+// The sops value of the launch and resume requests (1 or 0) for the setting 'Optimize game settings', the host and the
+// resolution and frame rate of the stream. Sunshine and the hosts based on it only use it themselves to switch the
+// display of the host to the stream (display device configuration) and do nothing with it while that is off, but they
+// pass it to the commands of the app they start as SUNSHINE_CLIENT_ENABLE_SOPS (Apollo also as
+// APOLLO_CLIENT_ENABLE_SOPS). GeForce Experience rewrites the settings of the game instead, and sets them to 720p at
+// 60 FPS when it doesn't know the resolution or gets more than 60 FPS, which stays in the game after the stream. So,
+// combining the checks of moonlight-qt (a listed display mode, session.cpp) and moonlight-android (720p, 1080p or 4K,
+// NvHTTP.java), the app asks GeForce Experience for it only at 720p, 1080p or 4K, and only at a resolution among the
+// display modes that the host lists, when it lists any. Above 60 FPS, where those clients send a frame rate of 0, the
+// app turns it off.
+function getGameOptimizationsRequest(host, width, height, frameRate, enabled) {
+  if (!enabled) {
+    return 0;
+  }
+  if (!host || !host.isNvidiaServerSoftware) {
+    return 1;
+  }
+  const streamWidth = parseInt(width, 10);
+  const streamHeight = parseInt(height, 10);
+  const displayModes = host.supportedDisplayModes || {};
+  const knownResolution = GFE_GAME_OPTIMIZATION_RESOLUTIONS.indexOf(streamWidth + 'x' + streamHeight) >= 0;
+  // The display modes of the host are keyed by height and width (NvHTTP in utils.js)
+  const listedMode = Object.keys(displayModes).length === 0 ||
+    Object.prototype.hasOwnProperty.call(displayModes, streamHeight + ':' + streamWidth);
+  return knownResolution && listedMode && parseInt(frameRate, 10) <= 60 ? 1 : 0;
 }
 
 // Called by the common.js module
@@ -3775,7 +3812,9 @@ function startGame(host, appID, restartKind) {
       }
       var gamepadMask = getConnectedGamepadMask();
       const framePacing = $('#framePacingSwitch').parent().hasClass('is-checked') ? 1 : 0;
-      const optimizeGames = $('#optimizeGamesSwitch').parent().hasClass('is-checked') ? 1 : 0;
+      const optimizeGamesSetting = $('#optimizeGamesSwitch').parent().hasClass('is-checked');
+      // What the host is asked for, which GeForce Experience gets only where it is safe (getGameOptimizationsRequest())
+      const optimizeGames = getGameOptimizationsRequest(host, streamWidth, streamHeight, frameRate, optimizeGamesSetting);
       const rumbleFeedback = $('#rumbleFeedbackSwitch').parent().hasClass('is-checked') ? 1 : 0;
       const mouseEmulation = $('#mouseEmulationSwitch').parent().hasClass('is-checked') ? 1 : 0;
       // The button mapping and the stick calibration of the controllers, as text for the module (button_mapping.js)
@@ -3810,7 +3849,7 @@ function startGame(host, appID, restartKind) {
       '\n Video frame rate: ' + frameRate + ' FPS' + 
       '\n Video bitrate: ' + bitrate + ' Kbps' + 
       '\n Video frame pacing: ' + framePacing + 
-      '\n Optimize game settings: ' + optimizeGames + 
+      '\n Optimize game settings: ' + optimizeGames + (optimizeGamesSetting && !optimizeGames ? ' (not sent to GeForce Experience at this resolution and frame rate)' : '') +
       '\n Rumble feedback: ' + rumbleFeedback + 
       '\n Mouse emulation: ' + mouseEmulation + 
       '\n Button mapping: ' + (controllerMappings ? controllerMappings.split('\n').length + ' controller lines' : 'none') +
@@ -4532,7 +4571,7 @@ function saveResolution() {
   applyBitratePresets();
   // Trigger warning check after changing video resolution
   warnResolutionFramerate();
-  warnH264Resolution();
+  warnH264();
 }
 
 function saveFramerate() {
@@ -4549,6 +4588,7 @@ function saveFramerate() {
   applyBitratePresets();
   // Trigger warning check after changing video frame rate
   warnResolutionFramerate();
+  warnH264();
 }
 
 // Show the text of a message key of the warning rules in tv_profile.js (VIDEO_WARNINGS). The texts are written out here,
@@ -4586,7 +4626,10 @@ function showVideoWarning(messageKey) {
       snackbarLogLong('Warning: Bitrates above %1$s Mbps exceed what is recommended for the video decoder of this TV and may cause playback interruptions and performance issues, please try with caution!', getBitrateWarningMbps(tvCapabilities));
       break;
     case VIDEO_WARNINGS.H264_RESOLUTION:
-      snackbarLogLong('Warning: Samsung TVs generally decode H.264 only up to 1080p, so use HEVC or AV1 for higher resolutions!');
+      snackbarLogLong('Warning: This TV may not decode H.264 at this resolution and frame rate, so use HEVC or AV1 for resolutions above 1080p!');
+      break;
+    case VIDEO_WARNINGS.H264_FRAME_RATE:
+      snackbarLogLong('Warning: H.264 above 60 FPS may fail to start on Samsung TVs, so use HEVC or AV1 for higher frame rates!');
       break;
     default:
       console.warn('%c[index.js, showVideoWarning]', 'color: green;', 'Warning: No text for the message key: ' + messageKey);
@@ -4621,21 +4664,20 @@ function warnResolutionFramerate() {
   }
 }
 
-function warnH264Resolution() {
+function warnH264() {
   var chosenResolution = String($('#selectResolution').data('value'));
+  var chosenFramerate = parseInt($('#selectFramerate').data('value'), 10);
   var chosenVideoCodec = $('#selectCodec').data('value');
 
-  // H.264 resolution warning, for H.264 above 1080p, which Samsung TVs generally can't decode (h264ResolutionWarningKey()
-  // in tv_profile.js)
-  const warningKey = h264ResolutionWarningKey(chosenVideoCodec, chosenResolution);
-  if (!h264ResolutionWarning && warningKey) {
+  // H.264 warning, for H.264 above 60 FPS and for H.264 above 1080p that the TV may not decode (h264WarningKey() in
+  // tv_profile.js). It shows once per message, so a change to a selection with another message (e.g. from 4K at 120 FPS
+  // to 4K at 60 FPS) shows that one, and again after a selection without a warning (HEVC, AV1, or what the TV decodes).
+  const warningKey = h264WarningKey(chosenVideoCodec, chosenResolution, chosenFramerate, tvCapabilities);
+  if (warningKey && warningKey !== h264Warning) {
     showVideoWarning(warningKey);
-    // Set flag for H.264 resolution warning
-    h264ResolutionWarning = true;
-  } else if (h264ResolutionWarning && !warningKey) {
-    // Reset the flag for H.264 resolution warning if the condition goes back to normal (HEVC, AV1 or 1080p)
-    h264ResolutionWarning = false;
   }
+  // Remember the message key, or reset it once the selection needs no warning
+  h264Warning = warningKey || false;
 }
 
 // Warn when HDR is switched on for a TV that doesn't report HDR support (hdrWarningKey() in tv_profile.js). It runs on
@@ -4953,7 +4995,7 @@ function updateVideoCodec(chosenCodecId, chosenCodecValue) {
 
   // Trigger warning check after changing video codec
   warnVideoCodec();
-  warnH264Resolution();
+  warnH264();
 }
 
 function warnVideoCodec() {
@@ -5074,6 +5116,7 @@ function handleUnlockAllFps() {
       applyBitratePresets();
       // Reset the resolution and frame rate warning, so that it shows again after the next switch to a higher frame rate
       warnResolutionFramerate();
+      warnH264();
     }
   }
 }
@@ -5189,8 +5232,8 @@ function saveHdrMetadata() {
 // Apply the optimal streaming settings for this TV and its network connection (deriveOptimalSettings() in tv_profile.js),
 // which are also the defaults of the video settings: the highest resolution of the panel up to 4K at 60 FPS with HEVC,
 // HDR when the TV supports it and a bitrate for the network connection, with all frame rates unlocked only for a tested
-// model with a high refresh rate panel (VERIFIED_PROFILES). The bitrate then follows later changes of the resolution and
-// frame rate with the bitrate presets, until the user picks one by hand.
+// model with a high refresh rate panel (VERIFIED_PROFILES), and 'Optimize game settings' on. The bitrate then follows
+// later changes of the resolution and frame rate with the bitrate presets, until the user picks one by hand.
 function applyOptimalStreamingSettings(connectionType) {
   console.log('%c[index.js, applyOptimalStreamingSettings]', 'color: green;', 'Applying the optimal streaming settings for the network connection: ' + connectionType);
   const optimalSettings = deriveOptimalSettings(tvCapabilities, connectionType);
@@ -5234,6 +5277,14 @@ function applyOptimalStreamingSettings(connectionType) {
   document.querySelector('#framePacingBtn').MaterialSwitch.on();
   storeData('framePacing', optimalSettings.framePacing, null);
 
+  // Let Sunshine render the game at the resolution of the stream, when its display device configuration is on
+  if (optimalSettings.optimizeGames) {
+    document.querySelector('#optimizeGamesBtn').MaterialSwitch.on();
+  } else {
+    document.querySelector('#optimizeGamesBtn').MaterialSwitch.off();
+  }
+  storeData('optimizeGames', optimalSettings.optimizeGames, null);
+
   // Set the game mode based on the Tizen platform version and the WASM player (see getGameModeDefault() in tv_profile.js)
   if (optimalSettings.gameMode === false) {
     // Turn off for Tizen 9.0 and newer to avoid compatibility issues, where the ForceGM variant enables the game mode
@@ -5262,7 +5313,7 @@ function applyOptimalStreamingSettings(connectionType) {
 
   // Re-run the one-shot warning checks so their flags match the applied resolution, frame rate and codec
   warnResolutionFramerate();
-  warnH264Resolution();
+  warnH264();
   warnVideoCodec();
 }
 
@@ -5305,10 +5356,12 @@ function optimalSettingsDialog() {
   // Start with what the settings are based on, and whether they were tested on this model (describeDetectedTv())
   let message = t('Detected: %1$s', describeDetectedTv(connectionType)) + '<br><br>';
 
+  // The line names 'Optimize game settings' of the Advanced Settings as well, which the optimal settings always turn on
+  // (deriveOptimalSettings() in tv_profile.js), within the lines that the dialog had before
   message += t('The following streaming settings will be applied:') + '<br>' +
     '&#8226; ' + (optimalSettings.unlockAllFps
-      ? t('Video frame pacing on, limited color range, unlock all frame rates on')
-      : t('Video frame pacing on, limited color range, unlock all frame rates off')) + '<br>';
+      ? t('Video frame pacing on, limited color range, unlock all frame rates on, optimize game settings on')
+      : t('Video frame pacing on, limited color range, unlock all frame rates off, optimize game settings on')) + '<br>';
   // Name the state of the ultra low latency mode, which depends on the Tizen version (the note below covers Tizen 9.0
   // and newer) and on whether the WASM player offers it
   if (optimalSettings.gameMode === true) {
@@ -5430,9 +5483,7 @@ function restoreDefaultsSettingsValues() {
   showAppSortOrder(defaultSortAppsList);
   storeData('sortAppsList', defaultSortAppsList, null);
 
-  const defaultOptimizeGames = false;
-  document.querySelector('#optimizeGamesBtn').MaterialSwitch.off();
-  storeData('optimizeGames', defaultOptimizeGames, null);
+  // 'Optimize game settings' is part of the optimal streaming settings, which applyOptimalStreamingSettings() restored above
 
   const defaultRumbleFeedback = true;
   document.querySelector('#rumbleFeedbackBtn').MaterialSwitch.on();
@@ -5628,8 +5679,9 @@ function describeCheckAnswer(answer) {
 }
 
 // Describe the answers of the decoder check (probeVideoDecoders() in tv_profile.js) as the lines of System information:
-// the codecs at the level that streams up to 4K at 60 FPS use, e.g. 'H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: No,
-// AV1 Main10: No', and the codecs at level 5.2, which faster 4K streams use. Answers that don't count give one line.
+// the codecs at the level that streams up to 1080p at 60 FPS with H.264 and up to 4K at 60 FPS with the other codecs use,
+// e.g. 'H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: No, AV1 Main10: No', H.264 at level 5.1, which H.264 streams above
+// 1080p at 60 FPS use, and the codecs at level 5.2, which faster 4K streams use. Answers that don't count give one line.
 function describeVideoDecoderProbe() {
   if (!videoDecoderProbe.reliable) {
     return [t('Video decoders (MediaSource check): %1$s', videoDecoderProbe.reason === 'unavailable'
@@ -5637,8 +5689,10 @@ function describeVideoDecoderProbe() {
       : t('Unknown (the answers of the TV are not reliable)'))];
   }
   const describe = (probes) => probes.map((probe) => probe.codec + ': ' + describeCheckAnswer(videoDecoderProbe.results[probe.mimeType])).join(', ');
+  const isH264Level51 = (probe) => probe.codec === 'H.264' && probe.level === '5.1';
   return [
-    t('Video decoders (MediaSource check): %1$s', describe(VIDEO_DECODER_PROBES.filter((probe) => probe.level !== '5.2'))),
+    t('Video decoders (MediaSource check): %1$s', describe(VIDEO_DECODER_PROBES.filter((probe) => probe.level !== '5.2' && !isH264Level51(probe)))),
+    t('Video decoders at level 5.1 (H.264 above 1080p): %1$s', describe(VIDEO_DECODER_PROBES.filter(isH264Level51))),
     t('Video decoders at level 5.2 (4K above 60 FPS): %1$s', describe(VIDEO_DECODER_PROBES.filter((probe) => probe.level === '5.2'))),
   ];
 }
@@ -5703,6 +5757,11 @@ function loadSystemInfo() {
   // screenshot shows what the TV reports next to what it accepted
   const ultraLowLatencyText = describeCheckAnswer(wasmPlayerFeatures.ultraLowLatency);
   const apiLevelsText = wasmPlayerFeatures.apiLevels && wasmPlayerFeatures.apiLevels.length > 0 ? wasmPlayerFeatures.apiLevels.join(', ') : '';
+  // The version and the features of the WASM player as its glue code sees them (detectWasmPlayerReport()), e.g. to tie
+  // a freeze to a player version; what isApiFeatureSupported() answered for each feature is in the log line at the start.
+  // An empty list has a text of its own, which says "none" in the gender of the word for the features.
+  const playerVersionText = wasmPlayerReport.version ? wasmPlayerReport.version : t('Unknown');
+  const hasPlayerFeatures = wasmPlayerReport.features === null || wasmPlayerReport.features.length > 0;
   const videoDecoderLines = describeVideoDecoderProbe();
   // The connected gamepads (Controller in gamepad.js), so a user can see whether the TV found a controller, whether it
   // has the standard layout that the menus and the stream expect, and which controller type the stream announces
@@ -5735,6 +5794,7 @@ function loadSystemInfo() {
     systemInfoPlaceholder.innerText =
       t('App Version: %1$s v%2$s', appInfo.name + (isForceGMVariant ? '-ForceGM' : ''), buildVer) + '\n' +
       t('Platform Version: Tizen %1$s', platformVer ? platformVer : t('Unknown')) + '\n' +
+      t('TV Firmware Version: %1$s', tvFirmware.version ? tvFirmware.version : t('Unknown')) + '\n' +
       t('TV Model Series: %1$s', modelSeries ? modelSeries : t('Unknown')) + '\n' +
       t('TV Model Name: %1$s', modelName ? modelName : t('Unknown')) + '\n' +
       (modelGroup && modelYearHint ? t('TV Model Group: %1$s (model year %2$s)', modelGroup, modelYearHint) :
@@ -5745,6 +5805,9 @@ function loadSystemInfo() {
       (testedProfile ? t('Tested Profile: %1$s', testedProfile) : t('Tested Profile: None')) + '\n' +
       t('Ultra Low Latency mode (Game mode): %1$s', ultraLowLatencyText) + '\n' +
       t('WASM player API levels: %1$s', apiLevelsText ? apiLevelsText : t('Unknown')) + '\n' +
+      (hasPlayerFeatures ? t('WASM player version: %1$s, features: %2$s', playerVersionText,
+        wasmPlayerReport.features === null ? t('Unknown') : wasmPlayerReport.features.join(', ')) :
+        t('WASM player version: %1$s, features: none', playerVersionText)) + '\n' +
       videoDecoderLines.map((line) => line + '\n').join('') +
       gamepadsText + '\n\n' +
       describeSessionReport(lastSessionReport, lastSessionReportOptions).join('\n');
@@ -5775,11 +5838,14 @@ function loadUserDataCb() {
 // An existing install of settings schema 2 or older also stores the defaults of settings schema 2 that settings schema 3
 // changed (schema2Snapshot()) and what replaces the settings that settings schema 3 removed (schema3Replacements()),
 // and drops the stored values of those settings, which are logged first, so that the diagnostic log still says what was
-// set. At every start, whatever the settings schema, a stored frame rate that the frame rate menu no longer offers (the
-// 144 FPS of 2.2.0 and earlier) is replaced as well (frameRateReplacements() in tv_profile.js), here where every value
-// it depends on has been read and before the loaders, which then load the replacement like any stored value.
+// set. An existing install of settings schema 3 or older stores the defaults of settings schema 3 that settings schema 4
+// changed (schema3Snapshot()), and only those: the steps of settings schema 3 already ran for an install of it. At every
+// start, whatever the settings schema, a stored frame rate that the frame rate menu no longer offers (the 144 FPS of
+// 2.2.0 and earlier) is replaced as well (frameRateReplacements() in tv_profile.js), here where every value it depends on
+// has been read and before the loaders, which then load the replacement like any stored value.
 function migrateSettingsSchema(callbackFunction) {
-  const keys = ['uniqueid', SETTINGS_SCHEMA_KEY].concat(LEGACY_SNAPSHOT_KEYS, Object.keys(SCHEMA_2_DEFAULTS), SCHEMA_3_REMOVED_KEYS)
+  const keys = ['uniqueid', SETTINGS_SCHEMA_KEY].concat(LEGACY_SNAPSHOT_KEYS, Object.keys(SCHEMA_2_DEFAULTS), SCHEMA_3_REMOVED_KEYS,
+    Object.keys(SCHEMA_3_DEFAULTS))
     .filter(function(key, index, allKeys) {
       // Read each key once (e.g. optimizeBitrate is a key of both the snapshot and the removed settings)
       return allKeys.indexOf(key) === index;
@@ -5799,28 +5865,37 @@ function migrateSettingsSchema(callbackFunction) {
     } else if (storedSchema == null && storedValues.uniqueid == null) {
       console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Fresh install, using the optimal streaming settings for this TV as the defaults.');
     } else {
+      // The settings schema of the install, where an existing install without one is of settings schema 1
+      const installSchema = storedSchema == null ? 1 : storedSchema;
       if (storedSchema == null) {
         migratedValues = legacySettingsSnapshot(storedValues, tvCapabilities, getActiveConnectionType());
         console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Existing install without a settings schema, storing the previous defaults of the unset video settings: ' + JSON.stringify(migratedValues));
       }
-      const schema2Values = schema2Snapshot(storedValues);
-      console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Existing install of settings schema ' + (storedSchema == null ? 1 : storedSchema) + ', storing the defaults of settings schema 2 that changed: ' + JSON.stringify(schema2Values));
-      Object.assign(migratedValues, schema2Values);
-      // What replaces the removed settings, e.g. 'Optimize bitrate presets' that was on keeps the bitrate following the
-      // video settings (schema3Replacements())
-      const replacements = schema3Replacements(storedValues);
-      if (Object.keys(replacements).length > 0) {
-        console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Storing what replaces the settings that no longer exist: ' + JSON.stringify(replacements));
-        Object.assign(migratedValues, replacements);
-      }
-      SCHEMA_3_REMOVED_KEYS.forEach(function(key) {
-        // The snapshot of settings schema 1 may hold a removed setting as well, which is not stored then
-        delete migratedValues[key];
-        if (storedValues[key] != null) {
-          console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Removing the stored value of a setting that no longer exists: ' + key + ' = ' + JSON.stringify(storedValues[key]));
-          removeData(key, null);
+      if (installSchema < 3) {
+        const schema2Values = schema2Snapshot(storedValues);
+        console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Existing install of settings schema ' + installSchema + ', storing the defaults of settings schema 2 that changed: ' + JSON.stringify(schema2Values));
+        Object.assign(migratedValues, schema2Values);
+        // What replaces the removed settings, e.g. 'Optimize bitrate presets' that was on keeps the bitrate following the
+        // video settings (schema3Replacements())
+        const replacements = schema3Replacements(storedValues);
+        if (Object.keys(replacements).length > 0) {
+          console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Storing what replaces the settings that no longer exist: ' + JSON.stringify(replacements));
+          Object.assign(migratedValues, replacements);
         }
-      });
+        SCHEMA_3_REMOVED_KEYS.forEach(function(key) {
+          // The snapshot of settings schema 1 may hold a removed setting as well, which is not stored then
+          delete migratedValues[key];
+          if (storedValues[key] != null) {
+            console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Removing the stored value of a setting that no longer exists: ' + key + ' = ' + JSON.stringify(storedValues[key]));
+            removeData(key, null);
+          }
+        });
+      }
+      // Every existing install of an earlier settings schema keeps the defaults of settings schema 3 that changed, e.g.
+      // 'Optimize game settings' off (schema3Snapshot())
+      const schema3Values = schema3Snapshot(storedValues);
+      console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Existing install of settings schema ' + installSchema + ', storing the defaults of settings schema 3 that changed: ' + JSON.stringify(schema3Values));
+      Object.assign(migratedValues, schema3Values);
     }
     if (!isCurrentSchema) {
       migratedValues[SETTINGS_SCHEMA_KEY] = SETTINGS_SCHEMA_VERSION;
@@ -5943,7 +6018,13 @@ function loadStoredSettings() {
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored optimizeGames preferences.');
   getData('optimizeGames', function(previousValue) {
     if (previousValue.optimizeGames == null) {
-      document.querySelector('#optimizeGamesBtn').MaterialSwitch.off(); // Set the default state
+      // On by default since settings schema 4 (deriveOptimalSettings() in tv_profile.js); an install of an earlier
+      // version stored its earlier default (off)
+      if (optimalSettings.optimizeGames) {
+        document.querySelector('#optimizeGamesBtn').MaterialSwitch.on();
+      } else {
+        document.querySelector('#optimizeGamesBtn').MaterialSwitch.off();
+      }
     } else if (previousValue.optimizeGames == false) {
       document.querySelector('#optimizeGamesBtn').MaterialSwitch.off();
     } else {
@@ -6095,11 +6176,13 @@ function loadStoredSettings() {
         }
       });
     } else {
-      // Set the default state to HEVC, because Samsung TVs generally decode H.264 only up to 1080p
+      // Set the default state to HEVC, because Samsung TVs decode H.264 above 1080p only at level 5.1, which ends at
+      // 1440p at 60 FPS or 4K at 30 FPS, and only where the TV decodes level 5.1 at all
       $('#selectCodec').text($('#hevc').text()).attr('data-value', optimalSettings.videoCodec).data('value', optimalSettings.videoCodec);
     }
-    // Warn when a previously stored H.264 codec meets the 4K default of the resolution, which is restored before the codec
-    warnH264Resolution();
+    // Warn when a previously stored H.264 codec meets a resolution or frame rate that the TV may not decode with it, which
+    // are restored before the codec
+    warnH264();
   });
 
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored hdrMode preferences.');

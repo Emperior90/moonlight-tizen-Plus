@@ -57,6 +57,7 @@ function checksWithoutTvBrowser() {
   });
   return {
     wasmPlayer: { ultraLowLatency: 'unknown', source: 'none', apiLevels: null },
+    wasmPlayerReport: { version: null, features: null, supported: null },
     videoDecoders: { reliable: false, reason: 'unavailable', results, answers: {} },
   };
 }
@@ -87,6 +88,7 @@ describe('detectTvCapabilities()', () => {
     assert.deepEqual(caps, Object.assign({
       platformVer: '9.0', modelName: 'QE55S90CAT', modelSeries: '23_PONTUSM_OLED', modelCode: '23_PONTUSM',
       is4k: true, is8k: false, isHdr: true, maxWidth: 3840, maxHeight: 2160, connection: 'wifi', profile: 'S90C', modelYearHint: 2023,
+      firmware: { version: 'T-INFOLINK2023-1020', source: 'productinfo' },
     }, checksWithoutTvBrowser()));
   });
 
@@ -111,6 +113,7 @@ describe('detectTvCapabilities()', () => {
       assert.deepEqual(caps, Object.assign({
         platformVer: null, modelName: null, modelSeries: null, modelCode: null, is4k: false, is8k: false, isHdr: false,
         maxWidth: 1920, maxHeight: 1080, connection: 'unknown', profile: null, modelYearHint: null,
+        firmware: { version: null, source: null },
       }, checksWithoutTvBrowser()), JSON.stringify(apis));
       assert.ok(warnings.length >= 5, 'each failed call is logged: ' + JSON.stringify(warnings));
     }
@@ -134,6 +137,39 @@ describe('detectTvCapabilities()', () => {
     assert.equal(caps.modelSeries, '23_PONTUSM_OLED');
     assert.equal(caps.warnings.length, 3, JSON.stringify(caps.warnings));
     assert.ok(caps.warnings.every((line) => line.indexOf('[tv_profile.js, safeTvCall]') >= 0));
+  });
+
+  test('the firmware version comes from the product information, else from the build string of Tizen, else is unknown', () => {
+    assert.deepEqual(detect({ tv: 'uhd' }).firmware, { version: 'T-INFOLINK2022-1030', source: 'productinfo' });
+    // Surrounding white space is left out
+    assert.deepEqual(detect({ tv: 'uhd', firmware: ' T-INFOLINK2022-1031 ' }).firmware, { version: 'T-INFOLINK2022-1031', source: 'productinfo' });
+    // getFirmware() fails, is missing or answers nothing usable: the build string of Tizen, logged once as a warning
+    const failing = detect({ tv: 'fhd', buildString: 'T-KANTM2-1234.5', failApis: 'webapis.productinfo.getFirmware' });
+    assert.deepEqual(failing.firmware, { version: 'T-KANTM2-1234.5', source: 'build' });
+    assert.equal(failing.warnings.length, 1, JSON.stringify(failing.warnings));
+    assert.match(failing.warnings[0], /Failed to get the TV firmware version/);
+    for (const firmware of ['', '   ']) {
+      const blank = detect({ tv: 'fhd', firmware, buildString: 'T-KANTM2-1234.5' });
+      assert.deepEqual(blank.firmware, { version: 'T-KANTM2-1234.5', source: 'build' }, JSON.stringify(firmware));
+      assert.deepEqual(blank.warnings, []);
+    }
+    const missing = apisFor({ tv: 'fhd', buildString: 'T-KANTM2-1234.5' });
+    delete missing.webapis.productinfo.getFirmware;
+    assert.deepEqual(detect({}, missing).firmware, { version: 'T-KANTM2-1234.5', source: 'build' });
+    // Neither: unknown
+    const neither = detect({ tv: 'fhd', failApis: 'webapis.productinfo.getFirmware,tizen.systeminfo.getCapability' });
+    assert.deepEqual(neither.firmware, { version: null, source: null });
+    assert.deepEqual(profile.detectFirmwareVersion(null, null), { version: null, source: null });
+    assert.deepEqual(profile.detectFirmwareVersion({ productinfo: { getFirmware: () => 42 } }, { systeminfo: { getCapability: () => null } }),
+      { version: null, source: null });
+    // The firmware version is only shown: it never changes a setting
+    for (const tv of ['s90c', 'uhd', 'fhd', '8k']) {
+      const caps = detect({ tv });
+      const otherFirmware = Object.assign({}, caps, { firmware: { version: null, source: null } });
+      for (const conn of CONNECTIONS) {
+        assert.deepEqual(profile.deriveOptimalSettings(caps, conn), profile.deriveOptimalSettings(otherFirmware, conn), tv + ' ' + conn);
+      }
+    }
   });
 
   test('a model name of null (reported by some firmware) is not an error', () => {
@@ -410,6 +446,8 @@ describe('deriveOptimalSettings() over FHD / UHD / 8K x HDR x Tizen 5.5 to 9.0 x
               gameMode: EXPECTED_GAME_MODE[tizen],
               framePacing: true,
               fullRange: false,
+              // On since settings schema 4, as in moonlight-qt and moonlight-android
+              optimizeGames: true,
             }, conn);
           }
         });
@@ -420,7 +458,7 @@ describe('deriveOptimalSettings() over FHD / UHD / 8K x HDR x Tizen 5.5 to 9.0 x
   test('without any capabilities, the defaults of a Full HD TV', () => {
     assert.deepEqual(profile.deriveOptimalSettings(null, undefined), {
       resolution: '1920:1080', frameRate: 60, videoCodec: 'HEVC', hdrMode: false, bitrate: 20, unlockAllFps: false, gameMode: true,
-      framePacing: true, fullRange: false,
+      framePacing: true, fullRange: false, optimizeGames: true,
     });
   });
 });
@@ -441,6 +479,7 @@ describe('the golden S90C values', () => {
         gameMode: false,
         framePacing: true,
         fullRange: false,
+        optimizeGames: true,
       });
     });
   }
@@ -647,8 +686,8 @@ describe('legacySettingsSnapshot(): the one-time snapshot of an existing install
     assert.ok(Object.isFrozen(profile.LEGACY_SNAPSHOT_KEYS));
   });
 
-  test('the settings schema is version 3', () => {
-    assert.equal(profile.SETTINGS_SCHEMA_VERSION, 3);
+  test('the settings schema is version 4', () => {
+    assert.equal(profile.SETTINGS_SCHEMA_VERSION, 4);
     assert.equal(profile.SETTINGS_SCHEMA_KEY, 'settingsSchema');
   });
 });
@@ -679,6 +718,28 @@ describe('the frozen defaults of settings schema 2 and the snapshot of settings 
     assert.deepEqual(profile.schema3Replacements({ optimizeBitrate: false }), {});
     assert.deepEqual(profile.schema3Replacements({}), {});
     assert.deepEqual(profile.schema3Replacements(null), {});
+  });
+});
+
+describe('the frozen defaults of settings schema 3 and the snapshot of settings schema 4', () => {
+  test('\'Optimize game settings\' was off, and the snapshot stores that only when it is unset', () => {
+    assert.deepEqual(profile.SCHEMA_3_DEFAULTS, { optimizeGames: false });
+    assert.ok(Object.isFrozen(profile.SCHEMA_3_DEFAULTS));
+    assert.deepEqual(profile.schema3Snapshot({ uniqueid: 'x', settingsSchema: 3 }), { optimizeGames: false });
+    assert.deepEqual(profile.schema3Snapshot({ optimizeGames: null }), { optimizeGames: false });
+    assert.deepEqual(profile.schema3Snapshot(null), { optimizeGames: false });
+    // A stored value is never replaced
+    assert.deepEqual(profile.schema3Snapshot({ optimizeGames: true }), {});
+    assert.deepEqual(profile.schema3Snapshot({ optimizeGames: false }), {});
+  });
+
+  test('new installs, Restore Defaults and the optimal settings get it on, while the frozen default stays off', () => {
+    for (const tv of ['s90c', 'uhd', 'fhd', '8k']) {
+      for (const conn of CONNECTIONS) {
+        assert.equal(profile.deriveOptimalSettings(detect({ tv, conn }), conn).optimizeGames, true, tv + ' ' + conn);
+      }
+    }
+    assert.notEqual(profile.SCHEMA_3_DEFAULTS.optimizeGames, profile.deriveOptimalSettings(null, 'wifi').optimizeGames);
   });
 });
 

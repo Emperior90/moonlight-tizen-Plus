@@ -25,8 +25,10 @@
 // switches 'Continuous audio from the host', which is gone since the host always keeps sending audio, and 'Optimize
 // bitrate presets', which is gone since the presets are the recommended bitrates (SCHEMA_3_REMOVED_KEYS). The 144 FPS
 // that 2.2.0 and earlier offered changed no default, so it needs no version of its own: a stored frame rate above the
-// frame rate menu is replaced at every start, whatever the version (frameRateReplacements()).
-const SETTINGS_SCHEMA_VERSION = 3;
+// frame rate menu is replaced at every start, whatever the version (frameRateReplacements()). Version 4 turned 'Optimize
+// game settings' on by default, so it stores the earlier default (off) once for an existing install that never switched
+// it (schema3Snapshot()).
+const SETTINGS_SCHEMA_VERSION = 4;
 const SETTINGS_SCHEMA_KEY = 'settingsSchema';
 
 const RECOMMENDED_ETHERNET_BITRATE = 75; // Highest recommended bitrate in Mbps over the 100 Mbps Ethernet port of Samsung TVs, leaving headroom for FEC, network overhead and larger frames
@@ -49,6 +51,16 @@ const MAX_BITRATE_MBPS = 250;
 // that the app asks the TV for.
 const LEVEL_51_MAX_LUMA_SAMPLE_RATE = 534773760;
 const LEVEL_52_MAX_LUMA_SAMPLE_RATE = 1069547520;
+
+// The limits of H.264 levels 4.2 and 5.1 (Table A-1 of ITU-T H.264): the largest frame in macroblocks of 16 x 16 pixels
+// (maxFrameMacroblocks) and the most macroblocks per second (maxMacroblocksPerSecond). Level 4.2 covers 1080p at up to
+// 60 FPS, and level 5.1, which Samsung specifies for the H.264 decoder of its UHD TVs, 1440p at up to 60 FPS and 4K at
+// up to 30 FPS. The level 4.2 values are the same as in wasm/video_config.hpp, which offers level 5.1 to the TV first for
+// an H.264 stream above level 4.2.
+const H264_LEVEL_LIMITS = Object.freeze({
+  '4.2': Object.freeze({ maxFrameMacroblocks: 8704, maxMacroblocksPerSecond: 522240 }),
+  '5.1': Object.freeze({ maxFrameMacroblocks: 36864, maxMacroblocksPerSecond: 983040 }),
+});
 
 // TV models whose settings were tested on the real TV. A profile is selected by its regular expression, which is
 // tested against the model name and the model series, and overrides what the TV can't report through its APIs:
@@ -110,6 +122,11 @@ const LEGACY_SNAPSHOT_KEYS = Object.freeze(['resolution', 'unlockAllFps', 'frame
 // switched it on. Never change these values: they describe what existing installs showed before the snapshot of
 // settings schema 3, not what new installs should get.
 const SCHEMA_2_DEFAULTS = Object.freeze({ rumbleFeedback: false });
+
+// Frozen copy of the defaults of settings schema 3 that settings schema 4 changed: 'Optimize game settings' was off
+// until the user switched it on. Never change these values: they describe what existing installs showed before the
+// snapshot of settings schema 4, not what new installs should get.
+const SCHEMA_3_DEFAULTS = Object.freeze({ optimizeGames: false });
 
 // The stored keys of the settings that settings schema 3 removed: the switch 'Continuous audio from the host' of an
 // A/B test, since the launch and resume requests always ask for audio during silence now, and the switch 'Optimize
@@ -267,12 +284,98 @@ function detectWasmPlayerFeatures(tizentvwasmObject) {
   return result;
 }
 
+// The features of the WASM player that the glue code of Samsung's Emscripten SDK (in the built moonlight-wasm.js) knows
+const WASM_PLAYER_FEATURE_NAMES = Object.freeze(['base-emss', 'legacy-emss', 'video-texture', 'software-decoding',
+  ULTRA_LOW_LATENCY_FEATURE, 'construct-with-modes', 'hardware-with-fallback']);
+
+// The report of the WASM player for System information and the diagnostic log, so that a report of a problem names the
+// player of the TV. It's only shown and never decides a setting (detectWasmPlayerFeatures() decides the Ultra Low
+// Latency mode). The tizentvwasm object can be passed in for the tests, otherwise the global one of the TV is used.
+// Returns:
+// - version: the version of the ElementaryMediaStreamSource entry of tizentvwasm.availableApis, or null (no entry, or an
+//   older player without availableApis)
+// - features: the features as the glue code sees them, or null when it can't tell: the list of the entry; without
+//   isApiFeatureSupported() the ones that the glue code derives from the API levels instead ('base-emss', with
+//   'video-texture' from level 2 and 'software-decoding' from level 3); for an older player without availableApis
+//   'base-emss' or 'legacy-emss' (getLegacyApis() of the glue code, by the session ID of its media track)
+// - supported: what isApiFeatureSupported() answers for each feature of WASM_PLAYER_FEATURE_NAMES (true, false, or null
+//   when the call fails), or null without the function, for the log
+function detectWasmPlayerReport(tizentvwasmObject) {
+  const wasmApi = tizentvwasmObject !== undefined ? tizentvwasmObject : getTvGlobal('tizentvwasm');
+  const report = { version: null, features: null, supported: null };
+  if (!wasmApi || (typeof wasmApi !== 'object' && typeof wasmApi !== 'function')) {
+    return report;
+  }
+  try {
+    if (wasmApi.availableApis === undefined) {
+      if (wasmApi.ElementaryMediaStreamSource) {
+        const track = wasmApi.ElementaryMediaTrack;
+        const hasSessionId = !!(track && track.prototype && Object.prototype.hasOwnProperty.call(track.prototype, 'sessionId'));
+        report.features = [hasSessionId ? 'base-emss' : 'legacy-emss'];
+      }
+      return report;
+    }
+    const emssInfo = (toArrayOrNull(wasmApi.availableApis) || []).find(function(apiInfo) {
+      return apiInfo && apiInfo.name === EMSS_API_NAME;
+    });
+    if (emssInfo && (typeof emssInfo.version === 'string' || typeof emssInfo.version === 'number')) {
+      report.version = String(emssInfo.version);
+    }
+    if (wasmApi.isApiFeatureSupported === undefined) {
+      // The glue code replaces the features of the entry with ones derived from its API levels
+      const apiLevels = emssInfo ? toArrayOrNull(emssInfo.apiLevels) : null;
+      if (apiLevels) {
+        report.features = ['base-emss'].concat(apiLevels.indexOf(2) >= 0 ? ['video-texture'] : [],
+          apiLevels.indexOf(3) >= 0 ? ['software-decoding'] : []);
+      }
+      return report;
+    }
+    const features = emssInfo ? toArrayOrNull(emssInfo.features) : null;
+    report.features = features ? features.map(String) : null;
+    if (typeof wasmApi.isApiFeatureSupported === 'function') {
+      report.supported = {};
+      WASM_PLAYER_FEATURE_NAMES.forEach(function(feature) {
+        const answer = safeTvCall('support of the feature ' + feature + ' of the WASM player', function() {
+          return wasmApi.isApiFeatureSupported(EMSS_API_NAME, feature);
+        }, null);
+        report.supported[feature] = typeof answer === 'boolean' ? answer : null;
+      });
+    }
+  } catch (error) {
+    console.warn('%c[tv_profile.js, detectWasmPlayerReport]', 'color: purple;', 'Warning: Failed to read the report of the WASM player: ' + (error && error.message ? error.message : error));
+  }
+  return report;
+}
+
+// The firmware version of the TV, so that System information and the diagnostic log tie a report to a software update
+// of Samsung (the Ultra Low Latency mode, freezes and picture faults differ between firmware versions of one model).
+// It comes from webapis.productinfo.getFirmware(), or, where that fails, from the build string of the Tizen platform
+// (tizen.systeminfo). The API objects can be passed in for the tests. Returns { version, source }: the version, or null
+// when neither can be read, and where it came from: 'productinfo', 'build' or null.
+function detectFirmwareVersion(webApi, tizenApi) {
+  const text = function(value) {
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+  };
+  const firmware = text(safeTvCall('TV firmware version', function() {
+    return webApi.productinfo.getFirmware();
+  }, null));
+  if (firmware) {
+    return { version: firmware, source: 'productinfo' };
+  }
+  const build = text(safeTvCall('Tizen build string', function() {
+    return tizenApi.systeminfo.getCapability('http://tizen.org/system/build.string');
+  }, null));
+  return build ? { version: build, source: 'build' } : { version: null, source: null };
+}
+
 // The video codecs that wasmplayer.cpp offers to the TV when it adds the video track (the MIME types of
-// StartupVidDecSetup()), which the decoder check asks the TV about: H.264 at level 4.2, and HEVC and AV1 at level 5.1
-// and, for streams above the luma sample rate of level 5.1 (e.g. 4K at 90 or 120 FPS), at level 5.2.
+// StartupVidDecSetup()), which the decoder check asks the TV about: H.264 at level 4.2 and, for streams above level 4.2
+// (e.g. 1440p at 60 FPS or 4K at 30 FPS), at level 5.1, and HEVC and AV1 at level 5.1 and, for streams above the luma
+// sample rate of level 5.1 (e.g. 4K at 90 or 120 FPS), at level 5.2.
 // tests/unit/runtime-checks.test.js checks that they are exactly the ones of wasmplayer.cpp.
 const VIDEO_DECODER_PROBES = Object.freeze([
   Object.freeze({ codec: 'H.264', level: '4.2', mimeType: 'video/mp4; codecs="avc1.64002A"' }),
+  Object.freeze({ codec: 'H.264', level: '5.1', mimeType: 'video/mp4; codecs="avc1.640033"' }),
   Object.freeze({ codec: 'HEVC', level: '5.1', mimeType: 'video/mp4; codecs="hev1.1.6.L153.B0"' }),
   Object.freeze({ codec: 'HEVC', level: '5.2', mimeType: 'video/mp4; codecs="hev1.1.6.L156.B0"' }),
   Object.freeze({ codec: 'HEVC Main10', level: '5.1', mimeType: 'video/mp4; codecs="hev1.2.4.L153.B0"' }),
@@ -371,6 +474,8 @@ function isAv1ReportedUnsupported(probe) {
 // - profile: the tested profile of this model (VERIFIED_PROFILES), or null
 // - modelYearHint: the model year suggested by the model code, or null (only shown, never used for a decision)
 // - wasmPlayer: whether the WASM player offers the Ultra Low Latency mode (detectWasmPlayerFeatures())
+// - wasmPlayerReport: the version and features of the WASM player (detectWasmPlayerReport()), only shown
+// - firmware: the firmware version of the TV and where it came from (detectFirmwareVersion()), only shown
 // - videoDecoders: the answers of the decoder check (probeVideoDecoders()), only shown and used for hints
 function detectTvCapabilities(apis) {
   const given = apis || {};
@@ -432,6 +537,8 @@ function detectTvCapabilities(apis) {
     profile: findVerifiedProfile(modelName, modelSeries),
     modelYearHint: getModelYearHint(modelCode),
     wasmPlayer: detectWasmPlayerFeatures(given.tizentvwasm),
+    wasmPlayerReport: detectWasmPlayerReport(given.tizentvwasm),
+    firmware: detectFirmwareVersion(webApi, tizenApi),
     videoDecoders: probeVideoDecoders(given.mediaSource),
   };
 }
@@ -567,6 +674,11 @@ function isGameModeUnavailable(caps) {
 //   disabled and not stored
 // - frame pacing on and the limited color range (the standard for video, which keeps the detail in dark and bright
 //   areas)
+// - 'Optimize game settings' on, as in moonlight-qt and moonlight-android: with the display device configuration of
+//   Sunshine, the host then renders at the resolution of the stream instead of scaling every frame of its own display
+//   to it, and without that configuration Sunshine itself does nothing with it and only passes it to the commands of
+//   the app it starts as SUNSHINE_CLIENT_ENABLE_SOPS (GeForce Experience gets it only where it is safe, see
+//   getGameOptimizationsRequest() in index.js)
 function deriveOptimalSettings(caps, connectionType) {
   const capabilities = caps || {};
   const profile = capabilities.profile || null;
@@ -582,6 +694,7 @@ function deriveOptimalSettings(caps, connectionType) {
     gameMode: getGameModeDefault(capabilities.platformVer, capabilities.wasmPlayer ? capabilities.wasmPlayer.ultraLowLatency : 'unknown'),
     framePacing: true,
     fullRange: false,
+    optimizeGames: true,
   };
 }
 
@@ -610,8 +723,12 @@ const VIDEO_WARNINGS = Object.freeze({
   ETHERNET_BITRATE: 'ethernetBitrate',
   // A bitrate above the warning threshold of the TV (getBitrateWarningMbps()), its decoder cap on most TVs
   BITRATE_ABOVE_CAP: 'bitrateAboveCap',
-  // H.264 above 1080p, which Samsung TVs generally can't decode
+  // H.264 above 1080p that the TV may not decode: the decoder check says that it rejects level 5.1, or the stream is
+  // above level 5.1 (e.g. 4K at 60 FPS), the highest level that Samsung specifies for H.264
   H264_RESOLUTION: 'h264Resolution',
+  // H.264 above 60 FPS, which failed to start on a Samsung TV at levels 5.1, 5.2 and 6.0 (brightcraft/moonlight-tizen
+  // discussion 166)
+  H264_FRAME_RATE: 'h264FrameRate',
 });
 
 // Return the width and height in pixels of a resolution value of the resolution menu (e.g. '3840:2160'), or null
@@ -685,11 +802,36 @@ function bitrateWarningKey(bitrate, connectionType, caps) {
   return mbps > getBitrateWarningMbps(caps) ? VIDEO_WARNINGS.BITRATE_ABOVE_CAP : null;
 }
 
-// Return the message key of the warning for a video codec at a resolution (VIDEO_WARNINGS), or null: H.264 above 1080p,
-// which Samsung TVs generally decode only up to level 4.2 (1080p)
-function h264ResolutionWarningKey(videoCodec, res) {
+// Whether an H.264 stream of a width, height and frame rate is above a level of H264_LEVEL_LIMITS ('4.2' or '5.1')
+function exceedsH264Level(width, height, frameRate, level) {
+  const limits = H264_LEVEL_LIMITS[level];
+  const frameMacroblocks = Math.ceil(width / 16) * Math.ceil(height / 16);
+  return frameMacroblocks > limits.maxFrameMacroblocks || frameMacroblocks * frameRate > limits.maxMacroblocksPerSecond;
+}
+
+// Return the message key of the warning for the H.264 codec at a resolution and frame rate on a TV (VIDEO_WARNINGS), or
+// null. The app offers H.264 at level 5.1 to the TV for a stream above level 4.2 (wasmplayer.cpp), so it returns one key,
+// the first that applies:
+// - above 60 FPS, which failed to start on a Samsung TV at levels 5.1, 5.2 and 6.0 (discussion 166), also at 1080p
+// - above 1080p, when the decoder check says that the TV rejects H.264 at level 5.1, or when the stream is above level
+//   5.1 (1800p or 4K at 60 FPS), which no answer of the TV covers. An answer of the check that doesn't count gives no
+//   warning within level 5.1, since Samsung specifies level 5.1 for its UHD TVs.
+function h264WarningKey(videoCodec, res, frameRate, caps) {
   const size = parseResolution(res);
-  return videoCodec === 'H264' && size && size.width > 1920 ? VIDEO_WARNINGS.H264_RESOLUTION : null;
+  const fps = parseInt(frameRate, 10);
+  if (videoCodec !== 'H264' || !size) {
+    return null;
+  }
+  if (fps > 60) {
+    return VIDEO_WARNINGS.H264_FRAME_RATE;
+  }
+  if (size.width > 1920) {
+    const rejectsLevel51 = getVideoDecoderSupport(caps ? caps.videoDecoders : null, 'H.264', '5.1') === 'no';
+    if (rejectsLevel51 || (fps > 0 && exceedsH264Level(size.width, size.height, fps, '5.1'))) {
+      return VIDEO_WARNINGS.H264_RESOLUTION;
+    }
+  }
+  return null;
 }
 
 // Frozen copy of the default resolution of settings schema 1: the highest resolution of the menu up to 4K, including
@@ -803,6 +945,20 @@ function schema2Snapshot(stored) {
   return snapshot;
 }
 
+// Return the settings that the one-time snapshot of settings schema 4 stores for an existing install of settings schema
+// 3 or older: the default of settings schema 3 (SCHEMA_3_DEFAULTS) for every setting whose default changed and that is
+// still unset, so that the install shows what it showed before. Stored values are never replaced.
+function schema3Snapshot(stored) {
+  const values = stored || {};
+  const snapshot = {};
+  Object.keys(SCHEMA_3_DEFAULTS).forEach(function(key) {
+    if (values[key] == null) {
+      snapshot[key] = SCHEMA_3_DEFAULTS[key];
+    }
+  });
+  return snapshot;
+}
+
 // Return what settings schema 3 stores for an existing install in place of the settings that it removed
 // (SCHEMA_3_REMOVED_KEYS): the optimized presets of 'Optimize bitrate presets' always followed the video settings, so an
 // install that had the switch on and never stored the state of the bitrate presets keeps following them, now with the
@@ -881,6 +1037,7 @@ if (typeof module === 'object' && module && module.exports) {
     MAX_BITRATE_MBPS: MAX_BITRATE_MBPS,
     LEVEL_51_MAX_LUMA_SAMPLE_RATE: LEVEL_51_MAX_LUMA_SAMPLE_RATE,
     LEVEL_52_MAX_LUMA_SAMPLE_RATE: LEVEL_52_MAX_LUMA_SAMPLE_RATE,
+    H264_LEVEL_LIMITS: H264_LEVEL_LIMITS,
     VERIFIED_PROFILES: VERIFIED_PROFILES,
     VIDEO_WARNINGS: VIDEO_WARNINGS,
     FRAME_RATES: FRAME_RATES,
@@ -891,6 +1048,7 @@ if (typeof module === 'object' && module && module.exports) {
     LEGACY_SNAPSHOT_KEYS: LEGACY_SNAPSHOT_KEYS,
     EMSS_API_NAME: EMSS_API_NAME,
     ULTRA_LOW_LATENCY_FEATURE: ULTRA_LOW_LATENCY_FEATURE,
+    WASM_PLAYER_FEATURE_NAMES: WASM_PLAYER_FEATURE_NAMES,
     VIDEO_DECODER_PROBES: VIDEO_DECODER_PROBES,
     BOGUS_CODEC_PROBE: BOGUS_CODEC_PROBE,
     H264_CONTROL_PROBE: H264_CONTROL_PROBE,
@@ -899,6 +1057,8 @@ if (typeof module === 'object' && module && module.exports) {
     findVerifiedProfile: findVerifiedProfile,
     getModelYearHint: getModelYearHint,
     detectWasmPlayerFeatures: detectWasmPlayerFeatures,
+    detectWasmPlayerReport: detectWasmPlayerReport,
+    detectFirmwareVersion: detectFirmwareVersion,
     probeVideoDecoders: probeVideoDecoders,
     getVideoDecoderSupport: getVideoDecoderSupport,
     isAv1ReportedUnsupported: isAv1ReportedUnsupported,
@@ -920,7 +1080,8 @@ if (typeof module === 'object' && module && module.exports) {
     framerateCadenceWarningKey: framerateCadenceWarningKey,
     hdrWarningKey: hdrWarningKey,
     bitrateWarningKey: bitrateWarningKey,
-    h264ResolutionWarningKey: h264ResolutionWarningKey,
+    exceedsH264Level: exceedsH264Level,
+    h264WarningKey: h264WarningKey,
     legacyOptimalResolution: legacyOptimalResolution,
     legacyLoadedResolution: legacyLoadedResolution,
     legacyDefaults: legacyDefaults,
@@ -928,7 +1089,9 @@ if (typeof module === 'object' && module && module.exports) {
     legacySettingsSnapshot: legacySettingsSnapshot,
     SCHEMA_2_DEFAULTS: SCHEMA_2_DEFAULTS,
     SCHEMA_3_REMOVED_KEYS: SCHEMA_3_REMOVED_KEYS,
+    SCHEMA_3_DEFAULTS: SCHEMA_3_DEFAULTS,
     schema2Snapshot: schema2Snapshot,
+    schema3Snapshot: schema3Snapshot,
     schema3Replacements: schema3Replacements,
     frameRateReplacements: frameRateReplacements,
   };

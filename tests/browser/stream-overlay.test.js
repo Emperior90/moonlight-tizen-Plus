@@ -297,7 +297,9 @@ test('the corrected help texts of SOPS, the ultra low latency mode and HDR keep 
       gameMode: $('#gameModeMenu').prev().text().trim(),
       hdr: $('#videoHdrMenu').prev().text().trim(),
     }));
-    assert.ok(texts.sops.indexOf('Lets Sunshine switch the display of the PC') >= 0, texts.sops);
+    assert.ok(texts.sops.indexOf('Lets Sunshine switch the display of the PC to the stream resolution') >= 0, texts.sops);
+    // It says that without the display device configuration of Sunshine only app scripts can read it (2.3.0)
+    assert.ok(texts.sops.indexOf('Without its display device configuration, only app scripts can read it') >= 0, texts.sops);
     // The optimized presets are gone (2.2.0)
     assert.equal(texts.presets, 0);
     assert.ok(texts.gameMode.indexOf('On Tizen 9 and newer it can freeze the picture') >= 0, texts.gameMode);

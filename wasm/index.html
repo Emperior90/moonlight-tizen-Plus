@@ -285,8 +285,8 @@
           <div id="videoSettings" class="settings-options">
             <div class="setting-option">
               <label data-i18n="Video codec">Video codec</label>
-              <span class="mdl-list__item-text-body" data-i18n="- HEVC suits Samsung TVs. H.264 only up to 1080p. AV1 needs an AV1 GPU and an AV1 TV.">
-                - HEVC suits Samsung TVs. H.264 only up to 1080p. AV1 needs an AV1 GPU and an AV1 TV.
+              <span class="mdl-list__item-text-body" data-i18n="- HEVC suits Samsung TVs. H.264 above 1080p only up to 1440p at 60 FPS or 4K at 30 FPS, where the TV decodes level 5.1. AV1 needs an AV1 GPU and an AV1 TV.">
+                - HEVC suits Samsung TVs. H.264 above 1080p only up to 1440p at 60 FPS or 4K at 30 FPS, where the TV decodes level 5.1. AV1 needs an AV1 GPU and an AV1 TV.
               </span>
               <div id="videoCodecMenu">
                 <button type="button" id="selectCodec" class="mdl-button mdl-js-button" data-value="H264" data-i18n="H.264">H.264</button>
@@ -535,8 +535,8 @@
           <div id="advancedSettings" class="settings-options">
             <div class="setting-option">
               <label data-i18n="Optimize game settings">Optimize game settings</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Lets Sunshine switch the display of the PC to the resolution of the stream, if its display device settings allow it.">
-                - Lets Sunshine switch the display of the PC to the resolution of the stream, if its display device settings allow it.
+              <span class="mdl-list__item-text-body" data-i18n="- Lets Sunshine switch the display of the PC to the stream resolution, so games render at it instead of being scaled. Without its display device configuration, only app scripts can read it.">
+                - Lets Sunshine switch the display of the PC to the stream resolution, so games render at it instead of being scaled. Without its display device configuration, only app scripts can read it.
               </span>
               <div id="optimizeGamesMenu">
                 <label id="optimizeGamesBtn" class="mdl-switch mdl-js-switch" for="optimizeGamesSwitch">
@@ -546,8 +546,8 @@
             </div>
             <div class="setting-option">
               <label data-i18n="Full color range">Full color range</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Keep it off: TVs expect the limited range, otherwise detail in dark and bright areas is lost.">
-                - Keep it off: TVs expect the limited range, otherwise detail in dark and bright areas is lost.
+              <span class="mdl-list__item-text-body" data-i18n="- Keep it off: TVs expect the limited range, otherwise detail in dark and bright areas is lost. With HDR on, the stream always uses the limited range.">
+                - Keep it off: TVs expect the limited range, otherwise detail in dark and bright areas is lost. With HDR on, the stream always uses the limited range.
               </span>
               <div id="colorRangeMenu">
                 <label id="fullRangeBtn" class="mdl-switch mdl-js-switch" for="fullRangeSwitch">
@@ -1050,6 +1050,9 @@
       </button>
       <button type="button" id="streamMenuBitrate" class="overlay-menu-item" role="menuitem">
         <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-sliders"/></svg><span class="overlay-menu-label"><span data-i18n="Bitrate">Bitrate</span></span><span class="overlay-menu-stepper"><svg id="streamMenuBitrateLower" class="icon" aria-hidden="true"><use xlink:href="#i-back"/></svg><span id="streamMenuBitrateValue" class="overlay-menu-value"></span><svg id="streamMenuBitrateHigher" class="icon stepper-next" aria-hidden="true"><use xlink:href="#i-back"/></svg></span><span id="streamMenuBitrateNote" class="overlay-menu-note"></span>
+      </button>
+      <button type="button" id="streamMenuRefresh" class="overlay-menu-item" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-refresh"/></svg><span class="overlay-menu-label" data-i18n="Refresh picture">Refresh picture</span>
       </button>
       <div class="overlay-menu-group" data-i18n="Send to the PC">Send to the PC</div>
       <button type="button" id="streamMenuText" class="overlay-menu-item" role="menuitem">

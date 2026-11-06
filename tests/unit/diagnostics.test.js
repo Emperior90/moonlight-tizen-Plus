@@ -8,8 +8,9 @@
 // the overlay left out, a repeated line counted, the oldest lines dropped when a session is full, the native lines of the
 // module merged by their time and hidden the same way), the report of the last session read from the messages of
 // tests/fixtures/session-reports.tsv with their hints and its lines for System information, and the heartbeat of a stream
-// that reports once at the next start that the app ended during it (not for a stream in the background), and that the
-// native lines come from the ring that every log line of the module enters.
+// that reports once at the next start that the app ended during it (not for a stream in the background), that the
+// native lines come from the ring that every log line of the module enters, that the module sets the listener that logs
+// the errors of the media element, and that each stream starts the host figures of its report from zero.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -327,7 +328,7 @@ function readReports() {
   return fs.readFileSync(path.join(REPO_ROOT, 'tests/fixtures/session-reports.tsv'), 'utf8')
     .split('\n').filter((line) => line && line[0] !== '#').map((line) => {
       const fields = line.split('\t');
-      return { name: fields[0], fields, message: fields[17], hints: fields[18].split(',') };
+      return { name: fields[0], fields, message: fields[19], hints: fields[20].split(',') };
     });
 }
 
@@ -336,7 +337,7 @@ test('the report of each message of the fixture, with its hints', () => {
   const parse = app.platform.get('parseSessionReport');
   const hints = app.platform.get('getSessionReportHints');
   const reports = readReports();
-  assert.equal(reports.length, 7);
+  assert.equal(reports.length, 15);
   reports.forEach((entry) => {
     assert.ok(entry.message.indexOf('SessionReportMsg: ') === 0, entry.name);
     const report = plain(parse(entry.message.slice('SessionReportMsg: '.length)));
@@ -344,6 +345,8 @@ test('the report of each message of the fixture, with its hints', () => {
     assert.equal(report.codec, entry.fields[2], entry.name);
     assert.equal(report.frames, Number(entry.fields[7]), entry.name);
     assert.equal(report.heapGrowthMb, Number(entry.fields[16]), entry.name);
+    assert.equal(report.hostFrameRateX100, Number(entry.fields[17]), entry.name);
+    assert.equal(report.hostProcessingLatencyX10, Number(entry.fields[18]), entry.name);
     assert.deepEqual(plain(hints(report, { refFrameInvalidation: false })), entry.hints, entry.name);
   });
   // With reference frame invalidation already on, the recovery keyframes give no hint of their own
@@ -353,6 +356,69 @@ test('the report of each message of the fixture, with its hints', () => {
   assert.equal(parse('{broken'), null);
   assert.equal(parse('42'), null);
   assert.equal(plain(parse('{"frames":"many","durationMs":-5}')).frames, 0);
+});
+
+// A clean report of a long stream at a frame rate, with the best host frame rate and the host processing latency given
+function hostReport(fps, hostFrameRate, hostLatencyMs, extra) {
+  return Object.assign({ durationMs: 1800000, codec: 'HEVC Main10', width: 3840, height: 2160, fps, bitrateKbps: 75000,
+    frames: fps * 1800, networkDroppedFrames: 0, tvDroppedFrames: 0, videoResets: 0, recoveryKeyframes: 0,
+    fecRecoveredBlocks: 0, fecFailures: 0, heapTopMb: 60, heapTotalMb: 128, heapGrowthMb: 0,
+    hostFrameRateX100: Math.round(hostFrameRate * 100), hostProcessingLatencyX10: Math.round(hostLatencyMs * 10) }, extra || {});
+}
+
+test('the hint about the refresh rate of the PC comes only for a host at 59.94 or 119.88 FPS in a 60 or 120 FPS stream', () => {
+  const hints = loadDiagnostics().platform.get('getSessionReportHints');
+  const cases = [
+    // 60 FPS: the band of 59.94 +- 0.02 FPS, which the best window of a 59.94 Hz display reads (59.93 to 59.94)
+    [60, 59.94, ['hostRefresh']], [60, 59.93, ['hostRefresh']], [60, 59.95, ['hostRefresh']], [60, 59.96, ['hostRefresh']],
+    [60, 59.92, ['ok']], [60, 59.97, ['ok']], [60, 60, ['ok']], [60, 59.99, ['ok']], [60, 60.01, ['ok']],
+    // a host that drops frames or a game capped below the stream is no display at 59.94 Hz
+    [60, 59, ['ok']], [60, 58.5, ['ok']], [60, 30, ['ok']], [60, 0, ['ok']],
+    // 120 FPS: 119.88 +- 0.04 FPS
+    [120, 119.88, ['hostRefresh']], [120, 119.85, ['hostRefresh']], [120, 119.92, ['hostRefresh']],
+    [120, 119.83, ['ok']], [120, 119.93, ['ok']], [120, 120, ['ok']], [120, 59.94, ['ok']],
+    // other stream rates have no NTSC display rate to compare with
+    [30, 29.97, ['ok']], [90, 89.91, ['ok']],
+  ];
+  cases.forEach(([fps, host, expected]) => assert.deepEqual(plain(hints(hostReport(fps, host, 4))), expected, fps + ' FPS, host ' + host));
+});
+
+test('the hint about the encoder of the PC needs a busy host in a long session without the network hint', () => {
+  const hints = loadDiagnostics().platform.get('getSessionReportHints');
+  const cases = [
+    // more than 75 % of the time between two frames: 12.5 ms at 60 FPS, 8.33 ms at 90, 6.25 ms at 120, 25 ms at 30
+    [hostReport(60, 60, 12.6), ['host']], [hostReport(60, 60, 12.5), ['ok']], [hostReport(60, 60, 5), ['ok']],
+    [hostReport(120, 120, 6.3), ['host']], [hostReport(120, 120, 6.2), ['ok']],
+    [hostReport(90, 90, 8.4), ['host']], [hostReport(90, 90, 8.3), ['ok']],
+    [hostReport(30, 30, 25.1), ['host']], [hostReport(30, 30, 20), ['ok']],
+    // a low host frame rate alone (a static scene, a capped game, the minimum frame rate of Sunshine) gives no hint
+    [hostReport(60, 30, 4), ['ok']], [hostReport(120, 45, 3), ['ok']],
+    // a host without the figure (0) gives none either
+    [hostReport(60, 60, 0), ['ok']],
+    // at least 2 minutes
+    [hostReport(60, 60, 14, { durationMs: 119000 }), ['ok']], [hostReport(60, 60, 14, { durationMs: 120000 }), ['host']],
+    // not with many frames lost on the network, whose keyframes make the encoder look busier, while a few lost frames
+    // that give no network hint (fewer than 10, or less than 0.5 %) don't stop it
+    [hostReport(60, 60, 14, { networkDroppedFrames: 600 }), ['network']],
+    [hostReport(60, 60, 14, { networkDroppedFrames: 9 }), ['host']], [hostReport(60, 60, 14, { networkDroppedFrames: 500 }), ['host']],
+    [hostReport(60, 60, 14, { networkDroppedFrames: 540 }), ['network']],
+    // with the TV dropping frames too, both show, and with a host display at 59.94 Hz as well
+    [hostReport(60, 59.94, 14, { tvDroppedFrames: 600 }), ['tv', 'host', 'hostRefresh']],
+  ];
+  cases.forEach(([report, expected]) => assert.deepEqual(plain(hints(report)), expected, JSON.stringify(report)));
+});
+
+test('the hints about the PC name its figures', () => {
+  const app = loadDiagnostics();
+  const text = app.platform.get('getSessionReportHintText');
+  assert.equal(text('host', hostReport(60, 60, 13.8)),
+    'The PC took 13.8 ms of the 16.7 ms between two frames to encode a frame, so it may have skipped frames: use a faster encoder preset on the PC, or a lower resolution or frame rate.');
+  assert.equal(text('host', hostReport(120, 120, 7.1)),
+    'The PC took 7.1 ms of the 8.3 ms between two frames to encode a frame, so it may have skipped frames: use a faster encoder preset on the PC, or a lower resolution or frame rate.');
+  assert.equal(text('hostRefresh', hostReport(60, 59.94, 4)),
+    'The PC sent 59.94 instead of 60 frames per second, which shows as a short stutter about every 17 seconds: set the display of the PC to exactly 60 Hz.');
+  assert.equal(text('hostRefresh', hostReport(120, 119.88, 4)),
+    'The PC sent 119.88 instead of 120 frames per second, which shows as a short stutter about every 8 seconds: set the display of the PC to exactly 120 Hz.');
 });
 
 test('the lines of the report in System information', () => {
@@ -366,6 +432,7 @@ test('the lines of the report in System information', () => {
     'Frames lost on the network: 540 of 36,000 (1.50%)',
     'Frames dropped by the TV: 0, video resets: 1, recovery keyframes: 4',
     'FEC repairs: 900 blocks, 6 failed',
+    'Host frame rate (best 30 s): 60.00 FPS, average host processing latency: 6.1 ms',
     'WASM heap at the end: 62 of 128 MB (+1 MB in this session)',
     'Hint: Many frames were lost on the network: use a cable or lower the bitrate.',
     'Hint: The PC often sent whole frames again after a loss: turn on Reference frame invalidation in the Advanced Settings.',
@@ -379,6 +446,20 @@ test('the lines of the report in System information', () => {
   const lines = plain(describe(app.platform.get('parseSessionReport')(noVideo.message.slice(18)), {}));
   assert.equal(lines[0], 'Last session: 4 s, No video, 75 Mbps');
   assert.equal(lines[lines.length - 1], 'Hint: No video arrived from the PC in this session.');
+  // Without either figure of the host its line is left out, and a missing one is Unknown
+  assert.equal(lines.filter((line) => line.indexOf('Host frame rate') === 0).length, 0);
+  assert.equal(plain(describe(Object.assign({}, report, { hostFrameRateX100: 0 }), {}))[4],
+    'Host frame rate (best 30 s): Unknown, average host processing latency: 6.1 ms');
+  assert.equal(plain(describe(Object.assign({}, report, { hostProcessingLatencyX10: 0 }), {}))[4],
+    'Host frame rate (best 30 s): 60.00 FPS, average host processing latency: Unknown');
+  // The hint of a host display at 59.94 Hz with its figures
+  const refresh = readReports().filter((entry) => entry.name === 'host-refresh')[0];
+  const refreshLines = plain(describe(app.platform.get('parseSessionReport')(refresh.message.slice(18)), {}));
+  assert.deepEqual(refreshLines.slice(4), [
+    'Host frame rate (best 30 s): 59.94 FPS, average host processing latency: 4.7 ms',
+    'WASM heap at the end: 61 of 128 MB (+1 MB in this session)',
+    'Hint: The PC sent 59.94 instead of 60 frames per second, which shows as a short stutter about every 17 seconds: set the display of the PC to exactly 60 Hz.',
+  ]);
 });
 
 test('the heartbeat of a stream reports once at the next start that the app ended during it', () => {
@@ -445,6 +526,44 @@ test('the front end takes the native lines from the ring of the module, which ev
   assert.match(main, /std::string takeDiagnosticLog\(\) \{\s+return GetDiagnosticLog\(\)\.Take\(\);\s+\}/);
   assert.match(main, /emscripten::function\("takeDiagnosticLog", &takeDiagnosticLog\);/);
   assert.match(read('wasm/platform/diagnostics.js'), /Module\.takeDiagnosticLog\(\)/);
+});
+
+test('the module sets the listener that logs the errors of the media element once, and it outlives the element', () => {
+  // native/player_errors_test.cpp runs the listener, which the media element only calls once the constructor of
+  // MoonlightInstance (wasm/main.cpp, which no native test builds) has set it
+  const read = (file) => fs.readFileSync(path.join(REPO_ROOT, file), 'utf8');
+  const main = read('wasm/main.cpp');
+  const start = main.indexOf('MoonlightInstance::MoonlightInstance()');
+  const end = main.indexOf('MoonlightInstance::~MoonlightInstance()');
+  assert.ok(start >= 0 && end > start, 'the constructor of MoonlightInstance');
+  const constructor = main.slice(start, end);
+  const body = constructor.slice(constructor.indexOf(') {'));
+  assert.match(body, /if \(!m_MediaElement\.SetListener\(&m_MediaElementListener\)\) \{\s+ClLogMessage\(/);
+  assert.equal((main.match(/SetListener\(&m_MediaElementListener\)/g) || []).length, 1, 'set once, for the life of the module');
+  // The listener is built before the element that holds it and destroyed after it: the order of the members decides
+  // that, and the initializer list follows it
+  const initializerListener = constructor.indexOf('m_MediaElementListener(this)');
+  const initializerElement = constructor.indexOf('m_MediaElement("wasm_module")');
+  assert.ok(initializerListener > 0 && initializerElement > initializerListener, 'initializer list');
+  const header = read('wasm/moonlight_wasm.hpp');
+  const memberListener = header.indexOf('  MediaElementListener m_MediaElementListener;');
+  const memberElement = header.indexOf('  samsung::html::HTMLMediaElement m_MediaElement;');
+  assert.ok(memberListener > 0 && memberElement > memberListener, 'members of MoonlightInstance');
+  assert.match(read('tests/native/player_errors_test.cpp'), /#include "\.\.\/\.\.\/wasm\/wasmplayer\.cpp"/);
+});
+
+test('each stream starts the host figures of its report from zero', () => {
+  // native/stats_overlay_test.cpp runs ResetHostFrameRate() between two streams; VidDecSetup(), which waits for the
+  // media pipeline of the TV and so runs in no native test, calls it for each stream
+  const source = fs.readFileSync(path.join(REPO_ROOT, 'wasm', 'wasmplayer.cpp'), 'utf8');
+  const start = source.indexOf('int MoonlightInstance::VidDecSetup(');
+  const end = source.indexOf('\n}\n', start);
+  assert.ok(start >= 0 && end > start, 'VidDecSetup()');
+  const setup = source.slice(start, end);
+  assert.match(setup, /\n {2}ResetHostFrameRate\(\);\n/);
+  assert.ok(setup.indexOf('ResetHostFrameRate();') < setup.indexOf('StartupVidDecSetup('), 'before the media pipeline is set up');
+  const reset = source.slice(source.indexOf('static void ResetHostFrameRate() {'));
+  assert.match(reset.slice(0, reset.indexOf('\n}\n')), /s_HostFrameRateBest = 0\.0f;/);
 });
 
 // Record the length of every text that the redaction rules run over

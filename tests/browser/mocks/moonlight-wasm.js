@@ -53,6 +53,12 @@
   Module.toggleMouseEmulation = function() {
     record('toggleMouseEmulation', arguments);
   };
+  // 'Refresh picture' of the Stream Menu: the module asks the host for a keyframe and answers true during a stream
+  // (requestIdrFrame() of wasm/main.cpp)
+  Module.requestIdrFrame = function() {
+    record('requestIdrFrame', arguments);
+    return true;
+  };
   Module.sendKeyboardEvent = function() {
     record('sendKeyboardEvent', arguments);
   };

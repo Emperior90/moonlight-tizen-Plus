@@ -4,8 +4,9 @@
 // mapping), reached with the remote and a gamepad: LEFT and RIGHT change what a button presses for every controller, the
 // change is stored and goes to the stream with its start request; a connected controller gets a mapping of its own,
 // which a reset forgets, and one that reports a timestamp of 0 (Tizen 5.5) joins the open menu once its input changed,
-// with OK still on the marked entry; the calibration of its sticks from what they report at rest and at their edge; and the stored
-// switches 'Flip A/B face buttons' and 'Flip X/Y face buttons' of an earlier version as the mapping for every controller.
+// with OK still on the marked entry and its first D-pad press reaching the entry it brings; the calibration of its
+// sticks from what they report at rest and at their edge; and the stored switches 'Flip A/B face buttons' and 'Flip X/Y
+// face buttons' of an earlier version as the mapping for every controller.
 
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -325,6 +326,44 @@ test('OK stays on the marked entry when a controller with a timestamp of 0 joins
     await remoteKey(app.page, ...RIGHT);
     menu = await readMenu(app.page);
     assert.deepEqual([menu.focus, menu.subtitle, menu.calibrate], ['buttonMappingSelect', 'Own buttons', true]);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('the first D-pad press of a controller with a timestamp of 0 goes to Calibrate the sticks, which the controller brings', async () => {
+  const own = IDENTITY.slice(0, 15).concat([14]);
+  const app = await openApp(harness, {
+    tv: { tv: 'fhd', conn: 'wifi' },
+    initScripts: [simulatedGamepads],
+    stored: { controllerMappings: { version: 1, controllers: { [XBOX_STREAM_ID]: { name: 'Xbox Wireless Controller', buttons: own } } } },
+  });
+  try {
+    await app.page.evaluate((id) => {
+      window.__pads[0] = {
+        index: 0, id, mapping: 'standard', connected: true, timestamp: 0, vibrationActuator: null,
+        buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })), axes: [0, 0, 0, 0],
+      };
+    }, XBOX_ID);
+    await openMapping(app.page);
+    await remoteKey(app.page, ...RIGHT);
+    await remoteKey(app.page, ...UP);
+    await remoteKey(app.page, ...UP);
+    let menu = await readMenu(app.page);
+    assert.deepEqual([menu.focus, menu.controller, menu.calibrate], ['buttonMappingReset', 'Xbox Wireless Controller', false]);
+    // D-pad up on the controller, its first input since the TV listed it: it makes the controller count, which shows
+    // 'Calibrate the sticks' before Reset, and then moves there instead of skipping it
+    await app.page.evaluate(() => {
+      window.__pads[0].buttons[12] = { pressed: true, value: 1 };
+    });
+    await app.page.waitForTimeout(60);
+    await app.page.evaluate(() => {
+      window.__pads[0].buttons[12] = { pressed: false, value: 0 };
+    });
+    await app.page.waitForTimeout(300);
+    menu = await readMenu(app.page);
+    assert.deepEqual([menu.focus, menu.calibrate], ['buttonMappingCalibrate', true]);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
