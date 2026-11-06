@@ -1089,6 +1089,79 @@ static void LateCaptureTimerKeepsThePace() {
   }
 }
 
+// The timestamps from fromMs on that lie exactly on the grid of the ticks from the first frame (frame numbers count)
+static Count TimestampsOnTheGrid(const std::vector<Frame>& frames, const std::vector<Outcome>& outcomes, int fps,
+                                 double fromMs) {
+  Count count;
+  for (size_t i = 1; i < outcomes.size(); i++) {
+    if (outcomes[i].captureMs - outcomes.front().captureMs >= fromMs) {
+      count.frames++;
+      const double gridPts = outcomes.front().pts + (double)(frames[i].number - frames.front().number) / fps;
+      count.passed += std::abs(outcomes[i].pts - gridPts) < 1e-6 ? 1 : 0;
+    }
+  }
+  return count;
+}
+
+// A capture timer on a busy Linux host that wakes up late, so that the frame goes out that much later too, for two
+// frames in a row. Two capture times 2.6 and 2.4 ms late raise the top of the range of the offset for good, but the
+// timestamps don't follow it, as no other frame confirms it (43e25f0 moved them 1.4 ms later, 0.1 ms per frame); two
+// capture times 5 and 5.5 ms late, which arrive late as well, make the timestamps follow the second one, and the frame
+// after them, back on the grid of before, takes them back to it (43e25f0 kept the shift of 2.5 ms and counted the host as
+// irregular for a second). In a stream at 90 FPS on a 120 Hz TV, each such move of the timestamps put about a third of
+// the frames on another refresh until the next window of the pacer: with 5% of the capture times 2 to 6 ms late, 43e25f0
+// showed 130 frames per 1000 on another refresh than they should be in the first 20 s of a stream, against 98 for 2.2.1
+// (this version 100). In such streams, nearly every timestamp stays on the grid of the ticks.
+static void LateCaptureTimerPairsKeepTheGrid() {
+  const double frameMs = 1000.0 / 90;
+  std::vector<Frame> frames = Host(14, [frameMs](int k) { return 1000.37 + k * frameMs; });
+  for (const auto& late : {std::make_pair(450, 2.6), std::make_pair(451, 2.4), std::make_pair(810, 5.0),
+                           std::make_pair(811, 5.5)}) {
+    frames[late.first].captureMs += late.second;
+    frames[late.first].hostTimeMs = HostTimeMs(frames[late.first].captureMs);
+  }
+  Arrive(frames, 90, 2.0, 51);
+  std::vector<Outcome> outcomes = Run(90, frames);
+  int offGrid = 0;
+  std::string firstOffGrid;
+  for (size_t i = 1; i < outcomes.size(); i++) {
+    const double offGridMs = (outcomes[i].pts - outcomes.front().pts - (double)i / 90) * 1000;
+    if (i == 811) {
+      test_support::Check(offGridMs > 0 && offGridMs <= 3.0, "the second frame 5.5 ms late is followed, by up to 3 ms",
+                          Describe(offGridMs), __FILE__, __LINE__);
+    } else if (std::abs(offGridMs) > 1e-6) {
+      if (offGrid++ == 0) {
+        firstOffGrid = "frame " + std::to_string(i + 1) + " by " + Describe(offGridMs) + " ms";
+      }
+    }
+  }
+  test_support::Check(offGrid == 0, "every other timestamp on the grid of the ticks",
+                      std::to_string(offGrid) + " off it, the first " + firstOffGrid, __FILE__, __LINE__);
+  const double held = HeldPercent(outcomes, 3000);
+  test_support::Check(held > 95, "the pacer holds more than 95% of the frames", Describe(held), __FILE__, __LINE__);
+
+  // 5% of the capture times 2 to 6 ms late, and the frames sent that much later, at 90 FPS, 8 streams of 20 s
+  Count onGrid;
+  for (unsigned seed = 52; seed < 60; seed++) {
+    frames = Host(20, [frameMs](int k) { return 1000.37 + k * frameMs; });
+    std::mt19937 random(seed);
+    for (Frame& frame : frames) {
+      if (random() / 4294967296.0 < 0.05) {
+        frame.captureMs += 2.0 + random() / 4294967296.0 * 4.0;
+        frame.hostTimeMs = HostTimeMs(frame.captureMs);
+      }
+    }
+    Arrive(frames, 90, 2.0, seed + 100);
+    outcomes = Run(90, frames);
+    const Count runOnGrid = TimestampsOnTheGrid(frames, outcomes, 90, 0);
+    onGrid.frames += runOnGrid.frames;
+    onGrid.passed += runOnGrid.passed;
+  }
+  test_support::Check(onGrid.passed >= onGrid.frames * 0.99,
+                      "90 FPS, 5% 2 to 6 ms late: 99% of the timestamps on the grid of the ticks", Describe(onGrid),
+                      __FILE__, __LINE__);
+}
+
 // 24 FPS content (a film) in a 60 FPS stream: Sunshine sends each new image at its present, and when no new image comes
 // within two frame durations after one (half the stream rate is its default minimum frame rate), the image again, as a
 // duplicate stamped with the end of the send of the frame before. The new images keep their pace, 41.7 ms apart, and
@@ -1126,6 +1199,106 @@ static void SunshineDuplicatesKeepThePaceOfTheNewImages() {
   }
   test_support::Check((highest - lowest) * 1000 < 4, "the time difference of the pacer stays within 4 ms",
                       Describe((highest - lowest) * 1000), __FILE__, __LINE__);
+}
+
+// A frame lost on the network, as this client gets it: without reference frame invalidation (the app announces no such
+// capability), moonlight-common-c drops every frame after the lost one until a keyframe, which it asks for with the
+// first complete frame after the loss. The request reaches the host 11 ms after that frame was sent, so Sunshine sends
+// one more frame as usual (dropped too) and then encodes the previous image again as the keyframe: a duplicate sent 3
+// ms after that frame, stamped with the end of its send (4 ms after it, stream.cpp), that arrives keyframeMs after it,
+// between two frames. The decoder gets the frame before the loss, the duplicate after a gap of 3 frame numbers, and
+// the next frame. frames[lost] is the lost frame; captureMs is the moment the host sent a frame. A host other than
+// Sunshine (marked false) reports a processing latency for the duplicate as well.
+static void LoseFrameUntilKeyframe(std::vector<Frame>& frames, size_t lost, double keyframeMs, bool marked = true) {
+  Frame duplicate = frames[lost + 2];
+  duplicate.number++;
+  duplicate.captureMs += 3.0;
+  duplicate.hostTimeMs = HostTimeMs(frames[lost + 2].captureMs + 4.0);
+  duplicate.arrival += keyframeMs / 1000.0;
+  duplicate.duplicate = marked;
+  for (size_t i = lost + 3; i < frames.size(); i++) {
+    frames[i].number++;
+  }
+  frames[lost + 2] = duplicate;
+  frames.erase(frames.begin() + lost, frames.begin() + lost + 2);
+}
+
+// A host that sends its frames at its own pace below the stream rate, so that the timestamps follow its capture times
+// (a host display at 50 Hz in a 60 FPS stream, at 100 Hz in a 120 FPS stream, a game at 48 to 60 FPS on a display with
+// a variable refresh rate), loses a frame every 2 s, and the keyframe that the client then asks for is a duplicate (see
+// LoseFrameUntilKeyframe). The frame after the duplicate moves the timestamp on by the capture times since the frame
+// before the loss, and the pacer goes on holding the frames (43e25f0 counted the frames lost before the duplicate twice,
+// as lost and as ticks that the host skipped: the timestamp jumped 2 to 4 frame durations too far, the time difference
+// of the pacer followed it down as a fall of the latency, and the pacer passed every frame through for about 2 s, 160
+// instead of 53 frames per 1000 off their refresh with a game at 48 to 60 FPS). The same holds for a steady host at the
+// stream rate at 60 FPS whose duplicate carries no mark (a host other than Sunshine) and arrives early between two
+// ticks, 3 ms after it was sent: its capture time adds less than half a frame duration to the lost frames, so it takes
+// 1 ms (43e25f0 gave it the place of the next frame on the grid, and the timestamps ran a frame ahead of the host after
+// every loss). An unmarked duplicate that arrives less than 0.6 frame durations before the next tick (most of them at
+// 120 FPS) still takes that place.
+static void LossBeforeAKeyframeDuplicateKeepsThePace() {
+  const std::tuple<int, double, double, bool> cases[] = {
+    {60, 50.0, 9.0, true}, {120, 100.0, 4.0, true}, {60, 0.0, 9.0, true}, {60, 60.0, 3.0, false}};
+  for (const auto& host : cases) {
+    const int fps = std::get<0>(host);
+    const double hostHz = std::get<1>(host);
+    const bool marked = std::get<3>(host);
+    const std::string name = std::to_string(fps) + " FPS from " +
+      (hostHz > 0 ? "a " + Describe(hostHz) + " Hz display" : "a game at 48 to 60 FPS with a variable refresh rate") +
+      (marked ? ": " : ", duplicates unmarked: ");
+    std::vector<Frame> frames;
+    if (hostHz > 0) {
+      frames = Host(24, [hostHz](int k) { return 1000.37 + k * 1000.0 / hostHz; });
+    } else {
+      std::mt19937 random(41);
+      std::vector<double> presents = {1000.37};
+      while (presents.back() < 25000) {
+        presents.push_back(presents.back() + 1000.0 / 60 + random() / 4294967296.0 * (1000.0 / 48 - 1000.0 / 60));
+      }
+      frames = Host(24, [presents](int k) { return presents[k]; });
+    }
+    Arrive(frames, fps, 4.0, 42);
+    // A frame lost every 2 s from 4 s on
+    std::vector<size_t> duplicateAt;
+    for (double atMs = 4000; atMs < 22000; atMs += 2000) {
+      size_t lost = 0;
+      while (frames[lost].captureMs - frames.front().captureMs < atMs) {
+        lost++;
+      }
+      LoseFrameUntilKeyframe(frames, lost, std::get<2>(host), marked);
+      duplicateAt.push_back(lost);
+    }
+    KeepInOrder(frames, fps);
+    const std::vector<Outcome> outcomes = Run(fps, frames);
+    int duplicates = 0;
+    for (size_t i : duplicateAt) {
+      duplicates++;
+      const std::string at = name + "duplicate " + std::to_string(duplicates) + ": ";
+      test_support::Check((outcomes[i].pts - outcomes[i - 1].pts) * 1000 >= 1 - 1e-6, at + "it takes at least 1 ms",
+                          Describe((outcomes[i].pts - outcomes[i - 1].pts) * 1000), __FILE__, __LINE__);
+      // The timestamp of the frame after the duplicate, from the frame before the loss, against the capture times
+      const double ptsStepMs = (outcomes[i + 1].pts - outcomes[i - 1].pts) * 1000;
+      const double hostStepMs = (double)frames[i + 1].hostTimeMs - (double)frames[i - 1].hostTimeMs;
+      test_support::Check(std::abs(ptsStepMs - hostStepMs) <= 1.0 + 1e-6,
+                          at + "the frame after it moves on by the capture times since the frame before the loss",
+                          Describe(ptsStepMs) + " ms for " + Describe(hostStepMs) + " ms", __FILE__, __LINE__);
+      // The time difference of the pacer stays where it was (it fell by the frame durations counted too many, as if
+      // the latency had fallen), and the pacer holds the frames
+      const double afterMs = outcomes[i + 1].captureMs - outcomes.front().captureMs;
+      double lowest = 1e9;
+      for (size_t j = i + 1; j < outcomes.size() && outcomes[j].captureMs - outcomes[i + 1].captureMs < 2000; j++) {
+        lowest = std::min(lowest, outcomes[j].ptsDiff);
+      }
+      test_support::Check((outcomes[i - 1].ptsDiff - lowest) * 1000 < 1000.0 / fps / 2,
+                          at + "the time difference of the pacer falls by less than half a frame duration in the 2 s "
+                          "after it",
+                          Describe((outcomes[i - 1].ptsDiff - lowest) * 1000) + " ms", __FILE__, __LINE__);
+      const double held = HeldPercent(outcomes, afterMs, afterMs + 2000);
+      test_support::Check(held > 90, at + "the pacer holds more than 90% of the frames of the 2 s after it",
+                          Describe(held), __FILE__, __LINE__);
+    }
+    CHECK_EQ(duplicates, 9);
+  }
 }
 
 // A steady host at 60 FPS that skips a tick at 5 and 9 s (a game that missed its frame), with no frame lost: the frame
@@ -1306,7 +1479,10 @@ int main() {
   test_support::RunTest("a short rise and fall of the latency keeps the decode unit queue short",
                         ShortLatencyEpisodeKeepsTheQueueShort);
   test_support::RunTest("a capture timer that wakes up late now and then keeps the pace", LateCaptureTimerKeepsThePace);
+  test_support::RunTest("two late capture times in a row keep the timestamps on the grid", LateCaptureTimerPairsKeepTheGrid);
   test_support::RunTest("duplicates of Sunshine keep the pace of the new images", SunshineDuplicatesKeepThePaceOfTheNewImages);
+  test_support::RunTest("a loss before a keyframe duplicate keeps the pace of a host below the stream rate",
+                        LossBeforeAKeyframeDuplicateKeepsThePace);
   test_support::RunTest("a host that skips a tick is followed with the next frame",
                         HostSkippingATickIsFollowedWithTheNextFrame);
   test_support::RunTest("a full buffer of the player is retried for 16 ms", FullBufferIsRetriedFor16Ms);

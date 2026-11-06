@@ -113,17 +113,23 @@ static constexpr uint32_t kHostTimeMaxBackStepMs = 100;
 // display grid up to a refresh below it. Its top rises to an offset that two frames in a row exceed it by (a single
 // capture time that came late stays out), and the timestamps follow a top above kHostOffsetBandMs by at most
 // kHostOffsetCorrectionMs per frame, which follows a host display at 59.94 Hz (1 ms per second later) and moves a frame
-// by much less than a refresh of the TV; such a move shifts the whole range. The top only falls back while the host
-// is irregular (within kHostSteadyMs of a skipped tick or of following the capture times directly), by
-// kHostOffsetDecayMs per kHostOffsetDecayFrameMs of capture time (1.2 ms per second), which follows a host display at
-// 60.06 Hz that sends at its presents in a 120 FPS stream, one tick late at every frame. Capture times that lag the
-// tick more and more (a display slightly faster than the stream rate) therefore don't pull the timestamps along: that
-// moved them by 1 ms per second, and the jump of the capture times back by a refresh then looked like a skipped tick,
-// a stutter every 16.7 s at 60.06 Hz. The bottom of the range rises back by the same rate at any time.
+// by much less than a refresh of the TV; such a move shifts the whole range. They only follow the top as far as two
+// frames in a row reached it within each of the latest two periods of kHostTopConfirmMs of capture time: two capture
+// times in a row that came late (a busy Linux host whose capture timer now and then wakes up 2 to 6 ms late) lifted
+// the top for good, and the timestamps followed it by up to 5 ms, which the frame pacer took as frames that arrived
+// that much earlier until its next window (at 90 FPS on a 120 Hz TV, 30% more frames off their refresh in the first
+// 20 s of a stream). The top only falls back while the host is irregular (within kHostSteadyMs of a skipped tick or of
+// following the capture times directly), by kHostOffsetDecayMs per kHostOffsetDecayFrameMs of capture time (1.2 ms per
+// second), which follows a host display at 60.06 Hz that sends at its presents in a 120 FPS stream, one tick late at
+// every frame. Capture times that lag the tick more and more (a display slightly faster than the stream rate)
+// therefore don't pull the timestamps along: that moved them by 1 ms per second, and the jump of the capture times back
+// by a refresh then looked like a skipped tick, a stutter every 16.7 s at 60.06 Hz. The bottom of the range rises back
+// by the same rate at any time.
 static constexpr double kHostOffsetDecayMs = 0.02;
 static constexpr double kHostOffsetDecayFrameMs = 1000.0 / 60;
 static constexpr double kHostOffsetBandMs = 1.0;
 static constexpr double kHostOffsetCorrectionMs = 0.1;
+static constexpr double kHostTopConfirmMs = 250;
 // A capture time more than kHostTimeLeadMs ahead of the timestamp makes the timestamps follow the capture times
 // directly, e.g. for a game below the stream rate on a display with a variable refresh rate, whose frames come 17 to
 // 21 ms apart at 60 FPS
@@ -141,16 +147,26 @@ static constexpr double kFrameCountBiasMs = 1.0;
 // capture times show (at least by kHostStampConfirmMs on average), while the capture times of a display grid that came
 // back by a refresh, or of a range that hadn't seen the top of that grid yet, don't, and are taken as a shift of the
 // capture times (the summed capture times move back by it) instead of moving the timestamps. A tick skipped within
-// kHostSteadyMs of another one, or a pause of the host for longer than a tick, is counted at once.
+// kHostSteadyMs of another one, or a pause of the host for longer than a tick, is counted at once. Two frames that ran
+// ahead of a steady host and arrived later as well make the timestamps follow the capture times; when the frame after
+// them is back on the grid of before, they were two frames that the capture timer took late, and the timestamp, the
+// range and the steady host come back as they were (the timestamps kept the shift of up to 3 ms, and the host counted
+// as irregular for a second, in which the next frame that came late was followed at once).
 static constexpr double kHostSteadyMs = 1000;
 static constexpr double kHostStampConfirmMs = 1.5;
 // The usual arrival time of a frame relative to its timestamp is the median of those of the latest kArrivalHistory
 // frames
 static constexpr int kArrivalHistory = 16;
-// A frame whose capture time repeats the one before and that arrives more than kRepeatedStampEarlyFrames frame
-// durations earlier than the usual arrival time for its frame duration is the same image encoded again, sent right
-// after it: it takes 1 ms instead of a frame duration (another frame on its tick takes a frame duration, as a single
-// frame taken for 1 ms would make every later frame look late by a frame duration)
+// A frame whose capture time repeats the one before, or steps back, and that arrives more than
+// kRepeatedStampEarlyFrames frame durations earlier than the usual arrival time for its frame duration is the same
+// image encoded again, sent right after it: it takes 1 ms instead of a frame duration (another frame on its tick takes
+// a frame duration, as a single frame taken for 1 ms would make every later frame look late by a frame duration). So
+// does a frame after frames lost on the network whose capture time adds less than half a frame duration to the lost
+// frames and that arrives that much earlier than the usual arrival time for its timestamp: the keyframe that a host
+// without the duplicate mark of Sunshine (no host processing latency) encodes again from the previous image after a
+// loss, stamped with the end of the send of the frame before. It is a duplicate, and the frames lost before it count
+// for the next frame (taken for a frame of the grid, it put the timestamps a frame ahead of the host after every loss:
+// 17 instead of 1.5 per 1000 frames off their refresh at 60 FPS with 1% lost).
 static constexpr double kRepeatedStampEarlyFrames = 0.6;
 // Capture times more than kHostOffsetResetFrames frame durations below the top of the range: the timestamps ran ahead
 // of the host by whole frames (e.g. an earlier frame encoded again was lost, or the clock of the host stepped back), so
@@ -181,12 +197,34 @@ static bool s_FollowingHostTime = false;
 
 // When the host last skipped a tick of the stream rate or ran off its grid (s_HostElapsedMs), until when the top of the
 // range falls back, and whether the latest frame waits for the next one to tell whether it did, with how far its offset
-// was above the top of the range and how much later than usual it arrived, in milliseconds (see kHostSteadyMs)
+// was above the top of the range and how much later than usual it arrived, in milliseconds, and whether the host was
+// steady then (see kHostSteadyMs)
 static double s_HostIrregularMs = 0;
 static double s_HostDecayUntilMs = 0;
 static bool s_HostTimeWaiting = false;
 static double s_WaitStampExcessMs = 0;
 static double s_WaitArrivalExcessMs = 0;
+static bool s_WaitWasSteady = false;
+
+// The highest offset that two frames in a row reached (see the range) in the current period of kHostTopConfirmMs of
+// capture time and in the one before, in milliseconds, and when the current one started (s_HostElapsedMs)
+static double s_HostPairTopMs[2] = {};
+static double s_HostPairStartMs = 0;
+
+// Two frames that ran ahead of a steady host, which the timestamps follow for one frame: whether they may have been
+// late capture times only (see kHostSteadyMs), and the timestamp the second one would have had on the grid of before,
+// with the range, its periods and the state of the steady host from before them
+struct HostOffsetState {
+  double topMs;
+  double bottomMs;
+  double pairTopMs[2];
+  double pairStartMs;
+  double irregularMs;
+  double decayUntilMs;
+};
+static bool s_LateFramesFollowed = false;
+static double s_LateFramesGridMs = 0;
+static HostOffsetState s_BeforeLateFrames = {};
 
 // The arrival times of the latest frames relative to their timestamps, in milliseconds, in a ring of kArrivalHistory,
 // and the number of frames recorded since the stream started or broke
@@ -813,7 +851,11 @@ static void ResetHostOffset() {
   s_FollowingHostTime = false;
   s_HostIrregularMs = s_HostElapsedMs - kHostSteadyMs - 1;
   s_HostDecayUntilMs = s_HostElapsedMs;
+  s_HostPairTopMs[0] = 0;
+  s_HostPairTopMs[1] = 0;
+  s_HostPairStartMs = s_HostElapsedMs;
   s_HostTimeWaiting = false;
+  s_LateFramesFollowed = false;
   s_ArrivalCount = 0;
 }
 
@@ -1097,9 +1139,10 @@ static double ArrivalReferenceMs() {
 // its frames at their capture times (a display with a variable refresh rate below the stream rate, or one slower than
 // the stream): the timestamps then follow them directly, kHostTimeLeadMs behind them, counting only the whole frame
 // durations of each interval, until an interval brings them back onto the grid. The range follows a host display at
-// 59.94 Hz, and at 60.06 Hz in a 120 FPS stream. A capture time that repeats the one before, from a frame that arrives
-// right after it, is the same image encoded again and takes 1 ms; a duplicate of Sunshine takes 1 ms, and the next
-// frame goes on from the frame before it.
+// 59.94 Hz, and at 60.06 Hz in a 120 FPS stream. A capture time that repeats the one before or steps back, from a frame
+// that arrives right after it, is the same image encoded again and takes 1 ms; a duplicate of Sunshine, or an unmarked
+// one after frames lost on the network (see kRepeatedStampEarlyFrames), takes 1 ms, and the next frame goes on from the
+// frame before it.
 // Returns whether the arrival time of the frame counts for the window of the frame pacer: not when the frame isn't a
 // new image on the grid (a duplicate, or a capture time less than half a frame duration after the one before) and
 // arrived more than half a frame duration later than the usual arrival time for its timestamp, e.g. a duplicate that
@@ -1126,6 +1169,12 @@ static bool UpdatePresentationTimestamp(uint32_t hostTimeMs, uint32_t missingFra
     } else {
       stepMs = -(int64_t)(s_LastHostTimeMs - hostTimeMs);
     }
+    // An unmarked duplicate after frames lost on the network (see kRepeatedStampEarlyFrames)
+    if (!duplicate && missingFrames > 0 && stepMs >= 0 && stepMs - lostMs < frameMs / 2 &&
+        arrivalMs - (s_GridPtsMs + frameMs + lostMs) < ArrivalReferenceMs() - kRepeatedStampEarlyFrames * frameMs) {
+      duplicate = true;
+      reused = true;
+    }
     if (s_HostTimeBreak || stepMs > kHostTimeMaxGapMs || stepMs < -(int64_t)kHostTimeMaxBackStepMs) {
       // A break in the stream: go on by one frame duration from the new capture time, as the timestamps did before
       // they followed the host, instead of jumping by the length of the break (e.g. the minutes that the app was
@@ -1138,9 +1187,10 @@ static bool UpdatePresentationTimestamp(uint32_t hostTimeMs, uint32_t missingFra
       ResetHostOffset();
     } else if (duplicate) {
       // A duplicate isn't a frame of the grid: 1 ms after the timestamp before, and the frames lost before it count
-      // for the next frame. Its capture time is ignored.
+      // for the next frame. Its capture time is ignored. The offset stays as it is: the capture time of the next frame
+      // already contains the lost frames, and a lower offset (the reference of the range while the timestamps follow
+      // the capture times) counted them a second time, as ticks the host skipped.
       s_GridPtsMs += lostMs;
-      s_HostOffsetMs -= lostMs;
       s_PtsMs = std::max(s_PtsMs + 1.0, s_GridPtsMs);
     } else {
       // A capture time that repeats or steps back adds nothing and keeps the later one: a frame that the host encoded
@@ -1153,7 +1203,7 @@ static bool UpdatePresentationTimestamp(uint32_t hostTimeMs, uint32_t missingFra
       reused = missingFrames == 0 && hostStepMs < frameMs / 2;
       // The timestamp from the frame numbers
       double gridMs = s_GridPtsMs + frameMs + lostMs;
-      if (stepMs == 0 && !s_HostTimeWaiting &&
+      if (stepMs <= 0 && !s_HostTimeWaiting &&
           arrivalMs - gridMs < ArrivalReferenceMs() - kRepeatedStampEarlyFrames * frameMs) {
         gridMs = s_GridPtsMs + 1.0 + lostMs;
       }
@@ -1195,12 +1245,17 @@ static bool UpdatePresentationTimestamp(uint32_t hostTimeMs, uint32_t missingFra
       if (wait) {
         // Keep the grid and the range, and let the next frame tell
         s_HostTimeWaiting = true;
+        s_WaitWasSteady = steady;
         s_WaitStampExcessMs = stampExcessMs;
         s_WaitArrivalExcessMs = arrivalMs - gridMs - ArrivalReferenceMs();
         next = std::max(gridMs, s_PtsMs + 1.0);
         s_HostOffsetMs = s_HostElapsedMs - next;
         s_PtsMs = next;
       } else {
+        const bool wasFollowing = s_FollowingHostTime;
+        const HostOffsetState before = {s_HostOffsetTopMs, s_HostOffsetBottomMs,
+                                        {s_HostPairTopMs[0], s_HostPairTopMs[1]}, s_HostPairStartMs,
+                                        s_HostIrregularMs, s_HostDecayUntilMs};
         // The frame after one that waited shows the same: unless the two frames arrived late as well, the capture times
         // moved without the frames (see kHostSteadyMs), so the summed capture times move back by it and the frame keeps
         // the grid
@@ -1218,11 +1273,32 @@ static bool UpdatePresentationTimestamp(uint32_t hostTimeMs, uint32_t missingFra
           s_HostIrregularMs = s_HostElapsedMs;
           s_HostDecayUntilMs = s_HostElapsedMs + kHostSteadyMs;
         }
-        s_HostTimeWaiting = false;
         if (s_HostElapsedMs - next > kHostTimeLeadMs) {
+          // Two frames that ran ahead of a steady host may have been late capture times only (see kHostSteadyMs)
+          s_LateFramesFollowed = !wasFollowing && s_HostTimeWaiting && s_WaitWasSteady && !skipped;
+          s_LateFramesGridMs = gridMs;
+          s_BeforeLateFrames = before;
           next = s_HostElapsedMs - kHostTimeLeadMs;
           s_FollowingHostTime = true;
         } else {
+          // The frame after two late frames that the timestamps followed is back on the grid of before: they go on from
+          // it, with the range and the steady host of before
+          if (wasFollowing && s_LateFramesFollowed) {
+            const double beforeGridMs = gridMs - (s_GridPtsMs - s_LateFramesGridMs);
+            const double beforeOffsetMs = s_HostElapsedMs - beforeGridMs;
+            if (beforeOffsetMs <= s_BeforeLateFrames.topMs + kHostOffsetBandMs &&
+                beforeOffsetMs >= s_BeforeLateFrames.bottomMs - frameMs / 2) {
+              next = beforeGridMs;
+              s_HostOffsetTopMs = s_BeforeLateFrames.topMs;
+              s_HostOffsetBottomMs = s_BeforeLateFrames.bottomMs;
+              s_HostPairTopMs[0] = s_BeforeLateFrames.pairTopMs[0];
+              s_HostPairTopMs[1] = s_BeforeLateFrames.pairTopMs[1];
+              s_HostPairStartMs = s_BeforeLateFrames.pairStartMs;
+              s_HostIrregularMs = s_BeforeLateFrames.irregularMs;
+              s_HostDecayUntilMs = s_BeforeLateFrames.decayUntilMs;
+            }
+          }
+          s_LateFramesFollowed = false;
           if (!s_FollowingHostTime && !reused &&
               s_HostElapsedMs - next < s_HostOffsetTopMs - kHostOffsetResetFrames * frameMs) {
             s_HostElapsedMs += std::floor((s_HostOffsetTopMs - (s_HostElapsedMs - next)) / frameMs) * frameMs;
@@ -1231,15 +1307,19 @@ static bool UpdatePresentationTimestamp(uint32_t hostTimeMs, uint32_t missingFra
           // range with the timestamps
           s_FollowingHostTime = false;
           double correctionMs = 0;
-          if (s_HostOffsetTopMs > kHostOffsetBandMs) {
-            correctionMs = std::min(s_HostOffsetTopMs - kHostOffsetBandMs, kHostOffsetCorrectionMs);
+          const double confirmedTopMs = std::min(s_HostOffsetTopMs, std::min(s_HostPairTopMs[0], s_HostPairTopMs[1]));
+          if (confirmedTopMs > kHostOffsetBandMs) {
+            correctionMs = std::min(confirmedTopMs - kHostOffsetBandMs, kHostOffsetCorrectionMs);
           } else if (s_HostOffsetTopMs < -kHostOffsetBandMs) {
             correctionMs = -std::min(-kHostOffsetBandMs - s_HostOffsetTopMs, kHostOffsetCorrectionMs);
           }
           s_HostOffsetTopMs -= correctionMs;
           s_HostOffsetBottomMs = std::min(s_HostOffsetBottomMs - correctionMs, s_HostOffsetTopMs);
+          s_HostPairTopMs[0] -= correctionMs;
+          s_HostPairTopMs[1] -= correctionMs;
           next += correctionMs;
         }
+        s_HostTimeWaiting = false;
         // At least 1 ms after the timestamp before
         next = std::max(next, s_PtsMs + 1.0);
         const double previousOffsetMs = s_HostOffsetMs;
@@ -1247,6 +1327,9 @@ static bool UpdatePresentationTimestamp(uint32_t hostTimeMs, uint32_t missingFra
         if (s_FollowingHostTime) {
           s_HostOffsetTopMs = s_HostOffsetMs;
           s_HostOffsetBottomMs = s_HostOffsetMs;
+          s_HostPairTopMs[0] = s_HostOffsetMs;
+          s_HostPairTopMs[1] = s_HostOffsetMs;
+          s_HostPairStartMs = s_HostElapsedMs;
           s_HostIrregularMs = s_HostElapsedMs;
           s_HostDecayUntilMs = s_HostElapsedMs + kHostSteadyMs;
         } else if (!reused) {
@@ -1255,6 +1338,15 @@ static bool UpdatePresentationTimestamp(uint32_t hostTimeMs, uint32_t missingFra
           const double decayMs = kHostOffsetDecayMs * hostStepMs / kHostOffsetDecayFrameMs;
           const double topMs = s_HostElapsedMs < s_HostDecayUntilMs ? s_HostOffsetTopMs - decayMs : s_HostOffsetTopMs;
           s_HostOffsetTopMs = std::max(std::min(s_HostOffsetMs, previousOffsetMs), topMs);
+          // The highest offset of two frames in a row in the current period, which starts anew after kHostTopConfirmMs
+          const double pairMs = std::min(s_HostOffsetMs, previousOffsetMs);
+          if (s_HostElapsedMs - s_HostPairStartMs >= kHostTopConfirmMs) {
+            s_HostPairTopMs[1] = s_HostPairTopMs[0];
+            s_HostPairTopMs[0] = pairMs;
+            s_HostPairStartMs = s_HostElapsedMs;
+          } else {
+            s_HostPairTopMs[0] = std::max(s_HostPairTopMs[0], pairMs);
+          }
           s_HostOffsetBottomMs = std::min(s_HostOffsetMs, s_HostOffsetBottomMs + decayMs);
         }
         s_PtsMs = next;
