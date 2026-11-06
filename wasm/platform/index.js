@@ -13,7 +13,13 @@ var maxSupportedWidth = tvCapabilities.maxWidth; // Width of the highest resolut
 var maxSupportedHeight = tvCapabilities.maxHeight; // Height of the highest resolution the resolution menu offers
 var isHdrCapable = tvCapabilities.isHdr; // Whether the device supports HDR
 var wasmPlayerFeatures = tvCapabilities.wasmPlayer; // Whether the WASM player offers the Ultra Low Latency mode that the game mode asks for
+var wasmPlayerReport = tvCapabilities.wasmPlayerReport; // Version and features of the WASM player, only shown
+var tvFirmware = tvCapabilities.firmware; // Firmware version of the TV and where it came from, only shown
 var videoDecoderProbe = tvCapabilities.videoDecoders; // Answers of the browser about the video codecs of the WASM player, only shown and used for hints
+// Log the firmware of the TV and the report of its WASM player once per start, so that the diagnostic log ties a problem
+// to a software version of the TV (System information shows both as well)
+console.log('%c[index.js]', 'color: green;', 'TV firmware: ' + (tvFirmware.version ? tvFirmware.version + ' (' + tvFirmware.source + ')' : 'Unknown') +
+  ', WASM player: ' + JSON.stringify(wasmPlayerReport));
 var hosts = {}; // Hosts is an associative array of NvHTTP objects, keyed by server UID
 var isHostOpening = false; // Prevents concurrent hostChosen executions, initial value is false
 var isHostsLoaded = false; // Indicates if IndexedDB has finished loading hosts
@@ -5748,6 +5754,11 @@ function loadSystemInfo() {
   // screenshot shows what the TV reports next to what it accepted
   const ultraLowLatencyText = describeCheckAnswer(wasmPlayerFeatures.ultraLowLatency);
   const apiLevelsText = wasmPlayerFeatures.apiLevels && wasmPlayerFeatures.apiLevels.length > 0 ? wasmPlayerFeatures.apiLevels.join(', ') : '';
+  // The version and the features of the WASM player as its glue code sees them (detectWasmPlayerReport()), e.g. to tie
+  // a freeze to a player version; what isApiFeatureSupported() answered for each feature is in the log line at the start.
+  // An empty list has a text of its own, which says "none" in the gender of the word for the features.
+  const playerVersionText = wasmPlayerReport.version ? wasmPlayerReport.version : t('Unknown');
+  const hasPlayerFeatures = wasmPlayerReport.features === null || wasmPlayerReport.features.length > 0;
   const videoDecoderLines = describeVideoDecoderProbe();
   // The connected gamepads (Controller in gamepad.js), so a user can see whether the TV found a controller, whether it
   // has the standard layout that the menus and the stream expect, and which controller type the stream announces
@@ -5780,6 +5791,7 @@ function loadSystemInfo() {
     systemInfoPlaceholder.innerText =
       t('App Version: %1$s v%2$s', appInfo.name + (isForceGMVariant ? '-ForceGM' : ''), buildVer) + '\n' +
       t('Platform Version: Tizen %1$s', platformVer ? platformVer : t('Unknown')) + '\n' +
+      t('TV Firmware Version: %1$s', tvFirmware.version ? tvFirmware.version : t('Unknown')) + '\n' +
       t('TV Model Series: %1$s', modelSeries ? modelSeries : t('Unknown')) + '\n' +
       t('TV Model Name: %1$s', modelName ? modelName : t('Unknown')) + '\n' +
       (modelGroup && modelYearHint ? t('TV Model Group: %1$s (model year %2$s)', modelGroup, modelYearHint) :
@@ -5790,6 +5802,9 @@ function loadSystemInfo() {
       (testedProfile ? t('Tested Profile: %1$s', testedProfile) : t('Tested Profile: None')) + '\n' +
       t('Ultra Low Latency mode (Game mode): %1$s', ultraLowLatencyText) + '\n' +
       t('WASM player API levels: %1$s', apiLevelsText ? apiLevelsText : t('Unknown')) + '\n' +
+      (hasPlayerFeatures ? t('WASM player version: %1$s, features: %2$s', playerVersionText,
+        wasmPlayerReport.features === null ? t('Unknown') : wasmPlayerReport.features.join(', ')) :
+        t('WASM player version: %1$s, features: none', playerVersionText)) + '\n' +
       videoDecoderLines.map((line) => line + '\n').join('') +
       gamepadsText + '\n\n' +
       describeSessionReport(lastSessionReport, lastSessionReportOptions).join('\n');

@@ -63,6 +63,7 @@ MoonlightInstance::MoonlightInstance()
     m_VideoStarted(false),
     m_AudioSessionId(0),
     m_VideoSessionId(0),
+    m_MediaElementListener(this),
     m_MediaElement("wasm_module"),
     m_Source(nullptr),
     m_SourceListener(this),
@@ -76,6 +77,11 @@ MoonlightInstance::MoonlightInstance()
     m_SourceClosed(false),
     m_SourceAttached(false) {
       m_Dispatcher.start();
+      // Log the errors of the media element that the stream plays in (player_errors.hpp). The element stays for the life
+      // of the module, so the listener is set once.
+      if (!m_MediaElement.SetListener(&m_MediaElementListener)) {
+        ClLogMessage("Setting the listener of the media element failed, so its errors are not logged\n");
+      }
     }
 
 MoonlightInstance::~MoonlightInstance() { 

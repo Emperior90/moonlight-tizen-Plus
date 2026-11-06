@@ -181,6 +181,17 @@ class MoonlightInstance {
     void OnSourceOpen() override;
     void OnSourceOpenPending() override;
     void OnSourceClosed() override;
+    // An error of the media pipeline of the TV (SDK 1.39.4.7), only logged (player_errors.hpp)
+    void OnPipelineError(samsung::wasm::MediaPipelineError error, const char* message) override;
+  private:
+    MoonlightInstance* m_Instance;
+  };
+  // The errors of the HTML media element that the stream plays in, only logged (player_errors.hpp)
+  class MediaElementListener
+    : public samsung::html::HTMLMediaElementListener {
+  public:
+    MediaElementListener(MoonlightInstance* instance);
+    void OnError(samsung::html::MediaError error, const char* message) override;
   private:
     MoonlightInstance* m_Instance;
   };
@@ -281,6 +292,9 @@ class MoonlightInstance {
   pthread_t m_StopThread;
   std::atomic<samsung::wasm::SessionId> m_AudioSessionId;
   std::atomic<samsung::wasm::SessionId> m_VideoSessionId;
+  // Declared before the media element, so that it exists for the whole life of the element that holds it as its
+  // listener (members are built in this order and destroyed in the reverse order)
+  MediaElementListener m_MediaElementListener;
   samsung::html::HTMLMediaElement m_MediaElement;
   std::unique_ptr<samsung::wasm::ElementaryMediaStreamSource> m_Source;
   SourceListener m_SourceListener;

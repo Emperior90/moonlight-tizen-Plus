@@ -171,7 +171,7 @@ test('a stream starts a session of the log, keeps its report, and its heartbeat 
       // The stream ends, and the module sends its totals after the end
       Module.stopStream();
       window.__nativeLog = Date.now() + '\tWASM heap top after the stream: 62 of 128 MB (+1 MB this stream)\n';
-      handleMessage('SessionReportMsg: {"durationMs":600000,"codec":"HEVC Main10","width":3840,"height":2160,"fps":60,"bitrateKbps":100000,"frames":36000,"networkDroppedFrames":540,"tvDroppedFrames":0,"videoResets":1,"recoveryKeyframes":4,"fecRecoveredBlocks":900,"fecFailures":6,"heapTopMb":62,"heapTotalMb":128,"heapGrowthMb":1}');
+      handleMessage('SessionReportMsg: {"durationMs":600000,"codec":"HEVC Main10","width":3840,"height":2160,"fps":60,"bitrateKbps":100000,"frames":36000,"networkDroppedFrames":540,"tvDroppedFrames":0,"videoResets":1,"recoveryKeyframes":4,"fecRecoveredBlocks":900,"fecFailures":6,"heapTopMb":62,"heapTotalMb":128,"heapGrowthMb":1,"hostFrameRateX100":5994,"hostProcessingLatencyX10":61}');
       const sessions = DiagnosticLog.getSessions();
       loadSystemInfo();
       return {
@@ -198,9 +198,12 @@ test('a stream starts a session of the log, keeps its report, and its heartbeat 
       'Im Netz verlorene Frames: 540 von 36.000 (1,50 %)',
       'Vom TV verworfene Frames: 0, Video-Neustarts: 1, Keyframes zur Wiederherstellung: 4',
       'FEC-Reparaturen: 900 Blöcke, 6 fehlgeschlagen',
+      // The figures of the host, and the hint of its display at 59.94 Hz with the German decimal comma
+      'Bildrate des PCs (beste 30 s): 59,94 FPS, mittlere Verarbeitungslatenz des PCs: 6,1 ms',
       'WASM-Heap am Ende: 62 von 128 MB (+1 MB in dieser Sitzung)',
       'Tipp: Viele Frames gingen im Netzwerk verloren: Nutze ein Kabel oder senke die Bitrate.',
       'Tipp: Der PC musste nach Verlusten oft ganze Frames neu senden: Schalte Referenzbild-Invalidierung in den erweiterten Einstellungen ein.',
+      'Tipp: Der PC hat 59,94 statt 60 Frames pro Sekunde gesendet, das zeigt sich etwa alle 17 Sekunden als kurzes Ruckeln: Stelle den Bildschirm des PCs auf genau 60 Hz ein.',
     ]);
     // A stream that ended normally leaves no notice for the next start
     await reloadApp(app);
@@ -308,10 +311,10 @@ test('System information with four controllers and a report with three hints fit
       });
       const first = await box();
       assert.equal(first.focus, 'systemInfoBtn', locale);
-      // Four controllers, an empty line, five lines of the report and three hints
+      // Four controllers, an empty line, six lines of the report (with the figures of the host) and three hints
       const info = await app.page.evaluate(() => document.getElementById('systemInfoBtn').innerHTML.split(/<br\s*\/?>/));
       assert.equal(info.filter((line) => /: 8BitDo Ultimate 2C|: Pro Controller|: DualSense|: Xbox Wireless/.test(line)).length, 4, locale);
-      assert.equal(info.length - info.indexOf('') - 1, 8, locale + ': ' + info.join('\n'));
+      assert.equal(info.length - info.indexOf('') - 1, 9, locale + ': ' + info.join('\n'));
       // The whole box is on the screen, below the top of the pane
       assert.ok(first.top >= first.paneTop && first.bottom <= first.screen, locale + ': ' + JSON.stringify(first));
       if (first.maxScroll <= 0) {

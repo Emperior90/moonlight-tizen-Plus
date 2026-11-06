@@ -90,6 +90,7 @@ describe('detectWasmPlayerFeatures()', () => {
       none: { ultraLowLatency: 'unknown', source: 'none', apiLevels: null },
       ull: { ultraLowLatency: 'yes', source: 'features', apiLevels: [0, 1, 2, 3, 4, 5] },
       noUll: { ultraLowLatency: 'no', source: 'features', apiLevels: [0, 1, 2, 3, 4] },
+      noFeatures: { ultraLowLatency: 'no', source: 'features', apiLevels: [0, 1, 2, 3, 4] },
       // Without isApiFeatureSupported() the glue code derives features from the API levels, never the Ultra Low Latency mode
       apiLevels: { ultraLowLatency: 'no', source: 'apiLevels', apiLevels: [0, 1, 2, 3] },
       // An older player without availableApis: the glue code describes it by its classes (API level 0 without the session
@@ -199,6 +200,95 @@ describe('detectWasmPlayerFeatures()', () => {
         global.window = originalWindow;
       }
     }
+  });
+});
+
+describe('detectWasmPlayerReport()', () => {
+  // What isApiFeatureSupported() of the simulated player answers for the features of the glue code
+  const supported = (listed) => Object.fromEntries(profile.WASM_PLAYER_FEATURE_NAMES.map((name) => [name, listed.indexOf(name) >= 0]));
+
+  test('reports the version and the features of the WASM player the way its glue code sees them', () => {
+    const base = ['base-emss', 'video-texture', 'software-decoding', 'construct-with-modes'];
+    const expected = {
+      none: { version: null, features: null, supported: null },
+      ull: { version: '1.4', features: base.concat('ultra-low-latency'), supported: supported(base.concat('ultra-low-latency')) },
+      noUll: { version: '1.4', features: base, supported: supported(base) },
+      noFeatures: { version: '1.4', features: [], supported: supported([]) },
+      // Without isApiFeatureSupported() the glue code derives the features from the API levels (0 to 3)
+      apiLevels: { version: '1.1', features: ['base-emss', 'video-texture', 'software-decoding'], supported: null },
+      // An older player without availableApis: the feature that the glue code gives it by its classes
+      legacy: { version: null, features: ['legacy-emss'], supported: null },
+      // The list names the Ultra Low Latency mode while isApiFeatureSupported() denies every feature, which the log shows
+      disagree: { version: '1.4', features: base.concat('ultra-low-latency'), supported: supported([]) },
+      throws: { version: null, features: null, supported: null },
+    };
+    assert.deepEqual(Object.keys(expected).sort(), tvMock.WASM_PLAYER_MODES.slice().sort());
+    for (const mode of Object.keys(expected)) {
+      const { result, warnings } = withWarnings(() => profile.detectWasmPlayerReport(wasmPlayerOf(mode)));
+      assert.deepEqual(result, expected[mode], mode);
+      assert.equal(warnings.length, mode === 'throws' ? 1 : 0, mode + ': ' + JSON.stringify(warnings));
+    }
+    assert.ok(profile.WASM_PLAYER_FEATURE_NAMES.every((name) => typeof name === 'string'));
+    assert.ok(Object.isFrozen(profile.WASM_PLAYER_FEATURE_NAMES));
+  });
+
+  test('handles the other shapes of the player of a TV', () => {
+    // An older player whose media track has a session ID is API level 1 with 'base-emss'
+    const ElementaryMediaTrack = function() {};
+    ElementaryMediaTrack.prototype.sessionId = 0;
+    assert.deepEqual(profile.detectWasmPlayerReport({ ElementaryMediaStreamSource: function() {}, ElementaryMediaTrack }),
+      { version: null, features: ['base-emss'], supported: null });
+    // Without the media source class it can't stream, and nothing is known
+    assert.deepEqual(profile.detectWasmPlayerReport({}), { version: null, features: null, supported: null });
+    // Array-like lists and a numeric version, and a check that throws for one feature
+    const arrayLike = {
+      availableApis: { length: 1, 0: { name: 'ElementaryMediaStreamSource', version: 2, apiLevels: [1], features: { length: 1, 0: 'base-emss' } } },
+      isApiFeatureSupported: (api, feature) => {
+        if (feature === 'video-texture') {
+          throw new Error('Simulated failure');
+        }
+        return feature === 'base-emss';
+      },
+    };
+    const { result, warnings } = withWarnings(() => profile.detectWasmPlayerReport(arrayLike));
+    assert.equal(result.version, '2');
+    assert.deepEqual(result.features, ['base-emss']);
+    assert.equal(result.supported['base-emss'], true);
+    assert.equal(result.supported['video-texture'], null);
+    assert.equal(result.supported['ultra-low-latency'], false);
+    assert.equal(warnings.length, 1);
+    // Without isApiFeatureSupported() each feature that the glue code derives needs its own API level: 'video-texture'
+    // level 2 and 'software-decoding' level 3, while levels 0 and 1 only give 'base-emss'
+    const levels = (apiLevels) => profile.detectWasmPlayerReport({ availableApis: [{ name: 'ElementaryMediaStreamSource', version: '1.0', apiLevels }] });
+    assert.deepEqual(levels([0, 1]).features, ['base-emss']);
+    assert.deepEqual(levels([0, 1, 2]).features, ['base-emss', 'video-texture']);
+    assert.deepEqual(levels([1, 3]).features, ['base-emss', 'software-decoding']);
+    // An answer of isApiFeatureSupported() that is no boolean is unknown in the log, not taken as it is
+    for (const answer of ['yes', 1, 0, undefined, {}]) {
+      const strange = profile.detectWasmPlayerReport({ availableApis: [{ name: 'ElementaryMediaStreamSource', version: '1.4', apiLevels: [1], features: ['base-emss'] }],
+        isApiFeatureSupported: () => answer });
+      assert.deepEqual(strange.supported, Object.fromEntries(profile.WASM_PLAYER_FEATURE_NAMES.map((name) => [name, null])), String(answer));
+    }
+    // An entry without features, and a list without the entry of the WASM player
+    assert.deepEqual(profile.detectWasmPlayerReport({ availableApis: [{ name: 'ElementaryMediaStreamSource', version: '1.0', apiLevels: [1] }], isApiFeatureSupported: 1 }),
+      { version: '1.0', features: null, supported: null });
+    assert.deepEqual(profile.detectWasmPlayerReport({ availableApis: [{ name: 'TizenSockets', version: '1.0', apiLevels: [1], features: [] }] }),
+      { version: null, features: null, supported: null });
+    // The list of the TV stays as it is
+    const player = wasmPlayerOf('ull');
+    const before = JSON.stringify(player.availableApis);
+    profile.detectWasmPlayerReport(player).features.push('extra');
+    assert.equal(JSON.stringify(player.availableApis), before);
+  });
+
+  test('is only shown: the game mode and the optimal settings are the same with any report', () => {
+    const apis = tvMock.createTizenApis(tvMock.parseConfig('', { tv: 's90c' }), (callback) => callback());
+    const caps = profile.detectTvCapabilities(Object.assign({}, apis, { tizentvwasm: wasmPlayerOf('ull'), mediaSource: null }));
+    const withoutReport = Object.assign({}, caps, { wasmPlayerReport: { version: null, features: null, supported: null } });
+    for (const conn of CONNECTIONS) {
+      assert.deepEqual(profile.deriveOptimalSettings(caps, conn), profile.deriveOptimalSettings(withoutReport, conn), conn);
+    }
+    assert.equal(profile.isGameModeUnavailable(caps), profile.isGameModeUnavailable(withoutReport));
   });
 });
 

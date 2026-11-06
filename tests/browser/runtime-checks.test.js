@@ -5,7 +5,8 @@
 // - Game mode: a WASM player that says clearly that it doesn't offer the Ultra Low Latency mode keeps the switch off
 //   and disabled whatever is stored, explains it, and starts the stream without it. With the mode, or without a clear
 //   answer, the rules by Tizen version stay (Tizen 9.0 off with the ForceGM hint), except that Tizen 5.5 with the mode
-//   lets the switch be turned on. System information shows the answer and the API levels.
+//   lets the switch be turned on. System information shows the answer and the API levels, and the version and the
+//   features of the WASM player as its glue code sees them.
 // - Codec check: System information shows the answers of MediaSource, or why they don't count, and only a counting no
 //   for AV1 labels its menu entry, which stays selectable and keeps the label after a translation pass.
 // - A stream that ends with error -200 after the TV rejected its video track names the codec, resolution and frame
@@ -32,6 +33,9 @@ const START_ARG_GAME_MODE = 26;
 
 const ULL_LINE = 'Ultra Low Latency mode (Game mode): ';
 const LEVELS_LINE = 'WASM player API levels: ';
+const PLAYER_LINE = 'WASM player version: ';
+// The features of the simulated players (tv-mock.js), as System information lists them
+const MOCK_FEATURES = 'base-emss, video-texture, software-decoding, construct-with-modes';
 const DECODERS_LINE = 'Video decoders (MediaSource check): ';
 const LEVEL51_LINE = 'Video decoders at level 5.1 (H.264 above 1080p): ';
 const LEVEL52_LINE = 'Video decoders at level 5.2 (4K above 60 FPS): ';
@@ -46,6 +50,11 @@ function readSystemInfoLines(page) {
 // The lines of System information about the WASM player and the decoders
 async function readCheckLines(page) {
   return (await readSystemInfoLines(page)).filter((line) => [ULL_LINE, LEVELS_LINE, DECODERS_LINE, LEVEL51_LINE, LEVEL52_LINE].some((prefix) => line.indexOf(prefix) === 0));
+}
+
+// The line of System information with the version and the features of the WASM player
+async function readPlayerLine(page) {
+  return (await readSystemInfoLines(page)).filter((line) => line.indexOf(PLAYER_LINE) === 0);
 }
 
 // What the AV1 entry of the video codec menu and the codec field show
@@ -116,14 +125,17 @@ function endStream(page, messages) {
 
 test('a WASM player without the Ultra Low Latency mode keeps the game mode off and disabled, whatever the Tizen version', async () => {
   const cases = [
-    { tv: { tv: 'uhd', wasmPlayer: 'noUll' }, levels: '0, 1, 2, 3, 4' },
-    // Without isApiFeatureSupported() the glue code of the WASM player never uses the mode
-    { tv: { tv: 'uhd', wasmPlayer: 'apiLevels' }, levels: '0, 1, 2, 3' },
-    // Nor on an older player without availableApis, whose API level the glue code derives from its classes
-    { tv: { tv: 'uhd', wasmPlayer: 'legacy' }, levels: '0' },
-    { tv: { tv: 'fhd', wasmPlayer: 'legacy' }, levels: '0' },
-    { tv: { tv: 's90c', wasmPlayer: 'noUll' }, levels: '0, 1, 2, 3, 4' },
-    { tv: { tv: 'fhd', wasmPlayer: 'noUll' }, levels: '0, 1, 2, 3, 4' },
+    { tv: { tv: 'uhd', wasmPlayer: 'noUll' }, levels: '0, 1, 2, 3, 4', player: '1.4, features: ' + MOCK_FEATURES },
+    // Without isApiFeatureSupported() the glue code of the WASM player never uses the mode, and derives the features
+    // from the API levels
+    { tv: { tv: 'uhd', wasmPlayer: 'apiLevels' }, levels: '0, 1, 2, 3', player: '1.1, features: base-emss, video-texture, software-decoding' },
+    // Nor on an older player without availableApis, whose API level and feature the glue code derives from its classes
+    { tv: { tv: 'uhd', wasmPlayer: 'legacy' }, levels: '0', player: 'Unknown, features: legacy-emss' },
+    { tv: { tv: 'fhd', wasmPlayer: 'legacy' }, levels: '0', player: 'Unknown, features: legacy-emss' },
+    { tv: { tv: 's90c', wasmPlayer: 'noUll' }, levels: '0, 1, 2, 3, 4', player: '1.4, features: ' + MOCK_FEATURES },
+    { tv: { tv: 'fhd', wasmPlayer: 'noUll' }, levels: '0, 1, 2, 3, 4', player: '1.4, features: ' + MOCK_FEATURES },
+    // A player that lists no feature at all, which System information says in a text of its own
+    { tv: { tv: 'uhd', wasmPlayer: 'noFeatures' }, levels: '0, 1, 2, 3, 4', player: '1.4, features: none' },
   ];
   for (const entry of cases) {
     const label = JSON.stringify(entry.tv);
@@ -132,6 +144,7 @@ test('a WASM player without the Ultra Low Latency mode keeps the game mode off a
       const shown = await readVideoSettings(app.page);
       assert.deepEqual([shown.gameMode, shown.gameModeDisabled], [false, true], label);
       assert.deepEqual((await readCheckLines(app.page)).slice(0, 2), [ULL_LINE + 'No', LEVELS_LINE + entry.levels], label);
+      assert.deepEqual(await readPlayerLine(app.page), [PLAYER_LINE + entry.player], label);
       assert.ok(app.logs.some((line) => line.indexOf('WASM Player: {"ultraLowLatency":"no"') >= 0), label);
       assert.deepEqual(app.errors, [], label);
     } finally {
@@ -196,10 +209,13 @@ test('the optimal settings say why the game mode stays off and remove a stored v
 test('with the Ultra Low Latency mode or without a clear answer, the game mode follows the Tizen version as before', async () => {
   const cases = [
     // Tizen 6.5: on by default
-    { tv: { tv: 'uhd', wasmPlayer: 'ull' }, expected: [true, false], answer: 'Yes', levels: '0, 1, 2, 3, 4, 5' },
-    { tv: { tv: 'uhd', wasmPlayer: 'none' }, expected: [true, false], answer: 'Unknown', levels: 'Unknown' },
-    { tv: { tv: 'uhd', wasmPlayer: 'disagree' }, expected: [true, false], answer: 'Unknown', levels: '0, 1, 2, 3, 4, 5' },
-    { tv: { tv: 'uhd', wasmPlayer: 'throws' }, expected: [true, false], answer: 'Unknown', levels: 'Unknown' },
+    { tv: { tv: 'uhd', wasmPlayer: 'ull' }, expected: [true, false], answer: 'Yes', levels: '0, 1, 2, 3, 4, 5',
+      player: '1.4, features: ' + MOCK_FEATURES + ', ultra-low-latency' },
+    { tv: { tv: 'uhd', wasmPlayer: 'none' }, expected: [true, false], answer: 'Unknown', levels: 'Unknown', player: 'Unknown, features: Unknown' },
+    // The list names the mode while isApiFeatureSupported() denies it: the line shows the list, the log both answers
+    { tv: { tv: 'uhd', wasmPlayer: 'disagree' }, expected: [true, false], answer: 'Unknown', levels: '0, 1, 2, 3, 4, 5',
+      player: '1.4, features: ' + MOCK_FEATURES + ', ultra-low-latency' },
+    { tv: { tv: 'uhd', wasmPlayer: 'throws' }, expected: [true, false], answer: 'Unknown', levels: 'Unknown', player: 'Unknown, features: Unknown' },
     // Tizen 5.5: off and disabled, unless the WASM player offers the mode, where the switch can be turned on
     { tv: { tv: 'fhd', wasmPlayer: 'none' }, expected: [false, true], answer: 'Unknown', levels: 'Unknown' },
     { tv: { tv: 'fhd', wasmPlayer: 'ull' }, expected: [false, false], answer: 'Yes', levels: '0, 1, 2, 3, 4, 5' },
@@ -214,6 +230,9 @@ test('with the Ultra Low Latency mode or without a clear answer, the game mode f
       const shown = await readVideoSettings(app.page);
       assert.deepEqual([shown.gameMode, shown.gameModeDisabled], entry.expected, label);
       assert.deepEqual((await readCheckLines(app.page)).slice(0, 2), [ULL_LINE + entry.answer, LEVELS_LINE + entry.levels], label);
+      if (entry.player) {
+        assert.deepEqual(await readPlayerLine(app.page), [PLAYER_LINE + entry.player], label);
+      }
       assert.deepEqual(app.errors, [], label);
     } finally {
       await app.context.close();

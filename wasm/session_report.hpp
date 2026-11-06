@@ -29,6 +29,14 @@ struct SessionReport {
   uint32_t heapTopMb = 0; // top of the WASM heap at the end of the stream
   uint32_t heapTotalMb = 0; // the fixed size of the WASM memory
   uint32_t heapGrowthMb = 0; // growth of the heap during the stream
+  // The highest frame rate of the host in a 30 s window of its capture times (UpdateHostFrameRate() in wasmplayer.cpp),
+  // in hundredths of FPS, or 0 when no window was completed. A host captures at most one image per refresh of its
+  // display, so the best window shows the refresh rate of the display, e.g. 5994 for 59.94 Hz, while static scenes, a
+  // game capped below the stream and the minimum frame rate of Sunshine only lower the other windows.
+  uint32_t hostFrameRateX100 = 0;
+  // The average time the host needed to capture and encode a frame, in tenths of a millisecond (the unit of
+  // frameHostProcessingLatency of moonlight-common-c), or 0 when the host sent none
+  uint32_t hostProcessingLatencyX10 = 0;
 };
 
 // Name of a video format of moonlight-common-c (the VIDEO_FORMAT_* values of Limelight.h) for the report
@@ -49,10 +57,11 @@ inline std::string FormatSessionReportMessage(const SessionReport& report) {
   const int length = std::snprintf(json, sizeof(json),
     "SessionReportMsg: {\"durationMs\":%llu,\"codec\":\"%s\",\"width\":%u,\"height\":%u,\"fps\":%u,\"bitrateKbps\":%u,"
     "\"frames\":%u,\"networkDroppedFrames\":%u,\"tvDroppedFrames\":%u,\"videoResets\":%u,\"recoveryKeyframes\":%u,"
-    "\"fecRecoveredBlocks\":%u,\"fecFailures\":%u,\"heapTopMb\":%u,\"heapTotalMb\":%u,\"heapGrowthMb\":%u}",
+    "\"fecRecoveredBlocks\":%u,\"fecFailures\":%u,\"heapTopMb\":%u,\"heapTotalMb\":%u,\"heapGrowthMb\":%u,"
+    "\"hostFrameRateX100\":%u,\"hostProcessingLatencyX10\":%u}",
     static_cast<unsigned long long>(report.durationMs), report.codec ? report.codec : "", report.width, report.height,
     report.fps, report.bitrateKbps, report.frames, report.networkDroppedFrames, report.tvDroppedFrames, report.videoResets,
     report.recoveryKeyframes, report.fecRecoveredBlocks, report.fecFailures, report.heapTopMb, report.heapTotalMb,
-    report.heapGrowthMb);
+    report.heapGrowthMb, report.hostFrameRateX100, report.hostProcessingLatencyX10);
   return length > 0 && length < static_cast<int>(sizeof(json)) ? std::string(json) : std::string();
 }

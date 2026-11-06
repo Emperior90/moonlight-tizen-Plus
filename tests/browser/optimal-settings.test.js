@@ -248,6 +248,7 @@ test('a TV whose product APIs fail still starts, with the defaults of a Full HD 
     'webapis.productinfo.getModel',
     'webapis.productinfo.getRealModel',
     'webapis.productinfo.getModelCode',
+    'webapis.productinfo.getFirmware',
     'webapis.productinfo.isUdPanelSupported',
     'webapis.avinfo',
   ].join(',');
@@ -260,6 +261,8 @@ test('a TV whose product APIs fail still starts, with the defaults of a Full HD 
     assert.equal(systemInfo, [
       'App Version: Moonlight Plus v2.2.1',
       'Platform Version: Tizen Unknown',
+      // Neither the firmware of the product information nor the build string of Tizen (getCapability() fails as well)
+      'TV Firmware Version: Unknown',
       'TV Model Series: Unknown',
       'TV Model Name: Unknown',
       'TV Model Group: Unknown',
@@ -269,6 +272,7 @@ test('a TV whose product APIs fail still starts, with the defaults of a Full HD 
       'Tested Profile: None',
       'Ultra Low Latency mode (Game mode): Unknown',
       'WASM player API levels: Unknown',
+      'WASM player version: Unknown, features: Unknown',
       'Video decoders (MediaSource check): H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
       'Video decoders at level 5.1 (H.264 above 1080p): H.264: Yes',
       'Video decoders at level 5.2 (4K above 60 FPS): HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes',
@@ -283,7 +287,8 @@ test('a TV whose product APIs fail still starts, with the defaults of a Full HD 
     assert.equal(dialog.title, 'Optimal settings for this TV');
     assert.ok(dialog.text.indexOf('Detected: Full HD panel, no HDR, unknown Tizen version, Wi-Fi<br><br>') === 0, dialog.text);
     await app.page.evaluate(() => $('#closeWarning').trigger('click'));
-    for (const label of ['Tizen platform version', 'TV model series', 'TV model name', 'TV model group', '4K panel support', 'HDR support']) {
+    for (const label of ['Tizen platform version', 'TV model series', 'TV model name', 'TV model group', '4K panel support', 'HDR support',
+      'TV firmware version', 'Tizen build string']) {
       assert.equal(count(app, 'Failed to get the ' + label), 1, label);
     }
     // The settings still work: Restore Defaults applies the same defaults

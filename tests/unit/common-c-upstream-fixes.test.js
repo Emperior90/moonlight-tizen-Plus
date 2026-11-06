@@ -2,10 +2,11 @@
 
 // Pins the fixes of upstream moonlight-common-c that this fork took into its vendored copy (moonlight-common-c/, based
 // on upstream 8599b60 with local patches) in the code, so that a later sync or merge can't drop them unnoticed. The
-// RTSP option list (5ec8397), the RTSP parser of aeba988, the loss reports of the RTP video queue (d85371c) and the
-// input packets of 4a95eb3, 0405384 and 448b2c6 also have native tests that run the code (native/rtsp_parser_test.c,
-// native/rtp_video_queue_test.c and native/input_stream_test.c); the other fixes sit in functions that need a network
-// connection, so this file checks their code.
+// RTSP option list (5ec8397), the RTSP parser of aeba988, the loss reports of the RTP video queue (d85371c), the
+// input packets of 4a95eb3, 0405384 and 448b2c6 and the interceptor of ENet disconnects (41cedb8, e80a786) also have
+// native tests that run the code (native/rtsp_parser_test.c, native/rtp_video_queue_test.c, native/input_stream_test.c
+// and native/control_stream_disconnect_test.c); the other fixes sit in functions that need a network connection, so
+// this file checks their code.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -36,6 +37,15 @@ test('41cedb8: an ENet disconnect is only intercepted when it is addressed to ou
   const disconnect = body.indexOf('ENET_PROTOCOL_COMMAND_DISCONNECT');
   assert.ok(guard > 0 && disconnect > guard, 'the peer check must come before the disconnect is acted on');
   assert.match(body, /peer == NULL \|\|\s+peerID != peer->incomingPeerID \|\|\s+sessionID != peer->incomingSessionID \|\|\s+!enet_address_equal\(&host->receivedPeerAddress, &peer->address\)\) \{\s+return 0;\s+\}/);
+});
+
+test('e80a786: the interceptor sizes the header of a disconnect by its sentTime flag and the checksum of the host', () => {
+  const body = functionBody(read('ControlStream.c'), 'static int ignoreDisconnectIntercept(ENetHost* host, ENetEvent* event) {');
+  assert.match(body, /if \(host->receivedDataLength >= sizeof\(ENetProtocolCommandHeader\)\) \{/);
+  assert.match(body, /size_t headerSize = \(peerID & ENET_PROTOCOL_HEADER_FLAG_SENT_TIME\) \?\s+sizeof\(ENetProtocolHeader\) :\s+sizeof\(ENetProtocolHeader\) - sizeof\(protoHeader->sentTime\);/);
+  assert.match(body, /if \(host->checksum != NULL\) \{\s+headerSize \+= sizeof\(enet_uint32\);\s+\}/);
+  assert.match(body, /if \(host->receivedDataLength != headerSize \+ sizeof\(ENetProtocolDisconnect\)\) \{\s+return 0;\s+\}/);
+  assert.doesNotMatch(body, /receivedDataLength == sizeof\(ENetProtocolHeader\) \+ sizeof\(ENetProtocolDisconnect\)/);
 });
 
 test('7b026e7: RTSP responses are limited in size and a malformed Session header ends the handshake', () => {

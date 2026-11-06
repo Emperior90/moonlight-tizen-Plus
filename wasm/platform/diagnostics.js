@@ -448,7 +448,40 @@ function parseSessionReport(json) {
     heapTopMb: number('heapTopMb'),
     heapTotalMb: number('heapTotalMb'),
     heapGrowthMb: number('heapGrowthMb'),
+    hostFrameRateX100: number('hostFrameRateX100'),
+    hostProcessingLatencyX10: number('hostProcessingLatencyX10'),
   };
+}
+
+// The 'host' hint needs a session of at least this length, so that the menus and the loading at its start don't decide
+// it, and an average host processing latency above this share of the time between two frames: an encoder that needs
+// most of it can't absorb the slower frames of a busy scene and skips frames. A low host frame rate alone never gives
+// the hint, since it is normal in static scenes, in games capped below the stream and with the minimum frame rate of
+// Sunshine (minimum_fps_target).
+const HOST_HINT_MIN_DURATION_MS = 120000;
+const HOST_HINT_FRAME_TIME_SHARE = 0.75;
+
+// The frame rates of a host display at 59.94 or 119.88 Hz, which a 60 or 120 FPS stream shows as a repeated frame
+// about every 17 or 8 seconds. The best 30 s window of the host (hostFrameRateX100 in wasm/session_report.hpp) measures
+// them to within about 0.01 FPS, while a 60 or 120 Hz display reads 60.00 or 120.00. A display at 60 or 120 Hz reads
+// the same when the game is capped at the NTSC rate, or misses 2 frames (3 or 4 at 120) in every window, even the best
+// one; the band can't tell these apart, so docs/GUIDE.md names them next to the hint.
+const HOST_REFRESH_TOLERANCE_PER_60_FPS = 0.02;
+
+// Whether the best window of the host ran at the NTSC rate of the stream (fps * 1000 / 1001) instead of the stream rate
+function isNtscHostFrameRate(report) {
+  if ((report.fps !== 60 && report.fps !== 120) || report.hostFrameRateX100 <= 0) {
+    return false;
+  }
+  const difference = Math.abs(report.hostFrameRateX100 / 100 - report.fps * 1000 / 1001);
+  // (the small addition keeps the edge of the band inside it despite the rounding of the division)
+  return difference <= HOST_REFRESH_TOLERANCE_PER_60_FPS * report.fps / 60 + 1e-9;
+}
+
+// Whether the host needed most of the time between two frames to capture and encode a frame (see the constants above)
+function isHostEncoderSaturated(report) {
+  return report.fps > 0 && report.hostProcessingLatencyX10 > 0 && report.durationMs >= HOST_HINT_MIN_DURATION_MS &&
+    report.hostProcessingLatencyX10 / 10 > HOST_HINT_FRAME_TIME_SHARE * 1000 / report.fps;
 }
 
 // The hints of a report in plain language, at most 3, most important first, as keys of SESSION_REPORT_HINTS. The options
@@ -469,6 +502,11 @@ function getSessionReportHints(report, options) {
   if ((tvPercent >= 0.5 && report.tvDroppedFrames >= 10) || report.videoResets >= 3) {
     hints.push('tv');
   }
+  // Many frames lost on the network make the encoder look busier than it is (keyframes after a loss), so only a stream
+  // without the network hint counts; the few frames that a good network loses in a long stream change nothing
+  if (!network && isHostEncoderSaturated(report)) {
+    hints.push('host');
+  }
   if (report.recoveryKeyframes >= 3 && !opts.refFrameInvalidation && /^(HEVC|AV1)/.test(report.codec)) {
     hints.push('keyframes');
   }
@@ -478,11 +516,15 @@ function getSessionReportHints(report, options) {
   if (report.heapTotalMb > 0 && report.heapTopMb >= report.heapTotalMb * 0.85) {
     hints.push('memory');
   }
+  if (isNtscHostFrameRate(report)) {
+    hints.push('hostRefresh');
+  }
   return hints.length > 0 ? hints.slice(0, 3) : ['ok'];
 }
 
-// The text of a hint of getSessionReportHints(), translated
-function getSessionReportHintText(hint) {
+// The text of a hint of getSessionReportHints(), translated, with the figures of the report that it names
+function getSessionReportHintText(hint, report) {
+  const figures = report || {};
   switch (hint) {
     case 'noVideo':
       return t('No video arrived from the PC in this session.');
@@ -490,12 +532,18 @@ function getSessionReportHintText(hint) {
       return t('Many frames were lost on the network: use a cable or lower the bitrate.');
     case 'tv':
       return t('The TV could not keep up with the video: lower the bitrate, the resolution or the frame rate.');
+    case 'host':
+      return t('The PC took %1$s ms of the %2$s ms between two frames to encode a frame, so it may have skipped frames: use a faster encoder preset on the PC, or a lower resolution or frame rate.',
+        formatReportNumber((figures.hostProcessingLatencyX10 || 0) / 10, 1), formatReportNumber(figures.fps > 0 ? 1000 / figures.fps : 0, 1));
     case 'keyframes':
       return t('The PC often sent whole frames again after a loss: turn on Reference frame invalidation in the Advanced Settings.');
     case 'fec':
       return t('Error correction repaired many lost packets: the network is near its limit, so a cable or a lower bitrate gives more headroom.');
     case 'memory':
       return t('The memory of the app is nearly full: restart the app before the next long session.');
+    case 'hostRefresh':
+      return t('The PC sent %1$s instead of %2$s frames per second, which shows as a short stutter about every %3$s seconds: set the display of the PC to exactly %2$s Hz.',
+        formatReportNumber((figures.hostFrameRateX100 || 0) / 100, 2), figures.fps, Math.round(1001 / (figures.fps || 60)));
     default:
       return t('No problems found in this session.');
   }
@@ -517,8 +565,10 @@ function formatReportNumber(value, decimals) {
 //   Frames lost on the network: 3 of 45,240 (0.01%)
 //   Frames dropped by the TV: 0, video resets: 0, recovery keyframes: 0
 //   FEC repairs: 12 blocks, 0 failed
+//   Host frame rate (best 30 s): 60.00 FPS, average host processing latency: 5.2 ms
 //   WASM heap at the end: 61 of 128 MB (+1 MB in this session)
 //   Hint: No problems found in this session.
+// The host line is left out when the host sent neither figure (e.g. a session without video).
 function describeSessionReport(report, options) {
   if (!report) {
     return [t('Last session: %1$s', t('None yet'))];
@@ -535,10 +585,16 @@ function describeSessionReport(report, options) {
     t('Frames dropped by the TV: %1$s, video resets: %2$s, recovery keyframes: %3$s', formatReportNumber(report.tvDroppedFrames),
       formatReportNumber(report.videoResets), formatReportNumber(report.recoveryKeyframes)),
     t('FEC repairs: %1$s blocks, %2$s failed', formatReportNumber(report.fecRecoveredBlocks), formatReportNumber(report.fecFailures)),
-    t('WASM heap at the end: %1$s of %2$s MB (+%3$s MB in this session)', report.heapTopMb, report.heapTotalMb, report.heapGrowthMb),
   ];
+  // A figure the host didn't give (e.g. no 30 s window in a shorter stream) is Unknown, without its unit
+  if (report.hostFrameRateX100 > 0 || report.hostProcessingLatencyX10 > 0) {
+    lines.push(t('Host frame rate (best 30 s): %1$s, average host processing latency: %2$s',
+      report.hostFrameRateX100 > 0 ? formatReportNumber(report.hostFrameRateX100 / 100, 2) + ' FPS' : t('Unknown'),
+      report.hostProcessingLatencyX10 > 0 ? formatReportNumber(report.hostProcessingLatencyX10 / 10, 1) + ' ms' : t('Unknown')));
+  }
+  lines.push(t('WASM heap at the end: %1$s of %2$s MB (+%3$s MB in this session)', report.heapTopMb, report.heapTotalMb, report.heapGrowthMb));
   getSessionReportHints(report, options).forEach(function(hint) {
-    lines.push(t('Hint: %1$s', getSessionReportHintText(hint)));
+    lines.push(t('Hint: %1$s', getSessionReportHintText(hint, report)));
   });
   return lines;
 }

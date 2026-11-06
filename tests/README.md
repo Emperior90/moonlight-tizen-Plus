@@ -49,6 +49,7 @@ The server assembles the widget the way `CMakeLists.txt` installs it, so the fil
 |---|---|
 | `tv` | `s90c` (QE55S90CAT, 4K, HDR, Tizen 9.0, default), `uhd` (4K, HDR, Tizen 6.5), `fhd` (Full HD, no HDR, Tizen 5.5), `8k` |
 | `model`, `series`, `modelCode` | what `getRealModel()`, `getModel()` and `getModelCode()` return |
+| `firmware`, `buildString` | what `webapis.productinfo.getFirmware()` returns (set by the `tv` preset) and the build string that `tizen.systeminfo.getCapability()` reports (default `tizen-build-1.0`) |
 | `panel` | `fhd`, `4k`, `8k` |
 | `hdr` | `1` or `0` |
 | `tizen` | the platform version, e.g. `6.5` |
@@ -58,7 +59,7 @@ The server assembles the widget the way `CMakeLists.txt` installs it, so the fil
 | `forceGM` | `1` for the ForceGM variant |
 | `failApis` | comma-separated API paths that fail, e.g. `webapis.avinfo.isHdrTvSupport,tizen.systeminfo.getCapability`: a function throws, an object (e.g. `webapis.avinfo`) is removed |
 | `wasmStartMs` | how long the stub of the WebAssembly module takes to start, in milliseconds (default 50) |
-| `wasmPlayer` | the `tizentvwasm` object of the WASM player: `none` (default, as in a desktop browser), `ull` (offers the Ultra Low Latency mode), `noUll`, `apiLevels` (API levels without `isApiFeatureSupported()`), `legacy` (no `availableApis`), `disagree` (the feature list and `isApiFeatureSupported()` disagree), `throws` |
+| `wasmPlayer` | the `tizentvwasm` object of the WASM player: `none` (default, as in a desktop browser), `ull` (offers the Ultra Low Latency mode), `noUll`, `noFeatures` (an empty feature list), `apiLevels` (API levels without `isApiFeatureSupported()`), `legacy` (no `availableApis`), `disagree` (the feature list and `isApiFeatureSupported()` disagree), `throws` |
 | `locale` | the language of the TV that `tizen.systeminfo` reports as `LOCALE`, e.g. `de_AT` (default: none, the app then reads the languages of the browser) |
 | `codecs` | what `MediaSource.isTypeSupported()` answers for the codecs of the WASM player: `all` (default), `noAv1`, `noAv1Main10`, `noLevel52`, `noH264Level51` (H.264 only at level 4.2), `acceptsBogus` (also a codec that doesn't exist), `noH264`, `throws`, `none` (no `MediaSource`) |
 
