@@ -18,9 +18,11 @@
 //   configuration, the 6-channel PCM track that only the EMSS backend adds, the two channels of the Web Audio output and
 //   the Audio stream line that the check reads
 // - what the host does with the stream: the share of the bitrate that Sunshine leaves to the encoder at a given FEC,
-//   the parity packets that Moonlight asks for, the display device configuration of Sunshine that is off by default and
-//   the reconnects of the app that speak against reverting it at every disconnect, the virtual display of Apollo that
-//   the app never asks for, and the 4:2:0 formats that are the only ones the app asks for
+//   which caps the received bitrate of the statistics, the parity packets that Moonlight asks for, the display device
+//   configuration of Sunshine that is off by default and follows the Video HDR switch that every start sends, the
+//   reconnects of the app that speak against reverting it at every disconnect, the virtual display of Apollo that the
+//   app never asks for, the 4:2:0 formats that are the only ones the app asks for, the HDR static metadata that only
+//   goes into HEVC, and the switch that keeps the sound off the speakers of the host
 // - the latency modes of the Ultra low latency switch and the Game Mode that only the ForceGM variant asks for, which
 //   the TV picture settings and the fallback for a corrupted picture above 1080p build on
 // The release notes of a release (docs/RELEASE_NOTES.md) only give the essentials, so the statements that they
@@ -363,10 +365,21 @@ test('the guide gives the share of the bitrate that Sunshine leaves to the encod
   assert.match(read('moonlight-common-c/src/SdpGenerator.c'), /"x-nv-vqos\[0\]\.fec\.minRequiredFecPackets", "2"\)/);
   assert.match(fec, /at least 2 parity packets in every block of a frame, so 2 lost packets in a block are always repaired/);
   assert.match(fec, /20 → 10 → 5/);
+  assert.match(fec, /as long as \*Session frames dropped by network\* stays at 0 and \*Worst FEC block\* doesn't often come close to its limit/);
   assert.match(fec, /If losses appear, first raise it to 10 again at the same bitrate/);
   assert.match(fec, /the TV decodes more video bits at the same bitrate setting/);
   // The bullet of the host settings points there instead of only saying to keep the default
   assert.doesNotMatch(GUIDE, /the share of error correction data\. Keep the default\./);
+  // The received bitrate of the statistics only adds up the video frames (wasmplayer.cpp), so it can't reach the
+  // configured bitrate, and the troubleshooting of a blocky picture gives the same ceiling as the FEC section
+  const player = read('wasm/wasmplayer.cpp');
+  assert.match(player, /total_bytes \+= decodeUnit->fullLength;/);
+  assert.match(player, /receivedBitrate = \(total_bytes \* 8\.0f\)/);
+  const blocky = GUIDE.split('\n').find((line) => line.indexOf('- **Blocky picture although the bitrate is high:**') === 0);
+  assert.ok(blocky, 'the troubleshooting item');
+  assert.ok(blocky.indexOf('It counts only the video, so it tops out at the share that Sunshine leaves to the encoder') > 0, blocky);
+  assert.ok(blocky.indexOf('at 150 Mbps *configured*, about ' + at20 + ' Mbps at FEC 20 and about ' + at5 + ' Mbps at FEC 5') > 0, blocky);
+  assert.doesNotMatch(blocky, /If much less arrives/);
 });
 
 test('the guide says that Sunshine changes the host display only with its display device configuration, which is off by default', () => {
@@ -380,9 +393,22 @@ test('the guide says that Sunshine changes the host display only with its displa
   assert.match(index, /function retryStreamAfterNoVideo\(/);
   assert.match(index, /function restartStreamWithBitrate\(/);
   assert.match(host, /Leave `dd_config_revert_on_disconnect` off\. Moonlight Plus reconnects on purpose, for a new bitrate from the Stream Menu and once more when no video arrived at the start/);
-  // The HDR option of the configuration follows the HDR state that the app sends as hdrMode with every start
+  // The HDR option of the configuration follows the HDR state that the app sends as hdrMode with every start: the
+  // state of the Video HDR switch goes in the place of enableHdr into both requests
   const utils = read('wasm/static/js/utils.js');
   assert.equal((utils.match(/'&hdrMode=' \+ enableHdr/g) || []).length, 2, '/launch and /resume');
+  assert.match(index, /const hdrMode = \$\('#hdrModeSwitch'\)\.parent\(\)\.hasClass\('is-checked'\) \? 1 : 0;/);
+  const withoutComments = index.replace(/\/\/[^\n]*/g, '');
+  for (const request of ['launchApp', 'resumeApp']) {
+    const parameters = new RegExp(request + ': function\\(([^)]*)\\)').exec(utils)[1].split(',').map((name) => name.trim());
+    const start = withoutComments.indexOf('host.' + request + '(');
+    assert.ok(start >= 0, 'index.js calls host.' + request);
+    const call = withoutComments.slice(start + request.length + 6, withoutComments.indexOf(').then(', start));
+    // The arguments at the top level of the call (the frame rate argument concatenates strings, without commas)
+    const args = call.split(',').map((arg) => arg.trim());
+    assert.equal(args.length, parameters.length, request + ': ' + args.join(' | '));
+    assert.equal(args[parameters.indexOf('enableHdr')], 'hdrMode', request);
+  }
   assert.match(host, /turns HDR on or off as \*Video HDR\* of the app \(Settings → Video Settings\) asks/);
 });
 
@@ -392,7 +418,9 @@ test('the guide says that the app never asks Apollo for its virtual display', ()
     assert.doesNotMatch(read(file), /virtualDisplay/, file);
   }
   const apollo = guideSection('### Apollo and Vibepollo');
-  assert.match(apollo, /Apollo creates its virtual display only when a client asks for it, and Moonlight Plus doesn't ask\. Switch \*Always create virtual display\* on for this TV in \*Device Management\*/);
+  assert.match(apollo, /Apollo creates its virtual display when a client asks for it, which Moonlight Plus doesn't, for its own \*Virtual Display\* entry in the app list, for a device or an app that is set to always create one, and in its \*Headless Mode\*\./);
+  assert.match(apollo, /switch \*Always create virtual display\* on for the TV in \*Device Management\*/);
+  assert.doesNotMatch(apollo, /creates its virtual display only when a client asks/);
   assert.match(apollo, /The rule of exactly 60 Hz in \[Host settings\]\(#host-settings-sunshine\) is for a physical display or a virtual display with a fixed refresh rate\./);
   assert.match(guideSection('## Host settings (Sunshine)'), /Set the host display to exactly 60 Hz \(or 120 Hz for 120 FPS streams\), not 59\.94 Hz\./);
 });
@@ -414,6 +442,18 @@ test('the guide names 4:2:0 as the color sampling of the stream, since the app a
   });
   assert.ok(named.has('VIDEO_FORMAT_H265_MAIN10') && named.has('VIDEO_FORMAT_AV1_MAIN10'), [...named].join(', '));
   named.forEach((name) => assert.equal(valueOf(name) & yuv444, 0, name));
+  // The formats that the app offers the host, masks and numbers included: VIDEO_FORMAT_MASK_YUV444 or
+  // VIDEO_FORMAT_MASK_H264 there would ask for 4:4:4
+  const main = read('wasm/main.cpp');
+  const offers = [...main.matchAll(/supportedVideoFormats\s*\|?=(?!=)([^;]*);/g)].map((match) => match[1]);
+  assert.ok(offers.length >= 3, offers.join(' / '));
+  offers.forEach((offer) => {
+    let value = 0;
+    for (const match of offer.matchAll(/\bVIDEO_FORMAT_[A-Z0-9_]+\b|\b0x[0-9A-Fa-f]+\b|\b\d+\b/g)) {
+      value |= /^VIDEO_FORMAT_/.test(match[0]) ? valueOf(match[0]) : Number(match[0]);
+    }
+    assert.equal(value & yuv444, 0, offer);
+  });
   const item = GUIDE.split('\n').find((line) => line.indexOf('- **Color sampling:**') === 0);
   assert.ok(item, 'the item of the known limits');
   assert.match(item, /the stream is 4:2:0\. Samsung TVs decode HEVC Main and Main10 and AV1 Main, which have no YUV 4:4:4, so the app doesn't offer it/);
@@ -440,4 +480,33 @@ test('the guide describes the latency modes and the Game Mode of the two files a
   }
   assert.match(picture, /\*\*Game HDR:\*\* \*Basic\* \(HGiG\)\. The TV then doesn't tone-map HDR itself/);
   assert.match(picture, /The menu names vary by model year/);
+  // Samsung names no single enhancement that the Ultra Low Latency mode turns off, and its game mode is what the Game
+  // Mode entries belong to, so the section applies with the switch on as well
+  assert.match(picture, /With the \*Ultra low latency mode\* switch on, the video player also turns the video enhancements of the TV off, as Samsung documents the mode, without naming them\./);
+  assert.match(picture, /Color Tone, HDR Tone Mapping and the Game Mode entries below apply in every case\./);
+  assert.doesNotMatch(picture, /with the switch off, and with the ForceGM variant, the picture settings below apply/);
+  assert.doesNotMatch(forceGm, /only selects the latency mode/);
+  // Switching the Ultra Low Latency mode off against micro-stutter also gives up its game mode with the standard file
+  const microStutter = GUIDE.split('\n').find((line) => line.indexOf('  - *A regular micro-stutter in smooth camera pans on Tizen 6.0 to 8.0:*') === 0);
+  assert.ok(microStutter, 'the troubleshooting item');
+  assert.match(microStutter, /With `Moonlight\.wgt` this also gives up the game mode that the Ultra Low Latency mode turns on; the ForceGM variant with the switch off keeps the Game Mode of the TV/);
+});
+
+test('the guide limits the HDR static metadata to HEVC, and names the switch that keeps the sound off the host speakers', () => {
+  // The metadata SEI goes only into HEVC keyframes (wasmplayer.cpp)
+  const player = read('wasm/wasmplayer.cpp');
+  assert.match(player, /if \(enabled && s_HdrMetadataEnabled && \(s_VideoFormat & VIDEO_FORMAT_MASK_H265\) &&/);
+  assert.match(player, /\(s_VideoFormat & VIDEO_FORMAT_MASK_H265\) && LiGetHdrMetadata\(&hdrMetadata\) &&/);
+  const calibration = guideSection('### HDR calibration');
+  assert.match(calibration, /\*HDR static metadata\* passes the same values to the TV, in HEVC streams only\./);
+  assert.match(calibration, /With \*HDR static metadata\* on and HEVC, a virtual display that reports a very high peak/);
+  // Play audio on the PC (Audio Settings, off when nothing is stored) sends localAudioPlayMode, and with it Sunshine
+  // keeps the sink of the host instead of the Steam Streaming Speakers
+  const html = read('wasm/index.html');
+  const audioSettings = html.slice(html.indexOf('<div id="audioSettings"'), html.indexOf('<div id="inputSettings"'));
+  assert.ok(audioSettings.indexOf('data-i18n="Play audio on the PC"') > 0, 'the switch in Audio Settings');
+  const index = read('wasm/platform/index.js');
+  assert.match(index, /if \(previousValue\.playHostAudio == null\) \{\s*document\.querySelector\('#playHostAudioBtn'\)\.MaterialSwitch\.off\(\);/);
+  assert.match(read('wasm/static/js/utils.js'), /'&localAudioPlayMode=' \+ localAudio/);
+  assert.match(GUIDE, /Keep \*Play audio on the PC\* \(Settings → Audio Settings, off by default\) off, so that Sunshine plays the sound into the \*Steam Streaming Speakers\* and not on the speakers of the host at the same time\./);
 });

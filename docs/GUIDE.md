@@ -256,7 +256,7 @@ The slider and the Stream Menu go up to 250 Mbps, for TVs and networks that hand
 
 When *Session frames dropped by network* rises although the Wi-Fi signal is good, check the network before you lower the bitrate:
 
-- **Wi-Fi channel:** use a less crowded 5 GHz channel outside the DFS range (in most countries channels 36 to 48). Radar detection can move the router off a DFS channel during a stream, and some Samsung TVs have trouble with DFS channels.
+- **Wi-Fi channel:** use a less crowded 5 GHz channel outside the DFS range (in most countries channels 36 to 48, and in some, such as the US, also 149 to 165). Radar detection can move the router off a DFS channel during a stream, and some Samsung TVs have trouble with DFS channels.
 - **Router protections:** turn off *UDP flood protection* and *DoS protection* for the local network. A stream sends thousands of UDP packets per second, which these protections can take for an attack.
 - **Isolation:** don't put the TV on a guest Wi-Fi, and turn off AP or client isolation for it, which can block or slow down the traffic between the TV and the PC.
 - **QoS:** don't let QoS rules or a bandwidth limit of the router throttle the TV.
@@ -314,7 +314,7 @@ A higher `nvenc_preset` (default 1, the fastest) compresses better at the cost o
 Sunshine sends error correction data (FEC) with every video frame, so that the TV can repair lost packets without waiting for a new keyframe. `fec_percentage` (default 20) sets its share, and it comes out of the bitrate of the app: Sunshine gives the encoder the bitrate × (100 − FEC) / 100, minus the audio and about 0.5 Mbps. At 150 Mbps, the video gets about 119 Mbps at FEC 20 and about 141 Mbps at FEC 5. The tested S90C streams 150 Mbps with FEC 5 over 5 GHz Wi-Fi.
 
 - Moonlight asks the host for at least 2 parity packets in every block of a frame, so 2 lost packets in a block are always repaired, also at a low FEC.
-- On a clean network, lower it step by step, 20 → 10 → 5, with a long session in the same demanding game for each step (as in [Finding your bitrate](#finding-your-bitrate)), as long as *Session frames dropped by network* stays at 0.
+- On a clean network, lower it step by step, 20 → 10 → 5, with a long session in the same demanding game for each step (as in [Finding your bitrate](#finding-your-bitrate)), as long as *Session frames dropped by network* stays at 0 and *Worst FEC block* doesn't often come close to its limit (see [Performance statistics](#performance-statistics)).
 - If losses appear, first raise it to 10 again at the same bitrate, before you lower the bitrate.
 - After lowering FEC, the TV decodes more video bits at the same bitrate setting (at 150 Mbps about 141 instead of 119 Mbps), so check the bitrate again and watch *Session frames dropped by the TV*: a bitrate that passed at FEC 20 can fail at FEC 5 on a TV near the limit of its decoder.
 - The value applies to every device that streams from this host, also to phones or laptops on weaker Wi-Fi.
@@ -326,7 +326,7 @@ Apollo and Vibepollo are hosts based on Sunshine that keep permissions for each 
 - **Permissions.** Apollo gives full permissions only to the first device paired with it, and a device paired later may only see the apps and watch streams. When the app list of the host shows a single tile *Permission Denied*, or the host answers a start with "Permission denied", Moonlight Plus starts nothing and shows *Permission needed* with what to allow. In the web UI of Apollo, open *PIN* → *Device Management* (in Vibepollo *Client Management*), select this TV and allow *List Apps*, *Launch Apps* and the input permissions it needs (*Controller Input*, *Keyboard Input*, *Mouse Input*). A TV that was paired without a device name shows as *Legacy Moonlight Client* there. Then open the host again.
 - **Control tiles.** While an app runs, Apollo with its input-only mode lists *Remote Input* and *Terminate* next to it. *Terminate* ends the running app on the host: Moonlight Plus starts it without asking to quit the running app first, and shows "… ended the running app." instead of the "Error 410: App terminated." of earlier versions. When Vibepollo asks to launch a tile or an app again within 60 seconds to confirm, the app shows that message of the host; press OK on the tile again to confirm.
 - **Order of the apps.** Apollo can put the apps in an order of your choice in its web UI. Choose *As on the PC* under Settings → General → *Sort the list of apps* to see them in that order (see [Stream Menu and app menu](#stream-menu-and-app-menu)).
-- **Virtual display of Apollo.** Apollo creates its virtual display only when a client asks for it, and Moonlight Plus doesn't ask. Switch *Always create virtual display* on for this TV in *Device Management*, or *Always create Virtual Display* for the app. Otherwise the stream shows the physical display of the host, with its resolution, refresh rate and HDR state.
+- **Virtual display of Apollo.** Apollo creates its virtual display when a client asks for it, which Moonlight Plus doesn't, for its own *Virtual Display* entry in the app list, for a device or an app that is set to always create one, and in its *Headless Mode*. To get it for every app from this TV, switch *Always create virtual display* on for the TV in *Device Management*, or *Always create Virtual Display* for single apps. Otherwise the stream shows the physical display of the host, with its resolution, refresh rate and HDR state.
 - **Refresh rate of Vibepollo.** On Windows 11, Vibepollo runs its virtual display faster than the stream on purpose (4 times its frame rate by default, with the game capped at the frame rate of the stream), so that each frame is captured sooner. The rule of exactly 60 Hz in [Host settings](#host-settings-sunshine) is for a physical display or a virtual display with a fixed refresh rate.
 
 ## ForceGM variant and game mode
@@ -334,7 +334,7 @@ Apollo and Vibepollo are hosts based on Sunshine that keep permissions for each 
 Two different things lower the latency of the TV:
 
 - **The Game Mode of the TV** turns off picture processing that adds latency. The ForceGM variant (`Moonlight-ForceGM.wgt`) asks the TV for it through its app metadata.
-- **The *Ultra low latency mode* switch of the app** (Settings → Video Settings; called *Game mode* before 2.2.0) only selects the latency mode of the video player of the TV: Ultra Low Latency when on, Low Latency when off. Samsung documents the Ultra Low Latency mode as the Low Latency mode with the video enhancements of the TV off and its game mode on, so the switch changes the picture as well (see [TV picture settings](#tv-picture-settings)).
+- **The *Ultra low latency mode* switch of the app** (Settings → Video Settings; called *Game mode* before 2.2.0) selects the latency mode of the video player of the TV: Ultra Low Latency when on, Low Latency when off. Samsung documents the Ultra Low Latency mode as the Low Latency mode with the video enhancements of the TV off and its game mode on, so the switch changes the picture as well (see [TV picture settings](#tv-picture-settings)).
 
 Recommendations:
 
@@ -346,7 +346,7 @@ Recommendations:
 
 ## TV picture settings
 
-The app can't read or change the picture settings of the TV, and the TV processes the stream like any other video. Sharpening, contrast enhancement and noise reduction make the blocks and banding of a compressed picture more visible or smear fine detail, and motion processing adds latency. With the *Ultra low latency mode* switch on, the video player of the TV turns its video enhancements off itself, as Samsung documents the mode; with the switch off, and with the ForceGM variant, the picture settings below apply.
+The app can't read or change the picture settings of the TV, and the TV processes the stream like any other video. Sharpening, contrast enhancement and noise reduction make the blocks and banding of a compressed picture more visible or smear fine detail, and motion processing adds latency. With the *Ultra low latency mode* switch on, the video player also turns the video enhancements of the TV off, as Samsung documents the mode, without naming them. So the rows on sharpening, contrast, noise reduction and motion matter most while the switch is off: on Tizen 5.5, with the ForceGM variant as recommended, or when you turned it off. Color Tone, HDR Tone Mapping and the Game Mode entries below apply in every case.
 
 Change them while a stream runs, so that they apply to the stream's picture mode (on recent models in Settings → All Settings → Picture → Expert Settings). The menu names vary by model year, so take them as examples:
 
@@ -365,7 +365,7 @@ Under Connection → Game Mode Settings (on some models in a submenu such as *Ga
 
 - **Game HDR:** *Basic* (HGiG). The TV then doesn't tone-map HDR itself, so set the peak brightness on the host with the Windows HDR Calibration app (see [HDR calibration](#hdr-calibration)). *HDR static metadata* of the app has no effect then.
 - **HDR10+ Gaming:** off. Neither Sunshine nor the app sends HDR10+ metadata.
-- **Game Motion Plus:** owners of an S90C or S95C report raised or noisy near-black at 60 Hz in Game Mode, which most of them avoided with Game Motion Plus on and both its sliders (Blur Reduction and Judder Reduction) at 0. These reports are about HDMI sources, and it may add some latency: compare both.
+- **Game Motion Plus:** owners of an S90C or S95C report raised or noisy near-black at 60 Hz in Game Mode, which some of them avoided with Game Motion Plus on and both its sliders (Blur Reduction and Judder Reduction) at 0, while one owner still saw it with both at 0. These reports are about HDMI sources, and it may add some latency: compare both.
 
 ## HDR
 
@@ -379,14 +379,14 @@ Under Connection → Game Mode Settings (on some models in a submenu such as *Ga
 
 ### HDR calibration
 
-Sunshine reads the peak brightness of the host display (its *MaxLuminance*), and Windows, Auto HDR and HDR games tone-map to it; *HDR static metadata* passes the same values to the TV. The peak of a monitor or a virtual display rarely matches the TV, so calibrate the host for the TV:
+Sunshine reads the peak brightness of the host display (its *MaxLuminance*), and Windows, Auto HDR and HDR games tone-map to it; *HDR static metadata* passes the same values to the TV, in HEVC streams only. The peak of a monitor or a virtual display rarely matches the TV, so calibrate the host for the TV:
 
 1. Start a stream of the desktop with HDR on, on the host and in the app.
 2. Run the Windows HDR Calibration app (Windows 11) inside the stream, and set each of its patterns by eye on the TV, not to a number. Windows saves the profile for that display.
 3. In each game, set its HDR peak brightness and paper white while you look at the TV.
 
 - Calibrate a display that only serves the stream, or a virtual display: a profile made through the stream for a physical monitor also changes how that monitor looks on the desk. Check that the profile still applies at the next stream, since some hosts create a new virtual display for every session.
-- With *HDR static metadata* on, a virtual display that reports a very high peak (some report several thousand nits) reaches the TV as the peak of the content, and the TV may compress the highlights more than needed.
+- With *HDR static metadata* on and HEVC, a virtual display that reports a very high peak (some report several thousand nits) reaches the TV as the peak of the content, and the TV may compress the highlights more than needed.
 - With Game HDR (HGiG) on the TV, the TV doesn't tone-map, so this calibration alone decides how the highlights look (see [TV picture settings](#tv-picture-settings)).
 - If HDR looks wrong in AV1, compare HEVC, and the other way round.
 
@@ -414,7 +414,7 @@ Settings → Audio Settings → *Audio backend*:
 
 The app always asks the host to keep sending audio during silence. Without that, Sunshine on Windows sends no audio at all while the PC is silent, and the audio player of the TV and the link to a soundbar run dry. It needs Sunshine v2026.516.143833 or newer; older hosts and other host software ignore it. Up to 2.1.0 this was the switch *Continuous audio from the host*; an install that had switched it off asks for it as well from 2.2.0 on.
 
-**On the PC.** Set the *Steam Streaming Speakers* to *16 bit, 48000 Hz* (sound control panel → *Playback* → *Properties* → *Advanced*), the rate of the stream, and don't let the host play the sound on its own speakers at the same time, which can delay it. If 5.1 sounds metallic or distorted, choose Stereo.
+**On the PC.** Keep *Play audio on the PC* (Settings → Audio Settings, off by default) off, so that Sunshine plays the sound into the *Steam Streaming Speakers* and not on the speakers of the host at the same time. Set the Steam Streaming Speakers to *16 bit, 48000 Hz* (sound control panel → *Playback* → *Properties* → *Advanced*), the rate of the stream. If 5.1 sounds metallic or distorted, choose Stereo.
 
 ### Surround sound with a soundbar
 
@@ -603,14 +603,14 @@ Other problems:
 - **The picture freezes on Tizen 9.0 or newer:** turn the *Ultra low latency mode* switch off, and use the ForceGM variant for the Game Mode of the TV.
 - **The lower part of the picture is corrupted above 1080p** (reported on some 2025 models): see [ForceGM variant and game mode](#forcegm-variant-and-game-mode).
 - **Colors look washed out:** HDR is on in the app but off on the host display, or the TV doesn't support HDR (see [HDR](#hdr)). For SDR games in an HDR stream, see [SDR games in an HDR stream](#sdr-games-in-an-hdr-stream).
-- **Blocky picture although the bitrate is high:** in a demanding scene, compare *received* and *configured* in the *Bitrate* line of the statistics. If much less arrives, check whether the encoder of the host is saturated, as [Host settings](#host-settings-sunshine) describes for NVENC: a saturated encoder looks like a slow network. Also check the picture settings of the TV ([TV picture settings](#tv-picture-settings)), since sharpening makes blocks more visible.
+- **Blocky picture although the bitrate is high:** in a demanding scene, look at *received* in the *Bitrate* line of the statistics. It counts only the video, so it tops out at the share that Sunshine leaves to the encoder (see [Error correction (FEC)](#error-correction-fec)): at 150 Mbps *configured*, about 119 Mbps at FEC 20 and about 141 Mbps at FEC 5. Only a figure clearly below that points to a saturated encoder of the host, as [Host settings](#host-settings-sunshine) describes for NVENC: a saturated encoder looks like a slow network. Also check the picture settings of the TV ([TV picture settings](#tv-picture-settings)), since sharpening makes blocks more visible.
 - **Only stereo from a soundbar or receiver:** see [Surround sound with a soundbar](#surround-sound-with-a-soundbar).
 - **Crackling sound with EMSS:** lower the bitrate by one step, or switch to Web Audio.
 - **Metallic or distorted 5.1:** choose Stereo, and check the format of the *Steam Streaming Speakers* on the PC (see [Audio](#audio)).
 - **Stutter after some time:** look at the session totals of the performance statistics at that moment (see [Performance statistics](#performance-statistics)).
 - **Stutter although the statistics look right:** the frame rates and the session totals look fine, but the picture judders.
   - *After the TV was switched on:* some TVs start with a wrong refresh rate for apps, possibly 50 Hz. Power on a device on an HDMI input (e.g. a console), switch to that input and back to Moonlight Plus. Switching to an input without a powered device doesn't help, and the fix lasts until the TV is switched off.
-  - *A regular micro-stutter in smooth camera pans on Tizen 6.0 to 8.0:* turn the *Ultra low latency mode* switch off and compare *TV player frame intervals*; one report (S95B) found the stutter gone in the Low Latency mode.
+  - *A regular micro-stutter in smooth camera pans on Tizen 6.0 to 8.0:* turn the *Ultra low latency mode* switch off and compare *TV player frame intervals*; one report (S95B) found the stutter gone in the Low Latency mode. With `Moonlight.wgt` this also gives up the game mode that the Ultra Low Latency mode turns on; the ForceGM variant with the switch off keeps the Game Mode of the TV (untested against this stutter).
   - *While or after an overlay of the TV shows* (volume, quick settings): the TV shares its resources with the overlay, which the app can't change. Change the volume with the remote of the soundbar if you can, and try the audio backend Web Audio (untested remedy).
 - **90 or 120 FPS doesn't look smoother than 60 FPS:** many TVs show only about 60 different frames per second from an app (see [Known limits](#known-limits)), although the statistics show 120. To check yours, open a moving test pattern such as TestUFO in a browser on the PC, stream it at the frame rate you chose, and film the TV with the slow motion of a phone (240 FPS) to count the different frames. If you count no more than 60, use 60 FPS, which gives each frame twice the bits at the same bitrate. The same holds for a game that only reaches 60 FPS: in a 120 FPS stream it gets about half the bits per frame, since Sunshine budgets each frame at the bitrate divided by the frame rate of the stream.
 
