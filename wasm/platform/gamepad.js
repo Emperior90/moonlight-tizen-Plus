@@ -84,11 +84,14 @@ const Controller = (function() {
         const value = restZoneValue(newAxes[i]);
         const previous = this.axes[i];
         // A value that is not a number is no stick position (the Gamepad API types the axes as doubles, which excludes
-        // NaN, so this only guards against a broken report): one in a read is skipped and the axis keeps its last
-        // position, and one in the snapshot (taken when the gamepad appeared, or from the baseline of its evidence) takes
-        // the first number as the resting position without a move, as hasInputChanged() does for the evidence.
-        // Otherwise the first number of a stick that rests past AXIS_MOVE_THRESHOLD would be reported as a move, and the
-        // menus would keep scrolling while it rests there.
+        // NaN, so this only guards against a broken report). One in the snapshot (taken when the gamepad appeared, when
+        // the polling resumed, or from the baseline of its evidence) takes the first number as the resting position
+        // without a move, as hasInputChanged() does for the evidence. Otherwise the first number of a stick that rests
+        // past AXIS_MOVE_THRESHOLD would be reported as a move, and the menus would keep scrolling while it rests there.
+        // One in a read is skipped and the axis keeps its last position, so a single one neither stops the repeat of a
+        // held stick nor, by the rule above, turns the next number into a resting position that swallows the move. The
+        // trade-off: a stick that keeps reading a non-number keeps its last position too, also a held one, whose repeat
+        // in the menus then goes on until a number arrives or another button ends it.
         if (!isFiniteNumber(value)) {
           continue;
         }
@@ -379,8 +382,10 @@ const Controller = (function() {
       // disconnect and connect events for a new id after the read; newer versions send them inside getGamepads()). The
       // input that the old snapshot holds ends, and a fresh snapshot replaces it instead of rejecting every later one,
       // but only for a gamepad that counts as a controller: one that doesn't yet (e.g. one with a timestamp of 0 that
-      // sent no input of its own, see isRealGamepad()) gets none, so a button it holds is no press in the menus. Once it
-      // counts, the branch below takes it like a controller found without a connection event.
+      // sent no input of its own, see isRealGamepad()) gets none here. The connection event that Chromium M69 sends
+      // after the read still takes one in gamepadConnected(), as for any gamepad that the browser announces, so a button
+      // that it holds presses once in the menus instead of twice. Without that event, the branch below takes it once it
+      // counts, like a controller found without a connection event.
       const counts = isRealGamepad(gamepad);
       console.log('%c[gamepad.js, analyzeGamepad]', 'color: gray;', 'Gamepad ' + index + ' changed its layout or was replaced, ' +
         (counts ? 'taking a new snapshot: ' : 'dropping its snapshot until it counts as a controller: ') + formatGamepadInfo(describeGamepad(gamepad)));

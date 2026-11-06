@@ -9,9 +9,10 @@
 // reports a timestamp of 0 (Tizen 5.5) counts once its input changed, with the rule of PollGamepads() in
 // wasm/gamepad.cpp (tests/fixtures/gamepad-evidence.tsv), which Controller.isRealGamepad() gives the input test and the
 // mask of a stream start (utils.js), and a 'gamepadvalidated' event tells the UI. Since 2.3.0 that event comes before the
-// input that made the controller count reaches the menus, a gamepad that doesn't count yet gets no snapshot when it
-// takes the slot of a known one, so the menus get no press or stick move from a slot that doesn't count, and a stick
-// value that is not a number moves nothing.
+// input that made the controller count reaches the menus, the polling takes no snapshot of a gamepad that doesn't count
+// yet when it takes the slot of a known one, so without a connection event the menus get no press or stick move from a
+// slot that doesn't count (the gamepadconnected event that Chromium M69 sends after the read still takes one, and a
+// button held then presses once instead of twice), and a stick value that is not a number moves nothing.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -505,7 +506,7 @@ test('the UI hears that a controller with a timestamp of 0 counts before the inp
   });
 });
 
-test('another gamepad with a timestamp of 0 that takes the slot of a known controller presses nothing until it counts', () => {
+test('without a connection event, another gamepad with a timestamp of 0 that takes the slot of a known controller presses nothing until it counts', () => {
   const pads = loadController();
   const order = recordEventOrder(pads);
   pads.controller.startWatching();
@@ -527,6 +528,29 @@ test('another gamepad with a timestamp of 0 that takes the slot of a known contr
   pads.slots[0] = makePad(0, 17, 4, [1], null, { timestamp: 0, id: dualSense });
   pads.poll();
   assert.deepEqual(order, ['button 13+', 'button 13-', 'validated 0', 'button 0-', 'button 1+']);
+  assert.equal(pads.errors().length, 0);
+});
+
+test('with the connection events of Chromium M69 after the read, a held button of such a gamepad presses once, not twice', () => {
+  // Chromium M69 (Tizen 5.5) returns the new id from getGamepads() at once and sends gamepaddisconnected for the old id
+  // and gamepadconnected for the new one only after the read. gamepadConnected() takes a snapshot with every button
+  // released, as for any gamepad that the browser announces, so the held A presses once; the polling no longer takes a
+  // snapshot of its own before it, which pressed it a first time and released it with the disconnect event.
+  const pads = loadController();
+  const order = recordEventOrder(pads);
+  pads.controller.startWatching();
+  pads.connect(makePad(0, 17, 4));
+  pads.poll(2);
+  const xbox = pads.slots[0];
+  const dualSense = 'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)';
+  pads.slots[0] = makePad(0, 17, 4, [0], null, { timestamp: 0, id: dualSense });
+  pads.poll();
+  pads.platform.context.dispatchEvent({ type: 'gamepaddisconnected', gamepad: Object.assign({}, xbox, { connected: false }) });
+  pads.platform.context.dispatchEvent({ type: 'gamepadconnected', gamepad: pads.slots[0] });
+  pads.poll(3);
+  pads.slots[0] = makePad(0, 17, 4, [], null, { timestamp: 0, id: dualSense });
+  pads.poll(2);
+  assert.deepEqual(order, ['button 0+', 'validated 0', 'button 0-']);
   assert.equal(pads.errors().length, 0);
 });
 
