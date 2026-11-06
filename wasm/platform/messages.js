@@ -796,9 +796,10 @@ function parseVideoTrackRejection(text) {
 }
 
 // Tell the user which video format the TV rejected when the stream added its video track, and what to change: HEVC
-// instead of AV1, or instead of H.264, which Samsung TVs generally decode only up to 1080p at 60 FPS (High Level 4.2),
-// so with H.264 also a resolution up to 1080p, or a lower frame rate for a stream that is already within 1080p, and
-// otherwise a lower resolution or frame rate, and HDR off for a 10-bit stream
+// instead of AV1, or instead of H.264, which Samsung TVs decode up to 1080p at 60 FPS (High Level 4.2) and above that
+// only where they decode level 5.1, which wasmplayer.cpp offers first, so with H.264 also a resolution up to 1080p, or a
+// lower frame rate for a stream that is already within 1080p, and otherwise a lower resolution or frame rate, and HDR
+// off for a 10-bit stream
 function showVideoTrackRejection(rejection) {
   const codec = rejection.codec;
   console.warn('%c[messages.js, showVideoTrackRejection]', 'color: gray;', 'Warning: The TV rejected the video track: ' + codec + ' at ' + rejection.width + 'x' + rejection.height + '@' + rejection.fps);

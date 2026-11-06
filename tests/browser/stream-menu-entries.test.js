@@ -1,7 +1,7 @@
 'use strict';
 
-// Checks the bitrate entry and 'Type text…' of the Stream Menu in the real page (wasm/platform/menus.js with index.js
-// and messages.js), over a simulated stream with the remote and a simulated gamepad:
+// Checks the bitrate entry, 'Refresh picture' and 'Type text…' of the Stream Menu in the real page
+// (wasm/platform/menus.js with index.js and messages.js), over a simulated stream with the remote and a simulated gamepad:
 // - the bitrate entry shows the bitrate of the stream, LEFT and RIGHT change it in steps of 5 Mbps from 5 Mbps up to
 //   250 Mbps, the end of the bitrate slider, and no further on every TV, OK on an unchanged bitrate does nothing but
 //   explain, and OK on a new one keeps it as the bitrate setting, ends the stream without quitting the app on the PC and
@@ -9,6 +9,8 @@
 //   warning threshold of the TV (150 Mbps on the S90C), or above 80 Mbps over Ethernet, OK shows the warning of the
 //   slider once; RED cancels the reconnect, an app that no longer runs ends it with a message, and an end of the stream
 //   for another reason never reconnects;
+// - 'Refresh picture' asks the module once for a keyframe (requestIdrFrame()), logs one line with its answer, closes the
+//   menu and gives the stream the focus back, without a key or a reconnect reaching the stream, also with a gamepad;
 // - 'Type text…' opens a field that takes the keys of the keyboard while nothing reaches the stream, Enter and the Done
 //   key of the keyboard of the TV send the text once through sendText() of the module and resume the stream, RETURN and
 //   the Cancel key send nothing and return to the Stream Menu, a text that can't be sent keeps the field with the reason,
@@ -153,7 +155,7 @@ const IME_CANCEL = [65385, 'Cancel'];
 // Open the Stream Menu with Play/Pause and move DOWN to an entry
 async function openMenuAt(page, entryId) {
   await remoteKey(page, ...PLAY_PAUSE);
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 16; i++) {
     if (await page.evaluate(() => document.activeElement.id) === entryId) {
       return;
     }
@@ -469,6 +471,70 @@ const textPanel = (page) => page.evaluate(() => ({
 }));
 
 const SECRET = 'Pässwörd 1 &é€😀';
+
+test('Refresh picture asks the module for a keyframe once, logs it and resumes the stream', async () => {
+  const app = await openStreaming();
+  try {
+    await openMenuAt(app.page, 'streamMenuRefresh');
+    // It comes right after the bitrate entry, with the icon of the other refresh buttons
+    const entry = await app.page.evaluate(() => {
+      const ids = getOverlayMenuItems('streamMenu').map((item) => item.id);
+      return {
+        after: ids[ids.indexOf('streamMenuRefresh') - 1],
+        label: $('#streamMenuRefresh .overlay-menu-label').text(),
+        icon: $('#streamMenuRefresh use').attr('xlink:href'),
+      };
+    });
+    assert.deepEqual(entry, { after: 'streamMenuBitrate', label: 'Refresh picture', icon: '#i-refresh' });
+    const linesBefore = app.logs.length;
+    await remoteKey(app.page, ...ENTER);
+    const state = await app.page.evaluate(() => ({
+      menu: isStreamMenuOpen, shown: $('#streamMenuOverlay').css('display'), focused: document.activeElement.id, isInGame,
+      events: window.__events.slice(),
+    }));
+    assert.deepEqual(state, { menu: false, shown: 'none', focused: 'wasm_module', isInGame: true, events: [] });
+    // One request, after the controller input of the PC was resumed, and no reconnect
+    assert.deepEqual(await moduleCalls(app.page), ['setStreamMenuOpen true', 'setStreamMenuOpen false', 'requestIdrFrame']);
+    const lines = app.logs.slice(linesBefore).filter((line) => line.indexOf('Refresh picture') >= 0);
+    assert.equal(lines.length, 1, JSON.stringify(lines));
+    assert.ok(lines[0].indexOf('Refresh picture: asked the host for a keyframe.') >= 0, lines[0]);
+    // Neither OK nor its release reached the stream
+    assert.deepEqual(await app.page.evaluate(() => window.__videoKeys.slice()), []);
+    await app.page.waitForTimeout(300);
+    assert.deepEqual(await app.page.evaluate(() => window.__events.slice()), []);
+
+    // A module without a running stream answers false, which the log line says
+    await app.page.evaluate(() => {
+      Module.requestIdrFrame = () => false;
+    });
+    await openMenuAt(app.page, 'streamMenuRefresh');
+    await remoteKey(app.page, ...ENTER);
+    assert.ok(app.logs.some((line) => line.indexOf('Refresh picture: no keyframe requested, because the module has no running stream.') >= 0));
+    assert.equal(await app.page.evaluate(() => isStreamMenuOpen), false);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('Refresh picture with a gamepad: A asks for the keyframe and the stream gets the controller back', async () => {
+  const app = await openStreaming({ gamepad: true });
+  try {
+    await openMenuAt(app.page, 'streamMenuRefresh');
+    await app.page.evaluate(() => window.__setButton(0, 0, true));
+    await app.page.waitForTimeout(AFTER_DELAY_MS);
+    await app.page.evaluate(() => window.__setButton(0, 0, false));
+    await app.page.waitForTimeout(AFTER_DELAY_MS);
+    assert.equal(await app.page.evaluate(() => isStreamMenuOpen), false);
+    const calls = await moduleCalls(app.page);
+    assert.equal(calls.filter((call) => call === 'requestIdrFrame').length, 1, JSON.stringify(calls));
+    assert.equal(calls[calls.length - 1], 'requestIdrFrame', JSON.stringify(calls));
+    assert.ok(calls.indexOf('setStreamMenuOpen false') >= 0, JSON.stringify(calls));
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
 
 test('Type text: the keys go to the field and not to the PC, and Enter sends the text once and resumes', async () => {
   const app = await openStreaming();

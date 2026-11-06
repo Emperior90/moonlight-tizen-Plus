@@ -3,6 +3,7 @@
 #include "compact_stats.hpp"
 #include "frame_intervals.hpp"
 #include "session_report.hpp"
+#include "video_config.hpp"
 #include "video_track_rejection.hpp"
 
 #include <algorithm>
@@ -339,6 +340,18 @@ void MoonlightInstance::RequestIdrFrame() {
   LiRequestIdrFrame();
 }
 
+// 'Refresh picture' of the Stream Menu (requestIdrFrame() in main.cpp, on the main thread): ask the host for a keyframe,
+// which replaces a corrupted picture at once. Sunshine sends keyframes only on request, so without one a corruption that
+// no frame loss reported stays on the screen. Only while the connection runs: the event and the queue that
+// LiRequestIdrFrame() uses exist only between LiStartConnection() and LiStopConnection(). Returns whether it asked.
+bool MoonlightInstance::RefreshPicture() {
+  if (!m_Running) {
+    return false;
+  }
+  RequestIdrFrame();
+  return true;
+}
+
 // The host sends its HDR metadata over the control channel, which can arrive after the first IDR frame was
 // submitted, or change when the host display switches HDR on mid-stream. The metadata SEI only goes into IDR
 // frames, so request one when the metadata becomes available during the stream. Before the track is open,
@@ -430,7 +443,12 @@ int MoonlightInstance::StartupVidDecSetup(int videoFormat, int width, int height
     const bool needsLevel52 = (uint64_t)width * height * redrawRate > kLevel51MaxLumaSampleRate;
     std::vector<std::pair<const char*, const char*>> videoProfiles; // MIME-type and profile name, in order of preference
     if (videoFormat & VIDEO_FORMAT_H264) {
-      // NOTE: Samsung TVs generally decode H.264 only up to level 4.2 (1080p), so higher resolutions should use HEVC or AV1
+      // H.264 streams above level 4.2 (e.g. 1440p at 60 FPS or 4K at 30 FPS) offer level 5.1 first, which Samsung
+      // specifies for its UHD TVs, and fall back to level 4.2 for TVs that reject it (ExceedsH264Level42() in
+      // video_config.hpp). Streams up to 1080p at 60 FPS keep using level 4.2 only, which every Samsung TV decodes.
+      if (ExceedsH264Level42(width, height, redrawRate)) {
+        videoProfiles.push_back({"video/mp4; codecs=\"avc1.640033\"", "H.264 High Level Profile 5.1"});
+      }
       videoProfiles.push_back({"video/mp4; codecs=\"avc1.64002A\"", "H.264 High Level Profile 4.2"});
     } else if (videoFormat & VIDEO_FORMAT_H265) {
       if (needsLevel52) {

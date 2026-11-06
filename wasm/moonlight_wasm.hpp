@@ -146,6 +146,7 @@ class MoonlightInstance {
   static void ClSetHdrMode(bool enabled);
 
   static void RequestIdrFrame();
+  bool RefreshPicture();
   bool InitializeRenderingSurface(int width, int height);
 
   static int VidDecSetup(int videoFormat, int width, int height, int redrawRate, void* context, int drFlags);
@@ -317,6 +318,7 @@ MessageResult cancelRequest();
 void toggleStats();
 void setStreamMenuOpen(bool open);
 void toggleMouseEmulation();
+bool requestIdrFrame();
 std::string takeDiagnosticLog();
 void stun(int callbackId);
 void pair(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber, std::string uniqueId);

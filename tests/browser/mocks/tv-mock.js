@@ -134,7 +134,7 @@
   }
 
   var WASM_PLAYER_MODES = ['none', 'ull', 'noUll', 'apiLevels', 'legacy', 'disagree', 'throws'];
-  var CODEC_MODES = ['all', 'noAv1', 'noAv1Main10', 'noLevel52', 'acceptsBogus', 'noH264', 'throws', 'none'];
+  var CODEC_MODES = ['all', 'noAv1', 'noAv1Main10', 'noLevel52', 'noH264Level51', 'acceptsBogus', 'noH264', 'throws', 'none'];
 
   // Create the `tizentvwasm` object of the WASM player in the shapes that the glue code of Samsung's Emscripten SDK
   // (in the built moonlight-wasm.js) distinguishes, or undefined for 'none'. The versions and API levels are
@@ -196,11 +196,12 @@
   // - 'all': every codec of the WASM player
   // - 'noAv1', 'noAv1Main10': no AV1, or no AV1 in 10 bits
   // - 'noLevel52': HEVC and AV1 only at level 5.1
+  // - 'noH264Level51': H.264 only at level 4.2
   // - 'acceptsBogus': every MIME type, also a codec that doesn't exist
   // - 'noH264': no H.264
   // - 'throws': every call throws
   function createIsTypeSupported(mode) {
-    var known = /^(avc1\.64002A|hev1\.[12]\.[46]\.L15[36]\.B0|av01\.0\.1[34]M\.(08|10))$/;
+    var known = /^(avc1\.64002A|avc1\.640033|hev1\.[12]\.[46]\.L15[36]\.B0|av01\.0\.1[34]M\.(08|10))$/;
     return function(mimeType) {
       if (mode === 'throws') {
         throw new Error('Simulated failure of MediaSource.isTypeSupported');
@@ -220,6 +221,9 @@
         return false;
       }
       if (mode === 'noLevel52' && /L156|14M/.test(codec)) {
+        return false;
+      }
+      if (mode === 'noH264Level51' && codec === 'avc1.640033') {
         return false;
       }
       if (mode === 'noH264' && codec.indexOf('avc1') === 0) {

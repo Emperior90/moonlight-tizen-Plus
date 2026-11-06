@@ -33,6 +33,7 @@ const START_ARG_GAME_MODE = 26;
 const ULL_LINE = 'Ultra Low Latency mode (Game mode): ';
 const LEVELS_LINE = 'WASM player API levels: ';
 const DECODERS_LINE = 'Video decoders (MediaSource check): ';
+const LEVEL51_LINE = 'Video decoders at level 5.1 (H.264 above 1080p): ';
 const LEVEL52_LINE = 'Video decoders at level 5.2 (4K above 60 FPS): ';
 const AV1_NOTE = 'AV1 (may not be supported by this TV)';
 const GENERIC_200 = 'The TV was unable to start the streaming with the selected video settings. Try reducing the resolution or frame rate and consider changing the codec.';
@@ -44,7 +45,7 @@ function readSystemInfoLines(page) {
 
 // The lines of System information about the WASM player and the decoders
 async function readCheckLines(page) {
-  return (await readSystemInfoLines(page)).filter((line) => [ULL_LINE, LEVELS_LINE, DECODERS_LINE, LEVEL52_LINE].some((prefix) => line.indexOf(prefix) === 0));
+  return (await readSystemInfoLines(page)).filter((line) => [ULL_LINE, LEVELS_LINE, DECODERS_LINE, LEVEL51_LINE, LEVEL52_LINE].some((prefix) => line.indexOf(prefix) === 0));
 }
 
 // What the AV1 entry of the video codec menu and the codec field show
@@ -299,10 +300,12 @@ test('System information shows the answers of the codec check, or why they do no
   const YES_ALL = 'H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes';
   const YES_52 = 'HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: Yes';
   const expected = {
-    all: [DECODERS_LINE + YES_ALL, LEVEL52_LINE + YES_52],
-    noAv1: [DECODERS_LINE + 'H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: No, AV1 Main10: No', LEVEL52_LINE + 'HEVC: Yes, HEVC Main10: Yes, AV1: No, AV1 Main10: No'],
-    noAv1Main10: [DECODERS_LINE + 'H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: No', LEVEL52_LINE + 'HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: No'],
-    noLevel52: [DECODERS_LINE + YES_ALL, LEVEL52_LINE + 'HEVC: No, HEVC Main10: No, AV1: No, AV1 Main10: No'],
+    all: [DECODERS_LINE + YES_ALL, LEVEL51_LINE + 'H.264: Yes', LEVEL52_LINE + YES_52],
+    noAv1: [DECODERS_LINE + 'H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: No, AV1 Main10: No', LEVEL51_LINE + 'H.264: Yes', LEVEL52_LINE + 'HEVC: Yes, HEVC Main10: Yes, AV1: No, AV1 Main10: No'],
+    noAv1Main10: [DECODERS_LINE + 'H.264: Yes, HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: No', LEVEL51_LINE + 'H.264: Yes', LEVEL52_LINE + 'HEVC: Yes, HEVC Main10: Yes, AV1: Yes, AV1 Main10: No'],
+    noLevel52: [DECODERS_LINE + YES_ALL, LEVEL51_LINE + 'H.264: Yes', LEVEL52_LINE + 'HEVC: No, HEVC Main10: No, AV1: No, AV1 Main10: No'],
+    // H.264 only at level 4.2: the line of the codecs that streams up to 1080p at 60 FPS use stays as it is
+    noH264Level51: [DECODERS_LINE + YES_ALL, LEVEL51_LINE + 'H.264: No', LEVEL52_LINE + YES_52],
     acceptsBogus: [DECODERS_LINE + 'Unknown (the answers of the TV are not reliable)'],
     noH264: [DECODERS_LINE + 'Unknown (the answers of the TV are not reliable)'],
     throws: [DECODERS_LINE + 'Unknown (the answers of the TV are not reliable)'],
