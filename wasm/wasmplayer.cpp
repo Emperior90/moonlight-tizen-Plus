@@ -238,7 +238,8 @@ MoonlightInstance::MediaElementListener::MediaElementListener(
 ) : m_Instance(instance) {}
 
 // An error of the HTML media element, which is only logged as well. It also comes while the app detaches the player
-// at the end of a stream, which the line tells apart.
+// at the end of a stream, which the line tells apart. Where the SDK emulates the pipeline errors of an older player,
+// the same error also logs one or two OnPipelineError lines of a general error (see FormatPlayerErrorLog()).
 void MoonlightInstance::MediaElementListener::OnError(samsung::html::MediaError error, const char* message) {
   const int code = static_cast<int>(error);
   ClLogMessage("%s", FormatPlayerErrorLog("HTMLMediaElement::OnError", code, MediaElementErrorName(code), message,
@@ -586,6 +587,17 @@ static void UpdateHostFrameRate(int frameNumber, uint32_t pts, uint16_t hostProc
   }
 }
 
+// Start the host frame rate of a new stream without a window, a figure or a best window of a previous stream, so that
+// neither the overlay nor the report of the session shows what an earlier stream of this app run measured (e.g. its
+// 60.00 hiding a later host at 59.94 Hz, or a rate in the report of a stream too short for a window). VidDecSetup()
+// calls it; the native tests call it as well, since VidDecSetup() waits for the media pipeline of the TV.
+static void ResetHostFrameRate() {
+  s_HostRateWindowOpen = false;
+  s_HostRateRepeats = 0;
+  s_HostFrameRate = 0.0f;
+  s_HostFrameRateBest = 0.0f;
+}
+
 // Name of a result of AppendPacket for the log, from EmssCommon.Result of the EMSS glue
 static const char* AppendResultName(int code) {
   switch (code) {
@@ -731,10 +743,7 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
   s_SessionStartMs = LiGetMillis();
 
   // Reset the host frame rate measurement so that no figure from a previous stream is shown
-  s_HostRateWindowOpen = false;
-  s_HostRateRepeats = 0;
-  s_HostFrameRate = 0.0f;
-  s_HostFrameRateBest = 0.0f;
+  ResetHostFrameRate();
 
   // Ensure that StartupVidDecSetup is called every time when VidDecSetup is invoked to reinitialize the media pipeline
   int initVidDec = StartupVidDecSetup(videoFormat, width, height, redrawRate, context, drFlags);

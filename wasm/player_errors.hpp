@@ -26,6 +26,12 @@ inline const char* MediaElementErrorName(int error) {
 // The line of the log for an error of the player: where it came from, its value and name, whether a stream was running
 // (an error while the app tears the player down is expected), and the text of the player. Samsung owns the text only
 // during the call of the listener, so it is copied into the line at once.
+// One fault can give several lines. Where the SDK emulates the pipeline errors of an older player from the errors of
+// the media element (_mediaElementRegisterOnErrorEMSS() of the glue code), an error of the element also reaches
+// OnPipelineError() as a 'general error' with the same text: once from the DOM listener of the emulation, whose check
+// for a listener of the app never skips (it receives the event object), and once more from the listener of the app
+// (_mediaElementSetOnError()). So an HTMLMediaElement::OnError line followed by one or two EMSS::OnPipelineError lines
+// of error 2 with the same text is one error of the element.
 inline std::string FormatPlayerErrorLog(const char* origin, int error, const char* name, const char* message, bool streaming) {
   return std::string(origin) + " (error " + std::to_string(error) + ": " + name + ")" +
     (streaming ? " during the stream" : " without a running stream") + ": " +

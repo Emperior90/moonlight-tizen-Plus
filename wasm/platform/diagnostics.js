@@ -463,7 +463,9 @@ const HOST_HINT_FRAME_TIME_SHARE = 0.75;
 
 // The frame rates of a host display at 59.94 or 119.88 Hz, which a 60 or 120 FPS stream shows as a repeated frame
 // about every 17 or 8 seconds. The best 30 s window of the host (hostFrameRateX100 in wasm/session_report.hpp) measures
-// them to within about 0.01 FPS, while a 60 or 120 Hz display reads 60.00 or 120.00.
+// them to within about 0.01 FPS, while a 60 or 120 Hz display reads 60.00 or 120.00. A display at 60 or 120 Hz reads
+// the same when the game is capped at the NTSC rate, or misses 2 frames (3 or 4 at 120) in every window, even the best
+// one; the band can't tell these apart, so docs/GUIDE.md names them next to the hint.
 const HOST_REFRESH_TOLERANCE_PER_60_FPS = 0.02;
 
 // Whether the best window of the host ran at the NTSC rate of the stream (fps * 1000 / 1001) instead of the stream rate
@@ -500,8 +502,8 @@ function getSessionReportHints(report, options) {
   if ((tvPercent >= 0.5 && report.tvDroppedFrames >= 10) || report.videoResets >= 3) {
     hints.push('tv');
   }
-  // Frames lost on the network make the encoder look busier than it is (keyframes after a loss), so only a stream
-  // without that loss counts
+  // Many frames lost on the network make the encoder look busier than it is (keyframes after a loss), so only a stream
+  // without the network hint counts; the few frames that a good network loses in a long stream change nothing
   if (!network && isHostEncoderSaturated(report)) {
     hints.push('host');
   }

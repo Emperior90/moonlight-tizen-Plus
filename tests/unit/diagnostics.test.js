@@ -8,8 +8,9 @@
 // the overlay left out, a repeated line counted, the oldest lines dropped when a session is full, the native lines of the
 // module merged by their time and hidden the same way), the report of the last session read from the messages of
 // tests/fixtures/session-reports.tsv with their hints and its lines for System information, and the heartbeat of a stream
-// that reports once at the next start that the app ended during it (not for a stream in the background), and that the
-// native lines come from the ring that every log line of the module enters.
+// that reports once at the next start that the app ended during it (not for a stream in the background), that the
+// native lines come from the ring that every log line of the module enters, that the module sets the listener that logs
+// the errors of the media element, and that each stream starts the host figures of its report from zero.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -382,7 +383,7 @@ test('the hint about the refresh rate of the PC comes only for a host at 59.94 o
   cases.forEach(([fps, host, expected]) => assert.deepEqual(plain(hints(hostReport(fps, host, 4))), expected, fps + ' FPS, host ' + host));
 });
 
-test('the hint about the encoder of the PC needs a busy host in a long session without network loss', () => {
+test('the hint about the encoder of the PC needs a busy host in a long session without the network hint', () => {
   const hints = loadDiagnostics().platform.get('getSessionReportHints');
   const cases = [
     // more than 75 % of the time between two frames: 12.5 ms at 60 FPS, 8.33 ms at 90, 6.25 ms at 120, 25 ms at 30
@@ -396,8 +397,11 @@ test('the hint about the encoder of the PC needs a busy host in a long session w
     [hostReport(60, 60, 0), ['ok']],
     // at least 2 minutes
     [hostReport(60, 60, 14, { durationMs: 119000 }), ['ok']], [hostReport(60, 60, 14, { durationMs: 120000 }), ['host']],
-    // not with frames lost on the network, whose keyframes make the encoder look busier
+    // not with many frames lost on the network, whose keyframes make the encoder look busier, while a few lost frames
+    // that give no network hint (fewer than 10, or less than 0.5 %) don't stop it
     [hostReport(60, 60, 14, { networkDroppedFrames: 600 }), ['network']],
+    [hostReport(60, 60, 14, { networkDroppedFrames: 9 }), ['host']], [hostReport(60, 60, 14, { networkDroppedFrames: 500 }), ['host']],
+    [hostReport(60, 60, 14, { networkDroppedFrames: 540 }), ['network']],
     // with the TV dropping frames too, both show, and with a host display at 59.94 Hz as well
     [hostReport(60, 59.94, 14, { tvDroppedFrames: 600 }), ['tv', 'host', 'hostRefresh']],
   ];
@@ -522,6 +526,44 @@ test('the front end takes the native lines from the ring of the module, which ev
   assert.match(main, /std::string takeDiagnosticLog\(\) \{\s+return GetDiagnosticLog\(\)\.Take\(\);\s+\}/);
   assert.match(main, /emscripten::function\("takeDiagnosticLog", &takeDiagnosticLog\);/);
   assert.match(read('wasm/platform/diagnostics.js'), /Module\.takeDiagnosticLog\(\)/);
+});
+
+test('the module sets the listener that logs the errors of the media element once, and it outlives the element', () => {
+  // native/player_errors_test.cpp runs the listener, which the media element only calls once the constructor of
+  // MoonlightInstance (wasm/main.cpp, which no native test builds) has set it
+  const read = (file) => fs.readFileSync(path.join(REPO_ROOT, file), 'utf8');
+  const main = read('wasm/main.cpp');
+  const start = main.indexOf('MoonlightInstance::MoonlightInstance()');
+  const end = main.indexOf('MoonlightInstance::~MoonlightInstance()');
+  assert.ok(start >= 0 && end > start, 'the constructor of MoonlightInstance');
+  const constructor = main.slice(start, end);
+  const body = constructor.slice(constructor.indexOf(') {'));
+  assert.match(body, /if \(!m_MediaElement\.SetListener\(&m_MediaElementListener\)\) \{\s+ClLogMessage\(/);
+  assert.equal((main.match(/SetListener\(&m_MediaElementListener\)/g) || []).length, 1, 'set once, for the life of the module');
+  // The listener is built before the element that holds it and destroyed after it: the order of the members decides
+  // that, and the initializer list follows it
+  const initializerListener = constructor.indexOf('m_MediaElementListener(this)');
+  const initializerElement = constructor.indexOf('m_MediaElement("wasm_module")');
+  assert.ok(initializerListener > 0 && initializerElement > initializerListener, 'initializer list');
+  const header = read('wasm/moonlight_wasm.hpp');
+  const memberListener = header.indexOf('  MediaElementListener m_MediaElementListener;');
+  const memberElement = header.indexOf('  samsung::html::HTMLMediaElement m_MediaElement;');
+  assert.ok(memberListener > 0 && memberElement > memberListener, 'members of MoonlightInstance');
+  assert.match(read('tests/native/player_errors_test.cpp'), /#include "\.\.\/\.\.\/wasm\/wasmplayer\.cpp"/);
+});
+
+test('each stream starts the host figures of its report from zero', () => {
+  // native/stats_overlay_test.cpp runs ResetHostFrameRate() between two streams; VidDecSetup(), which waits for the
+  // media pipeline of the TV and so runs in no native test, calls it for each stream
+  const source = fs.readFileSync(path.join(REPO_ROOT, 'wasm', 'wasmplayer.cpp'), 'utf8');
+  const start = source.indexOf('int MoonlightInstance::VidDecSetup(');
+  const end = source.indexOf('\n}\n', start);
+  assert.ok(start >= 0 && end > start, 'VidDecSetup()');
+  const setup = source.slice(start, end);
+  assert.match(setup, /\n {2}ResetHostFrameRate\(\);\n/);
+  assert.ok(setup.indexOf('ResetHostFrameRate();') < setup.indexOf('StartupVidDecSetup('), 'before the media pipeline is set up');
+  const reset = source.slice(source.indexOf('static void ResetHostFrameRate() {'));
+  assert.match(reset.slice(0, reset.indexOf('\n}\n')), /s_HostFrameRateBest = 0\.0f;/);
 });
 
 // Record the length of every text that the redaction rules run over

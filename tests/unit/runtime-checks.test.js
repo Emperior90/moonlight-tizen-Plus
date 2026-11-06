@@ -257,6 +257,18 @@ describe('detectWasmPlayerReport()', () => {
     assert.equal(result.supported['video-texture'], null);
     assert.equal(result.supported['ultra-low-latency'], false);
     assert.equal(warnings.length, 1);
+    // Without isApiFeatureSupported() each feature that the glue code derives needs its own API level: 'video-texture'
+    // level 2 and 'software-decoding' level 3, while levels 0 and 1 only give 'base-emss'
+    const levels = (apiLevels) => profile.detectWasmPlayerReport({ availableApis: [{ name: 'ElementaryMediaStreamSource', version: '1.0', apiLevels }] });
+    assert.deepEqual(levels([0, 1]).features, ['base-emss']);
+    assert.deepEqual(levels([0, 1, 2]).features, ['base-emss', 'video-texture']);
+    assert.deepEqual(levels([1, 3]).features, ['base-emss', 'software-decoding']);
+    // An answer of isApiFeatureSupported() that is no boolean is unknown in the log, not taken as it is
+    for (const answer of ['yes', 1, 0, undefined, {}]) {
+      const strange = profile.detectWasmPlayerReport({ availableApis: [{ name: 'ElementaryMediaStreamSource', version: '1.4', apiLevels: [1], features: ['base-emss'] }],
+        isApiFeatureSupported: () => answer });
+      assert.deepEqual(strange.supported, Object.fromEntries(profile.WASM_PLAYER_FEATURE_NAMES.map((name) => [name, null])), String(answer));
+    }
     // An entry without features, and a list without the entry of the WASM player
     assert.deepEqual(profile.detectWasmPlayerReport({ availableApis: [{ name: 'ElementaryMediaStreamSource', version: '1.0', apiLevels: [1] }], isApiFeatureSupported: 1 }),
       { version: '1.0', features: null, supported: null });

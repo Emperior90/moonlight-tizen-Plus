@@ -134,9 +134,7 @@ static void StartStream(int level) {
   s_SessionTvDroppedFrames = 0;
   s_SessionStartMs = nowMs;
   (g_Instance->*Pointer(StreamConfigMember())).bitrate = 75000;
-  s_HostRateWindowOpen = false;
-  s_HostFrameRate = 0.0f;
-  s_HostFrameRateBest = 0.0f;
+  ResetHostFrameRate();
   s_TerminatingStream = false;
 }
 
@@ -388,6 +386,40 @@ static void TheSessionReportHasTheBestHostFrameRateAndTheHostLatency() {
   CHECK_EQ(JsonNumber(postedAsync.empty() ? std::string() : postedAsync.back(), "hostFrameRateX100"), 6000L);
 }
 
+static void EachStreamReportsOnlyItsOwnHostFigures() {
+  // After a stream whose best window read 60.00, the next stream of the same app run is too short for a window of its
+  // own: its report has no host frame rate rather than the 60.00 of the stream before (ResetHostFrameRate(), which
+  // VidDecSetup() calls for each stream)
+  StartStream(kPerformanceStatsOff);
+  nextFrame = 1;
+  SubmitFrames(60 * 35);
+  MoonlightInstance::VidDecCleanup();
+  CHECK_EQ(JsonNumber(postedAsync.empty() ? std::string() : postedAsync.back(), "hostFrameRateX100"), 6000L);
+  StartStream(kPerformanceStatsOff);
+  nextFrame = 1;
+  SubmitFrames(120);
+  MoonlightInstance::VidDecCleanup();
+  CHECK_EQ(postedAsync.size(), 1u);
+  CHECK_EQ(JsonNumber(postedAsync.empty() ? std::string() : postedAsync.back(), "hostFrameRateX100"), 0L);
+
+  // The average host processing latency covers the stats window that was still open when the stream ended, and is
+  // rounded: 61 frames at 4.0 ms and then 19 frames at 6.1 ms, the last ones in the open window, average
+  // (61 * 40 + 19 * 61) / 80 = 44.99 tenths of a millisecond, which is 4.5 ms (the closed windows alone give 4.0 ms,
+  // and a cut-off division 4.4 ms)
+  StartStream(kPerformanceStatsOff);
+  for (int frameNumber = 1; frameNumber <= 80; frameNumber++) {
+    const unsigned int captureMs = (unsigned int)(frameNumber * 1000 / 60);
+    nowMs = 100000 + captureMs;
+    SubmitFrame(frameNumber, captureMs, false, frameNumber <= 61 ? 40 : 61);
+  }
+  // At least one stats window was closed, and the frames at 6.1 ms are all in the window that is still open
+  CHECK(m_GlobalVideoStats.framesWithHostProcessingLatency > 0);
+  CHECK_EQ(m_GlobalVideoStats.totalHostProcessingLatency, 40u * m_GlobalVideoStats.framesWithHostProcessingLatency);
+  CHECK(m_ActiveWndVideoStats.framesWithHostProcessingLatency >= 19);
+  MoonlightInstance::VidDecCleanup();
+  CHECK_EQ(JsonNumber(postedAsync.empty() ? std::string() : postedAsync.back(), "hostProcessingLatencyX10"), 45L);
+}
+
 int main() {
   test_support::RunTest("each toggle steps one level and reports it", EachToggleStepsOneLevelAndReportsIt);
   test_support::RunTest("nothing is sent while the level is Off", NothingWhileTheLevelIsOff);
@@ -399,5 +431,7 @@ int main() {
   test_support::RunTest("the end of the stream sends the totals of the session", TheEndOfTheStreamSendsTheSessionReport);
   test_support::RunTest("the report of the session has the best host frame rate and the average host latency",
     TheSessionReportHasTheBestHostFrameRateAndTheHostLatency);
+  test_support::RunTest("each stream reports only its own host figures, with the open window and rounded",
+    EachStreamReportsOnlyItsOwnHostFigures);
   return test_support::Summary();
 }
