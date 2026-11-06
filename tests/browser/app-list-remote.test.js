@@ -114,6 +114,9 @@ test('the quit button of the header hides without its mark and tooltip after the
     await remoteKey(page, DOWN);
     const tile = await page.evaluate(() => Views.Apps.view.current().id);
     assert.deepEqual((await screenState(page)).marked, [tile]);
+    // The tile ignores an OK within 600 ms of the one on the PC (the same press, see lastHostClickAt), which a fast
+    // test machine reaches here after the quit
+    await page.waitForFunction(() => performance.now() - lastHostClickAt >= 700, null, { timeout: 3000 });
     await remoteKey(page, OK);
     // The start waits behind the requests of the app list that the quit rebuilt, which takes a while on a slow test
     // machine (the module has one HTTP thread)
