@@ -525,7 +525,7 @@ test('a controller with a timestamp of 0 (Tizen 5.5) that the menus never saw sh
 test('the first D-pad press of a controller with a timestamp of 0 goes to the mouse emulation entry that the controller brings', async () => {
   const app = await openStreaming();
   try {
-    // A controller in slot 0 that reports a timestamp of 0 and sent no input since the app started
+    // A controller in slot 0 that reports a timestamp of 0 and sent no input since the TV listed it
     await app.page.evaluate((id) => {
       window.__pads[0] = {
         index: 0, id, mapping: 'standard', connected: true, timestamp: 0, vibrationActuator: null,

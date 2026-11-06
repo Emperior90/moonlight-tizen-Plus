@@ -352,7 +352,7 @@ test('the first D-pad press of a controller with a timestamp of 0 goes to Calibr
     await remoteKey(app.page, ...UP);
     let menu = await readMenu(app.page);
     assert.deepEqual([menu.focus, menu.controller, menu.calibrate], ['buttonMappingReset', 'Xbox Wireless Controller', false]);
-    // D-pad up on the controller, its first input since the app started: it makes the controller count, which shows
+    // D-pad up on the controller, its first input since the TV listed it: it makes the controller count, which shows
     // 'Calibrate the sticks' before Reset, and then moves there instead of skipping it
     await app.page.evaluate(() => {
       window.__pads[0].buttons[12] = { pressed: true, value: 1 };

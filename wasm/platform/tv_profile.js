@@ -676,8 +676,9 @@ function isGameModeUnavailable(caps) {
 //   areas)
 // - 'Optimize game settings' on, as in moonlight-qt and moonlight-android: with the display device configuration of
 //   Sunshine, the host then renders at the resolution of the stream instead of scaling every frame of its own display
-//   to it, and without that configuration Sunshine does nothing with it (GeForce Experience gets it only where it is
-//   safe, see getGameOptimizationsRequest() in index.js)
+//   to it, and without that configuration Sunshine itself does nothing with it and only passes it to the commands of
+//   the app it starts as SUNSHINE_CLIENT_ENABLE_SOPS (GeForce Experience gets it only where it is safe, see
+//   getGameOptimizationsRequest() in index.js)
 function deriveOptimalSettings(caps, connectionType) {
   const capabilities = caps || {};
   const profile = capabilities.profile || null;
