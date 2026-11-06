@@ -108,8 +108,9 @@ template struct PrivateMember<StatsLevelMember, &MoonlightInstance::m_Performanc
 
 // A frame of a scenario: the time the host captured it (ms of the host clock, not rounded), the capture time as the
 // decoder gets it (decodeUnit->presentationTimeMs), the moment it arrives in the decode unit queue (simulated seconds),
-// whether the video track of the TV is closed then (the decoder thread discards it), and whether it is a duplicate of
-// Sunshine (the previous image encoded again, which carries no host processing latency)
+// whether the video track of the TV is closed then (the decoder thread discards it), whether it is a duplicate of
+// Sunshine (the previous image encoded again, which carries no host processing latency), and whether it is a keyframe
+// (the first frame of a scenario is one too)
 struct Frame {
   int number;
   double captureMs;
@@ -117,6 +118,7 @@ struct Frame {
   double arrival;
   bool trackClosed = false;
   bool duplicate = false;
+  bool keyframe = false;
 };
 
 // What happened to a frame: when the decoder thread took it from the queue, when it was appended (-1 if it wasn't), its
@@ -283,7 +285,8 @@ static std::vector<Outcome> Run(int fps, const std::vector<Frame>& frames, bool 
     const int callsBefore = appendCalls;
     lastAppendTime = -1;
     g_Instance->*Pointer(VideoStartedMember()) = !frame.trackClosed;
-    outcome.result = Submit(frame.number, runningIndex == 0, frame.hostTimeMs, frame.arrival, frame.duplicate);
+    outcome.result =
+      Submit(frame.number, runningIndex == 0 || frame.keyframe, frame.hostTimeMs, frame.arrival, frame.duplicate);
     outcome.append = appendCalls != callsBefore ? lastAppendTime : -1;
     outcome.pts = appendCalls != callsBefore ? lastAppendPts : -1;
     outcome.ptsDiff = s_ptsDiff.count();
@@ -364,6 +367,58 @@ static void StampLate(std::vector<Frame>& frames, double share, double loMs, dou
                                                          : random() / 4294967296.0 * 0.4;
     frame.hostTimeMs = HostTimeMs(frame.captureMs + late);
   }
+}
+
+// The frames of a Windows host for `seconds` whose display refreshes at displayHz, faster than the stream rate, with a
+// capture timer that wakes up 0.1 ms late, and at a share of the ticks loMs to hiMs later. Sunshine captures in frame
+// pacing groups (display_base.cpp): from the present time of the first image of a group on, at every tick of the
+// stream rate, and stamps each frame with the present time of the latest desktop update, on the grid of the display
+// (display_vram.cpp). A capture that wakes up late takes the image of the display at that time and goes out that much
+// later. When a tick has no new image, the group ends: with skipTick (the model of the probes before), the host waits
+// up to 2 ms for one and otherwise skips the tick; without it (Sunshine), the capture waits for the next image and
+// starts a new group at its present time, so the ticks move. The frame numbers stay consecutive. captureMs is the
+// moment of the capture, which the frame is sent at; ticks gets the time the host meant each frame for (its tick, or
+// the present time that starts a group).
+static std::vector<Frame> WindowsHost(double seconds, int fps, double displayHz, double share, double loMs, double hiMs,
+                                      bool skipTick, unsigned seed, std::vector<double>& ticks) {
+  const double frameMs = 1000.0 / fps;
+  const double refreshMs = 1000.0 / displayHz;
+  const double first = 1000.37;
+  // The display presents at first - 0.3 + j * refreshMs: the index of the latest present at atMs, and its time
+  auto latest = [first, refreshMs](double atMs) { return (long)std::floor((atMs - first + 0.3) / refreshMs + 1e-9); };
+  auto presentAt = [first, refreshMs](long index) { return first - 0.3 + index * refreshMs; };
+  std::mt19937 random(seed);
+  std::vector<Frame> frames;
+  ticks.clear();
+  double groupStart = first;
+  int groupFrames = 0;
+  long lastImage = -1;
+  while (groupStart + groupFrames * frameMs - first <= seconds * 1000.0) {
+    const double tick = groupStart + groupFrames * frameMs;
+    const double late = random() / 4294967296.0 < share ? loMs + random() / 4294967296.0 * (hiMs - loMs) : 0.0;
+    double captureMs = tick + 0.1 + late;
+    long image = latest(captureMs);
+    double meant = tick;
+    if (image <= lastImage) {
+      image = lastImage + 1;
+      if (skipTick && presentAt(image) > captureMs + 2.0) {
+        groupFrames++;
+        continue;
+      }
+      captureMs = presentAt(image) + 0.1;
+      if (!skipTick) {
+        // A new group from this image on
+        meant = presentAt(image);
+        groupStart = meant;
+        groupFrames = 0;
+      }
+    }
+    lastImage = image;
+    groupFrames++;
+    frames.push_back({(int)frames.size() + 1, captureMs, HostTimeMs(presentAt(image)), 0.0});
+    ticks.push_back(meant);
+  }
+  return frames;
 }
 
 // Keep the arrivals in order after a scenario delayed some of them
@@ -532,6 +587,43 @@ static void HostDisplayOffTheStreamGridKeepsThePace() {
     test_support::Check(held > 95, name + "the pacer holds more than 95% of the frames", Describe(held), __FILE__,
                         __LINE__);
   }
+}
+
+// The reviewer's display probe at 120 FPS from a 165 Hz display (final230-pacer/probe/display_probe.cpp): Sunshine
+// stamps each frame with the latest present of the display before its tick, the frames arrive 7 ms after their tick
+// plus 0 to 4 ms. After the first second every timestamp is one frame duration after the one before, and the appends
+// keep the pace of the ticks exactly: an append interval differs from a frame duration (by more than the 0.3 ms that
+// handing a frame to the player takes, and the microseconds of the clock) only where the time difference of the pacer
+// changed, at the end of a window. (The probe counted 1.0 instead of 0.2 per 1000 frames off their refresh for a79cb97
+// and this version, at one of its 64 phases of the TV: the appends lie on that phase, to half a microsecond.)
+static void DisplayProbeAt165HzKeepsThePaceOfTheTicks() {
+  const double gridMs = 1000.0 / 165;
+  std::vector<Frame> frames = Host(20, [](int k) { return 1000.37 + k * kFrame120; });
+  for (Frame& frame : frames) {
+    frame.hostTimeMs = HostTimeMs(std::floor((frame.captureMs - 0.5) / gridMs) * gridMs + 0.5);
+  }
+  Arrive(frames, 120, 4.0, 2);
+  const std::vector<Outcome> outcomes = Run(120, frames);
+  const Count steps = StepsOfOneFrame(frames, outcomes, 120, 1000);
+  test_support::Check(steps.passed == steps.frames, "every timestamp one frame duration after the one before",
+                      Describe(steps), __FILE__, __LINE__);
+  int intervals = 0;
+  int moved = 0;
+  int windowChanges = 0;
+  for (size_t i = 2; i < outcomes.size(); i++) {
+    if (outcomes[i].captureMs - outcomes.front().captureMs >= 3000) {
+      intervals++;
+      moved += std::abs((outcomes[i].append - outcomes[i - 1].append) * 1000 - kFrame120) > 0.01 ? 1 : 0;
+      windowChanges += outcomes[i - 1].ptsDiff != outcomes[i - 2].ptsDiff ? 1 : 0;
+    }
+  }
+  test_support::Check(moved <= windowChanges,
+                      "the appends move off the pace of the ticks only where the time difference of the pacer changed",
+                      std::to_string(moved) + " of " + std::to_string(intervals) + " intervals, " +
+                        std::to_string(windowChanges) + " changes",
+                      __FILE__, __LINE__);
+  const double held = HeldPercent(outcomes, 3000);
+  test_support::Check(held > 99, "the pacer holds more than 99% of the frames", Describe(held), __FILE__, __LINE__);
 }
 
 // Frames lost on the network: the timestamp moves on by the lost frames, so the frames after the gap arrive at their
@@ -1216,6 +1308,7 @@ static void LoseFrameUntilKeyframe(std::vector<Frame>& frames, size_t lost, doub
   duplicate.hostTimeMs = HostTimeMs(frames[lost + 2].captureMs + 4.0);
   duplicate.arrival += keyframeMs / 1000.0;
   duplicate.duplicate = marked;
+  duplicate.keyframe = true;
   for (size_t i = lost + 3; i < frames.size(); i++) {
     frames[i].number++;
   }
@@ -1234,18 +1327,22 @@ static void LoseFrameUntilKeyframe(std::vector<Frame>& frames, size_t lost, doub
 // stream rate at 60 FPS whose duplicate carries no mark (a host other than Sunshine) and arrives early between two
 // ticks, 3 ms after it was sent: its capture time adds less than half a frame duration to the lost frames, so it takes
 // 1 ms (43e25f0 gave it the place of the next frame on the grid, and the timestamps ran a frame ahead of the host after
-// every loss). An unmarked duplicate that arrives less than 0.6 frame durations before the next tick (most of them at
-// 120 FPS) still takes that place.
+// every loss). So does one that arrives 12 ms after it was sent, less than 0.6 frame durations before the next tick (a
+// large keyframe): it is a keyframe, which a new image would make add about a frame duration (a79cb97 gave it that
+// place, and held every later frame a frame duration longer until the next window of the pacer: 20 instead of 10 per
+// 1000 frames off their refresh at 60 FPS with 1% lost and unmarked duplicates). An unmarked duplicate whose capture
+// time adds half a frame duration or more (most of them at 120 FPS) still takes that place.
 static void LossBeforeAKeyframeDuplicateKeepsThePace() {
   const std::tuple<int, double, double, bool> cases[] = {
-    {60, 50.0, 9.0, true}, {120, 100.0, 4.0, true}, {60, 0.0, 9.0, true}, {60, 60.0, 3.0, false}};
+    {60, 50.0, 9.0, true}, {120, 100.0, 4.0, true}, {60, 0.0, 9.0, true}, {60, 60.0, 3.0, false},
+    {60, 60.0, 12.0, false}};
   for (const auto& host : cases) {
     const int fps = std::get<0>(host);
     const double hostHz = std::get<1>(host);
     const bool marked = std::get<3>(host);
     const std::string name = std::to_string(fps) + " FPS from " +
       (hostHz > 0 ? "a " + Describe(hostHz) + " Hz display" : "a game at 48 to 60 FPS with a variable refresh rate") +
-      (marked ? ": " : ", duplicates unmarked: ");
+      (marked ? ": " : ", duplicates unmarked, arriving " + Describe(std::get<2>(host)) + " ms after the send: ");
     std::vector<Frame> frames;
     if (hostHz > 0) {
       frames = Host(24, [hostHz](int k) { return 1000.37 + k * 1000.0 / hostHz; });
@@ -1323,6 +1420,82 @@ static void HostSkippingATickIsFollowedWithTheNextFrame() {
   const double held = HeldPercent(outcomes, 5000);
   test_support::Check(held > 95, "more than 95% of the frames after the first skip held", Describe(held), __FILE__,
                       __LINE__);
+}
+
+// The frames from fromMs on that a TV at the stream rate shows on another refresh than the one after the frame before
+// that their ticks call for (a frame shown on its tick plus the median delay), per 1000 frames, averaged over 24 phases
+// of the refresh of the TV
+static double OffTheirRefresh(const std::vector<Outcome>& outcomes, const std::vector<double>& ticks, int fps,
+                              double fromMs) {
+  const double refreshMs = 1000.0 / fps;
+  std::vector<double> delays;
+  for (size_t i = 0; i < outcomes.size(); i++) {
+    if (outcomes[i].append >= 0 && outcomes[i].captureMs - outcomes.front().captureMs >= fromMs) {
+      delays.push_back(outcomes[i].append * 1000 - ticks[i]);
+    }
+  }
+  std::nth_element(delays.begin(), delays.begin() + delays.size() / 2, delays.end());
+  const double delay = delays[delays.size() / 2];
+  double total = 0;
+  for (int phase = 0; phase < 24; phase++) {
+    const double psi = refreshMs * (phase + 0.5) / 24;
+    long long shownBefore = 0;
+    long long dueBefore = 0;
+    bool have = false;
+    int pairs = 0;
+    int off = 0;
+    for (size_t i = 0; i < outcomes.size(); i++) {
+      if (outcomes[i].append < 0 || outcomes[i].captureMs - outcomes.front().captureMs < fromMs) {
+        continue;
+      }
+      const long long shown = (long long)std::ceil((outcomes[i].append * 1000 - psi) / refreshMs);
+      const long long due = (long long)std::ceil((ticks[i] + delay - psi) / refreshMs);
+      if (have) {
+        pairs++;
+        off += (shown - shownBefore) != (due - dueBefore) ? 1 : 0;
+      }
+      shownBefore = shown;
+      dueBefore = due;
+      have = true;
+    }
+    total += pairs == 0 ? 0 : 1000.0 * off / pairs;
+  }
+  return total / 24;
+}
+
+// A Windows host at 120 FPS whose display refreshes at 165 or 144 Hz, and whose capture timer wakes up late now and
+// then (see WindowsHost): a capture that wakes up late takes the next image of the display, and the next tick then has
+// none, so that the host skips it (the model of the earlier probes) or Sunshine starts its frame pacing anew from the
+// next image, which moves the ticks. The capture times hardly show either: the late image is one refresh before the
+// next one, at most 6 ms. The frames on another refresh of a TV at 120 Hz than their ticks call for, per 1000 frames,
+// over 12 streams of 20 s:
+//  - 5% of the captures 2 to 6 ms late at 165 Hz, the tick skipped: 24 (a79cb97 35, 9243201 102). After a skipped tick
+//    that the capture times didn't show, two frames that ran ahead of the grid and the frame after them, back on the
+//    grid of before but a frame duration later, took the timestamps back to the grid of before (see kHostSteadyMs).
+//  - 2% of the captures 1 to 6 ms late at 165 and 144 Hz, Sunshine starting anew: 8.5 and 17 (a79cb97 12.5 and 22.5,
+//    9243201 86 and 261), and 5% 2 to 6 ms late at 165 Hz: 39 (a79cb97 54). A top of the range that only single frames
+//    reach (at 165 Hz, every eighth frame) waited for two frames in a row to confirm it (see above kHostOffsetDecayMs).
+static void LateCapturesOfAWindowsHostKeepThePace() {
+  const std::tuple<double, double, double, double, bool, double> cases[] = {
+    {165, 0.05, 2.0, 6.0, true, 30}, {165, 0.02, 1.0, 6.0, false, 11}, {144, 0.02, 1.0, 6.0, false, 20},
+    {165, 0.05, 2.0, 6.0, false, 47}};
+  for (const auto& host : cases) {
+    const std::string name = "120 FPS from " + Describe(std::get<0>(host)) + " Hz, " +
+      Describe(std::get<1>(host) * 100) + "% of the captures " + Describe(std::get<2>(host)) + " to " +
+      Describe(std::get<3>(host)) + " ms late, " + (std::get<4>(host) ? "the next tick skipped" : "Sunshine") + ": ";
+    double off = 0;
+    for (unsigned seed = 61; seed < 73; seed++) {
+      std::vector<double> ticks;
+      std::vector<Frame> frames = WindowsHost(20, 120, std::get<0>(host), std::get<1>(host), std::get<2>(host),
+                                              std::get<3>(host), std::get<4>(host), seed, ticks);
+      Arrive(frames, 120, 4.0, seed + 100);
+      const std::vector<Outcome> outcomes = Run(120, frames);
+      off += OffTheirRefresh(outcomes, ticks, 120, 3000) / 12;
+    }
+    test_support::Check(off < std::get<5>(host),
+                        name + "fewer than " + Describe(std::get<5>(host)) + " per 1000 frames off their refresh",
+                        Describe(off), __FILE__, __LINE__);
+  }
 }
 
 // The changes of the time difference of the pacer within a window. The end of a window starts the next one a second or
@@ -1461,6 +1634,8 @@ int main() {
   test_support::RunTest("a steady host keeps the timestamps and the pace of before", SteadyHostKeepsTheTimestampsAndThePace);
   test_support::RunTest("a host display off the grid of the stream rate keeps the pace",
                         HostDisplayOffTheStreamGridKeepsThePace);
+  test_support::RunTest("the display probe at 120 FPS from 165 Hz keeps the pace of the ticks",
+                        DisplayProbeAt165HzKeepsThePaceOfTheTicks);
   test_support::RunTest("after frames lost on the network the pacer holds the frames again at once",
                         LostFramesKeepThePacerHolding);
   test_support::RunTest("a host below the stream rate stays paced", HostBelowTheStreamRateStaysPaced);
@@ -1485,6 +1660,7 @@ int main() {
                         LossBeforeAKeyframeDuplicateKeepsThePace);
   test_support::RunTest("a host that skips a tick is followed with the next frame",
                         HostSkippingATickIsFollowedWithTheNextFrame);
+  test_support::RunTest("late captures of a Windows host keep the pace", LateCapturesOfAWindowsHostKeepThePace);
   test_support::RunTest("a full buffer of the player is retried for 16 ms", FullBufferIsRetriedFor16Ms);
   test_support::RunTest("the retry stops when the track closes, and other rejections aren't retried",
                         RetryStopsWhenTheTrackCloses);
