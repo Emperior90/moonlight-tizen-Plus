@@ -17,6 +17,14 @@
 // - the audio path that the section on surround sound with a soundbar describes: the 5.1 entry of the audio
 //   configuration, the 6-channel PCM track that only the EMSS backend adds, the two channels of the Web Audio output and
 //   the Audio stream line that the check reads
+// - what the host does with the stream: the share of the bitrate that Sunshine leaves to the encoder at a given FEC,
+//   which caps the received bitrate of the statistics, the parity packets that Moonlight asks for, the display device
+//   configuration of Sunshine that is off by default and follows the Video HDR switch that every start sends, the
+//   reconnects of the app that speak against reverting it at every disconnect, the virtual display of Apollo that the
+//   app never asks for, the 4:2:0 formats that are the only ones the app asks for, the HDR static metadata that only
+//   goes into HEVC, and the switch that keeps the sound off the speakers of the host
+// - the latency modes of the Ultra low latency switch and the Game Mode that only the ForceGM variant asks for, which
+//   the TV picture settings and the fallback for a corrupted picture above 1080p build on
 // The release notes of a release (docs/RELEASE_NOTES.md) only give the essentials, so the statements that they
 // carried until 1.19.100 are checked in the guide and the patch notes (docs/PATCH_NOTES.md), where they are now.
 
@@ -35,6 +43,17 @@ const GUIDE = read('docs/GUIDE.md');
 function capsOf(tvOptions) {
   const apis = tvMock.createTizenApis(tvMock.parseConfig('', tvOptions), (callback) => callback());
   return profile.detectTvCapabilities({ tizen: apis.tizen, webapis: apis.webapis });
+}
+
+// The text of a section of the guide, from its heading (e.g. '### Error correction (FEC)') to the next heading of the
+// same or a higher level
+function guideSection(heading) {
+  const level = /^#+/.exec(heading)[0].length;
+  const start = GUIDE.indexOf('\n' + heading + '\n');
+  assert.ok(start >= 0, 'the guide has the heading ' + heading);
+  const rest = GUIDE.slice(start + heading.length + 2);
+  const next = rest.search(new RegExp('^#{1,' + level + '} ', 'm'));
+  return next < 0 ? rest : rest.slice(0, next);
 }
 
 // The row of a table of the guide whose first cell is the given text, as its cells
@@ -230,9 +249,9 @@ const level2Headings = (text) => text.split('\n').filter((line) => /^## /.test(l
 test('the guide and the controller page have headings without numbers, in the order of use, each in the contents list', () => {
   // Numbers in the headings changed every link to a heading whenever a section was added or moved
   assert.deepEqual(level2Headings(GUIDE), ['Requirements', 'Installation', 'The screens of the app', 'Optimal settings for this TV',
-    'Stream Menu and app menu', 'Finding your bitrate', 'Host settings (Sunshine)', 'ForceGM variant and game mode', 'HDR', 'Audio',
-    'Performance statistics', 'System information and diagnostic log', 'When Moonlight goes to the background', 'Known limits',
-    'Troubleshooting']);
+    'Stream Menu and app menu', 'Finding your bitrate', 'Host settings (Sunshine)', 'ForceGM variant and game mode',
+    'TV picture settings', 'HDR', 'Audio', 'Performance statistics', 'System information and diagnostic log',
+    'When Moonlight goes to the background', 'Known limits', 'Troubleshooting']);
   for (const file of ['docs/GUIDE.md', 'docs/CONTROLLERS.md']) {
     const text = read(file);
     text.split('\n').filter((line) => /^#{2,4} /.test(line)).forEach((line) => {
@@ -313,4 +332,181 @@ test('the README and the guide name the PC list, its chip and its Add PC card as
     assert.doesNotMatch(text, /Add Host|Hosts screen|host list\b|\*\*Hosts\.\*\*|\| Hosts \||Running, Online and Paired|Select on a gamepad/, file);
   }
   assert.match(GUIDE, /\*\*PC list\.\*\* The first screen, titled \*PCs\*\./);
+});
+
+// The video bitrate that Sunshine gives the encoder for the bitrate of the app (src/rtsp.cpp of Sunshine, when the
+// client sends x-ml-video.configuredBitrateKbps as moonlight-common-c does): the FEC share comes off first, then the
+// audio (256 Kbps per channel of high quality audio, at most a fifth) and 500 Kbps for packet headers and control data
+// (at most a tenth)
+function sunshineEncoderMbps(bitrateMbps, fecPercentage, channels) {
+  let kbps = bitrateMbps * 1000;
+  kbps /= 100 / (100 - fecPercentage);
+  kbps -= Math.min(256 * channels, kbps / 5);
+  kbps -= Math.min(500, kbps / 10);
+  return kbps / 1000;
+}
+
+test('the guide gives the share of the bitrate that Sunshine leaves to the encoder, and the parity packets Moonlight asks for', () => {
+  // The default audio of the app is stereo, and moonlight-common-c asks for high quality audio from 15 Mbps on
+  assert.match(read('wasm/platform/index.js'), /const defaultAudioConfig = 'Stereo';/);
+  const threshold = Number(/#define HIGH_AUDIO_BITRATE_THRESHOLD (\d+)/.exec(read('moonlight-common-c/src/Limelight-internal.h'))[1]);
+  assert.ok(150000 >= threshold, 'high quality audio at 150 Mbps');
+  const fec = guideSection('### Error correction (FEC)');
+  assert.match(fec, /Sunshine gives the encoder the bitrate × \(100 − FEC\) \/ 100, minus the audio and about 0\.5 Mbps\./);
+  const at20 = Math.round(sunshineEncoderMbps(150, 20, 2));
+  const at5 = Math.round(sunshineEncoderMbps(150, 5, 2));
+  assert.deepEqual([at20, at5], [119, 141]);
+  assert.ok(fec.indexOf('At 150 Mbps, the video gets about ' + at20 + ' Mbps at FEC 20 and about ' + at5 + ' Mbps at FEC 5.') >= 0, fec);
+  assert.ok(fec.indexOf('(at 150 Mbps about ' + at5 + ' instead of ' + at20 + ' Mbps)') >= 0, fec);
+  // The section Above 150 Mbps rounds the same arithmetic to 10 Mbps
+  assert.equal(Math.round(sunshineEncoderMbps(250, 20, 2) / 10) * 10, 200);
+  assert.match(GUIDE, /so at 250 Mbps the encoder gets about 200 Mbps/);
+  // moonlight-common-c asks for at least 2 parity packets per FEC block, which Sunshine adds to every block
+  assert.match(read('moonlight-common-c/src/SdpGenerator.c'), /"x-nv-vqos\[0\]\.fec\.minRequiredFecPackets", "2"\)/);
+  assert.match(fec, /at least 2 parity packets in every block of a frame, so 2 lost packets in a block are always repaired/);
+  assert.match(fec, /20 → 10 → 5/);
+  assert.match(fec, /as long as \*Session frames dropped by network\* stays at 0 and \*Worst FEC block\* doesn't often come close to its limit/);
+  assert.match(fec, /If losses appear, first raise it to 10 again at the same bitrate/);
+  assert.match(fec, /the TV decodes more video bits at the same bitrate setting/);
+  // The bullet of the host settings points there instead of only saying to keep the default
+  assert.doesNotMatch(GUIDE, /the share of error correction data\. Keep the default\./);
+  // The received bitrate of the statistics only adds up the video frames (wasmplayer.cpp), so it can't reach the
+  // configured bitrate, and the troubleshooting of a blocky picture gives the same ceiling as the FEC section
+  const player = read('wasm/wasmplayer.cpp');
+  assert.match(player, /total_bytes \+= decodeUnit->fullLength;/);
+  assert.match(player, /receivedBitrate = \(total_bytes \* 8\.0f\)/);
+  const blocky = GUIDE.split('\n').find((line) => line.indexOf('- **Blocky picture although the bitrate is high:**') === 0);
+  assert.ok(blocky, 'the troubleshooting item');
+  assert.ok(blocky.indexOf('It counts only the video, so it tops out at the share that Sunshine leaves to the encoder') > 0, blocky);
+  assert.ok(blocky.indexOf('at 150 Mbps *configured*, about ' + at20 + ' Mbps at FEC 20 and about ' + at5 + ' Mbps at FEC 5') > 0, blocky);
+  assert.doesNotMatch(blocky, /If much less arrives/);
+});
+
+test('the guide says that Sunshine changes the host display only with its display device configuration, which is off by default', () => {
+  const host = guideSection('## Host settings (Sunshine)');
+  assert.match(host, /The display device configuration of Sunshine \(\*Device configuration\* in its web UI, `dd_configuration_option`, Windows only\) is off by default \(`disabled`\), and with it all its `dd_` options/);
+  assert.match(host, /Set it to `ensure_active` \(\*Activate the display automatically\*\), or to `ensure_only_display` for a virtual display/);
+  // The statement of 2.2.1 that the refresh rate follows the stream anyway, which needs the configuration on
+  assert.doesNotMatch(GUIDE, /follows the selected frame rate anyway/);
+  // The app reconnects on purpose (index.js), so a revert at every disconnect would switch the display back and forth
+  const index = read('wasm/platform/index.js');
+  assert.match(index, /function retryStreamAfterNoVideo\(/);
+  assert.match(index, /function restartStreamWithBitrate\(/);
+  assert.match(host, /Leave `dd_config_revert_on_disconnect` off\. Moonlight Plus reconnects on purpose, for a new bitrate from the Stream Menu and once more when no video arrived at the start/);
+  // The HDR option of the configuration follows the HDR state that the app sends as hdrMode with every start: the
+  // state of the Video HDR switch goes in the place of enableHdr into both requests
+  const utils = read('wasm/static/js/utils.js');
+  assert.equal((utils.match(/'&hdrMode=' \+ enableHdr/g) || []).length, 2, '/launch and /resume');
+  assert.match(index, /const hdrMode = \$\('#hdrModeSwitch'\)\.parent\(\)\.hasClass\('is-checked'\) \? 1 : 0;/);
+  const withoutComments = index.replace(/\/\/[^\n]*/g, '');
+  for (const request of ['launchApp', 'resumeApp']) {
+    const parameters = new RegExp(request + ': function\\(([^)]*)\\)').exec(utils)[1].split(',').map((name) => name.trim());
+    const start = withoutComments.indexOf('host.' + request + '(');
+    assert.ok(start >= 0, 'index.js calls host.' + request);
+    const call = withoutComments.slice(start + request.length + 6, withoutComments.indexOf(').then(', start));
+    // The arguments at the top level of the call (the frame rate argument concatenates strings, without commas)
+    const args = call.split(',').map((arg) => arg.trim());
+    assert.equal(args.length, parameters.length, request + ': ' + args.join(' | '));
+    assert.equal(args[parameters.indexOf('enableHdr')], 'hdrMode', request);
+  }
+  assert.match(host, /turns HDR on or off as \*Video HDR\* of the app \(Settings → Video Settings\) asks/);
+});
+
+test('the guide says that the app never asks Apollo for its virtual display', () => {
+  // Apollo creates its virtual display for virtualDisplay=1 in /launch, or for a device or an app set to always create it
+  for (const file of ['wasm/static/js/utils.js', 'wasm/platform/index.js']) {
+    assert.doesNotMatch(read(file), /virtualDisplay/, file);
+  }
+  const apollo = guideSection('### Apollo and Vibepollo');
+  assert.match(apollo, /Apollo creates its virtual display when a client asks for it, which Moonlight Plus doesn't, for its own \*Virtual Display\* entry in the app list, for a device or an app that is set to always create one, and in its \*Headless Mode\*\./);
+  assert.match(apollo, /switch \*Always create virtual display\* on for the TV in \*Device Management\*/);
+  assert.doesNotMatch(apollo, /creates its virtual display only when a client asks/);
+  assert.match(apollo, /The rule of exactly 60 Hz in \[Host settings\]\(#host-settings-sunshine\) is for a physical display or a virtual display with a fixed refresh rate\./);
+  assert.match(guideSection('## Host settings (Sunshine)'), /Set the host display to exactly 60 Hz \(or 120 Hz for 120 FPS streams\), not 59\.94 Hz\./);
+});
+
+test('the guide names 4:2:0 as the color sampling of the stream, since the app asks for no 4:4:4 format', () => {
+  // Every video format that the native code names (the masks aside) is a 4:2:0 format of moonlight-common-c
+  const limelight = read('moonlight-common-c/src/Limelight.h');
+  const valueOf = (name) => {
+    const match = new RegExp('#define ' + name + '\\s+(0x[0-9A-Fa-f]+)').exec(limelight);
+    assert.ok(match, name + ' in Limelight.h');
+    return Number(match[1]);
+  };
+  const yuv444 = valueOf('VIDEO_FORMAT_MASK_YUV444');
+  const named = new Set();
+  fs.readdirSync(path.join(REPO_ROOT, 'wasm')).filter((name) => /\.(cpp|hpp|h)$/.test(name)).forEach((name) => {
+    for (const match of read('wasm/' + name).matchAll(/\bVIDEO_FORMAT_(?!MASK_)[A-Z0-9_]+/g)) {
+      named.add(match[0]);
+    }
+  });
+  assert.ok(named.has('VIDEO_FORMAT_H265_MAIN10') && named.has('VIDEO_FORMAT_AV1_MAIN10'), [...named].join(', '));
+  named.forEach((name) => assert.equal(valueOf(name) & yuv444, 0, name));
+  // The formats that the app offers the host, masks and numbers included: VIDEO_FORMAT_MASK_YUV444 or
+  // VIDEO_FORMAT_MASK_H264 there would ask for 4:4:4
+  const main = read('wasm/main.cpp');
+  const offers = [...main.matchAll(/supportedVideoFormats\s*\|?=(?!=)([^;]*);/g)].map((match) => match[1]);
+  assert.ok(offers.length >= 3, offers.join(' / '));
+  offers.forEach((offer) => {
+    let value = 0;
+    for (const match of offer.matchAll(/\bVIDEO_FORMAT_[A-Z0-9_]+\b|\b0x[0-9A-Fa-f]+\b|\b\d+\b/g)) {
+      value |= /^VIDEO_FORMAT_/.test(match[0]) ? valueOf(match[0]) : Number(match[0]);
+    }
+    assert.equal(value & yuv444, 0, offer);
+  });
+  const item = GUIDE.split('\n').find((line) => line.indexOf('- **Color sampling:**') === 0);
+  assert.ok(item, 'the item of the known limits');
+  assert.match(item, /the stream is 4:2:0\. Samsung TVs decode HEVC Main and Main10 and AV1 Main, which have no YUV 4:4:4, so the app doesn't offer it/);
+});
+
+test('the guide describes the latency modes and the Game Mode of the two files as the code selects them', () => {
+  // The switch selects the Ultra Low Latency mode of the WASM player when on and the Low Latency mode when off
+  assert.match(read('wasm/main.cpp'), /gameMode \? EmssLatencyMode::kUltraLow : EmssLatencyMode::kLow/);
+  const forceGm = guideSection('## ForceGM variant and game mode');
+  assert.match(forceGm, /Samsung documents the Ultra Low Latency mode as the Low Latency mode with the video enhancements of the TV off and its game mode on/);
+  // Only the ForceGM build adds the Game Mode metadata, so the standard file with the switch off never asks for it
+  assert.doesNotMatch(read('res/config.xml'), /use\.game\.mode/);
+  const dockerfile = read('Dockerfile');
+  const injection = dockerfile.slice(dockerfile.indexOf('if [ "$FORCE_GAME_MODE" = "true" ]; then'));
+  assert.ok(injection.indexOf('use.game.mode" value="true"') > 0 && injection.indexOf('use.game.mode') < injection.indexOf('else'), 'the metadata only for ForceGM');
+  assert.match(forceGm, /lost it only with a build that never asks for Game Mode, as `Moonlight\.wgt` with the \*Ultra low latency mode\* switch off does/);
+  // The section on the picture settings of the TV and what it recommends
+  const picture = guideSection('## TV picture settings');
+  for (const [setting, value] of [['Sharpness', '0. A few steps are fine at 1080p or 1440p'], ['Contrast Enhancer', 'Off'],
+    ['Noise Reduction (on older models Digital Clean View)', 'Off'], ['Picture Clarity (on older models Auto Motion Plus)', 'Off'],
+    ['Auto HDR Remastering', 'Off'], ['Color Tone', 'Warm2'], ['HDR Tone Mapping', 'Static']]) {
+    const cells = tableRow(setting);
+    assert.equal(cells[1].indexOf(value), 0, setting + ': ' + cells[1]);
+  }
+  assert.match(picture, /\*\*Game HDR:\*\* \*Basic\* \(HGiG\)\. The TV then doesn't tone-map HDR itself/);
+  assert.match(picture, /The menu names vary by model year/);
+  // Samsung names no single enhancement that the Ultra Low Latency mode turns off, and its game mode is what the Game
+  // Mode entries belong to, so the section applies with the switch on as well
+  assert.match(picture, /With the \*Ultra low latency mode\* switch on, the video player also turns the video enhancements of the TV off, as Samsung documents the mode, without naming them\./);
+  assert.match(picture, /Color Tone, HDR Tone Mapping and the Game Mode entries below apply in every case\./);
+  assert.doesNotMatch(picture, /with the switch off, and with the ForceGM variant, the picture settings below apply/);
+  assert.doesNotMatch(forceGm, /only selects the latency mode/);
+  // Switching the Ultra Low Latency mode off against micro-stutter also gives up its game mode with the standard file
+  const microStutter = GUIDE.split('\n').find((line) => line.indexOf('  - *A regular micro-stutter in smooth camera pans on Tizen 6.0 to 8.0:*') === 0);
+  assert.ok(microStutter, 'the troubleshooting item');
+  assert.match(microStutter, /With `Moonlight\.wgt` this also gives up the game mode that the Ultra Low Latency mode turns on; the ForceGM variant with the switch off keeps the Game Mode of the TV/);
+});
+
+test('the guide limits the HDR static metadata to HEVC, and names the switch that keeps the sound off the host speakers', () => {
+  // The metadata SEI goes only into HEVC keyframes (wasmplayer.cpp)
+  const player = read('wasm/wasmplayer.cpp');
+  assert.match(player, /if \(enabled && s_HdrMetadataEnabled && \(s_VideoFormat & VIDEO_FORMAT_MASK_H265\) &&/);
+  assert.match(player, /\(s_VideoFormat & VIDEO_FORMAT_MASK_H265\) && LiGetHdrMetadata\(&hdrMetadata\) &&/);
+  const calibration = guideSection('### HDR calibration');
+  assert.match(calibration, /\*HDR static metadata\* passes the same values to the TV, in HEVC streams only\./);
+  assert.match(calibration, /With \*HDR static metadata\* on and HEVC, a virtual display that reports a very high peak/);
+  // Play audio on the PC (Audio Settings, off when nothing is stored) sends localAudioPlayMode, and with it Sunshine
+  // keeps the sink of the host instead of the Steam Streaming Speakers
+  const html = read('wasm/index.html');
+  const audioSettings = html.slice(html.indexOf('<div id="audioSettings"'), html.indexOf('<div id="inputSettings"'));
+  assert.ok(audioSettings.indexOf('data-i18n="Play audio on the PC"') > 0, 'the switch in Audio Settings');
+  const index = read('wasm/platform/index.js');
+  assert.match(index, /if \(previousValue\.playHostAudio == null\) \{\s*document\.querySelector\('#playHostAudioBtn'\)\.MaterialSwitch\.off\(\);/);
+  assert.match(read('wasm/static/js/utils.js'), /'&localAudioPlayMode=' \+ localAudio/);
+  assert.match(GUIDE, /Keep \*Play audio on the PC\* \(Settings → Audio Settings, off by default\) off, so that Sunshine plays the sound into the \*Steam Streaming Speakers\* and not on the speakers of the host at the same time\./);
 });
