@@ -8,7 +8,8 @@
 // append. The frames of a scenario arrive in the decode unit queue at the times it gives, and the decoder thread takes
 // the next one as soon as it is free, as moonlight-common-c does. The scenarios follow the probe that measured the
 // pacer (a host at a steady rate, below the stream rate, with frames lost, a latency that rises and falls back), with
-// uniform arrival jitter from a seeded std::mt19937, whose numbers the C++ standard fixes on every platform.
+// uniform arrival jitter and normally distributed noise of the capture times, both from a seeded std::mt19937, whose
+// numbers the C++ standard fixes on every platform (the noise is drawn here, since std::normal_distribution isn't fixed).
 // VidDecSetup() waits for the media pipeline of the TV, so the test sets up the state of a stream the way it does
 // (StartStream() below), with its ResetFramePacer().
 
@@ -104,12 +105,14 @@ template struct PrivateMember<StreamConfigMember, &MoonlightInstance::m_StreamCo
 template struct PrivateMember<StatsLevelMember, &MoonlightInstance::m_PerformanceStatsLevel>;
 
 // A frame of a scenario: the time the host captured it (ms of the host clock, not rounded), the capture time as the
-// decoder gets it (decodeUnit->presentationTimeMs) and the moment it arrives in the decode unit queue (simulated seconds)
+// decoder gets it (decodeUnit->presentationTimeMs), the moment it arrives in the decode unit queue (simulated seconds),
+// and whether the video track of the TV is closed then (the decoder thread discards it)
 struct Frame {
   int number;
   double captureMs;
   uint32_t hostTimeMs;
   double arrival;
+  bool trackClosed = false;
 };
 
 // What happened to a frame: when the decoder thread took it from the queue, when it was appended (-1 if it wasn't), its
@@ -275,6 +278,7 @@ static std::vector<Outcome> Run(int fps, const std::vector<Frame>& frames, bool 
     outcome.pending = LiGetPendingVideoFrames();
     const int callsBefore = appendCalls;
     lastAppendTime = -1;
+    g_Instance->*Pointer(VideoStartedMember()) = !frame.trackClosed;
     outcome.result = Submit(frame.number, runningIndex == 0, frame.hostTimeMs, frame.arrival);
     outcome.append = appendCalls != callsBefore ? lastAppendTime : -1;
     outcome.pts = appendCalls != callsBefore ? lastAppendPts : -1;
@@ -319,6 +323,19 @@ static void Arrive(std::vector<Frame>& frames, int fps, double jitterMs, unsigne
   }
 }
 
+// Noise of sigmaMs (normally distributed, cut off at 3 sigma) on the capture times as the host stamps them, e.g. the
+// wake-up of the capture timer on the host; the frames are still captured, and arrive, on the grid of the stream rate
+static void StampNoise(std::vector<Frame>& frames, double sigmaMs, unsigned seed) {
+  std::mt19937 random(seed);
+  for (Frame& frame : frames) {
+    // Box-Muller from two uniform numbers in (0, 1]
+    const double u1 = (random() + 1.0) / 4294967296.0;
+    const double u2 = (random() + 1.0) / 4294967296.0;
+    const double noise = sigmaMs * std::sqrt(-2.0 * std::log(u1)) * std::cos(2.0 * 3.14159265358979323846 * u2);
+    frame.hostTimeMs = HostTimeMs(frame.captureMs + std::clamp(noise, -3.0 * sigmaMs, 3.0 * sigmaMs));
+  }
+}
+
 // Keep the arrivals in order after a scenario delayed some of them
 static void KeepInOrder(std::vector<Frame>& frames, int fps) {
   for (size_t i = 1; i < frames.size(); i++) {
@@ -355,59 +372,83 @@ static constexpr double kFrame60 = 1000.0 / 60;
 static constexpr double kFrame120 = 1000.0 / 120;
 
 // A steady host: the timestamps and the pace of the appends stay exactly as they were before the timestamps followed
-// the capture times, which come in whole milliseconds
+// the capture times, which come in whole milliseconds, also when the host stamps them with some timing noise (0.25 ms
+// at 60 FPS, 0.35 ms at 120 FPS; a tolerance of 1 ms let the noise into the timestamps)
 static void SteadyHostKeepsTheTimestampsAndThePace() {
-  std::vector<Frame> frames = Host(20, [](int k) { return 1000.37 + k * kFrame60; });
-  Arrive(frames, 60, 4.0, 1);
-  const std::vector<Outcome> outcomes = Run(60, frames);
-  int wrongSteps = 0;
-  for (size_t i = 1; i < outcomes.size(); i++) {
-    wrongSteps += std::abs(outcomes[i].pts - outcomes[i - 1].pts - 1.0 / 60) > 1e-9 ? 1 : 0;
-  }
-  CHECK_EQ(wrongSteps, 0);
-  CHECK(std::abs(outcomes.back().pts - (outcomes.size() - 1) / 60.0) < 1e-6);
-  // After the first windows of the pacer, the frames reach the player every 16.67 ms
-  int intervals = 0;
-  int even = 0;
-  for (size_t i = 1; i < outcomes.size(); i++) {
-    if (outcomes[i].captureMs - outcomes.front().captureMs >= 3000) {
-      intervals++;
-      even += std::abs((outcomes[i].append - outcomes[i - 1].append) * 1000 - kFrame60) <= 0.3 ? 1 : 0;
+  for (const auto& run : {std::make_tuple(60, 0.0), std::make_tuple(60, 0.25), std::make_tuple(120, 0.35)}) {
+    const int fps = std::get<0>(run);
+    const double frameMs = 1000.0 / fps;
+    const std::string name = std::to_string(fps) + " FPS, noise " + Describe(std::get<1>(run)) + " ms: ";
+    std::vector<Frame> frames = Host(20, [frameMs](int k) { return 1000.37 + k * frameMs; });
+    if (std::get<1>(run) > 0) {
+      StampNoise(frames, std::get<1>(run), 11);
     }
+    Arrive(frames, fps, 4.0, 1);
+    const std::vector<Outcome> outcomes = Run(fps, frames);
+    int wrongSteps = 0;
+    for (size_t i = 1; i < outcomes.size(); i++) {
+      wrongSteps += std::abs(outcomes[i].pts - outcomes[i - 1].pts - 1.0 / fps) > 1e-9 ? 1 : 0;
+    }
+    test_support::Check(wrongSteps == 0, name + "every timestamp one frame duration after the one before",
+                        std::to_string(wrongSteps) + " other steps", __FILE__, __LINE__);
+    CHECK(std::abs(outcomes.back().pts - (outcomes.size() - 1) / (double)fps) < 1e-6);
+    // After the first windows of the pacer, the frames reach the player every frame duration
+    int intervals = 0;
+    int even = 0;
+    for (size_t i = 1; i < outcomes.size(); i++) {
+      if (outcomes[i].captureMs - outcomes.front().captureMs >= 3000) {
+        intervals++;
+        even += std::abs((outcomes[i].append - outcomes[i - 1].append) * 1000 - frameMs) <= 0.3 ? 1 : 0;
+      }
+    }
+    test_support::Check(even >= intervals * 0.97,
+                        name + "97% of the append intervals within 0.3 ms of a frame duration",
+                        std::to_string(even) + " of " + std::to_string(intervals), __FILE__, __LINE__);
+    const double held = HeldPercent(outcomes, 3000);
+    test_support::Check(held > 95, name + "the pacer holds more than 95% of the frames", Describe(held), __FILE__,
+                        __LINE__);
   }
-  test_support::Check(even >= intervals * 0.97, "97% of the append intervals within 0.3 ms of 16.67 ms",
-                      std::to_string(even) + " of " + std::to_string(intervals), __FILE__, __LINE__);
-  const double held = HeldPercent(outcomes, 3000);
-  test_support::Check(held > 95, "the pacer holds more than 95% of the frames", Describe(held), __FILE__, __LINE__);
 }
 
 // Frames lost on the network: the timestamp moves on by the lost frames, so the frames after the gap arrive at their
-// usual time and the pacer holds them again at once (it passed every frame through for 1.5 to 2.4 s)
+// usual time and the pacer holds them again at once (it passed every frame through for 1.5 to 2.4 s). This holds for 4
+// lost frames, for a Wi-Fi roam of 300 ms and for an outage of 1.5 s.
 static void LostFramesKeepThePacerHolding() {
-  std::vector<Frame> all = Host(16, [](int k) { return 1000.37 + k * kFrame60; });
+  std::vector<Frame> all = Host(20, [](int k) { return 1000.37 + k * kFrame60; });
   Arrive(all, 60, 4.0, 2);
+  // The first lost frame and the number lost: at 5, 9, 11, 13 and 15 s
+  const std::pair<int, int> losses[] = {{300, 4}, {540, 4}, {660, 18}, {780, 4}, {900, 90}};
   std::vector<Frame> frames;
-  std::vector<int> firstAfterGap;
+  std::vector<std::pair<int, int>> firstAfterGap;
   for (const Frame& frame : all) {
     const int k = frame.number - 1;
-    // 4 frames lost at 5, 9 and 13 s
-    if ((k >= 300 && k < 304) || (k >= 540 && k < 544) || (k >= 780 && k < 784)) {
-      continue;
+    bool lost = false;
+    for (const auto& loss : losses) {
+      lost = lost || (k >= loss.first && k < loss.first + loss.second);
+      if (k == loss.first + loss.second) {
+        firstAfterGap.push_back({(int)frames.size(), loss.second});
+      }
     }
-    if (k == 304 || k == 544 || k == 784) {
-      firstAfterGap.push_back((int)frames.size());
+    if (!lost) {
+      frames.push_back(frame);
     }
-    frames.push_back(frame);
   }
   const std::vector<Outcome> outcomes = Run(60, frames);
-  for (int index : firstAfterGap) {
-    // The frame after the gap is 5 frame durations later
-    CHECK(std::abs(outcomes[index].pts - outcomes[index - 1].pts - 5.0 / 60) < 1e-6);
+  CHECK_EQ(firstAfterGap.size(), 5u);
+  for (const auto& gap : firstAfterGap) {
+    const int index = gap.first;
+    const std::string name = std::to_string(gap.second) + " frames lost: ";
+    // The frame after the gap is one frame duration more than the lost frames later
+    const double stepFrames = (outcomes[index].pts - outcomes[index - 1].pts) * 60;
+    test_support::Check(std::abs(stepFrames - (gap.second + 1)) < 1e-6,
+                        name + "the timestamp moves on by the lost frames", Describe(stepFrames) + " frames", __FILE__,
+                        __LINE__);
     // One of the first two frames after the gap is held back again, and nearly all of the next second
-    CHECK(Held(outcomes[index]) || Held(outcomes[index + 1]));
+    test_support::Check(Held(outcomes[index]) || Held(outcomes[index + 1]),
+                        name + "one of the first two frames after the gap held", "", __FILE__, __LINE__);
     const double afterMs = outcomes[index].captureMs - outcomes.front().captureMs;
     const double held = HeldPercent(outcomes, afterMs, afterMs + 1000);
-    test_support::Check(held > 90, "the pacer holds more than 90% of the frames of the second after the gap",
+    test_support::Check(held > 90, name + "the pacer holds more than 90% of the frames of the second after the gap",
                         Describe(held), __FILE__, __LINE__);
   }
 }
@@ -431,25 +472,31 @@ static void HostBelowTheStreamRateStaysPaced() {
 
 // A host display at 59.94 Hz in a 60 FPS stream on a link with little jitter: one frame in 1000 is missing, and the
 // timestamps follow the slower host (the pacer held only a third of the frames, as the host fell behind its timestamps
-// by 1 ms per second and the time difference followed only every second window)
+// by 1 ms per second and the time difference followed only every second window). A host display at 60.06 Hz, which
+// sends a frame more than the stream rate every 16.7 s, is followed the same way.
 static void HostDisplayAt5994HzStaysPaced() {
-  std::vector<Frame> frames = Host(20, [](int k) { return 1000.37 + k * 1000.0 / 59.94; });
-  Arrive(frames, 60, 2.0, 5);
-  const std::vector<Outcome> outcomes = Run(60, frames);
-  const double held = HeldPercent(outcomes, 3000);
-  test_support::Check(held > 90, "more than 90% of the frames held", Describe(held), __FILE__, __LINE__);
-  // The timestamps stay within 1 ms of the capture times
-  double worst = 0;
-  for (const Outcome& outcome : outcomes) {
-    worst = std::max(worst, std::abs(outcome.pts * 1000 - (std::floor(outcome.captureMs) - std::floor(outcomes.front().captureMs))));
+  for (double hostHz : {59.94, 60.06}) {
+    const std::string name = Describe(hostHz) + " Hz: ";
+    std::vector<Frame> frames = Host(20, [hostHz](int k) { return 1000.37 + k * 1000.0 / hostHz; });
+    Arrive(frames, 60, 2.0, 5);
+    const std::vector<Outcome> outcomes = Run(60, frames);
+    const double held = HeldPercent(outcomes, 3000);
+    test_support::Check(held > 90, name + "more than 90% of the frames held", Describe(held), __FILE__, __LINE__);
+    // The timestamps stay within the tolerance of 2 ms of the capture times
+    double worst = 0;
+    for (const Outcome& outcome : outcomes) {
+      const double hostElapsedMs = std::floor(outcome.captureMs) - std::floor(outcomes.front().captureMs);
+      worst = std::max(worst, std::abs(outcome.pts * 1000 - hostElapsedMs));
+    }
+    test_support::Check(worst <= 2.0 + 1e-6, name + "timestamps within 2 ms of the capture times", Describe(worst),
+                        __FILE__, __LINE__);
   }
-  test_support::Check(worst <= 1.0 + 1e-6, "timestamps within 1 ms of the capture times", Describe(worst), __FILE__,
-                      __LINE__);
 }
 
 // The RTP timestamp wraps at 2^32 after about 13.3 hours, so the capture time jumps from 47,721,850 ms to 5 ms here
-// (the host captured that frame 13.8 ms after the one before): the timestamp moves on by that interval, and the pacer
-// neither waits for days nor stops holding the frames
+// (the host captured that frame 13.8 ms after the one before): the timestamp moves on by that interval, within the
+// tolerance of 2 ms, and the pacer neither waits for days nor stops holding the frames. A steady host keeps the exact
+// timestamps across the wrap, also when the frames around it are lost.
 static void WrapOfTheCaptureTimeKeepsThePace() {
   std::vector<Frame> frames = Host(4, [](int k) {
     return k <= 120 ? 47721850.4 - (120 - k) * kFrame60 : 47721858.84 + 5.4 + (k - 121) * kFrame60;
@@ -459,8 +506,8 @@ static void WrapOfTheCaptureTimeKeepsThePace() {
   Arrive(frames, 60, 4.0, 6);
   const std::vector<Outcome> outcomes = Run(60, frames);
   const double stepMs = (outcomes[121].pts - outcomes[120].pts) * 1000;
-  test_support::Check(stepMs >= 13 && stepMs <= 15, "a step of about 14 ms across the wrap", Describe(stepMs), __FILE__,
-                      __LINE__);
+  test_support::Check(stepMs >= 13 && stepMs <= 17, "a step of 14 ms, within 2 ms, across the wrap", Describe(stepMs),
+                      __FILE__, __LINE__);
   double longestHold = 0;
   for (size_t i = 121; i < outcomes.size(); i++) {
     longestHold = std::max(longestHold, (outcomes[i].append - outcomes[i].dequeue) * 1000);
@@ -470,6 +517,21 @@ static void WrapOfTheCaptureTimeKeepsThePace() {
                       Describe(longestHold), __FILE__, __LINE__);
   const double held = HeldPercent(outcomes, outcomes[121].captureMs - outcomes.front().captureMs);
   test_support::Check(held > 90, "more than 90% of the frames after the wrap held", Describe(held), __FILE__, __LINE__);
+
+  // The 4 frames after 47,721,850 ms are lost, so the next one comes 5 frame durations later at 74 ms
+  std::vector<Frame> steady = Host(4, [](int k) { return 47721850.4 + (k - 120) * kFrame60; });
+  Arrive(steady, 60, 4.0, 6);
+  steady.erase(steady.begin() + 121, steady.begin() + 125);
+  CHECK_EQ(steady[120].hostTimeMs, 47721850u);
+  CHECK_EQ(steady[121].hostTimeMs, 74u);
+  const std::vector<Outcome> steadyOutcomes = Run(60, steady);
+  int wrongSteps = 0;
+  for (size_t i = 1; i < steadyOutcomes.size(); i++) {
+    const double frames = i == 121 ? 5 : 1;
+    wrongSteps += std::abs(steadyOutcomes[i].pts - steadyOutcomes[i - 1].pts - frames / 60) > 1e-9 ? 1 : 0;
+  }
+  test_support::Check(wrongSteps == 0, "a steady host: every timestamp one frame duration after the one before, and 5 "
+                      "across the lost frames", std::to_string(wrongSteps) + " other steps", __FILE__, __LINE__);
 }
 
 // A capture time that repeats or steps back (a frame the host encoded again is stamped with the time it was sent) still
@@ -494,18 +556,70 @@ static void RepeatedOrEarlierCaptureTimesKeepTheTimestampsRising() {
   CHECK(std::abs(outcomes[8].pts * 1000 - 102.0) < 1e-6);
 }
 
-// A break of more than a second (e.g. while the video track was closed) moves the timestamp on by one frame duration
-// instead of the length of the break, as before, and the timestamps follow the host again after it
-static void BreakInTheStreamMovesOnByOneFrame() {
-  std::vector<Frame> frames;
-  for (int k = 0; k < 120; k++) {
-    const double captureMs = 1000.37 + k * kFrame60 + (k >= 60 ? 5000.0 : 0.0);
-    frames.push_back({k + 1, captureMs, HostTimeMs(captureMs), 0.0});
+// The frames of a host at 60 FPS for 12 s, in which something happens at frame 240 (4 s): the host sends nothing for
+// gapMs, the clock of its capture times steps by clockStepMs (the frames still come on time), or the video track of
+// the TV is closed for 3 s, which discards the frames meanwhile. 3 frames captured 3 s later are lost on the network.
+static std::vector<Frame> HostWithABreak(double gapMs, double clockStepMs, bool trackClosed, unsigned seed) {
+  std::vector<Frame> frames = Host(12 + gapMs / 1000, [gapMs](int k) {
+    return 1000.37 + k * kFrame60 + (k >= 240 ? gapMs : 0.0);
+  });
+  Arrive(frames, 60, 4.0, seed);
+  for (Frame& frame : frames) {
+    const int k = frame.number - 1;
+    if (k >= 240) {
+      frame.hostTimeMs = HostTimeMs(frame.captureMs + clockStepMs);
+    }
+    frame.trackClosed = trackClosed && k >= 240 && k < 420;
   }
-  Arrive(frames, 60, 4.0, 7);
-  const std::vector<Outcome> outcomes = Run(60, frames);
-  CHECK(std::abs(outcomes[60].pts - outcomes[59].pts - 1.0 / 60) < 1e-9);
-  CHECK(std::abs(outcomes[61].pts - outcomes[60].pts - 1.0 / 60) < 1e-9);
+  const int lostFrom = trackClosed ? 600 : 420;
+  frames.erase(frames.begin() + lostFrom, frames.begin() + lostFrom + 3);
+  return frames;
+}
+
+// After a break in the stream, the timestamps go on by one frame duration instead of the length of the break, as
+// before: when the track was closed (e.g. while the app was hidden, for minutes), after a gap of more than 10 s, longer
+// than any network outage that the stream survives, and when the clock of the capture times steps back by more than a
+// second. They follow the capture times again from the frame after the break, so the frames lost 3 s later move the
+// timestamp on by 4 frames, and the pacer holds the frames after them. A network outage of 8 s is followed instead.
+static void BreakInTheStreamMovesOnByOneFrame() {
+  struct Case {
+    const char* name;
+    double gapMs;
+    double clockStepMs;
+    bool trackClosed;
+  };
+  const Case cases[] = {{"track closed for 3 s", 0, 0, true},
+                        {"gap of 12 s", 12000, 0, false},
+                        {"clock 5 s back", 0, -5000, false},
+                        {"outage of 8 s", 8000, 0, false}};
+  for (const Case& test : cases) {
+    const std::string name = std::string(test.name) + ": ";
+    const std::vector<Frame> frames = HostWithABreak(test.gapMs, test.clockStepMs, test.trackClosed, 7);
+    const std::vector<Outcome> outcomes = Run(60, frames);
+    // The first frame after the break, and the last frame before it that was appended
+    const int after = test.trackClosed ? 420 : 240;
+    const double stepFrames = (outcomes[after].pts - outcomes[239].pts) * 60;
+    const double expected = test.gapMs > 0 && test.gapMs <= 10000 ? (test.gapMs + kFrame60) / kFrame60 : 1;
+    test_support::Check(std::abs(stepFrames - expected) < 1e-6, name + "the timestamp after the break",
+                        Describe(stepFrames) + " frames instead of " + Describe(expected), __FILE__, __LINE__);
+    // The next frame follows it by one frame duration
+    const double nextStepFrames = (outcomes[after + 1].pts - outcomes[after].pts) * 60;
+    test_support::Check(std::abs(nextStepFrames - 1) < 1e-6, name + "the timestamp of the frame after it",
+                        Describe(nextStepFrames) + " frames", __FILE__, __LINE__);
+    if (test.gapMs > 0 && test.gapMs <= 10000) {
+      test_support::Check(Held(outcomes[after]) || Held(outcomes[after + 1]),
+                          name + "one of the first two frames after the outage held", "", __FILE__, __LINE__);
+    }
+    // The 3 frames lost 3 s after the break
+    const int lost = after + 180;
+    const double lostStepFrames = (outcomes[lost].pts - outcomes[lost - 1].pts) * 60;
+    test_support::Check(std::abs(lostStepFrames - 4) < 1e-6, name + "the timestamp moves on by the 3 lost frames",
+                        Describe(lostStepFrames) + " frames", __FILE__, __LINE__);
+    const double afterMs = outcomes[lost].captureMs - outcomes.front().captureMs;
+    const double held = HeldPercent(outcomes, afterMs, afterMs + 1000);
+    test_support::Check(held > 90, name + "more than 90% of the frames of the second after the lost frames held",
+                        Describe(held), __FILE__, __LINE__);
+  }
 }
 
 // The latency of the network rises by riseMs for 4 s (over 300 ms, from 5 s on) and falls back at once at 9 s. The
@@ -673,11 +787,12 @@ int main() {
   test_support::RunTest("after frames lost on the network the pacer holds the frames again at once",
                         LostFramesKeepThePacerHolding);
   test_support::RunTest("a host below the stream rate stays paced", HostBelowTheStreamRateStaysPaced);
-  test_support::RunTest("a host display at 59.94 Hz stays paced", HostDisplayAt5994HzStaysPaced);
+  test_support::RunTest("a host display at 59.94 or 60.06 Hz stays paced", HostDisplayAt5994HzStaysPaced);
   test_support::RunTest("the wrap of the capture time after 13.3 hours keeps the pace", WrapOfTheCaptureTimeKeepsThePace);
   test_support::RunTest("repeated or earlier capture times keep the timestamps rising",
                         RepeatedOrEarlierCaptureTimesKeepTheTimestampsRising);
-  test_support::RunTest("a break in the stream moves the timestamps on by one frame", BreakInTheStreamMovesOnByOneFrame);
+  test_support::RunTest("a break in the stream moves the timestamps on by one frame, an outage by its length",
+                        BreakInTheStreamMovesOnByOneFrame);
   test_support::RunTest("a fall of the latency after a sustained rise is followed at once",
                         FallOfTheLatencyIsFollowedAtOnce);
   test_support::RunTest("the usual jitter doesn't move the pacer within a window", UsualJitterDoesNotMoveThePacerWithinAWindow);

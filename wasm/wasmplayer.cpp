@@ -69,16 +69,32 @@ static TimeStamp s_pktPts;
 // after the stream started
 static constexpr uint32_t kHostTimeWrapMs = 47721859;
 
-// A capture time more than this ahead of the previous one, or behind it, is a break in the stream (e.g. the frames
-// discarded while the video track was closed), after which the presentation timestamps go on by one frame duration
-static constexpr uint32_t kHostTimeMaxStepMs = 1000;
+// The presentation timestamps follow a gap of the capture times up to this long, which covers the longest network
+// outage that a stream survives (moonlight-common-c ends the connection when its control stream hears nothing from the
+// host for 10 s, the enet_peer_timeout() of ControlStream.c). A longer gap, a capture time more than
+// kHostTimeMaxBackStepMs behind the previous one (a new clock of the host), and the frames that were discarded while
+// the video track was closed are a break in the stream, after which the timestamps go on by one frame duration, as they
+// did before they followed the capture times
+static constexpr uint32_t kHostTimeMaxGapMs = 10000;
+static constexpr uint32_t kHostTimeMaxBackStepMs = 1000;
+
+// How far the presentation timestamps may stray from the capture times. The capture times come in whole milliseconds
+// and carry the timing noise of the capture on the host (it reads the clock when its timer wakes it up on Linux, or
+// takes the present time of the image on Windows), so a whole frame interval appears as e.g. 15 to 18 ms at 60 FPS.
+// 1 ms let 0.25 ms of such noise into the timestamps of a steady stream. In a simulation, 2 ms keeps their exact steps
+// with up to 0.35 ms of noise at 60 and 120 FPS, and all but 1 step in 2500 with 0.5 ms, while the frames of a host
+// display at 59.94 Hz, which fall behind the stream rate by 1 ms per second, still reach the bound after 2 s.
+static constexpr double kHostTimeToleranceMs = 2.0;
 
 // The presentation timestamps that follow the capture times of the host (see UpdatePresentationTimestamp): the latest
-// capture time, the time the host has advanced since the first frame of the stream, and the timestamp, in milliseconds
+// capture time, the time the host has advanced since the first frame of the stream, the timestamp, in milliseconds,
+// and whether frames were discarded since the latest one because the video track was closed (the first frame of a
+// stream clears it)
 static bool s_HaveHostTime = false;
 static uint32_t s_LastHostTimeMs = 0;
 static double s_HostElapsedMs = 0;
 static double s_PtsMs = 0;
+static bool s_HostTimeBreak = false;
 
 static TimeStamp s_ptsDiff;
 static TimeStamp s_lastSec;
@@ -874,18 +890,17 @@ static size_t WriteHdrMetadataSei(unsigned char* out, const SS_HDR_METADATA& met
 // than the stream rate (a game at 50 FPS in a 60 FPS stream, 80 FPS in a 120 FPS stream, a host display at 59.94 Hz),
 // look like frames that arrive later and later, so the pacer passed every frame straight through: for 1.5 to 2.4 s
 // after each loss, and for good below the stream rate.
-// The capture times come in whole milliseconds, though, and taking them as they are would add up to 1 ms of jitter
-// that makes a steady stream less even. So an interval within 1 ms of a whole number of frame durations advances the
-// timestamp by exactly that many frame durations (a steady host advances exactly as before, a lost frame by its own
-// duration), any other interval by itself, and the timestamp never strays more than 1 ms from the capture times. Each
-// step is at least 1 ms, so that the timestamps keep rising.
+// The capture times come in whole milliseconds with the timing noise of the host, though (see kHostTimeToleranceMs),
+// and taking them as they are would make a steady stream less even. So an interval of at least half a frame duration
+// advances the timestamp by the nearest whole number of frame durations (a steady host advances exactly as before, a
+// lost frame by its own duration), and a shorter one by itself, at least 1 ms, so that the timestamps keep rising.
+// Bounding the timestamp to kHostTimeToleranceMs around the capture times makes it follow a host whose frames don't
+// come on the grid of the stream rate (a host display at 59.94 Hz, or one with a variable refresh rate).
 static void UpdatePresentationTimestamp(uint32_t hostTimeMs) {
   const double frameMs = s_frameDuration.count() * 1000.0;
   if (!s_HaveHostTime) {
     s_HaveHostTime = true;
     s_LastHostTimeMs = hostTimeMs;
-    s_HostElapsedMs = 0;
-    s_PtsMs = 0;
   } else {
     // The time the host advanced since the latest capture time, also across a wrap of the RTP timestamp
     int64_t stepMs;
@@ -896,9 +911,10 @@ static void UpdatePresentationTimestamp(uint32_t hostTimeMs) {
     } else {
       stepMs = -(int64_t)(s_LastHostTimeMs - hostTimeMs);
     }
-    if (stepMs > kHostTimeMaxStepMs || stepMs < -(int64_t)kHostTimeMaxStepMs) {
+    if (s_HostTimeBreak || stepMs > kHostTimeMaxGapMs || stepMs < -(int64_t)kHostTimeMaxBackStepMs) {
       // A break in the stream: go on by one frame duration from the new capture time, as the timestamps did before
-      // they followed the host, instead of jumping by the length of the break
+      // they followed the host, instead of jumping by the length of the break (e.g. the minutes that the app was
+      // hidden: whether the video player of the TV takes such a jump is untested)
       s_PtsMs += frameMs;
       s_HostElapsedMs = s_PtsMs;
       s_LastHostTimeMs = hostTimeMs;
@@ -912,10 +928,12 @@ static void UpdatePresentationTimestamp(uint32_t hostTimeMs) {
       }
       s_HostElapsedMs += hostStepMs;
       const double frames = std::round(hostStepMs / frameMs);
-      const double ptsStepMs = frames >= 1 && std::abs(hostStepMs - frames * frameMs) <= 1.0 ? frames * frameMs : hostStepMs;
-      s_PtsMs = std::clamp(s_PtsMs + ptsStepMs, s_HostElapsedMs - 1.0, s_HostElapsedMs + 1.0);
+      const double ptsStepMs = frames >= 1 ? frames * frameMs : hostStepMs;
+      s_PtsMs = std::clamp(s_PtsMs + ptsStepMs, s_HostElapsedMs - kHostTimeToleranceMs,
+                           s_HostElapsedMs + kHostTimeToleranceMs);
     }
   }
+  s_HostTimeBreak = false;
   s_pktPts = TimeStamp(s_PtsMs / 1000.0);
 }
 
@@ -965,6 +983,9 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
   // count as neither network nor TV drops: the frame number and the client drops are followed here, so that the
   // first frame after the track reopens only shows the real losses in its gap.
   if (!g_Instance->m_VideoStarted) {
+    // The capture time of the first frame after the track reopens jumps by the time that it was closed, so its
+    // timestamp goes on by one frame duration (see UpdatePresentationTimestamp)
+    s_HostTimeBreak = true;
     if (s_VideoSourceFailed.exchange(false)) {
       s_TerminatingStream = true;
       LiTerminateConnectionAsync(ERROR_VIDEO_PLAYER_FAILED);
