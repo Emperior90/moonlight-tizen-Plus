@@ -1327,11 +1327,12 @@ static void LoseFrameUntilKeyframe(std::vector<Frame>& frames, size_t lost, doub
 // stream rate at 60 FPS whose duplicate carries no mark (a host other than Sunshine) and arrives early between two
 // ticks, 3 ms after it was sent: its capture time adds less than half a frame duration to the lost frames, so it takes
 // only the lost frames, without a frame duration of its own (43e25f0 gave it the place of the next frame on the grid,
-// and the timestamps ran a frame ahead of the host after every loss). So does one that arrives 12 ms after it was sent, less than 0.6 frame durations before the next tick (a
-// large keyframe): it is a keyframe, which a new image would make add about a frame duration (a79cb97 gave it that
-// place, and held every later frame a frame duration longer until the next window of the pacer: 20 instead of 10 per
-// 1000 frames off their refresh at 60 FPS with 1% lost and unmarked duplicates). An unmarked duplicate whose capture
-// time adds half a frame duration or more (most of them at 120 FPS) still takes that place.
+// and the timestamps ran a frame ahead of the host after every loss). So does one that arrives 12 ms after it was sent,
+// less than 0.6 frame durations before the next tick (a large keyframe): it is a keyframe, which a new image would make
+// add about a frame duration (a79cb97 gave it that place, and held every later frame a frame duration longer until the
+// next window of the pacer: 20 instead of 10 per 1000 frames off their refresh at 60 FPS with 1% lost and unmarked
+// duplicates). An unmarked duplicate whose capture time adds half a frame duration or more (most of them at 120 FPS)
+// still takes that place.
 static void LossBeforeAKeyframeDuplicateKeepsThePace() {
   const std::tuple<int, double, double, bool> cases[] = {
     {60, 50.0, 9.0, true}, {120, 100.0, 4.0, true}, {60, 0.0, 9.0, true}, {60, 60.0, 3.0, false},
@@ -1420,6 +1421,46 @@ static void HostSkippingATickIsFollowedWithTheNextFrame() {
   const double held = HeldPercent(outcomes, 5000);
   test_support::Check(held > 95, "more than 95% of the frames after the first skip held", Describe(held), __FILE__,
                       __LINE__);
+}
+
+// A game below a 120 FPS stream on a host display with a variable refresh rate (48 to 60 FPS, 16.7 to 20.8 ms apart)
+// for 3 s, then V-synced at 60 FPS on the 120 Hz display, e.g. a cut scene: the timestamps follow the capture times
+// during the first part, and go back onto the grid of the stream rate for the second, although its capture times step
+// by 16 and 17 ms, as whole milliseconds (they followed the rounded capture times for good, up to 1 ms off the grid:
+// 60 to 70 per 1000 frames off their refresh on a 120 Hz TV instead of 32)
+static void HostFollowedBelowTheStreamRateGoesBackToTheGrid() {
+  for (unsigned seed : {41u, 42u, 43u}) {
+    std::mt19937 random(seed);
+    std::vector<double> captures = {1000.37};
+    while (captures.back() < 4000) {
+      captures.push_back(captures.back() + 1000.0 / 60 + random() / 4294967296.0 * (1000.0 / 48 - 1000.0 / 60));
+    }
+    const double vsyncMs = 1000.37 + std::ceil((captures.back() + kFrame60 - 1000.37) / kFrame120) * kFrame120;
+    for (int k = 0; vsyncMs + k * kFrame60 < 12000; k++) {
+      captures.push_back(vsyncMs + k * kFrame60);
+    }
+    std::vector<Frame> frames =
+      Host(10.5, [&captures](int k) { return captures[std::min<size_t>(k, captures.size() - 1)]; });
+    Arrive(frames, 120, 4.0, seed);
+    const std::vector<Outcome> outcomes = Run(120, frames);
+    Count count;
+    for (size_t i = 1; i < outcomes.size(); i++) {
+      if (outcomes[i].captureMs - outcomes.front().captureMs >= 5000) {
+        count.frames++;
+        const double stepFrames = (outcomes[i].pts - outcomes[i - 1].pts) * 120;
+        count.passed += std::abs(stepFrames - std::round(stepFrames)) < 1e-3 ? 1 : 0;
+      }
+    }
+    test_support::Check(count.passed >= count.frames * 0.95,
+                        "60 FPS after a variable refresh rate in a 120 FPS stream (seed " + std::to_string(seed) +
+                          "): 95% of the timestamps whole frame durations after the one before",
+                        Describe(count), __FILE__, __LINE__);
+    const double held = HeldPercent(outcomes, 5000);
+    test_support::Check(held > 90,
+                        "60 FPS after a variable refresh rate in a 120 FPS stream (seed " + std::to_string(seed) +
+                          "): more than 90% of the frames held",
+                        Describe(held), __FILE__, __LINE__);
+  }
 }
 
 // The frames from fromMs on that a TV at the stream rate shows on another refresh than the one after the frame before
@@ -1661,6 +1702,8 @@ int main() {
   test_support::RunTest("a host that skips a tick is followed with the next frame",
                         HostSkippingATickIsFollowedWithTheNextFrame);
   test_support::RunTest("late captures of a Windows host keep the pace", LateCapturesOfAWindowsHostKeepThePace);
+  test_support::RunTest("a host followed below the stream rate goes back to the grid with V-synced content",
+                        HostFollowedBelowTheStreamRateGoesBackToTheGrid);
   test_support::RunTest("a full buffer of the player is retried for 16 ms", FullBufferIsRetriedFor16Ms);
   test_support::RunTest("the retry stops when the track closes, and other rejections aren't retried",
                         RetryStopsWhenTheTrackCloses);

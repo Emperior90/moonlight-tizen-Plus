@@ -140,6 +140,14 @@ static constexpr double kHostTopConfirmMs = 250;
 // directly, e.g. for a game below the stream rate on a display with a variable refresh rate, whose frames come 17 to
 // 21 ms apart at 60 FPS
 static constexpr double kHostTimeLeadMs = 3.0;
+// The resolution of the capture times: the RTP timestamp of the host divided by 90, rounded down to whole milliseconds.
+// V-synced frames at whole frame durations that aren't whole milliseconds (16.67 ms for 60 FPS content in a 120 FPS
+// stream, 33.33 ms for 30 in 60, 41.67 ms for 24 in 120) step by 16 and 17 ms, so the timestamps that follow the
+// capture times never came back onto the grid (only an interval of exactly whole frame durations brought them back),
+// after a game below the stream rate on a display with a variable refresh rate went over to such content: up to 1 ms
+// off the grid, 60 to 77 per 1000 frames off their refresh instead of 32 to 51. Two intervals in a row of more than one
+// frame duration that end within this resolution of the grid keep the grid instead.
+static constexpr double kHostStampResolutionMs = 1.0;
 // A tick that the host skipped is only counted when it fits the range better by kFrameCountBiasMs, or by half the
 // width of the range where that is more (capture times with more noise, or a host at its own pace off the grid of the
 // stream rate, e.g. a display at 72 Hz in a 120 FPS stream): a skipped tick counted one short shows at once, as a
@@ -208,6 +216,9 @@ static double s_HostOffsetMs = 0;
 static double s_HostOffsetTopMs = 0;
 static double s_HostOffsetBottomMs = 0;
 static bool s_FollowingHostTime = false;
+// Whether the latest interval, while the timestamps followed the capture times, ended within kHostStampResolutionMs of
+// the grid (see kHostStampResolutionMs)
+static bool s_HostIntervalOnGrid = false;
 
 // When the host last skipped a tick of the stream rate or ran off its grid (s_HostElapsedMs), until when the top of the
 // range falls back, and whether the latest frame waits for the next one to tell whether it did, with how far its offset
@@ -868,6 +879,7 @@ static void ResetHostOffset() {
   s_HostOffsetTopMs = 0;
   s_HostOffsetBottomMs = 0;
   s_FollowingHostTime = false;
+  s_HostIntervalOnGrid = false;
   s_HostIrregularMs = s_HostElapsedMs - kHostSteadyMs - 1;
   s_HostDecayUntilMs = s_HostElapsedMs;
   s_HostConfirmedTopMs[0] = 0;
@@ -1159,9 +1171,10 @@ static double ArrivalReferenceMs() {
 // times (see kHostSteadyMs). Where the capture times run more than kHostTimeLeadMs ahead of that grid, the host sends
 // its frames at their capture times (a display with a variable refresh rate below the stream rate, or one slower than
 // the stream): the timestamps then follow them directly, kHostTimeLeadMs behind them, counting only the whole frame
-// durations of each interval, until an interval brings them back onto the grid. The range follows a host display at
-// 59.94 Hz, and at 60.06 Hz in a 120 FPS stream. A capture time that repeats the one before or steps back, from a frame
-// that arrives right after it, is the same image encoded again and takes 1 ms, and the next frame goes on from it; a
+// durations of each interval, until an interval brings them back onto the grid, or two intervals in a row end within
+// the resolution of the capture times of it (see kHostStampResolutionMs). The range follows a host display at 59.94 Hz,
+// and at 60.06 Hz in a 120 FPS stream. A capture time that repeats the one before or steps back, from a frame that
+// arrives right after it, is the same image encoded again and takes 1 ms, and the next frame goes on from it; a
 // duplicate of Sunshine takes 1 ms, and the next frame goes on from the frame before it; one after frames lost on the
 // network (also an unmarked one, see kRepeatedStampEarlyFrames) takes only the lost frames, without a frame duration of
 // its own, and the next frame goes on from it.
@@ -1300,12 +1313,31 @@ static bool UpdatePresentationTimestamp(uint32_t hostTimeMs, uint32_t missingFra
           s_HostIrregularMs = s_HostElapsedMs;
           s_HostDecayUntilMs = s_HostElapsedMs + kHostSteadyMs;
         }
-        if (s_HostElapsedMs - next > kHostTimeLeadMs) {
+        // While the timestamps follow the capture times, a frame more than one frame duration after the one before
+        // whose timestamp from the capture time lies within kHostStampResolutionMs of the grid takes the grid, after
+        // another such interval (the timestamps never move further from the capture times than the rounding of them)
+        bool keepGrid = false;
+        if (wasFollowing && stepMs > 0) {
+          const double followMs = s_HostElapsedMs - kHostTimeLeadMs;
+          const double gridPointMs = gridMs + std::max(0.0, std::round((followMs - gridMs) / frameMs)) * frameMs;
+          const bool onGrid =
+            stepMs > frameMs + kHostStampResolutionMs && std::abs(gridPointMs - followMs) <= kHostStampResolutionMs;
+          keepGrid = onGrid && s_HostIntervalOnGrid;
+          s_HostIntervalOnGrid = onGrid;
+          if (keepGrid) {
+            next = gridPointMs;
+          }
+        } else {
+          s_HostIntervalOnGrid = false;
+        }
+        if (keepGrid || s_HostElapsedMs - next > kHostTimeLeadMs) {
           // Two frames that ran ahead of a steady host may have been late capture times only (see kHostSteadyMs)
           s_LateFramesFollowed = !wasFollowing && s_HostTimeWaiting && s_WaitWasSteady && !skipped;
           s_LateFramesGridMs = gridMs;
           s_BeforeLateFrames = before;
-          next = s_HostElapsedMs - kHostTimeLeadMs;
+          if (!keepGrid) {
+            next = s_HostElapsedMs - kHostTimeLeadMs;
+          }
           s_FollowingHostTime = true;
         } else {
           // The frame after two late frames that the timestamps followed is back on the grid of before, and arrives on
