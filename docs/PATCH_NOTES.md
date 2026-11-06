@@ -2,7 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
-- [2.3.0](#230): pre-release, a picture refresh in the Stream Menu, better diagnostics and a longer guide
+- [2.3.0](#230): pre-release, smoother motion, a picture refresh in the Stream Menu and a longer guide
 - [2.2.1](#221): 2026-11-05, no more 144 FPS, and controllers that work on 2020 TVs
 - [2.2.0](#220): 2026-11-03, a tidier app with fixes and a smaller download
 - [2.1.0](#210): 2026-10-30, five languages and new tools in the Stream Menu
@@ -18,11 +18,11 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ## 2.3.0
 
-*Pre-release, in testing.* A way to refresh a broken picture, clearer hints about the PC, and a guide for the best picture.
+*Pre-release, in testing.* Smoother motion over Wi-Fi, a way to refresh a broken picture, and a guide for the best picture.
 
 > **Install:** by hand over 2.2.1 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >
-> **Tested:** with simulated TVs, hosts and controllers only; *Refresh picture* and the new hints still need a test on a TV.
+> **Tested:** with simulated TVs, hosts and controllers only; the new frame pacing still needs a test on a TV.
 
 ### New
 
@@ -39,6 +39,8 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ### Fixed
 
+- Smoother motion after packet loss, in games below the stream rate and with a PC display at 59.94 Hz
+- After a network delay at 120 FPS, the picture no longer freezes briefly while it catches up
 - When the PC ends a stream, its reason (e.g. an encoder error) is kept more often
 - At 90 and 120 FPS, a short stall of the TV player no longer costs a keyframe
 - On Tizen 5.5 (2020), the first D-pad press of a controller that is already connected no longer skips a menu entry
