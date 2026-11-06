@@ -29,7 +29,8 @@ All notable changes to Moonlight Plus, by version, newest first. Each version li
   - by one frame duration per frame, and by one more for each frame lost on the network, which the gap of the frame numbers shows. A steady PC keeps the grid of its frames exactly, also on a Windows PC whose display refreshes faster than the stream rate but not at a multiple of it (60 FPS at 75, 144 or 165 Hz, 120 FPS at 144 or 165 Hz), where Sunshine stamps each frame with the latest refresh of that display
   - by the frames that the PC skipped, which its capture times show; in a steady stream a single skipped frame counts only once the next frame and the arrival times confirm it (a pause of more than one frame counts at once), so a late capture or a PC display slightly faster than the stream (60.06 Hz) doesn't move the grid
   - with the capture times where a PC sends fewer frames than the stream rate, so the frames of a game at 50 FPS, a PC display at 59.94 Hz or a variable refresh rate are evened out too
-  - by 1 ms for a duplicate of Sunshine, and for a keyframe sent again after a loss only by the frames lost before it, without a frame duration of its own, and on across the wrap of the capture time after 13.3 hours, an outage of up to 10 seconds and a closed video track
+  - by 1 ms for a duplicate of Sunshine, and for a keyframe sent again after a loss (marked by Sunshine or not) only by the frames lost before it, without a frame duration of its own
+  - across the wrap of the capture time after 13.3 hours, an outage of up to 10 seconds and a closed video track
 
   Judged against 2.2.1 on 1,964 simulated scenarios by an independent check, the frames not shown on the refresh of a 60 or 120 Hz TV that they should be fell, per 1000 frames:
   - from 97 to 1.2 at 60 FPS with one frame lost every 2 seconds, and from 184 to 1.5 at 120 FPS with 1 % of the frames lost

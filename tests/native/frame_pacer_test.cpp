@@ -1326,8 +1326,8 @@ static void LoseFrameUntilKeyframe(std::vector<Frame>& frames, size_t lost, doub
 // instead of 53 frames per 1000 off their refresh with a game at 48 to 60 FPS). The same holds for a steady host at the
 // stream rate at 60 FPS whose duplicate carries no mark (a host other than Sunshine) and arrives early between two
 // ticks, 3 ms after it was sent: its capture time adds less than half a frame duration to the lost frames, so it takes
-// 1 ms (43e25f0 gave it the place of the next frame on the grid, and the timestamps ran a frame ahead of the host after
-// every loss). So does one that arrives 12 ms after it was sent, less than 0.6 frame durations before the next tick (a
+// only the lost frames, without a frame duration of its own (43e25f0 gave it the place of the next frame on the grid,
+// and the timestamps ran a frame ahead of the host after every loss). So does one that arrives 12 ms after it was sent, less than 0.6 frame durations before the next tick (a
 // large keyframe): it is a keyframe, which a new image would make add about a frame duration (a79cb97 gave it that
 // place, and held every later frame a frame duration longer until the next window of the pacer: 20 instead of 10 per
 // 1000 frames off their refresh at 60 FPS with 1% lost and unmarked duplicates). An unmarked duplicate whose capture

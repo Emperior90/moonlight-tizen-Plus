@@ -189,10 +189,10 @@ static constexpr double kHostOffsetResetFrames = 1.5;
 
 // The presentation timestamps that follow the capture times of the host (see UpdatePresentationTimestamp): the latest
 // capture time, the time the host has advanced since the first frame of the stream, the timestamp, and the timestamp of
-// the latest frame that wasn't a duplicate of Sunshine (the next frame goes on from it), in milliseconds, whether frames
-// were discarded since the latest one because the video track was closed (the first frame of a stream clears it), and
-// whether the host reported its processing latency for a frame of the stream (Sunshine does for every frame but a
-// duplicate)
+// the latest frame that wasn't a duplicate, or of a duplicate after frames lost on the network (the next frame goes on
+// from it), in milliseconds, whether frames were discarded since the latest one because the video track was closed (the
+// first frame of a stream clears it), and whether the host reported its processing latency for a frame of the stream
+// (Sunshine does for every frame but a duplicate)
 static bool s_HaveHostTime = false;
 static uint32_t s_LastHostTimeMs = 0;
 static double s_HostElapsedMs = 0;
@@ -1148,8 +1148,9 @@ static double ArrivalReferenceMs() {
 // the time it captured it. The frame pacer releases each frame at its timestamp plus the usual arrival delay, so the
 // timestamps have to advance as far as the host did. Advancing them by one frame duration per frame made a frame lost
 // on the network, or a host that sends fewer frames than the stream rate (a game at 50 FPS in a 60 FPS stream, 80 FPS
-// in a 120 FPS stream, a host display at 59.94 Hz), look like frames that arrive later and later, so the pacer passed
-// every frame straight through: for 1.5 to 2.4 s after each loss, and for good below the stream rate.
+// in a 120 FPS stream), look like frames that arrive later and later, so the pacer passed every frame straight through:
+// for 1.5 to 2.4 s after each loss, and for good below the stream rate (from a host display at 59.94 Hz in a 60 FPS
+// stream it held only part of the frames).
 // The timestamp moves on by one frame duration, and by one more for each frame lost on the network (the gap of the
 // frame numbers, missingFrames), which keeps the grid of the ticks of a steady host exactly, whatever its capture times
 // do (see above kHostOffsetDecayMs). The capture times only add the ticks that the host skipped: the whole frame
@@ -1160,9 +1161,10 @@ static double ArrivalReferenceMs() {
 // the stream): the timestamps then follow them directly, kHostTimeLeadMs behind them, counting only the whole frame
 // durations of each interval, until an interval brings them back onto the grid. The range follows a host display at
 // 59.94 Hz, and at 60.06 Hz in a 120 FPS stream. A capture time that repeats the one before or steps back, from a frame
-// that arrives right after it, is the same image encoded again and takes 1 ms; a duplicate of Sunshine takes 1 ms, and
-// one after frames lost on the network (also an unmarked one, see kRepeatedStampEarlyFrames) only the lost frames,
-// without a frame duration of its own; the next frame goes on from it by one frame duration.
+// that arrives right after it, is the same image encoded again and takes 1 ms, and the next frame goes on from it; a
+// duplicate of Sunshine takes 1 ms, and the next frame goes on from the frame before it; one after frames lost on the
+// network (also an unmarked one, see kRepeatedStampEarlyFrames) takes only the lost frames, without a frame duration of
+// its own, and the next frame goes on from it.
 // Returns whether the arrival time of the frame counts for the window of the frame pacer: not when the frame isn't a
 // new image on the grid (a duplicate, or a capture time less than half a frame duration after the one before) and
 // arrived more than half a frame duration later than the usual arrival time for its timestamp, e.g. a duplicate that
