@@ -92,6 +92,12 @@
       "note": "The streaming library, with patches of this fork (stats, reference frame invalidation, a faster rs.c). Port commits one at a time and keep the local patches; never replace the folder.",
       "decisions": [
         {
+          "commits": ["e80a786"],
+          "decision": "taken",
+          "in": "2.3.0",
+          "why": "ENet disconnects with a short header: the interceptor of the control stream sizes the ENet header by its sentTime flag and the checksum of the host instead of expecting exactly 4 bytes. So the unsequenced disconnect without sentTime that enet_peer_disconnect_now() sends, which Sunshine ends a session with, is held back until the control stream has processed what came before it, such as the termination message with the reason of the end. The peer check of 41cedb8 stays. tests/native/control_stream_disconnect_test.c runs it with the real ENet over the loopback interface. The other commits after 5d3c0ec are not reviewed yet, so reviewed_through stays."
+        },
+        {
           "commits": ["0fa805d", "dff1690", "20c05ed", "342b106", "aeba988", "4a95eb3", "0405384", "448b2c6"],
           "decision": "taken",
           "in": "2.1.0",
@@ -266,7 +272,7 @@
       "reviewed_through": "bf9ce40affd94b274f4150d2630954c12aea79fd",
       "reviewed_state": "open",
       "reviewed_on": "2026-10-30",
-      "note": "The host side of Dolby passthrough to a soundbar.",
+      "note": "The host side of Dolby passthrough to a soundbar. Vibeshine ships AC-3 and E-AC-3 in its stable releases since 2.0.2, with the same negotiation as fidoboy's fork; Moonlight Plus still waits for a check on a TV before it offers Dolby.",
       "decisions": [
         {
           "commits": ["bf9ce40"],

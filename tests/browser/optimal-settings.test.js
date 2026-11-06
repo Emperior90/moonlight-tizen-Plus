@@ -259,7 +259,7 @@ test('a TV whose product APIs fail still starts, with the defaults of a Full HD 
     assert.deepEqual([shown.resolution, shown.hdr, shown.bitrate, shown.unlockAllFps, shown.codec], ['1920:1080', false, '25', false, 'HEVC']);
     const systemInfo = await app.page.evaluate(() => document.getElementById('systemInfoBtn').innerHTML.replace(/<br\s*\/?>/g, '\n'));
     assert.equal(systemInfo, [
-      'App Version: Moonlight Plus v2.2.1',
+      'App Version: Moonlight Plus v2.3.0',
       'Platform Version: Tizen Unknown',
       // Neither the firmware of the product information nor the build string of Tizen (getCapability() fails as well)
       'TV Firmware Version: Unknown',
