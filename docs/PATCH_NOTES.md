@@ -22,13 +22,14 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 > **Install:** by hand over 2.2.1 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >
-> **Tested:** with simulated TVs, hosts and controllers only; the new frame pacing still needs a test on a TV.
+> **Tested:** with simulated TVs, hosts and controllers only; the new frame pacing and the AV1 HDR metadata still need a test on a TV.
 
 ### New
 
 - *Refresh picture* in the Stream Menu clears a broken picture with one new keyframe, without ending the stream
 - System information shows the TV firmware and the version of its video player
 - The last-session report adds the PC frame rate and encode time, with hints for 59.94 Hz or a slow encoder
+- *HDR static metadata* (experimental) now works with AV1 as well as HEVC
 
 ### Changed
 
