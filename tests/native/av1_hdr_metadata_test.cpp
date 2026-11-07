@@ -1,6 +1,6 @@
 // Pins wasm/av1_hdr_metadata.hpp: the metadata OBUs of the HDR10 static metadata that VidDecSubmitDecodeUnit() inserts
 // into the keyframes of an AV1 HDR stream while 'HDR static metadata' is on, byte for byte against values worked out by
-// hand from the AV1 specification (sections 5.3.1 to 5.3.3, 5.8.1, 5.8.3, 5.8.4, 6.7.3 and 6.7.4): the OBU header and
+// hand from the AV1 specification (sections 5.3.1 to 5.3.4, 5.8.1, 5.8.3, 5.8.4, 6.2.4, 6.7.3 and 6.7.4): the OBU header and
 // size, the metadata type, the chromaticities as 0.16 fixed point in red, green, blue order, the luminances as 24.8 and
 // 18.14 fixed point, and the trailing bits; and where they go in a temporal unit (right after the sequence header), with
 // temporal units that have no sequence header, already carry the metadata, or can't be read left as they are.
@@ -141,6 +141,18 @@ static void TheMetadataGoesRightAfterTheSequenceHeader() {
   CHECK_EQ(info.sequenceHeaderEnd, kTemporalDelimiter.size() + kSequenceHeader.size());
 }
 
+static void AFrameLongerThanTheMetadataMovesIntact() {
+  // 200 bytes after the sequence header: the moved part overlaps its new place, which memmove has to handle
+  Bytes frame = {0x32, 0xC5, 0x01};
+  for (int i = 0; i < 197; i++) {
+    frame.push_back((unsigned char)(i * 13));
+  }
+  Av1HdrMetadataResult result;
+  const Bytes withMetadata = Insert(Join({kTemporalDelimiter, kSequenceHeader, frame}), Bt2020Display(), result);
+  CHECK(result == Av1HdrMetadataResult::kInserted);
+  CHECK(withMetadata == Join({kTemporalDelimiter, kSequenceHeader, kMdcvObu, kCllObu, frame}));
+}
+
 static void ASequenceHeaderWithAnExtensionHeaderIsReadToo() {
   // obu_extension_flag set: one more byte after the OBU header (temporal_id 0, spatial_id 0)
   const Bytes sequenceHeader = {0x0E, 0x00, 0x03, 0x00, 0x00, 0x00};
@@ -221,6 +233,7 @@ int main() {
   test_support::RunTest("without light levels only the mastering display is written", WithoutLightLevelsOnlyTheMasteringDisplayIsWritten);
   test_support::RunTest("the fixed-point values round and stay in range", TheFixedPointValuesRoundAndStayInRange);
   test_support::RunTest("the metadata goes right after the sequence header", TheMetadataGoesRightAfterTheSequenceHeader);
+  test_support::RunTest("a frame longer than the metadata moves intact", AFrameLongerThanTheMetadataMovesIntact);
   test_support::RunTest("a sequence header with an extension header is read too", ASequenceHeaderWithAnExtensionHeaderIsReadToo);
   test_support::RunTest("a frame without a sequence header stays as it is", AFrameWithoutASequenceHeaderStaysAsItIs);
   test_support::RunTest("metadata that the host sent is not added twice", MetadataThatTheHostSentIsNotAddedTwice);

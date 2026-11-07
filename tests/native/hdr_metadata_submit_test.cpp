@@ -145,8 +145,7 @@ static void StartStream(int videoFormat, bool metadataSwitch) {
   s_frameDuration = TimeStamp(1.0 / 60);
   s_pktPts = 0s;
   s_FramePacingEnabled = false;
-  s_HdrMetadataEnabled = metadataSwitch;
-  s_Av1HdrMetadataLogged = 0;
+  ResetHdrMetadataState(metadataSwitch);
   s_DecodeBuffer.resize(INITIAL_DECODE_BUFFER_LEN);
   s_StatString.assign(4096, 0);
   ResetFrameIntervalClock(s_HostIntervalClock);
@@ -216,7 +215,8 @@ static void Av1KeyframesGetTheMetadataAfterTheSequenceHeader() {
   StartStream(VIDEO_FORMAT_AV1_MAIN10, true);
   SubmitOk(1, true, {{BUFFER_TYPE_PICDATA, Join({kAv1Head, kAv1Frame})}});
   SubmitOk(2, false, {{BUFFER_TYPE_PICDATA, Join({Bytes{0x12, 0x00}, kAv1Frame})}});
-  // A keyframe that comes in two buffers (moonlight-common-c doesn't split AV1 frames, but nothing relies on it)
+  // A keyframe that comes in two buffers: moonlight-common-c queues each RTP packet of an AV1 frame as its own buffer
+  // (VideoDepacketizer.c, "Other codecs are just passed through as is"), so the metadata goes into the joined frame
   SubmitOk(3, true, {{BUFFER_TYPE_PICDATA, Bytes(kAv1Head.begin(), kAv1Head.begin() + 6)},
                             {BUFFER_TYPE_PICDATA, Join({Bytes(kAv1Head.begin() + 6, kAv1Head.end()), kAv1Frame})}});
   CHECK_EQ(appended.size(), (size_t)3);
@@ -226,6 +226,33 @@ static void Av1KeyframesGetTheMetadataAfterTheSequenceHeader() {
   // One line in the log per stream
   CHECK(HasLog("HDR static metadata: inserted into AV1 keyframes"));
   CHECK_EQ(logged.size(), (size_t)1);
+}
+
+// A real keyframe: hundreds of KB after the sequence header, so the insertion moves a tail that overlaps its new place,
+// and as large as the decode buffer, so the frame only fits with the room reserved for the metadata of a keyframe
+static void ALargeAv1KeyframeGetsTheMetadataWithinTheDecodeBuffer() {
+  StartStream(VIDEO_FORMAT_AV1_MAIN10, true);
+  s_DecodeBuffer.clear();
+  s_DecodeBuffer.shrink_to_fit();
+  s_DecodeBuffer.resize(INITIAL_DECODE_BUFFER_LEN);
+  // A frame OBU with a payload size of 3 bytes of leb128, so that the keyframe is 33 bytes short of the decode buffer
+  const size_t payloadSize = INITIAL_DECODE_BUFFER_LEN - 33 - kAv1Head.size() - 4;
+  Bytes frame = {0x32, (unsigned char)(0x80 | (payloadSize & 0x7F)), (unsigned char)(0x80 | ((payloadSize >> 7) & 0x7F)),
+                 (unsigned char)(payloadSize >> 14)};
+  for (size_t i = 0; i < payloadSize; i++) {
+    frame.push_back((unsigned char)(i * 7 + (i >> 8)));
+  }
+  const Bytes keyframe = Join({kAv1Head, frame});
+  CHECK_EQ(keyframe.size(), (size_t)INITIAL_DECODE_BUFFER_LEN - 33);
+  // In buffers of 1392 bytes, as the packets of a stream bring it
+  std::vector<std::pair<int, Bytes>> buffers;
+  for (size_t start = 0; start < keyframe.size(); start += 1392) {
+    const size_t end = std::min(keyframe.size(), start + 1392);
+    buffers.push_back({BUFFER_TYPE_PICDATA, Bytes(keyframe.begin() + start, keyframe.begin() + end)});
+  }
+  SubmitOk(1, true, buffers);
+  CHECK_EQ(appended.size(), (size_t)1);
+  CHECK(appended[0] == Join({kAv1Head, kAv1Metadata, frame}));
 }
 
 static void Av1FramesStayAsTheyAreWithoutTheSwitchOrTheMetadata() {
@@ -286,6 +313,7 @@ static void AKeyframeIsRequestedWhenTheMetadataArrivesDuringAStream() {
 
 int main() {
   test_support::RunTest("AV1 keyframes get the metadata after the sequence header", Av1KeyframesGetTheMetadataAfterTheSequenceHeader);
+  test_support::RunTest("a large AV1 keyframe gets the metadata within the decode buffer", ALargeAv1KeyframeGetsTheMetadataWithinTheDecodeBuffer);
   test_support::RunTest("AV1 frames stay as they are without the switch or the metadata", Av1FramesStayAsTheyAreWithoutTheSwitchOrTheMetadata);
   test_support::RunTest("an AV1 keyframe without a sequence header is logged once", AnAv1KeyframeWithoutASequenceHeaderIsLoggedOnce);
   test_support::RunTest("HEVC keyframes still get the SEI before the first slice", HevcKeyframesStillGetTheSeiBeforeTheFirstSlice);

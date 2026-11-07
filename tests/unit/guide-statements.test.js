@@ -22,7 +22,7 @@
 //   configuration of Sunshine that is off by default and follows the Video HDR switch that every start sends, the
 //   reconnects of the app that speak against reverting it at every disconnect, the virtual display of Apollo that the
 //   app never asks for, the 4:2:0 formats that are the only ones the app asks for, the HDR static metadata that only
-//   goes into HEVC, and the switch that keeps the sound off the speakers of the host
+//   goes into HEVC and AV1, and the switch that keeps the sound off the speakers of the host
 // - the latency modes of the Ultra low latency switch and the Game Mode that only the ForceGM variant asks for, which
 //   the TV picture settings and the fallback for a corrupted picture above 1080p build on
 // The release notes of a release (docs/RELEASE_NOTES.md) only give the essentials, so the statements that they

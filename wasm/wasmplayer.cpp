@@ -291,6 +291,12 @@ static bool s_HdrMetadataEnabled = false;
 // The results of InsertAv1HdrMetadata() (one bit each) that the stream has logged, so that each shows once per stream
 static unsigned s_Av1HdrMetadataLogged = 0;
 
+// Start the HDR metadata state of a new stream: whether 'HDR static metadata' is on, and nothing logged about it yet
+static void ResetHdrMetadataState(bool enabled) {
+  s_HdrMetadataEnabled = enabled;
+  s_Av1HdrMetadataLogged = 0;
+}
+
 static uint32_t total_bytes = 0;
 static int m_LastFrameNumber = 0;
 
@@ -951,8 +957,7 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
   s_FramePacingEnabled = g_Instance->m_FramePacingEnabled;
 
   // Set the HDR metadata flag based on instance configuration
-  s_HdrMetadataEnabled = g_Instance->m_HdrMetadataEnabled;
-  s_Av1HdrMetadataLogged = 0;
+  ResetHdrMetadataState(g_Instance->m_HdrMetadataEnabled);
 
   // Preallocate space for the performance stats string
   s_StatString.assign(4096, 0);
