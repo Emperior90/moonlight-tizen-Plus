@@ -177,7 +177,7 @@ test('the guide names the end of the slider and of the Stream Menu, and what a b
   assert.ok(above.length > 0, 'the guide has the section Above 150 Mbps');
   assert.match(above, /The slider and the Stream Menu go up to 250 Mbps/);
   assert.match(above, /Only a strong 5 GHz or 6 GHz Wi-Fi link close to the router carries that much; the Ethernet port of the TV has 100 Mbps\./);
-  assert.match(above, /If `max_bitrate` of Sunshine is set, it must allow the bitrate/);
+  assert.match(above, /If `max_bitrate` of Sunshine is set, it must allow the bitrate with AMD, Intel and software encoding and on Linux; Sunshine's NVENC encoder on Windows ignores it/);
   assert.match(above, /The bitrate warning of the TV stays \(above 150 Mbps on the S90C\)/);
   assert.doesNotMatch(GUIDE, /goes up to 150 Mbps|up to the decoder cap of the TV \(100 Mbps|Above the decoder cap of the TV \(100 Mbps/);
 });
@@ -364,7 +364,13 @@ test('the guide gives the share of the bitrate that Sunshine leaves to the encod
   // moonlight-common-c asks for at least 2 parity packets per FEC block, which Sunshine adds to every block
   assert.match(read('moonlight-common-c/src/SdpGenerator.c'), /"x-nv-vqos\[0\]\.fec\.minRequiredFecPackets", "2"\)/);
   assert.match(fec, /at least 2 parity packets in every block of a frame, so 2 lost packets in a block are always repaired/);
-  assert.match(fec, /20 → 10 → 5/);
+  assert.match(fec, /20 → 10 → 5 \(not 0, see \[Host settings\]/);
+  // The stable Sunshine and its forks accept fec_percentage 1 to 255 (int_between_f in src/config.cpp keeps the default
+  // for any other value); only the Sunshine pre-releases from v2026.1103 on accept 0, which turns FEC off
+  const host = guideSection('## Host settings (Sunshine)');
+  assert.match(host, /accept 1 to 255 and ignore any other value without a warning, so 0 leaves it at 20\. Only the Sunshine pre-releases from v2026\.1103 on accept 0, which turns error correction off/);
+  // max_bitrate is only read by the avcodec encoders; the NVENC encoder of Sunshine on Windows takes the client bitrate
+  assert.match(host, /caps the bitrate of the encoder \(after error correction and audio\) with AMD, Intel and software encoding and on Linux; Sunshine's NVENC encoder on Windows ignores it/);
   assert.match(fec, /as long as \*Session frames dropped by network\* stays at 0 and \*Worst FEC block\* doesn't often come close to its limit/);
   assert.match(fec, /If losses appear, first raise it to 10 again at the same bitrate/);
   assert.match(fec, /the TV decodes more video bits at the same bitrate setting/);
@@ -472,13 +478,21 @@ test('the guide describes the latency modes and the Game Mode of the two files a
   assert.match(forceGm, /lost it only with a build that never asks for Game Mode, as `Moonlight\.wgt` with the \*Ultra low latency mode\* switch off does/);
   // The section on the picture settings of the TV and what it recommends
   const picture = guideSection('## TV picture settings');
-  for (const [setting, value] of [['Sharpness', '0. A few steps are fine at 1080p or 1440p'], ['Contrast Enhancer', 'Off'],
+  for (const [setting, value] of [['Picture Mode', 'Movie for SDR, Filmmaker Mode (or Movie) for HDR'], ['Color Space', 'Auto'],
+    ['Sharpness', '0. A few steps are fine at 1080p or 1440p'], ['Contrast Enhancer', 'Off'],
     ['Noise Reduction (on older models Digital Clean View)', 'Off'], ['Picture Clarity (on older models Auto Motion Plus)', 'Off'],
-    ['Auto HDR Remastering', 'Off'], ['Color Tone', 'Warm2'], ['HDR Tone Mapping', 'Static']]) {
+    ['Auto HDR Remastering', 'Off'], ['Color Tone', 'Warm2'], ['HDR Tone Mapping', 'Static'], ['Shadow Detail', '0'],
+    ['Local Dimming (LED and Mini LED models)', 'High']]) {
     const cells = tableRow(setting);
     assert.equal(cells[1].indexOf(value), 0, setting + ': ' + cells[1]);
   }
   assert.match(picture, /\*\*Game HDR:\*\* \*Basic\* \(HGiG\)\. The TV then doesn't tone-map HDR itself/);
+  // Foundation Sunshine sends HDR10+ to a client that reports no dynamic HDR capabilities, as this app; the other hosts
+  // of the Sunshine family send none
+  assert.match(picture, /\*\*HDR10\+ Gaming:\*\* off\. It is a feature for HDMI sources\. LizardByte Sunshine, Apollo and Vibepollo send no HDR10\+ metadata; Foundation Sunshine sends HDR10\+ dynamic metadata/);
+  assert.doesNotMatch(GUIDE, /Neither Sunshine nor the app sends HDR10\+ metadata/);
+  assert.match(picture, /\*\*Dynamic Black Equalizer:\*\* 0\./);
+  assert.match(picture, /Some features of the TV belong to its HDMI inputs and do nothing for the stream of an app: VRR and FreeSync, ALLM/);
   assert.match(picture, /The menu names vary by model year/);
   // Samsung names no single enhancement that the Ultra Low Latency mode turns off, and its game mode is what the Game
   // Mode entries belong to, so the section applies with the switch on as well

@@ -251,7 +251,7 @@ If a long session stutters after a while, note the time and the lines above: the
 The slider and the Stream Menu go up to 250 Mbps, for TVs and networks that handle more than the careful defaults:
 
 - Only a strong 5 GHz or 6 GHz Wi-Fi link close to the router carries that much; the Ethernet port of the TV has 100 Mbps. Sunshine fits its error correction (`fec_percentage`, 20 % by default) and the audio into the bitrate, so at 250 Mbps the encoder gets about 200 Mbps, and the network carries a few percent more for the packet headers.
-- If `max_bitrate` of Sunshine is set, it must allow the bitrate (see [Host settings](#host-settings-sunshine)). Sunshine older than v0.22.0 (March 2024) gives the encoder only 80 % of the bitrate and at most 100 Mbps, so update it first.
+- If `max_bitrate` of Sunshine is set, it must allow the bitrate with AMD, Intel and software encoding and on Linux; Sunshine's NVENC encoder on Windows ignores it (see [Host settings](#host-settings-sunshine)). Sunshine older than v0.22.0 (March 2024) gives the encoder only 80 % of the bitrate and at most 100 Mbps, so update it first.
 - The bitrate warning of the TV stays (above 150 Mbps on the S90C), since bitrates this high are untested on every TV. Go back as soon as *Session frames dropped by the TV* or *TV player rejections* appear.
 
 ### Network and router
@@ -271,8 +271,8 @@ The values below are the defaults from the [Sunshine configuration documentation
 
 **All encoders**
 
-- `fec_percentage` (default 20): the share of error correction data, which comes out of the bitrate. Start with the default; [Error correction (FEC)](#error-correction-fec) says how far to lower it on a clean network, and when to raise it.
-- `max_bitrate` (default 0): 0 uses the bitrate that the app requests. Another value (in Kbps) caps it, so leave it at 0 or set it at least as high as the bitrate of the app, e.g. 250000 for 250 Mbps.
+- `fec_percentage` (default 20): the share of error correction data, which comes out of the bitrate. Start with the default; [Error correction (FEC)](#error-correction-fec) says how far to lower it on a clean network, and when to raise it. The stable release of Sunshine (v2026.914) and Apollo, Vibepollo and Vibeshine accept 1 to 255 and ignore any other value without a warning, so 0 leaves it at 20. Only the Sunshine pre-releases from v2026.1103 on accept 0, which turns error correction off: every lost packet then costs its whole frame, so don't use 0 over Wi-Fi. 5 is the lowest value worth using.
+- `max_bitrate` (default 0): 0 uses the bitrate that the app requests. Another value (in Kbps) caps the bitrate of the encoder (after error correction and audio) with AMD, Intel and software encoding and on Linux; Sunshine's NVENC encoder on Windows ignores it and always uses the bitrate of the app. Leave it at 0, or set it at least as high as the bitrate of the app, e.g. 250000 for 250 Mbps.
 - `minimum_fps_target` (*Minimum FPS Target*, default 0): leave it at 0, which is half the frame rate of the stream. When the game shows no new image for that long (two frame durations), Sunshine encodes the last one again and sends it: a game a little below the stream rate sends such repeats only now and then, a still scene one every two frame durations, and 24 or 25 FPS video in a 60 FPS stream from a 60 Hz PC display one after about every second image. Set to the frame rate of the stream, Sunshine repeats the image after every frame duration without a new one; these repeats go out late, and the frame pacing of the TV gives each of them only 1 ms, so they don't make the motion smoother.
 - `hevc_mode` and `av1_mode` (default 0): Sunshine offers HEVC and AV1 when its encoder supports them. When the host can't encode the selected codec or 10-bit video, the app falls back (HEVC instead of AV1, SDR instead of HDR) and shows a notice.
 - Set the host display to exactly 60 Hz (or 120 Hz for 120 FPS streams), not 59.94 Hz. *Host frame rate (30 s)* shows what the host delivers.
@@ -317,7 +317,7 @@ A higher `nvenc_preset` (default 1, the fastest) compresses better at the cost o
 Sunshine sends error correction data (FEC) with every video frame, so that the TV can repair lost packets without waiting for a new keyframe. `fec_percentage` (default 20) sets its share, and it comes out of the bitrate of the app: Sunshine gives the encoder the bitrate × (100 − FEC) / 100, minus the audio and about 0.5 Mbps. At 150 Mbps, the video gets about 119 Mbps at FEC 20 and about 141 Mbps at FEC 5. The tested S90C streams 150 Mbps with FEC 5 over 5 GHz Wi-Fi.
 
 - Moonlight asks the host for at least 2 parity packets in every block of a frame, so 2 lost packets in a block are always repaired, also at a low FEC.
-- On a clean network, lower it step by step, 20 → 10 → 5, with a long session in the same demanding game for each step (as in [Finding your bitrate](#finding-your-bitrate)), as long as *Session frames dropped by network* stays at 0 and *Worst FEC block* doesn't often come close to its limit (see [Performance statistics](#performance-statistics)).
+- On a clean network, lower it step by step, 20 → 10 → 5 (not 0, see [Host settings](#host-settings-sunshine)), with a long session in the same demanding game for each step (as in [Finding your bitrate](#finding-your-bitrate)), as long as *Session frames dropped by network* stays at 0 and *Worst FEC block* doesn't often come close to its limit (see [Performance statistics](#performance-statistics)).
 - If losses appear, first raise it to 10 again at the same bitrate, before you lower the bitrate.
 - After lowering FEC, the TV decodes more video bits at the same bitrate setting (at 150 Mbps about 141 instead of 119 Mbps), so check the bitrate again and watch *Session frames dropped by the TV*: a bitrate that passed at FEC 20 can fail at FEC 5 on a TV near the limit of its decoder.
 - The value applies to every device that streams from this host, also to phones or laptops on weaker Wi-Fi.
@@ -355,6 +355,8 @@ Change them while a stream runs, so that they apply to the stream's picture mode
 
 | Setting | For a stream |
 |---|---|
+| Picture Mode | Movie for SDR, Filmmaker Mode (or Movie) for HDR, where the TV lets you choose it; in Game Mode the TV may lock it. |
+| Color Space | Auto. *Native* stretches every signal to the colors of the panel and can oversaturate them; an SDR stream is BT.709. |
 | Sharpness | 0. A few steps are fine at 1080p or 1440p, which the TV scales up. |
 | Contrast Enhancer | Off |
 | Noise Reduction (on older models Digital Clean View) | Off |
@@ -362,13 +364,20 @@ Change them while a stream runs, so that they apply to the stream's picture mode
 | Auto HDR Remastering | Off, so that an SDR stream stays SDR |
 | Color Tone | Warm2 |
 | HDR Tone Mapping | Static. Active brightens the picture and can clip the brightest details. |
+| Shadow Detail | 0, where the TV offers it |
+| Local Dimming (LED and Mini LED models) | High; lower it if bright text of the game glows into the dark areas around it |
 | Intelligent Mode, eco and brightness optimization | Off, so that the brightness doesn't follow the light of the room |
+
+Check the table once during an SDR stream and once during an HDR stream: the TV can keep separate picture settings for each.
 
 Under Connection → Game Mode Settings (on some models in a submenu such as *Game Picture Expert*), if these entries appear during a stream; they may apply to HDMI inputs only, or be missing on some firmware:
 
 - **Game HDR:** *Basic* (HGiG). The TV then doesn't tone-map HDR itself, so set the peak brightness on the host with the Windows HDR Calibration app (see [HDR calibration](#hdr-calibration)). *HDR static metadata* of the app has no effect then.
-- **HDR10+ Gaming:** off. Neither Sunshine nor the app sends HDR10+ metadata.
+- **HDR10+ Gaming:** off. It is a feature for HDMI sources. LizardByte Sunshine, Apollo and Vibepollo send no HDR10+ metadata; Foundation Sunshine sends HDR10+ dynamic metadata in HEVC and AV1 HDR streams by default, also to Moonlight Plus, and whether the video player of the TV uses it is untested.
+- **Dynamic Black Equalizer:** 0. It brightens dark scenes, and with them the blocks of the compressed picture.
 - **Game Motion Plus:** owners of an S90C or S95C report raised or noisy near-black at 60 Hz in Game Mode, which some of them avoided with Game Motion Plus on and both its sliders (Blur Reduction and Judder Reduction) at 0, while one owner still saw it with both at 0. These reports are about HDMI sources, and it may add some latency: compare both.
+
+Some features of the TV belong to its HDMI inputs and do nothing for the stream of an app: VRR and FreeSync, ALLM, *Input Signal Plus*, *HDMI Black Level*, the PC mode and the Game Bar. For a stream, capping the game at the frame rate of the stream on the host takes the place of VRR (see [Host settings](#host-settings-sunshine)). Samsung notes that the upscaling of the TV may not apply in Game Mode, so where the bitrate allows it, stream at the native resolution of the panel.
 
 ## HDR
 
