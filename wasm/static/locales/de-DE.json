@@ -117,7 +117,7 @@
   "Reference frame invalidation": "Referenzbild-Invalidierung",
   "- Recovers from packet loss without a full keyframe, which avoids traffic spikes and blurry frames. Disable it if artifacts remain after a frame drop.": "- Behebt Paketverluste ohne vollständigen Keyframe, was Lastspitzen im Netz und unscharfe Bilder vermeidet. Schalte sie aus, wenn nach einem Frame-Verlust Bildfehler bleiben.",
   "HDR static metadata": "Statische HDR-Metadaten",
-  "- Passes the HDR metadata of the display of the PC (peak brightness, color primaries) to the TV with every HEVC keyframe, so that its HDR tone mapping matches. Disable it if HDR streams fail to start or look wrong.": "- Übergibt dem TV mit jedem HEVC-Keyframe die HDR-Metadaten des PC-Bildschirms (Spitzenhelligkeit, Primärfarben), damit sein HDR-Tone-Mapping passt. Schalte sie aus, wenn HDR-Streams nicht starten oder falsch aussehen.",
+  "- Passes the HDR metadata of the display of the PC (peak brightness, color primaries) to the TV with every HEVC and AV1 keyframe, so that its HDR tone mapping matches. Disable it if HDR streams fail to start or look wrong.": "- Übergibt dem TV mit jedem HEVC- und AV1-Keyframe die HDR-Metadaten des PC-Bildschirms (Spitzenhelligkeit, Primärfarben), damit sein HDR-Tone-Mapping passt. Schalte sie aus, wenn HDR-Streams nicht starten oder falsch aussehen.",
   "Decrypt host audio": "Host-Audio entschlüsseln",
   "- This is only necessary for Wolf and Punktfunk-style hosts that encrypt GameStream audio without advertising it.": "- Nur nötig für Hosts wie Wolf und Punktfunk, die GameStream-Audio verschlüsseln, ohne es anzukündigen.",
   "System information": "Systeminformationen",

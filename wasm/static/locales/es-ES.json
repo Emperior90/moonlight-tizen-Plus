@@ -117,7 +117,7 @@
   "Reference frame invalidation": "Invalidación de fotogramas de referencia",
   "- Recovers from packet loss without a full keyframe, which avoids traffic spikes and blurry frames. Disable it if artifacts remain after a frame drop.": "- Recupera la pérdida de paquetes sin un fotograma clave completo, lo que evita picos de tráfico y fotogramas borrosos. Desactívala si quedan artefactos tras perder un fotograma.",
   "HDR static metadata": "Metadatos estáticos HDR",
-  "- Passes the HDR metadata of the display of the PC (peak brightness, color primaries) to the TV with every HEVC keyframe, so that its HDR tone mapping matches. Disable it if HDR streams fail to start or look wrong.": "- Pasa al televisor los metadatos HDR de la pantalla del PC (brillo máximo, colores primarios) con cada fotograma clave HEVC, para que su mapeo de tonos HDR coincida. Desactívalos si las transmisiones HDR no se inician o se ven mal.",
+  "- Passes the HDR metadata of the display of the PC (peak brightness, color primaries) to the TV with every HEVC and AV1 keyframe, so that its HDR tone mapping matches. Disable it if HDR streams fail to start or look wrong.": "- Pasa al televisor los metadatos HDR de la pantalla del PC (brillo máximo, colores primarios) con cada fotograma clave HEVC y AV1, para que su mapeo de tonos HDR coincida. Desactívalos si las transmisiones HDR no se inician o se ven mal.",
   "Decrypt host audio": "Descifrar el audio del servidor",
   "- This is only necessary for Wolf and Punktfunk-style hosts that encrypt GameStream audio without advertising it.": "- Solo es necesario para servidores como Wolf o Punktfunk que cifran el audio de GameStream sin anunciarlo.",
   "System information": "Información del sistema",

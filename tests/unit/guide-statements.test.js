@@ -22,7 +22,7 @@
 //   configuration of Sunshine that is off by default and follows the Video HDR switch that every start sends, the
 //   reconnects of the app that speak against reverting it at every disconnect, the virtual display of Apollo that the
 //   app never asks for, the 4:2:0 formats that are the only ones the app asks for, the HDR static metadata that only
-//   goes into HEVC, and the switch that keeps the sound off the speakers of the host
+//   goes into HEVC and AV1, and the switch that keeps the sound off the speakers of the host
 // - the latency modes of the Ultra low latency switch and the Game Mode that only the ForceGM variant asks for, which
 //   the TV picture settings and the fallback for a corrupted picture above 1080p build on
 // The release notes of a release (docs/RELEASE_NOTES.md) only give the essentials, so the statements that they
@@ -506,14 +506,19 @@ test('the guide describes the latency modes and the Game Mode of the two files a
   assert.match(microStutter, /With `Moonlight\.wgt` this also gives up the game mode that the Ultra Low Latency mode turns on; the ForceGM variant with the switch off keeps the Game Mode of the TV/);
 });
 
-test('the guide limits the HDR static metadata to HEVC, and names the switch that keeps the sound off the host speakers', () => {
-  // The metadata SEI goes only into HEVC keyframes (wasmplayer.cpp)
+test('the guide limits the HDR static metadata to HEVC and AV1, and names the switch that keeps the sound off the host speakers', () => {
+  // The metadata goes into HEVC keyframes as SEI messages and into AV1 keyframes as metadata OBUs (wasmplayer.cpp), and
+  // a host that sends it during the stream gets asked for a keyframe in both formats (ClSetHdrMode)
   const player = read('wasm/wasmplayer.cpp');
-  assert.match(player, /if \(enabled && s_HdrMetadataEnabled && \(s_VideoFormat & VIDEO_FORMAT_MASK_H265\) &&/);
-  assert.match(player, /\(s_VideoFormat & VIDEO_FORMAT_MASK_H265\) && LiGetHdrMetadata\(&hdrMetadata\) &&/);
+  assert.match(player, /if \(enabled && s_HdrMetadataEnabled && \(s_VideoFormat & \(VIDEO_FORMAT_MASK_H265 \| VIDEO_FORMAT_MASK_AV1\)\) &&/);
+  assert.match(player, /\(hevcStream \|\| av1Stream\) && LiGetHdrMetadata\(&hdrMetadata\) &&/);
+  assert.match(player, /if \(insertHdrMetadata && av1Stream\) \{/);
   const calibration = guideSection('### HDR calibration');
-  assert.match(calibration, /\*HDR static metadata\* passes the same values to the TV, in HEVC streams only\./);
-  assert.match(calibration, /With \*HDR static metadata\* on and HEVC, a virtual display that reports a very high peak/);
+  assert.match(calibration, /\*HDR static metadata\* passes the same values to the TV, in HEVC and AV1 streams\./);
+  assert.match(calibration, /With \*HDR static metadata\* on, a virtual display that reports a very high peak/);
+  assert.match(guideSection('## HDR'), /with every HEVC and AV1 keyframe, so that the tone mapping of the TV matches the host\. Sunshine's NVENC encoder writes only the color space into an AV1 stream and no HDR metadata/);
+  // The log line that the guide names is the one the module writes
+  assert.ok(player.indexOf('"HDR static metadata: inserted into AV1 keyframes (peak %u nits') >= 0);
   // Play audio on the PC (Audio Settings, off when nothing is stored) sends localAudioPlayMode, and with it Sunshine
   // keeps the sink of the host instead of the Steam Streaming Speakers
   const html = read('wasm/index.html');

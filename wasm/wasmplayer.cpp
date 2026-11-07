@@ -1,5 +1,6 @@
 #include "moonlight_wasm.hpp"
 #include "audio_stream_stats.hpp"
+#include "av1_hdr_metadata.hpp"
 #include "compact_stats.hpp"
 #include "frame_intervals.hpp"
 #include "player_errors.hpp"
@@ -29,9 +30,10 @@
 #define INITIAL_DECODE_BUFFER_LEN 1024 * 1024
 #define MAX_SPS_EXTRA_SIZE 32
 
-// Space reserved in an IDR frame for the HDR metadata SEI NAL units: two NAL units of at most
-// 6 + 2 + 24 + 1 bytes and 6 + 2 + 4 + 1 bytes, plus the emulation prevention bytes within them
+// Space reserved in an IDR frame for the HDR metadata: in HEVC two SEI NAL units of at most 6 + 2 + 24 + 1 bytes and
+// 6 + 2 + 4 + 1 bytes, plus the emulation prevention bytes within them; in AV1 two metadata OBUs of 28 and 8 bytes
 #define MAX_HDR_METADATA_SEI_SIZE 64
+static_assert(kAv1HdrMetadataMaxSize <= MAX_HDR_METADATA_SEI_SIZE, "room for the AV1 HDR metadata OBUs");
 
 using std::chrono_literals::operator""s;
 using std::chrono_literals::operator""ms;
@@ -286,6 +288,14 @@ static std::chrono::time_point<std::chrono::steady_clock> s_lastTime;
 static bool s_hasFirstFrame = false;
 static bool s_FramePacingEnabled = false;
 static bool s_HdrMetadataEnabled = false;
+// The results of InsertAv1HdrMetadata() (one bit each) that the stream has logged, so that each shows once per stream
+static unsigned s_Av1HdrMetadataLogged = 0;
+
+// Start the HDR metadata state of a new stream: whether 'HDR static metadata' is on, and nothing logged about it yet
+static void ResetHdrMetadataState(bool enabled) {
+  s_HdrMetadataEnabled = enabled;
+  s_Av1HdrMetadataLogged = 0;
+}
 
 static uint32_t total_bytes = 0;
 static int m_LastFrameNumber = 0;
@@ -551,13 +561,13 @@ bool MoonlightInstance::RefreshPicture() {
 }
 
 // The host sends its HDR metadata over the control channel, which can arrive after the first IDR frame was
-// submitted, or change when the host display switches HDR on mid-stream. The metadata SEI only goes into IDR
-// frames, so request one when the metadata becomes available during the stream. Before the track is open,
-// OnTrackOpen requests the IDR frame anyway.
+// submitted, or change when the host display switches HDR on mid-stream. The metadata (HEVC SEI messages, AV1 metadata
+// OBUs) only goes into IDR frames, so request one when the metadata becomes available during the stream. Before the
+// track is open, OnTrackOpen requests the IDR frame anyway.
 void MoonlightInstance::ClSetHdrMode(bool enabled) {
-  // Only worth a keyframe when the metadata would actually go into the SEI (same test as the submit path)
+  // Only worth a keyframe when the metadata would actually go into the frame (same test as the submit path)
   SS_HDR_METADATA hdrMetadata;
-  if (enabled && s_HdrMetadataEnabled && (s_VideoFormat & VIDEO_FORMAT_MASK_H265) &&
+  if (enabled && s_HdrMetadataEnabled && (s_VideoFormat & (VIDEO_FORMAT_MASK_H265 | VIDEO_FORMAT_MASK_AV1)) &&
       g_Instance != nullptr && g_Instance->m_VideoStarted && LiGetHdrMetadata(&hdrMetadata) &&
       hdrMetadata.maxDisplayLuminance != 0 && hdrMetadata.displayPrimaries[0].x != 0) {
     RequestIdrFrame();
@@ -947,7 +957,7 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
   s_FramePacingEnabled = g_Instance->m_FramePacingEnabled;
 
   // Set the HDR metadata flag based on instance configuration
-  s_HdrMetadataEnabled = g_Instance->m_HdrMetadataEnabled;
+  ResetHdrMetadataState(g_Instance->m_HdrMetadataEnabled);
 
   // Preallocate space for the performance stats string
   s_StatString.assign(4096, 0);
@@ -1536,10 +1546,13 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
   // Build one packet from multiple data chunks
   totalLength = decodeUnit->fullLength;
 
-  // HDR metadata is only inserted into the IDR frames of an HEVC stream, when the host provides it
+  // HDR metadata is only inserted into the IDR frames of an HEVC or AV1 stream, when the host provides it: as SEI
+  // messages before the first slice in HEVC, as metadata OBUs after the sequence header in AV1
   SS_HDR_METADATA hdrMetadata;
+  const bool hevcStream = (s_VideoFormat & VIDEO_FORMAT_MASK_H265) != 0;
+  const bool av1Stream = (s_VideoFormat & VIDEO_FORMAT_MASK_AV1) != 0;
   bool insertHdrMetadata = s_HdrMetadataEnabled && decodeUnit->frameType == FRAME_TYPE_IDR &&
-    (s_VideoFormat & VIDEO_FORMAT_MASK_H265) && LiGetHdrMetadata(&hdrMetadata) &&
+    (hevcStream || av1Stream) && LiGetHdrMetadata(&hdrMetadata) &&
     hdrMetadata.maxDisplayLuminance != 0 && hdrMetadata.displayPrimaries[0].x != 0;
 
   // Check if the frame type from the decoding unit is IDR frame
@@ -1565,7 +1578,7 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
   // Iterate through the buffer list of video data entries
   while (entry != NULL) {
     // Insert the HDR metadata SEI NAL units after the parameter sets, right before the first slice of the frame
-    if (insertHdrMetadata && entry->bufferType == BUFFER_TYPE_PICDATA) {
+    if (insertHdrMetadata && hevcStream && entry->bufferType == BUFFER_TYPE_PICDATA) {
       offset += WriteHdrMetadataSei(&s_DecodeBuffer[offset], hdrMetadata);
       insertHdrMetadata = false;
     }
@@ -1575,6 +1588,27 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     offset += entry->length;
     // Move to the next entry in the buffer list
     entry = entry->next;
+  }
+
+  // An AV1 frame comes as one temporal unit that moonlight-common-c doesn't parse, so the metadata OBUs go in once the
+  // whole frame is in the decode buffer, which has room for them (MAX_HDR_METADATA_SEI_SIZE)
+  if (insertHdrMetadata && av1Stream) {
+    size_t length = offset;
+    const Av1HdrMetadataResult result = InsertAv1HdrMetadata(s_DecodeBuffer.data(), length, hdrMetadata);
+    offset = static_cast<unsigned int>(length);
+    const unsigned resultBit = 1u << static_cast<unsigned>(result);
+    if ((s_Av1HdrMetadataLogged & resultBit) == 0) {
+      s_Av1HdrMetadataLogged |= resultBit;
+      if (result == Av1HdrMetadataResult::kInserted) {
+        ClLogMessage("HDR static metadata: inserted into AV1 keyframes (peak %u nits, MaxCLL %u, MaxFALL %u)\n",
+                     hdrMetadata.maxDisplayLuminance, hdrMetadata.maxContentLightLevel,
+                     hdrMetadata.maxFrameAverageLightLevel);
+      } else if (result == Av1HdrMetadataResult::kAlreadyPresent) {
+        ClLogMessage("HDR static metadata: the host already sends it in AV1 keyframes, nothing added\n");
+      } else {
+        ClLogMessage("HDR static metadata: an AV1 keyframe without a readable sequence header, nothing added\n");
+      }
+    }
   }
 
   // Get the current time

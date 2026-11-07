@@ -387,18 +387,18 @@ Some features of the TV belong to its HDMI inputs and do nothing for the stream 
 - H.264 has no HDR. If the host can't encode 10-bit video with the selected codec, the stream runs without HDR and the app shows a notice.
 - If you switch HDR on for a TV that doesn't report HDR support, the app warns that the picture may look washed out or the stream may fail to start.
 - *Full color range* (Settings → Advanced Settings): keep it off, so that the stream uses the limited range, the standard for video. Full range loses detail in dark and bright areas on a TV that doesn't show full range video properly. It applies only while HDR is off: with HDR on, the app always asks the host for the limited range, the range of HDR10.
-- *HDR static metadata* (Settings → Advanced Settings → *Experimental*, off by default) passes the HDR metadata of the host display to the TV with every HEVC keyframe, so that the tone mapping of the TV matches the host. Turn it off again if HDR streams fail to start or look wrong.
+- *HDR static metadata* (Settings → Advanced Settings → *Experimental*, off by default) passes the HDR metadata of the host display to the TV with every HEVC and AV1 keyframe, so that the tone mapping of the TV matches the host. Sunshine's NVENC encoder writes only the color space into an AV1 stream and no HDR metadata, so with an NVIDIA GPU this switch is the only way the TV learns the peak brightness of the host, as in HEVC; the diagnostic log shows a line *HDR static metadata: inserted into AV1 keyframes* with the values. Sunshine's AMD and Intel encoders, and the NVENC encoder of Vibepollo and Vibeshine with a current driver, write it into AV1 themselves; the app then adds nothing to AV1, and the log says *the host already sends it*. Sunshine on Windows reports no content light levels (MaxCLL, MaxFALL), so only the mastering display values go in. Turn it off again if HDR streams fail to start or look wrong.
 
 ### HDR calibration
 
-Sunshine reads the peak brightness of the host display (its *MaxLuminance*), and Windows, Auto HDR and HDR games tone-map to it; *HDR static metadata* passes the same values to the TV, in HEVC streams only. The peak of a monitor or a virtual display rarely matches the TV, so calibrate the host for the TV:
+Sunshine reads the peak brightness of the host display (its *MaxLuminance*), and Windows, Auto HDR and HDR games tone-map to it; *HDR static metadata* passes the same values to the TV, in HEVC and AV1 streams. The peak of a monitor or a virtual display rarely matches the TV, so calibrate the host for the TV:
 
 1. Start a stream of the desktop with HDR on, on the host and in the app.
 2. Run the Windows HDR Calibration app (Windows 11) inside the stream, and set each of its patterns by eye on the TV, not to a number. Windows saves the profile for that display.
 3. In each game, set its HDR peak brightness and paper white while you look at the TV.
 
 - Calibrate a display that only serves the stream, or a virtual display: a profile made through the stream for a physical monitor also changes how that monitor looks on the desk. Check that the profile still applies at the next stream, since some hosts create a new virtual display for every session.
-- With *HDR static metadata* on and HEVC, a virtual display that reports a very high peak (some report several thousand nits) reaches the TV as the peak of the content, and the TV may compress the highlights more than needed.
+- With *HDR static metadata* on, a virtual display that reports a very high peak (some report several thousand nits) reaches the TV as the peak of the content, and the TV may compress the highlights more than needed.
 - With Game HDR (HGiG) on the TV, the TV doesn't tone-map, so this calibration alone decides how the highlights look (see [TV picture settings](#tv-picture-settings)).
 - If HDR looks wrong in AV1, compare HEVC, and the other way round.
 
