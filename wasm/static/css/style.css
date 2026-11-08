@@ -2084,22 +2084,26 @@ dialog::backdrop {
   margin-right: var(--safe-x);
 }
 /* The Stream Menu has the most entries: a little tighter, so that all of them and the hint fit the safe area of the
-   screen also with the mouse emulation entry and 'Refresh picture' (13 entries) */
+   screen with the mouse emulation entry of a controller and the surround quality entry of a 5.1 or 7.1 stream (14
+   entries), and with the notes of a changed bitrate and a changed quality at the same time */
 .stream-menu .overlay-menu-header {
-  padding-bottom: 12px;
-}
-.stream-menu .overlay-menu-item {
-  min-height: 50px;
-  margin-bottom: 2px;
-  padding-top: 8px;
   padding-bottom: 8px;
 }
+.stream-menu .overlay-menu-item {
+  min-height: 46px;
+  margin-bottom: 2px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.stream-menu .overlay-menu-note {
+  margin-top: 2px;
+}
 .stream-menu .overlay-menu-group {
-  margin-top: 8px;
-  padding: 14px 0 8px;
+  margin-top: 4px;
+  padding: 12px 0 6px;
 }
 .stream-menu .overlay-menu-separator {
-  margin: 8px 18px 10px;
+  margin: 6px 18px 8px;
 }
 /* The text panel of 'Type text…' sits at the top, above the keyboard of the TV */
 #streamTextPanel {
@@ -2232,10 +2236,10 @@ dialog::backdrop {
 .overlay-menu-item[disabled] {
   opacity: 0.45;
 }
-/* The bitrate entry of the Stream Menu: its value between the arrows of LEFT and RIGHT, dimmed at a limit, and a note
-   on a line of its own under the label and the value while a new value waits for OK, as wide as the entry without its
-   icon */
-#streamMenuBitrate {
+/* The bitrate and surround quality entries of the Stream Menu: the value between the arrows of LEFT and RIGHT, dimmed at
+   a limit, and a note on a line of its own under the label and the value while a new value waits for OK, as wide as the
+   entry without its icon */
+#streamMenuBitrate, #streamMenuSurround {
   flex-wrap: wrap;
 }
 .overlay-menu-stepper {

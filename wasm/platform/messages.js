@@ -8,7 +8,7 @@ const SyncFunctions = {
   /* host, httpPort, width, height, fps, bitrate, rikey, rikeyid, appversion, gfeversion, rtspurl, serverCodecModeSupport,
   framePacing, optimizeGames, rumbleFeedback, mouseEmulation, controllerMappings, audioBackend,
   audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange, gameMode,
-  disableWarnings, performanceStats, refFrameInvalidation, hdrMetadata, controllerType */
+  disableWarnings, performanceStats, refFrameInvalidation, hdrMetadata, controllerType, surroundQuality */
   'startRequest': (...args) => Module.startStream(...args),
   // no parameters
   'stopRequest': (...args) => Module.stopStream(...args),
@@ -98,7 +98,8 @@ function replaceKnownStageLabels(text) {
 }
 
 // Translate the audio lines of the performance stats (FormatAudioStreamStats() in wasm/audio_stream_stats.hpp), e.g.
-// 'Audio stream: Opus 5.1 surround (6 channels), 5 ms packets, 512 kbps'
+// 'Audio stream: Opus 5.1 surround (6 channels), 5 ms packets, 512 kbps' and
+// 'Audio CPU: decode 11.80 ms/s (max 0.21 ms), output 0.42 ms/s (max 0.05 ms)'
 function replaceKnownAudioStatsLabels(text) {
   const layouts = {
     'Mono': t('Mono'),
@@ -112,6 +113,10 @@ function replaceKnownAudioStatsLabels(text) {
       return t('Audio stream:') + ' Opus ' + (layout ? layouts[layout] + ' (' + channelText + ')' : channelText) + ', ' +
         t('%1$s ms packets', packetMs);
     })
+    .replace(/Audio CPU: decode ([\d.]+) ms\/s \(max ([\d.]+) ms\), output ([\d.]+) ms\/s \(max ([\d.]+) ms\)/g,
+      function(match, decode, decodeMax, output, outputMax) {
+        return t('Audio CPU: decode %1$s ms/s (max %2$s ms), output %3$s ms/s (max %4$s ms)', decode, decodeMax, output, outputMax);
+      })
     .replace(/Session audio packets lost by network:/g, t('Session audio packets lost by network:'))
     .replace(/Session audio decode errors:/g, t('Session audio decode errors:'))
     .replace(/TV audio player rejections:/g, t('TV audio player rejections:'));
@@ -384,7 +389,7 @@ function drawStatsGraph(canvas, points) {
 // Whether the figures of the performance statistics belong on the screen: only while a stream runs. The video decoder
 // thread of the module can send one more 'StatMsg: ' or 'StatCompactMsg: ' after the end of the stream (until the stop
 // thread ends it), which would show the overlay over the app list, and the one of a stream that ended without video
-// would show over the launch screen of its retry (retryStreamAfterNoVideo() in index.js).
+// would show over the launch screen of its retry (retryStreamStart() in index.js).
 function isShowingStreamStats() {
   return isInGame === true && wasmSessionStarted === true;
 }
@@ -860,6 +865,9 @@ function showStreamTerminationMessage(errorCode, videoTrackRejection, blockedPor
     case -201: // ERROR_VIDEO_PLAYER_FAILED
       snackbarLogLong('The video player of the TV stopped with an error during the stream. Start the stream again; if it keeps happening, try a lower bitrate, resolution or frame rate.');
       break;
+    case -300: // ML_ERROR_RTSP_DECRYPT_FAILED of the local patch of moonlight-common-c (Limelight.h)
+      showHeldStartMessage();
+      break;
     default:
       // Name the error code, which a report of the problem needs
       snackbarLogLong('The connection to the PC was lost (error %1$s).', errorCode);
@@ -875,6 +883,12 @@ function showNoVideoMessage(blockedPorts) {
   } else {
     snackbarLogLong('No video received from the PC. Check the host PC\'s firewall and port forwarding rules.');
   }
+}
+
+// Tell the user that the PC still held an earlier start, which made it drop this one (ML_ERROR_RTSP_DECRYPT_FAILED,
+// error -300): instead of the ports of the RTSP handshake, which aren't blocked when the PC answers it
+function showHeldStartMessage() {
+  snackbarLogLong('The PC is still holding an earlier start, e.g. from another device. Wait a few seconds and start again.');
 }
 
 function dispatchMessage(msg) {
@@ -898,23 +912,30 @@ function dispatchMessage(msg) {
     var quitApp = quitAppAfterStream;
     quitAppAfterStream = false;
     streamMouseEmulationActive = false;
+    // A start that the host accepted and whose stream never connected may still be held by the host, which would drop
+    // the next start meanwhile (rememberEndedStreamStart() in index.js)
+    if (typeof rememberEndedStreamStart === 'function') {
+      runGuarded('rememberEndedStreamStart', function() { rememberEndedStreamStart(errorCode); });
+    }
     // Each step on its own (runGuarded()), so that an error in one of them can't leave the app in the stream view.
     // The Stream Menu belongs to the stream, and 'Quit app on the PC' to this end of it (menus.js)
     runGuarded('closeStreamMenu', function() { closeStreamMenu(false); });
-    // The bitrate entry of the Stream Menu ended the stream to resume it with a new bitrate: the launch screen shows
-    // until it reconnects (resumeStreamAfterBitrateChange() in index.js)
-    if (!quitApp && typeof resumeStreamAfterBitrateChange === 'function' && runGuarded('resumeStreamAfterBitrateChange', function() {
-      return resumeStreamAfterBitrateChange(errorCode);
+    // The bitrate or the surround quality entry of the Stream Menu ended the stream to resume it with new settings: the
+    // launch screen shows until it reconnects (resumeStreamAfterSettingsChange() in index.js)
+    if (!quitApp && typeof resumeStreamAfterSettingsChange === 'function' && runGuarded('resumeStreamAfterSettingsChange', function() {
+      return resumeStreamAfterSettingsChange(errorCode);
     }) === true) {
       // As for the retry below: the rumble of this session is ignored from now on, so stop what the host left on
       runGuarded('Rumble.stopAll', function() { Rumble.stopAll(); });
       return;
     }
-    // No video arrived from the host at the start of the stream, e.g. since its display or encoder was still warming
-    // up: start it once more without a word, and show the message below only if that fails as well
-    // (retryStreamAfterNoVideo() in index.js)
-    if (errorCode === -100 && !quitApp && typeof retryStreamAfterNoVideo === 'function' && runGuarded('retryStreamAfterNoVideo', function() {
-      return retryStreamAfterNoVideo(blockedPorts);
+    // No video arrived from the host at the start of the stream (-100), e.g. since its display or encoder was still
+    // warming up, or the host answered the RTSP handshake with the key of an earlier start that it still held (-300):
+    // start it once more without a word (after the host released that start), and show the message below only if that
+    // fails as well (retryStreamStart() in index.js, with its kinds STREAM_RESTART_NO_VIDEO and STREAM_RESTART_HELD_START)
+    var retryKind = errorCode === -100 ? 'noVideo' : errorCode === -300 ? 'heldStart' : '';
+    if (retryKind && !quitApp && typeof retryStreamStart === 'function' && runGuarded('retryStreamStart', function() {
+      return retryStreamStart(retryKind, blockedPorts);
     }) === true) {
       // Stop the rumble that the host left on, as leaveStreamView() does at the end of a stream: the retry is a new
       // session with a new controller, for which the host sends no 0, and the rumble of this one is ignored from now on
@@ -926,6 +947,14 @@ function dispatchMessage(msg) {
     runGuarded('showStreamTerminationMessage', function() {
       showStreamTerminationMessage(errorCode, videoTrackRejection, blockedPorts);
     });
+  } else if (msg === 'ControlStreamConnected') {
+    // The control stream of the starting stream connected (ClStageComplete() in wasm/connectionlistener.cpp), which
+    // releases the start on the host: a stream that ends from now on, before 'Connection Established' (RED while the
+    // video stream starts, or a later stage that fails), leaves no start behind that the next one would have to wait
+    // for (rememberEndedStreamStart() in index.js). Only for a stream that is still starting, as below.
+    if (isInGame === true) {
+      streamLaunchAnsweredAt = 0;
+    }
   } else if (msg === 'Connection Established') {
     // A connection that completes after the user already stopped the stream or cancelled its start must neither
     // show the video nor turn the screensaver off in the menus
@@ -933,6 +962,8 @@ function dispatchMessage(msg) {
       return;
     }
     isStreamConnected = true;
+    // The control stream connected before, which released the start on the host ('ControlStreamConnected' above)
+    streamLaunchAnsweredAt = 0;
     // Keep the screensaver of the TV off during a session played only with a gamepad
     setTvScreenSaver(false);
     // Prepare the screen for video stream

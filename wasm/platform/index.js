@@ -37,9 +37,12 @@ var streamLaunchId = 0; // Number of the latest stream launch, which replies of 
 var streamLaunchHost = null; // Host of the latest stream launch, initial value is null
 var streamLaunchAppTitle = ''; // Title of the app of the latest stream launch, which the Stream Menu shows, initial value is empty
 var streamLaunchAppId = null; // ID of the app of the latest stream launch, which a retry after no video starts again, initial value is null
-var streamNoVideoRetried = false; // Flag indicating whether the latest stream launch is the retry after no video (retryStreamAfterNoVideo()), initial value is false
+var streamRetried = {}; // The kinds of start once more that the latest stream launch already had (retryStreamStart()), e.g. { noVideo: true }, initial value is empty
+var streamLaunchAnsweredAt = 0; // When the host accepted the launch or resume request of the latest stream launch (performance.now()), until its control stream connected or the stream ended, initial value is 0 (none)
+var heldHostStartUntil = {}; // Until when each host may still hold a start of this TV that never connected (performance.now(), rememberHeldHostStart()), keyed by server UID
 var streamBitrateMbps = 0; // Bitrate in Mbps of the latest stream launch, which the bitrate entry of the Stream Menu starts from, initial value is 0
-var pendingBitrateRestartMbps = 0; // Bitrate in Mbps that the stream reconnects with once it ended for the bitrate entry of the Stream Menu (restartStreamWithBitrate()), or 0
+var streamSurroundQuality = 'High'; // Surround audio quality of the latest stream launch ('High' or 'Efficient'), which the surround quality entry of the Stream Menu starts from
+var pendingStreamRestart = null; // The changed settings that the stream reconnects with once it ended for the Stream Menu (restartStreamWithSettings()), { bitrateMbps, surroundQuality } with either or both, or null
 var wasmSessionStarted = false; // Flag indicating whether the start request of the current stream reached the WASM module, initial value is false
 var isDialogOpen = false; // Flag indicating whether the dialog is open, initial value is false
 var isPairingInProgress = false; // Flag indicating whether a pairing process is in progress, initial value is false
@@ -204,6 +207,7 @@ function attachListeners() {
   $('.controllerTypeMenu li').on('click', saveControllerType);
   $('.audioBackendMenu li').on('click', saveAudioBackend);
   $('.audioConfigMenu li').on('click', saveAudioConfiguration);
+  $('.surroundQualityMenu li').on('click', saveSurroundQuality);
   $('#audioSyncSwitch').on('click', saveAudioSync);
   $('#audioClockSyncSwitch').on('click', saveAudioClockSync);
   $('#jitterSlider').on('input', saveAudioJitter);
@@ -243,6 +247,7 @@ function attachListeners() {
   registerMenu('selectControllerType', Views.SelectControllerTypeMenu);
   registerMenu('selectAudioBackend', Views.SelectAudioBackendMenu);
   registerMenu('selectAudio', Views.SelectAudioMenu);
+  registerMenu('selectSurroundQuality', Views.SelectSurroundQualityMenu);
   registerMenu('selectAudioJitter', Views.SelectAudioJitterMenu);
   registerMenu('selectCodec', Views.SelectCodecMenu);
   registerMenu('selectPerformanceStats', Views.SelectPerformanceStatsMenu);
@@ -3564,9 +3569,13 @@ function handleOnScreenOverlays() {
   showPerformanceStats('', false);
 }
 
-// The kinds of a start of the same app once more over the launch screen of the stream before it (startGame())
+// The kinds of a start of the same app once more over the launch screen of the stream before it (startGame()): after no
+// video arrived at the start of the stream and after the host answered its RTSP handshake with the key of an earlier
+// start that it still held (retryStreamStart()), and with new settings from the Stream Menu
+// (resumeStreamAfterSettingsChange())
 const STREAM_RESTART_NO_VIDEO = 'noVideo';
-const STREAM_RESTART_BITRATE = 'bitrate';
+const STREAM_RESTART_HELD_START = 'heldStart';
+const STREAM_RESTART_SETTINGS = 'settings';
 
 // Apollo answers the app list of a client without its permission 'List Apps' with one app of its own, 'Permission
 // Denied' with the ID 114514 (Apollo src/nvhttp.cpp; Vibepollo names it 'Permission denied - enable "List
@@ -3659,9 +3668,12 @@ function stopHeartbeatOfFailedStart(reason) {
 
 // Start the given appID. If another app is running, offer to quit it. Otherwise, if the given app is already running, just resume it.
 // restartKind marks the start of the same app once more, which the launch screen of the stream before it still shows
-// for: STREAM_RESTART_NO_VIDEO after no video arrived (retryStreamAfterNoVideo()), STREAM_RESTART_BITRATE after the
-// Stream Menu changed the bitrate (resumeStreamAfterBitrateChange()).
-function startGame(host, appID, restartKind) {
+// for: STREAM_RESTART_NO_VIDEO after no video arrived and STREAM_RESTART_HELD_START after the host still held an earlier
+// start (retryStreamStart()), STREAM_RESTART_SETTINGS after the Stream Menu changed the bitrate or the surround audio
+// quality (resumeStreamAfterSettingsChange()), with restartChange, what it changed ({ bitrateMbps, surroundQuality }, see
+// restartStreamWithSettings()). Before its launch or resume request, a start waits until the hold of an earlier start
+// of this TV that the host may still have is over (waitForHeldHostStart()).
+function startGame(host, appID, restartKind, restartChange) {
   var isRestart = !!restartKind;
   if (!host || !host.paired) {
     console.error('%c[index.js, startGame]', 'color: green;', 'Error: Attempted to start a game, but the host was not initialized properly! Host object: ', host);
@@ -3685,9 +3697,15 @@ function startGame(host, appID, restartKind) {
   var launchId = ++streamLaunchId;
   streamLaunchHost = host;
   streamLaunchAppId = appID;
-  // A reconnect with a new bitrate still gets its retry after no video
-  streamNoVideoRetried = restartKind === STREAM_RESTART_NO_VIDEO;
-  pendingBitrateRestartMbps = 0;
+  streamLaunchAnsweredAt = 0;
+  // Each kind of start once more runs once per launch (retryStreamStart()); a reconnect with new settings is a launch of
+  // its own, which still gets them
+  if (!restartKind || restartKind === STREAM_RESTART_SETTINGS) {
+    streamRetried = {};
+  } else {
+    streamRetried[restartKind] = true;
+  }
+  pendingStreamRestart = null;
   // A start once more is for the app of the stream before it, whose title its messages name
   if (!isRestart) {
     streamLaunchAppTitle = '';
@@ -3736,11 +3754,11 @@ function startGame(host, appID, restartKind) {
         return;
       }
       // A start once more only resumes the app that ran a moment ago, and asks nothing: one that can't ends
-      // (endStreamRestart()). The reconnect with a new bitrate also ends when nothing runs on the host any more (the
+      // (endStreamRestart()). The reconnect with new settings also ends when nothing runs on the host any more (the
       // game closed on the PC meanwhile), instead of launching the game anew; the retry after no video may launch it.
       if (isRestart && (!appToStart || (host.currentGame != 0 && host.currentGame != appID) ||
-          (restartKind === STREAM_RESTART_BITRATE && host.currentGame == 0))) {
-        endStreamRestart(restartKind, 'the app ' + appID + ' is not available, no longer runs or another app runs on the host');
+          (restartKind === STREAM_RESTART_SETTINGS && host.currentGame == 0))) {
+        endStreamRestart(restartKind, 'the app ' + appID + ' is not available, no longer runs or another app runs on the host', restartChange);
         return;
       }
       if (host.currentGame != 0 && host.currentGame != appID && !isHostTerminateTile(appToStart)) {
@@ -3822,6 +3840,9 @@ function startGame(host, appID, restartKind) {
       var controllerType = $('#selectControllerType').data('value').toString();
       var audioBackend = $('#selectAudioBackend').data('value').toString();
       var audioConfig = $('#selectAudio').data('value').toString();
+      // The setting goes to the module for every audio configuration; the module applies it to 5.1 and 7.1 only
+      // (audio_capabilities.h)
+      var surroundQuality = getSurroundQuality();
       const audioSync = $('#audioSyncSwitch').parent().hasClass('is-checked') ? 1 : 0;
       const audioJitter = parseInt($('#jitterSlider').val());
       const playHostAudio = $('#playHostAudioSwitch').parent().hasClass('is-checked') ? 1 : 0;
@@ -3855,6 +3876,7 @@ function startGame(host, appID, restartKind) {
       '\n Button mapping: ' + (controllerMappings ? controllerMappings.split('\n').length + ' controller lines' : 'none') +
       '\n Audio backend: ' + audioBackend + 
       '\n Audio configuration: ' + audioConfig + 
+      '\n Surround audio quality: ' + surroundQuality +
       '\n Audio synchronization: ' + audioSync + 
       '\n Audio jitter buffer: ' + audioJitter + ' ms' +
       '\n Play host audio: ' + playHostAudio + 
@@ -3873,11 +3895,12 @@ function startGame(host, appID, restartKind) {
       // Hide on-screen overlays until the streaming session begins
       $('#connection-warnings, #performance-stats').css('background', 'transparent').text('');
 
-      // Shows a loading message to launch the application and start stream mode, or the new bitrate of a reconnect
-      $('#loadingSpinnerMessage').text(restartKind === STREAM_RESTART_BITRATE ?
-        t('Reconnecting with %1$s Mbps...', parseFloat($('#bitrateSlider').val())) : t('Starting %1$s...', appToStart.title));
+      // Shows a loading message to launch the application and start stream mode, or what a reconnect changed
+      $('#loadingSpinnerMessage').text(restartKind === STREAM_RESTART_SETTINGS ?
+        getStreamReconnectMessage(restartChange || {}) : t('Starting %1$s...', appToStart.title));
       streamLaunchAppTitle = appToStart.title;
       streamBitrateMbps = parseFloat($('#bitrateSlider').val());
+      streamSurroundQuality = surroundQuality;
       // The order 'Recently played' of the app list puts the app first once the host accepted its start, but never the
       // Terminate tile of Apollo or Vibepollo, which ends an app instead of streaming one (menus.js)
       var rememberStartedApp = function() {
@@ -3897,10 +3920,92 @@ function startGame(host, appID, restartKind) {
       }
       showStreamMode();
 
-      // Check if user wants to resume the already-running app
-      if (host.currentGame == appID) {
-        // If the app is already running, we can just resume it
-        return host.resumeApp(
+      // The host may still hold an earlier start of this TV that never connected, and would drop this one meanwhile
+      // (rememberHeldHostStart()): wait until that hold is over, with a countdown on the launch screen. This comes after
+      // the refresh of the server info, which the one HTTP thread of the module sends only once the answer to the request
+      // of a start that was just cancelled arrived, so that its hold is known by now.
+      waitForHeldHostStart(host, launchId).then(function(goOn) {
+        if (!goOn) {
+          return;
+        }
+        // Check if user wants to resume the already-running app
+        if (host.currentGame == appID) {
+          // If the app is already running, we can just resume it
+          return host.resumeApp(
+            streamWidth + 'x' + streamHeight + 'x' + frameRate, // Resolution and frame rate
+            optimizeGames, // Optimize game settings (SOPS)
+            rikey, rikeyid, // Remote input key and key ID
+            hdrMode, // Auto HDR video streaming
+            playHostAudio, // Play audio on host and client device
+            getSurroundAudioInfo(audioConfig), // Surround channel mask << 16 | Surround channel count
+            gamepadMask, // Connect gamepad mask
+            continuousAudio // Audio packets also during silence
+          ).then(function(launchResult) {
+            if (launchId !== streamLaunchId) {
+              console.log('%c[index.js, startGame]', 'color: green;', 'Ignoring the reply to a cancelled resume request.');
+              rememberCancelledStartAnswer(host, launchResult);
+              return;
+            }
+            $xml = $($.parseXML(launchResult.toString()));
+            $root = $xml.find('root');
+            var status_code = $root.attr('status_code');
+            var status_message = $root.attr('status_message');
+            if (status_code != 200) {
+              $('#loadingSpinnerMessage').text('');
+              endLaunchWithAnswer(host, status_code, status_message);
+              return;
+            }
+            // The host holds this start from now on until its stream connects (rememberHeldHostStart())
+            streamLaunchAnsweredAt = performance.now();
+            // Read the session URL now, because refreshing the server info replaces the global $root
+            var sessionUrl = $root.find('sessionUrl0').text().trim();
+            // Start stream request with the codec modes from the encoder probe of this resume request
+            refreshCodecModesBeforeStream(host).then(function(codecModes) {
+              if (launchId !== streamLaunchId) {
+                console.log('%c[index.js, startGame]', 'color: green;', 'Not starting the stream of a cancelled resume request.');
+                return;
+              }
+              wasmSessionStarted = true;
+              rememberStartedApp();
+              // A video format that the TV rejected and the ports named for the termination of an earlier stream don't
+              // belong to this one (messages.js)
+              terminationBlockedPorts = '';
+              rejectedVideoTrack = null;
+              sendMessage('startRequest', [
+                host.address, host.httpPort, streamWidth, streamHeight, frameRate, bitrate.toString(), rikey, rikeyid.toString(),
+                host.appVersion, host.gfeVersion, sessionUrl, codecModes,
+                framePacing, optimizeGames, rumbleFeedback, mouseEmulation, controllerMappings,
+                audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
+                gameMode, disableWarnings, getPerformanceStatsLevel(), refFrameInvalidation, hdrMetadata, controllerType,
+                surroundQuality
+              ]);
+              if (isRestart) {
+                startWebAudio();
+              }
+            });
+          }, function(failedResumeApp) {
+            // The request may have reached the host before it failed (e.g. when the connection broke during it), which the
+            // TV can't tell from the error, so the host may hold this start as well
+            rememberHeldHostStart(host, performance.now(), 'its resume request failed');
+            if (launchId !== streamLaunchId) {
+              return;
+            }
+            console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to resume app with id: ' + appID + '\n Returned error was: ' + failedResumeApp + '!');
+            stopHeartbeatOfFailedStart('the resume request failed');
+            snackbarLog('Failed to resume %1$s', appToStart.title);
+            showApps(host).then(() => {
+              // Scroll to the current game row
+              Navigation.switch();
+              // Switch to Apps view
+              Navigation.change(Views.Apps);
+            });
+            return;
+          });
+        }
+
+        // If the user wants to launch the app, then we start launching it
+        host.launchApp(
+          appID, // App ID
           streamWidth + 'x' + streamHeight + 'x' + frameRate, // Resolution and frame rate
           optimizeGames, // Optimize game settings (SOPS)
           rikey, rikeyid, // Remote input key and key ID
@@ -3911,7 +4016,8 @@ function startGame(host, appID, restartKind) {
           continuousAudio // Audio packets also during silence
         ).then(function(launchResult) {
           if (launchId !== streamLaunchId) {
-            console.log('%c[index.js, startGame]', 'color: green;', 'Ignoring the reply to a cancelled resume request.');
+            console.log('%c[index.js, startGame]', 'color: green;', 'Ignoring the reply to a cancelled launch request.');
+            rememberCancelledStartAnswer(host, launchResult);
             return;
           }
           $xml = $($.parseXML(launchResult.toString()));
@@ -3919,16 +4025,23 @@ function startGame(host, appID, restartKind) {
           var status_code = $root.attr('status_code');
           var status_message = $root.attr('status_message');
           if (status_code != 200) {
+            if (status_code == 4294967295 && status_message == 'Invalid') {
+              // Special case handling an audio capture error which GFE doesn't provide any useful status message
+              status_code = 418;
+              status_message = t('Audio capture device is missing. Please reinstall the audio drivers.');
+            }
             $('#loadingSpinnerMessage').text('');
             endLaunchWithAnswer(host, status_code, status_message);
             return;
           }
+          // The host holds this start from now on until its stream connects (rememberHeldHostStart())
+          streamLaunchAnsweredAt = performance.now();
           // Read the session URL now, because refreshing the server info replaces the global $root
           var sessionUrl = $root.find('sessionUrl0').text().trim();
-          // Start stream request with the codec modes from the encoder probe of this resume request
+          // Start stream request with the codec modes from the encoder probe of this launch request
           refreshCodecModesBeforeStream(host).then(function(codecModes) {
             if (launchId !== streamLaunchId) {
-              console.log('%c[index.js, startGame]', 'color: green;', 'Not starting the stream of a cancelled resume request.');
+              console.log('%c[index.js, startGame]', 'color: green;', 'Not starting the stream of a cancelled launch request.');
               return;
             }
             wasmSessionStarted = true;
@@ -3942,19 +4055,23 @@ function startGame(host, appID, restartKind) {
               host.appVersion, host.gfeVersion, sessionUrl, codecModes,
               framePacing, optimizeGames, rumbleFeedback, mouseEmulation, controllerMappings,
               audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
-              gameMode, disableWarnings, getPerformanceStatsLevel(), refFrameInvalidation, hdrMetadata, controllerType
+              gameMode, disableWarnings, getPerformanceStatsLevel(), refFrameInvalidation, hdrMetadata, controllerType,
+              surroundQuality
             ]);
             if (isRestart) {
               startWebAudio();
             }
           });
-        }, function(failedResumeApp) {
+        }, function(failedLaunchApp) {
+          // The request may have reached the host before it failed (e.g. when the connection broke during it), which the
+          // TV can't tell from the error, so the host may hold this start as well
+          rememberHeldHostStart(host, performance.now(), 'its launch request failed');
           if (launchId !== streamLaunchId) {
             return;
           }
-          console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to resume app with id: ' + appID + '\n Returned error was: ' + failedResumeApp + '!');
-          stopHeartbeatOfFailedStart('the resume request failed');
-          snackbarLog('Failed to resume %1$s', appToStart.title);
+          console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to launch app with id: ' + appID + '\n Returned error was: ' + failedLaunchApp + '!');
+          stopHeartbeatOfFailedStart('the launch request failed');
+          snackbarLog('Failed to launch %1$s', appToStart.title);
           showApps(host).then(() => {
             // Scroll to the current game row
             Navigation.switch();
@@ -3963,111 +4080,55 @@ function startGame(host, appID, restartKind) {
           });
           return;
         });
-      }
-
-      // If the user wants to launch the app, then we start launching it
-      host.launchApp(
-        appID, // App ID
-        streamWidth + 'x' + streamHeight + 'x' + frameRate, // Resolution and frame rate
-        optimizeGames, // Optimize game settings (SOPS)
-        rikey, rikeyid, // Remote input key and key ID
-        hdrMode, // Auto HDR video streaming
-        playHostAudio, // Play audio on host and client device
-        getSurroundAudioInfo(audioConfig), // Surround channel mask << 16 | Surround channel count
-        gamepadMask, // Connect gamepad mask
-        continuousAudio // Audio packets also during silence
-      ).then(function(launchResult) {
-        if (launchId !== streamLaunchId) {
-          console.log('%c[index.js, startGame]', 'color: green;', 'Ignoring the reply to a cancelled launch request.');
-          return;
-        }
-        $xml = $($.parseXML(launchResult.toString()));
-        $root = $xml.find('root');
-        var status_code = $root.attr('status_code');
-        var status_message = $root.attr('status_message');
-        if (status_code != 200) {
-          if (status_code == 4294967295 && status_message == 'Invalid') {
-            // Special case handling an audio capture error which GFE doesn't provide any useful status message
-            status_code = 418;
-            status_message = t('Audio capture device is missing. Please reinstall the audio drivers.');
-          }
-          $('#loadingSpinnerMessage').text('');
-          endLaunchWithAnswer(host, status_code, status_message);
-          return;
-        }
-        // Read the session URL now, because refreshing the server info replaces the global $root
-        var sessionUrl = $root.find('sessionUrl0').text().trim();
-        // Start stream request with the codec modes from the encoder probe of this launch request
-        refreshCodecModesBeforeStream(host).then(function(codecModes) {
-          if (launchId !== streamLaunchId) {
-            console.log('%c[index.js, startGame]', 'color: green;', 'Not starting the stream of a cancelled launch request.');
-            return;
-          }
-          wasmSessionStarted = true;
-          rememberStartedApp();
-          // A video format that the TV rejected and the ports named for the termination of an earlier stream don't
-          // belong to this one (messages.js)
-          terminationBlockedPorts = '';
-          rejectedVideoTrack = null;
-          sendMessage('startRequest', [
-            host.address, host.httpPort, streamWidth, streamHeight, frameRate, bitrate.toString(), rikey, rikeyid.toString(),
-            host.appVersion, host.gfeVersion, sessionUrl, codecModes,
-            framePacing, optimizeGames, rumbleFeedback, mouseEmulation, controllerMappings,
-            audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
-            gameMode, disableWarnings, getPerformanceStatsLevel(), refFrameInvalidation, hdrMetadata, controllerType
-          ]);
-          if (isRestart) {
-            startWebAudio();
-          }
-        });
-      }, function(failedLaunchApp) {
-        if (launchId !== streamLaunchId) {
-          return;
-        }
-        console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to launch app with id: ' + appID + '\n Returned error was: ' + failedLaunchApp + '!');
-        stopHeartbeatOfFailedStart('the launch request failed');
-        snackbarLog('Failed to launch %1$s', appToStart.title);
-        showApps(host).then(() => {
-          // Scroll to the current game row
-          Navigation.switch();
-          // Switch to Apps view
-          Navigation.change(Views.Apps);
-        });
-        return;
       });
     });
   }, function(failedRefreshInfo) {
     console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to refresh server info! Returned error was: ' + failedRefreshInfo + ' and failed server was: ' + '\n', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
     // The launch screen of a start once more still shows
     if (isRestart && launchId === streamLaunchId) {
-      endStreamRestart(restartKind, 'the server info of the host could not be refreshed');
+      endStreamRestart(restartKind, 'the server info of the host could not be refreshed', restartChange);
     }
   });
 }
 
-// How long a stream that ended without video at its start waits before it starts once more (retryStreamAfterNoVideo()),
-// so that the failed connection is closed on both sides first, as in StreamLight
-var NO_VIDEO_RETRY_DELAY_MS = 1500;
+// How long a stream that ended at its start waits before it starts once more (retryStreamStart()), so that the failed
+// connection is closed on both sides first, as in StreamLight
+var STREAM_RETRY_DELAY_MS = 1500;
 // The ports of the host PC that the termination of the stream without video named, for the message of a failed retry
 var noVideoRetryBlockedPorts = '';
 
-// Start a stream once more, without a word, when no video arrived from the host at its start (ML_ERROR_NO_VIDEO_TRAFFIC,
-// error -100, called by handleMessage() in messages.js): a host can be too slow for the first start, e.g. when it
-// switches its display to 4K HDR or to a virtual display, and the app usually runs by the second one. The launch screen
-// shows meanwhile, where RED cancels the start as usual (cancelStreamLaunch()). Only once per launch, so that a port
-// that is really blocked shows its message about 10 seconds later, and never while Moonlight is in the background or
-// after the user ended the stream (which ends it without error). Returns whether the retry takes over the end of the
-// stream. The idea comes from StreamLight (FoggyBytes/StreamLight, app/gui/StreamSegue.qml), which retries the same way.
-function retryStreamAfterNoVideo(blockedPorts) {
+// Start a stream once more, without a word, when its start failed in a way that a second start usually gets past
+// (called by handleMessage() in messages.js with the kind of restart):
+// - STREAM_RESTART_NO_VIDEO: no video arrived from the host at its start (ML_ERROR_NO_VIDEO_TRAFFIC, error -100). A host
+//   can be too slow for the first start, e.g. when it switches its display to 4K HDR or to a virtual display, and the
+//   app usually runs by the second one. blockedPorts are the ports of the host PC that the termination named, for the
+//   message of a retry that fails as well. The idea comes from StreamLight (FoggyBytes/StreamLight,
+//   app/gui/StreamSegue.qml), which retries the same way.
+// - STREAM_RESTART_HELD_START: the host answered the RTSP handshake with the key of another start
+//   (ML_ERROR_RTSP_DECRYPT_FAILED, error -300, of the local patch of moonlight-common-c), which Sunshine does while it
+//   still holds an earlier start, e.g. one that this TV cancelled or one of another device, after it dropped this one.
+//   The stream that ended never connected, so the start once more waits for its hold, from the answer to its request on
+//   (waitForHeldHostStart()), which also covers the earlier start, as long as the host keeps it for its default time.
+// The launch screen shows meanwhile, where RED cancels the start as usual (cancelStreamLaunch()). Each kind only once per
+// launch, so that a port that is really blocked shows its message about 10 seconds later, and never while Moonlight is
+// in the background or after the user ended the stream (which ends it without error). Returns whether the retry takes
+// over the end of the stream.
+function retryStreamStart(restartKind, blockedPorts) {
   var host = streamLaunchHost;
   var appID = streamLaunchAppId;
-  if (streamNoVideoRetried || !host || appID === null || document.visibilityState !== 'visible' || isStreamStoppedInBackground) {
+  if (streamRetried[restartKind] || !host || appID === null || document.visibilityState !== 'visible' || isStreamStoppedInBackground) {
     return false;
   }
-  streamNoVideoRetried = true;
-  noVideoRetryBlockedPorts = blockedPorts || '';
+  streamRetried[restartKind] = true;
+  if (restartKind === STREAM_RESTART_NO_VIDEO) {
+    noVideoRetryBlockedPorts = blockedPorts || '';
+  }
   var launchId = streamLaunchId;
-  console.warn('%c[index.js, retryStreamAfterNoVideo]', 'color: green;', 'Warning: No video arrived from the host at the start of the stream, starting it once more in ' + NO_VIDEO_RETRY_DELAY_MS + ' ms.');
+  if (restartKind === STREAM_RESTART_HELD_START) {
+    console.warn('%c[index.js, retryStreamStart]', 'color: green;', 'Warning: ' + host.hostname + ' answered the RTSP handshake with the key of another start, which it still holds, starting the stream once more once it released that start.');
+  } else {
+    console.warn('%c[index.js, retryStreamStart]', 'color: green;', 'Warning: No video arrived from the host at the start of the stream, starting it once more in ' + STREAM_RETRY_DELAY_MS + ' ms.');
+  }
   // Back to the launch screen: the stream view stays, the video goes, and the stream counts as starting again
   isInGame = true;
   $('#connection-warnings, #performance-stats').css('background', 'transparent').text('');
@@ -4080,44 +4141,166 @@ function retryStreamAfterNoVideo(blockedPorts) {
     if (launchId !== streamLaunchId || isInGame !== true) {
       return;
     }
-    console.log('%c[index.js, retryStreamAfterNoVideo]', 'color: green;', 'Starting app ' + appID + ' once more.');
-    startGame(host, appID, STREAM_RESTART_NO_VIDEO);
-  }, NO_VIDEO_RETRY_DELAY_MS);
+    console.log('%c[index.js, retryStreamStart]', 'color: green;', 'Starting app ' + appID + ' once more.');
+    startGame(host, appID, restartKind);
+  }, STREAM_RETRY_DELAY_MS);
   return true;
 }
 
-// End a start once more that couldn't start the stream, back to the app list: a retry after no video like the stream
-// that it retried, with the message about the ports of the host PC, and a reconnect with a new bitrate with a message
-// of its own
-function endStreamRestart(restartKind, reason) {
+// End a start once more that couldn't start the stream, back to the app list: a retry like the stream that it retried,
+// after no video with the message about the ports of the host PC and after a held start with its message, and a
+// reconnect with new settings with a message of its own, which names the bitrate when only the bitrate changed
+// (restartChange, see restartStreamWithSettings())
+function endStreamRestart(restartKind, reason, restartChange) {
   console.warn('%c[index.js, endStreamRestart]', 'color: green;', 'Warning: The stream can\'t be started once more: ' + reason + '.');
   streamLaunchId++;
   isInGame = false;
   wasmSessionStarted = false;
   leaveStreamView(streamLaunchHost || api);
-  if (restartKind === STREAM_RESTART_BITRATE) {
-    snackbarLogLong('Unable to resume %1$s with the new bitrate. Start it again from the app list.', streamLaunchAppTitle);
+  if (restartKind === STREAM_RESTART_SETTINGS) {
+    if (restartChange && restartChange.surroundQuality === undefined) {
+      snackbarLogLong('Unable to resume %1$s with the new bitrate. Start it again from the app list.', streamLaunchAppTitle);
+    } else {
+      snackbarLogLong('Unable to resume %1$s with the new settings. Start it again from the app list.', streamLaunchAppTitle);
+    }
+  } else if (restartKind === STREAM_RESTART_HELD_START) {
+    showHeldStartMessage();
   } else {
     showNoVideoMessage(noVideoRetryBlockedPorts);
   }
 }
 
-// How long the stream waits after it ended for a new bitrate before it resumes the app (resumeStreamAfterBitrateChange()),
+// How long after its answer to a launch or resume request a host may still hold that start for this TV. Sunshine keeps
+// the launch session of the request, with the key of its stream, until the control stream of the stream connects or
+// ping_timeout runs out, 10 seconds by default (src/stream.cpp, src/rtsp.cpp and src/config.cpp of Sunshine). It holds
+// only one: the session of another launch or resume request meanwhile is dropped without a word, while the request is
+// still answered with success, and the RTSP handshake of its stream then fails, since the host checks it with the key of
+// the start it holds ('Failed to verify RTSP message tag' in the log of Sunshine, ML_ERROR_RTSP_DECRYPT_FAILED on the
+// TV). A cancelled start doesn't release it either. The hold counts from the arrival of the answer, which comes after the
+// session, and one second more is a margin. A host with a larger ping_timeout holds a start longer, which the start
+// once more after such a failed handshake covers in part (retryStreamStart()).
+var HOST_START_HOLD_MS = 11000;
+
+// Remember that the host may still hold a start of this TV that won't connect, from since (performance.now() of the
+// answer of the host, or of the failure of the request) for HOST_START_HOLD_MS, so that the next start to this host
+// waits until then (waitForHeldHostStart()): when the host accepted a start that was cancelled meanwhile
+// (rememberCancelledStartAnswer()), when a start is cancelled after the host accepted it (cancelStreamLaunch()), when the
+// stream of a start ended before its control stream connected (handleMessage() in messages.js) and when a launch or
+// resume request failed on the TV. Not for a stream whose control stream connected ('ControlStreamConnected' in
+// messages.js), which released its start on the host, even if the stream ended before 'Connection Established', so
+// that the reconnects of the Stream Menu, the retry after no video and a start after RED during the setup of the video
+// stream don't wait. why says what happened, for the log.
+function rememberHeldHostStart(host, since, why) {
+  if (!host || !host.serverUid) {
+    return;
+  }
+  var until = since + HOST_START_HOLD_MS;
+  if ((heldHostStartUntil[host.serverUid] || 0) >= until) {
+    return;
+  }
+  heldHostStartUntil[host.serverUid] = until;
+  console.log('%c[index.js, rememberHeldHostStart]', 'color: green;', host.hostname + ' may hold a start of this TV for ' + Math.max(0, Math.round(until - performance.now())) + ' ms more: ' + why + '.');
+}
+
+// Remember the hold of a start whose launch or resume request the host answered after the start was cancelled: a host
+// that accepted the request (status 200) started it all the same, since the TV can't call it back
+function rememberCancelledStartAnswer(host, launchResult) {
+  var statusCode = '';
+  try {
+    statusCode = $($.parseXML(String(launchResult))).find('root').attr('status_code');
+  } catch (error) {
+    // An answer that isn't XML is no session
+  }
+  if (statusCode == 200) {
+    rememberHeldHostStart(host, performance.now(), 'it accepted a start that was cancelled');
+  }
+}
+
+// The error codes of the end of a stream that only come once its control stream connected, which released the start
+// on the host: those of the video stream and the control stream of moonlight-common-c (ML_ERROR_NO_VIDEO_TRAFFIC to
+// ML_ERROR_FRAME_CONVERSION), whose threads run only after the control stream connected, and those of the video player
+// of the module (ERROR_VIDEO_SETUP_FAILED, ERROR_VIDEO_PLAYER_FAILED), whose setup comes after it as well
+var CONNECTED_STREAM_END_CODES = [-100, -101, -102, -103, -104, -200, -201];
+
+// The stream of the current start ended with errorCode (handleMessage() in messages.js): one whose start the host
+// accepted and whose control stream never connected may still be held by the host, from the answer on.
+// streamLaunchAnsweredAt is cleared once the control stream connects ('ControlStreamConnected', which comes before
+// 'Connection Established'), and the codes of CONNECTED_STREAM_END_CODES tell the same, also if that message was
+// ignored.
+function rememberEndedStreamStart(errorCode) {
+  if (streamLaunchAnsweredAt > 0 && CONNECTED_STREAM_END_CODES.indexOf(errorCode) < 0) {
+    rememberHeldHostStart(streamLaunchHost, streamLaunchAnsweredAt, 'the stream of a start it accepted ended before its control stream connected');
+  }
+  streamLaunchAnsweredAt = 0;
+}
+
+// How many milliseconds the host may still hold a start of this TV (rememberHeldHostStart()), or 0
+function getHeldHostStartMs(host) {
+  var until = host && host.serverUid ? heldHostStartUntil[host.serverUid] || 0 : 0;
+  return Math.max(0, until - performance.now());
+}
+
+// Wait until the hold of a start of this TV that the host may still have is over (rememberHeldHostStart()) before the
+// launch or resume request of the start launchId goes out: the launch screen counts the seconds down, and RED cancels
+// the start as usual (cancelStreamLaunch()). Resolves with whether the start goes on, at once when there is nothing to
+// wait for.
+function waitForHeldHostStart(host, launchId) {
+  var waitMs = getHeldHostStartMs(host);
+  if (waitMs <= 0) {
+    return Promise.resolve(true);
+  }
+  console.warn('%c[index.js, waitForHeldHostStart]', 'color: green;', 'Warning: ' + host.hostname + ' may still hold an earlier start of this TV, which would make it drop this one, waiting ' + Math.round(waitMs) + ' ms before the start.');
+  var message = $('#loadingSpinnerMessage').text();
+  return new Promise(function(resolve) {
+    var tick = function() {
+      // Cancelled meanwhile with RED, or since Moonlight went to the background (endStreamInBackground())
+      if (launchId !== streamLaunchId) {
+        console.log('%c[index.js, waitForHeldHostStart]', 'color: green;', 'The start ended during the wait for ' + host.hostname + '.');
+        resolve(false);
+        return;
+      }
+      var leftMs = getHeldHostStartMs(host);
+      if (leftMs <= 0) {
+        console.log('%c[index.js, waitForHeldHostStart]', 'color: green;', 'The hold of the earlier start on ' + host.hostname + ' is over, starting.');
+        $('#loadingSpinnerMessage').text(message);
+        resolve(true);
+        return;
+      }
+      $('#loadingSpinnerMessage').text(t('Waiting for the PC to release the previous start (%1$s s)...', Math.ceil(leftMs / 1000)));
+      // Next when the number of seconds changes
+      setTimeout(tick, (leftMs % 1000) || 1000);
+    };
+    tick();
+  });
+}
+
+// How long the stream waits after it ended for new settings before it resumes the app (resumeStreamAfterSettingsChange()),
 // so that the host has closed the session first. StreamLight (FoggyBytes/StreamLight, app/gui/StreamSegue.qml) resumes
 // after 700 ms on a PC; the TV waits a little longer, like the retry after no video.
-var BITRATE_RESTART_DELAY_MS = 1000;
+var SETTINGS_RESTART_DELAY_MS = 1000;
 
-// Reconnect the running stream with a new bitrate (the bitrate entry of the Stream Menu, menus.js): the stream ends
-// without quitting the app on the PC, and resumeStreamAfterBitrateChange() resumes the app with the bitrate setting a
-// moment later. Since the bitrate goes to the host with the start of a stream, this works with every host. The idea
+// What the launch screen says while the stream reconnects with new settings: the new bitrate when it changed (also with
+// a new surround audio quality, which the menu showed next to it), otherwise only that it reconnects
+function getStreamReconnectMessage(change) {
+  return change.bitrateMbps !== undefined ? t('Reconnecting with %1$s Mbps...', change.bitrateMbps) : t('Reconnecting...');
+}
+
+// Reconnect the running stream with changed settings (the bitrate and the surround quality entries of the Stream Menu,
+// menus.js): change holds the new bitrate in Mbps (bitrateMbps), the new surround audio quality (surroundQuality) or
+// both, which the settings already hold. The stream ends without quitting the app on the PC, and
+// resumeStreamAfterSettingsChange() resumes the app with the settings a moment later. Both go to the host and the module
+// with the start of a stream, so this works with every host, and changes that wait together reconnect once. The idea
 // comes from StreamLight (FoggyBytes/StreamLight, app/gui/StreamSegue.qml), which reconnects for changed stream settings
 // the same way. Returns whether the stream ends for it.
-function restartStreamWithBitrate(mbps) {
+function restartStreamWithSettings(change) {
   if (isInGame !== true || !wasmSessionStarted || !streamLaunchHost || streamLaunchAppId === null) {
     return false;
   }
-  console.log('%c[index.js, restartStreamWithBitrate]', 'color: green;', 'Reconnecting the stream with a bitrate of ' + mbps + ' Mbps.');
-  pendingBitrateRestartMbps = mbps;
+  console.log('%c[index.js, restartStreamWithSettings]', 'color: green;', 'Reconnecting the stream with' +
+    (change.bitrateMbps !== undefined ? ' a bitrate of ' + change.bitrateMbps + ' Mbps' : '') +
+    (change.bitrateMbps !== undefined && change.surroundQuality !== undefined ? ' and' : '') +
+    (change.surroundQuality !== undefined ? ' the surround audio quality ' + change.surroundQuality : '') + '.');
+  pendingStreamRestart = change;
   quitAppAfterStream = false;
   closeStreamMenu(false);
   // The module ends the stream and reports it with 'streamTerminated: 0' (handleMessage() in messages.js)
@@ -4125,34 +4308,34 @@ function restartStreamWithBitrate(mbps) {
   return true;
 }
 
-// Resume the app with the new bitrate once the stream ended for restartStreamWithBitrate() (called by handleMessage()
-// in messages.js with the error code of the end of the stream): the launch screen shows meanwhile, with the new
-// bitrate, where RED cancels as usual (cancelStreamLaunch()). Not when the stream ended for another reason, or while
-// Moonlight is in the background. Returns whether the reconnect takes over the end of the stream.
-function resumeStreamAfterBitrateChange(errorCode) {
-  var mbps = pendingBitrateRestartMbps;
-  pendingBitrateRestartMbps = 0;
+// Resume the app with the new settings once the stream ended for restartStreamWithSettings() (called by handleMessage()
+// in messages.js with the error code of the end of the stream): the launch screen shows meanwhile, with what changed,
+// where RED cancels as usual (cancelStreamLaunch()). Not when the stream ended for another reason, or while Moonlight is
+// in the background. Returns whether the reconnect takes over the end of the stream.
+function resumeStreamAfterSettingsChange(errorCode) {
+  var change = pendingStreamRestart;
+  pendingStreamRestart = null;
   var host = streamLaunchHost;
   var appID = streamLaunchAppId;
-  if (!mbps || errorCode !== 0 || !host || appID === null || document.visibilityState !== 'visible' || isStreamStoppedInBackground) {
+  if (!change || errorCode !== 0 || !host || appID === null || document.visibilityState !== 'visible' || isStreamStoppedInBackground) {
     return false;
   }
   var launchId = streamLaunchId;
-  console.log('%c[index.js, resumeStreamAfterBitrateChange]', 'color: green;', 'Resuming app ' + appID + ' with a bitrate of ' + mbps + ' Mbps in ' + BITRATE_RESTART_DELAY_MS + ' ms.');
+  console.log('%c[index.js, resumeStreamAfterSettingsChange]', 'color: green;', 'Resuming app ' + appID + ' with the new settings in ' + SETTINGS_RESTART_DELAY_MS + ' ms.');
   // Back to the launch screen: the stream view stays, the video goes, and the stream counts as starting again
   isInGame = true;
   $('#connection-warnings, #performance-stats').css('background', 'transparent').text('');
   $('#wasm_module').css('display', 'none');
   $('body').css('backgroundColor', '');
   $('#loadingSpinner').css('display', 'inline-block');
-  $('#loadingSpinnerMessage').text(t('Reconnecting with %1$s Mbps...', mbps));
+  $('#loadingSpinnerMessage').text(getStreamReconnectMessage(change));
   setTimeout(function() {
     // Cancelled meanwhile with RED, or since Moonlight went to the background (endStreamInBackground())
     if (launchId !== streamLaunchId || isInGame !== true) {
       return;
     }
-    startGame(host, appID, STREAM_RESTART_BITRATE);
-  }, BITRATE_RESTART_DELAY_MS);
+    startGame(host, appID, STREAM_RESTART_SETTINGS, change);
+  }, SETTINGS_RESTART_DELAY_MS);
   return true;
 }
 
@@ -4161,6 +4344,11 @@ function resumeStreamAfterBitrateChange(errorCode) {
 // which the app list then shows as running, and the reply is ignored (see startGame).
 function cancelStreamLaunch() {
   console.log('%c[index.js, cancelStreamLaunch]', 'color: green;', 'Cancelling the start of the stream.');
+  // The host may already hold this start, which no request can call back (rememberHeldHostStart())
+  if (streamLaunchAnsweredAt > 0) {
+    rememberHeldHostStart(streamLaunchHost, streamLaunchAnsweredAt, 'a start it accepted was cancelled');
+  }
+  streamLaunchAnsweredAt = 0;
   streamLaunchId++;
   isInGame = false;
   wasmSessionStarted = false;
@@ -4869,10 +5057,13 @@ function updateAudioBackendSettings() {
     $('#audioJitterOption').hide();
     $('#audioClockSyncOption').hide();
     $('#decryptHostAudioOption').hide();
+    $('#surroundQualityOption').hide();
   } else {
     // These two settings apply to all active backends, so show them normally
     $('#audioConfigOption').show();
     $('#decryptHostAudioOption').show();
+    // The surround audio quality only with 5.1 and 7.1
+    updateSurroundQualityOption();
     // Check which backend is selected and show the appropriate setting for that backend
     if (isWebAudioBackendSelected()) {
       // The Web Audio backend schedules the audio itself using the jitter buffer
@@ -4906,6 +5097,44 @@ function saveAudioConfiguration() {
 
   // Trigger warning check after changing audio configuration
   warnAudioConfiguration();
+  // The surround audio quality shows with 5.1 and 7.1 only
+  updateSurroundQualityOption();
+}
+
+// The surround audio quality of the settings: 'Efficient', or 'High' (the default, also for a value the settings don't
+// know)
+function getSurroundQuality() {
+  return $('#selectSurroundQuality').data('value') === 'Efficient' ? 'Efficient' : 'High';
+}
+
+// Set the surround audio quality ('High' or 'Efficient') in the settings and store it: from its menu in the Audio
+// Settings, and from the surround quality entry of the Stream Menu (menus.js)
+function setSurroundQuality(quality) {
+  const item = $('.surroundQualityMenu li').filter(function() {
+    return $(this).data('value') === quality;
+  });
+  if (item.length === 0) {
+    return;
+  }
+  $('#selectSurroundQuality').text(item.text().trim()).attr('data-value', quality).data('value', quality);
+  console.log('%c[index.js, setSurroundQuality]', 'color: green;', 'Saving surroundQuality value: ' + quality);
+  storeData('surroundQuality', quality, null);
+}
+
+function saveSurroundQuality() {
+  setSurroundQuality($(this).data('value'));
+}
+
+// Whether the surround audio quality applies to the selected audio configuration: only 5.1 and 7.1 have it, and the
+// stereo of the host keeps its high quality (audio_capabilities.h)
+function isSurroundAudioSelected() {
+  const audioConfig = $('#selectAudio').data('value');
+  return audioConfig === '51Surround' || audioConfig === '71Surround';
+}
+
+// Show the surround audio quality only while the audio configuration is 5.1 or 7.1 and the audio output isn't disabled
+function updateSurroundQualityOption() {
+  $('#surroundQualityOption').toggle(!isAudioOutputDisabled() && isSurroundAudioSelected());
 }
 
 function warnAudioConfiguration() {
@@ -5509,6 +5738,10 @@ function restoreDefaultsSettingsValues() {
   const defaultAudioConfig = 'Stereo';
   $('#selectAudio').text('Stereo').attr('data-value', defaultAudioConfig).data('value', defaultAudioConfig);
   storeData('audioConfig', defaultAudioConfig, null);
+
+  // High, the quality of earlier versions, which the restored stereo hides anyway
+  setSurroundQuality('High');
+  updateSurroundQualityOption();
 
   const defaultAudioSync = false;
   document.querySelector('#audioSyncBtn').MaterialSwitch.off();
@@ -6127,6 +6360,20 @@ function loadStoredSettings() {
         }
       });
     }
+    // The surround audio quality shows with 5.1 and 7.1 only
+    updateSurroundQualityOption();
+  });
+
+  // The surround audio quality: High unless Efficient is stored. Its default keeps the audio stream of earlier versions,
+  // so an existing install needs no step of the settings schema for it.
+  console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored surroundQuality preferences.');
+  getData('surroundQuality', function(previousValue) {
+    $('.surroundQualityMenu li').each(function() {
+      const quality = previousValue.surroundQuality === 'Efficient' ? 'Efficient' : 'High';
+      if ($(this).data('value') === quality) {
+        $('#selectSurroundQuality').text($(this).text().trim()).attr('data-value', quality).data('value', quality);
+      }
+    });
   });
 
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored audioSync preferences.');

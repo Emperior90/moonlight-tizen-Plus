@@ -1288,6 +1288,8 @@ const Views = {
     view: new ListView(() => [
       'selectAudioBackend',
       isAudioOutputDisabled() ? null : 'selectAudio',
+      // The surround audio quality only with 5.1 and 7.1 (updateSurroundQualityOption() in index.js)
+      isAudioOutputDisabled() || !isSurroundAudioSelected() ? null : 'selectSurroundQuality',
       // At most one of these settings is shown at a time, as each one belongs to a single backend,
       // and neither is shown when the audio output is disabled
       isAudioOutputDisabled() ? null : isWebAudioBackendSelected() ? 'selectAudioJitter' : 'audioSyncBtn',
@@ -1414,6 +1416,38 @@ const Views = {
       closePopupMenu('selectAudio');
       closeActiveVisibleMenu();
       focusElement('selectAudio');
+    },
+    press: function() {},
+    switch: function() {},
+    enter: function() {
+      mark(this.view.current());
+    },
+    leave: function() {
+      unmark(this.view.current());
+    },
+  },
+  SelectSurroundQualityMenu: {
+    isActive: () => isPopupMenuActive('surroundQualityMenu'),
+    view: new ListView(() =>
+      document.getElementById('surroundQualityMenu')
+      .parentNode.children[3].children[1].children),
+    up: function() {
+      this.view.prevOption();
+    },
+    down: function() {
+      this.view.nextOption();
+    },
+    left: function() {},
+    right: function() {},
+    accept: function() {
+      clickElement(this.view.current());
+      closeActiveVisibleMenu();
+      setTimeout(() => focusElement('selectSurroundQuality'), 250);
+    },
+    back: function() {
+      closePopupMenu('selectSurroundQuality');
+      closeActiveVisibleMenu();
+      focusElement('selectSurroundQuality');
     },
     press: function() {},
     switch: function() {},
@@ -2054,9 +2088,10 @@ const Views = {
   },
   StreamMenu: {
     // The entries of the Stream Menu that show (menus.js). Back closes it and resumes the stream, LEFT and RIGHT change
-    // the bitrate of the bitrate entry. UP and DOWN stop at the first and the last entry instead of wrapping around like
-    // the other menus: the menu opens on Resume, and the last entry quits the app on the PC without a question, so one
-    // UP too many must not select it.
+    // the bitrate of the bitrate entry and set the quality of the surround quality entry (LEFT Efficient, RIGHT High,
+    // so that a held key stays at its end). UP and DOWN stop at the first and the last entry instead of wrapping around
+    // like the other menus: the menu opens on Resume, and the last entry quits the app on the PC without a question,
+    // so one UP too many must not select it.
     view: new ListView(() => getOverlayMenuItems('streamMenu')),
     up: function() {
       this.view.prev();
@@ -2069,11 +2104,15 @@ const Views = {
     left: function() {
       if (elementId(this.view.current()) === 'streamMenuBitrate') {
         changeStreamMenuBitrate(-1);
+      } else if (elementId(this.view.current()) === 'streamMenuSurround') {
+        changeStreamMenuSurround(-1);
       }
     },
     right: function() {
       if (elementId(this.view.current()) === 'streamMenuBitrate') {
         changeStreamMenuBitrate(1);
+      } else if (elementId(this.view.current()) === 'streamMenuSurround') {
+        changeStreamMenuSurround(1);
       }
     },
     accept: function() {

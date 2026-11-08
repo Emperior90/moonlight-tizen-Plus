@@ -153,7 +153,9 @@ static char* sealRtspMessage(PRTSP_MESSAGE request, int* messageLen) {
     return (char*)encryptedMessage;
 }
 
-static bool unsealRtspMessage(char* rawMessage, int rawMessageLen, PRTSP_MESSAGE response) {
+// Moonlight Plus: error is set to ML_ERROR_RTSP_DECRYPT_FAILED when an encrypted message doesn't decrypt with the key
+// of this start, and left as it is for every other failure
+static bool unsealRtspMessage(char* rawMessage, int rawMessageLen, PRTSP_MESSAGE response, int* error) {
     char* decryptedMessage;
     int decryptedMessageLen;
     bool success;
@@ -219,6 +221,9 @@ static bool unsealRtspMessage(char* rawMessage, int rawMessageLen, PRTSP_MESSAGE
                                     (uint8_t*)decryptedMessage, &decryptedMessageLen);
         if (!success) {
             Limelog("Failed to decrypt RTSP response\n");
+            // The host encrypted its answer with another key than the one of this start, which Sunshine does while
+            // it holds an earlier start (Limelight.h), so the app can tell this apart from a blocked port
+            *error = ML_ERROR_RTSP_DECRYPT_FAILED;
             free(decryptedMessage);
             return false;
         }
@@ -501,7 +506,7 @@ static bool transactRtspMessageTcp(PRTSP_MESSAGE request, PRTSP_MESSAGE response
     }
 
     // Decrypt (if necessary) and deserialize the RTSP response
-    ret = unsealRtspMessage(responseBuffer, offset, response);
+    ret = unsealRtspMessage(responseBuffer, offset, response, error);
 
     // Fetch the local address for this socket if it's not populated yet
     if (LocalAddr.ss_family == 0) {

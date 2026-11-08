@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 
 #include <emscripten.h>
 
@@ -34,6 +35,8 @@ static constexpr size_t kAudioSlotElements = kAudioSlotStride * MAX_CHANNEL_COUN
 // Jitter buffer target used by the Web Audio backend when the user has not selected one
 static constexpr int kDefaultAudioJitterMs = 100;
 
+// Decoded samples of the packet that the EMSS backend appends, interleaved: one frame of the negotiated size over all of
+// its channels (AudDecInit())
 static std::vector<opus_int16> s_DecodeBuffer;
 
 AudioStreamStats g_AudioStreamStats;
@@ -76,6 +79,12 @@ static int s_AudioSequence = 0;
 // Frames the Opus decoder rejected since the last time it was reported
 static int s_AudioDecodeErrors = 0;
 
+// Packets that the audio player of the TV rejected, and packets that 'Limit audio delay' dropped, since the start of the
+// stream. Both can happen for every packet of a stream (200 per second with 5 ms packets), so they are logged in batches
+// like the errors of the decoder above: logging each one from the audio thread would cost more time than the packet.
+static int s_AppendFailures = 0;
+static int s_DroppedPackets = 0;
+
 // Arrival of the previous packet with audio data. Sunshine sends no packets while the host is silent, so a long
 // gap before a packet tells the scheduler that the host paused its audio, which empties the schedule without
 // any sound missing, rather than an underrun.
@@ -87,21 +96,39 @@ static inline TimeStamp FrameDuration(double samplesPerFrame, double sampleRate)
   return TimeStamp(samplesPerFrame / sampleRate);
 }
 
+// The microseconds between two readings of the monotonic clock, for the work of the audio thread in the performance
+// stats (AudioStreamStats::CountDecode() and CountOutput()). A reading cost about 0.1 us in WebAssembly built with the
+// compiler of the app and run by Node.js on a PC, against 30 to 150 us for decoding a packet there. A clock that the
+// browser of the TV rounds more coarsely still adds up to the right total over the many packets of a second; only the
+// maxima are rounded then.
+static inline uint32_t ElapsedUs(std::chrono::steady_clock::time_point start, std::chrono::steady_clock::time_point end) {
+  const long long us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+  return us <= 0 ? 0 : (uint32_t)std::min<long long>(us, UINT32_MAX);
+}
+
+// Decode a packet with the Opus decoder into the given buffer, and count the time it took and the samples per channel
+// it decoded for the performance stats. The end of the decode is returned, where the hand-over to the player starts.
+static int DecodeTimed(OpusMSDecoder* decoder, const unsigned char* sampleData, int sampleLength, opus_int16* pcm,
+                       int frameSize, std::chrono::steady_clock::time_point* decodeEnd) {
+  const auto decodeStart = std::chrono::steady_clock::now();
+  const int decodeLen = opus_multistream_decode(decoder, sampleData, sampleLength, pcm, frameSize, 0);
+  *decodeEnd = std::chrono::steady_clock::now();
+  g_AudioStreamStats.CountDecode(ElapsedUs(decodeStart, *decodeEnd), decodeLen);
+  return decodeLen;
+}
+
 static void DecodeAndAppendPacket(samsung::wasm::ElementaryMediaTrack* track, samsung::wasm::SessionId session_id,
   OpusMSDecoder* decoder, const unsigned char* sampleData, int sampleLength) {
-  int decodeLen;
-  
-  // Decode the incoming audio packet using Opus decoder
-  decodeLen = opus_multistream_decode(
-    decoder, sampleData, sampleLength,
-    s_DecodeBuffer.data(), s_samplesPerFrame, 0
-  );
+  // Decode the incoming audio packet using Opus decoder. It writes at most the negotiated frame size per channel, which
+  // the decode buffer holds (AudDecInit()).
+  std::chrono::steady_clock::time_point decodeEnd;
+  const int decodeLen = DecodeTimed(decoder, sampleData, sampleLength, s_DecodeBuffer.data(), (int)s_samplesPerFrame,
+    &decodeEnd);
 
-  // Check if audio decoding failed
+  // Check if audio decoding failed. Nothing is appended for the packet then, and the next packet that is appended
+  // carries only the samples that its own decode wrote, so there is nothing to clear in the buffer.
   if (decodeLen <= 0) {
     g_AudioStreamStats.decodeErrors.fetch_add(1, std::memory_order_relaxed);
-    // Reset the buffer contents to zero when decoding fails
-    s_DecodeBuffer.assign(s_DecodeBuffer.size(), 0);
     return;
   }
 
@@ -120,18 +147,20 @@ static void DecodeAndAppendPacket(samsung::wasm::ElementaryMediaTrack* track, sa
     session_id // session identifier
   };
 
-  // Attempt to append the packet to the audio track for rendering
-  if (track->AppendPacket(pkt)) {
+  // Attempt to append the packet to the audio track for rendering. Its time counts from the end of the decode, since
+  // the packet description in between costs next to nothing, which saves a reading of the clock.
+  const bool appended = (bool)track->AppendPacket(pkt);
+  g_AudioStreamStats.CountOutput(ElapsedUs(decodeEnd, std::chrono::steady_clock::now()));
+  if (appended) {
     // If successful, update the presentation timestamp for the next packet
     s_pktPts += s_frameDuration;
   } else {
     g_AudioStreamStats.playerRejections.fetch_add(1, std::memory_order_relaxed);
-    MoonlightInstance::ClLogMessage("Append audio packet failed\n");
-  }
-
-  // Resize decode buffer if it's smaller than the desired size
-  if (s_desiredBufferSize > s_DecodeBuffer.size()) {
-    s_DecodeBuffer.resize(s_desiredBufferSize);
+    // Report the rejected packets in batches (the first and every 100th), see s_AppendFailures
+    if (++s_AppendFailures % 100 == 1) {
+      MoonlightInstance::ClLogMessage("Append audio packet failed: the audio player of the TV rejected %d packets of this stream\n",
+        s_AppendFailures);
+    }
   }
 }
 
@@ -149,10 +178,8 @@ static void DecodeAndScheduleFrame(OpusMSDecoder* decoder, const unsigned char* 
   // into 10 ms of audio, which raised the audio delay by 5 ms for each loss.
   const bool concealLoss = (sampleData == nullptr || sampleLength <= 0);
   const int frameSize = concealLoss ? (int)std::min<size_t>(s_samplesPerFrame, kAudioSlotStride) : (int)kAudioSlotStride;
-  int decodeLen = opus_multistream_decode(
-    decoder, sampleData, sampleLength,
-    s_AudioPcm, frameSize, 0
-  );
+  std::chrono::steady_clock::time_point decodeEnd;
+  int decodeLen = DecodeTimed(decoder, sampleData, sampleLength, s_AudioPcm, frameSize, &decodeEnd);
 
   // Check if audio decoding failed
   if (decodeLen <= 0) {
@@ -213,6 +240,10 @@ static void DecodeAndScheduleFrame(OpusMSDecoder* decoder, const unsigned char* 
     }
   }, (int)(size_t)slot, decodeLen, (int)s_channelCount, s_sampleRate,
      (int)kAudioSlotStride, sequence, arrivalGapMs);
+
+  // The hand-over to the player is the conversion to the slot and the post to the main thread, from the end of the
+  // decode
+  g_AudioStreamStats.CountOutput(ElapsedUs(decodeEnd, std::chrono::steady_clock::now()));
 }
 
 int MoonlightInstance::AudDecInit(int audioConfiguration, POPUS_MULTISTREAM_CONFIGURATION opusConfig, void* context, int arFlags) {
@@ -243,11 +274,14 @@ int MoonlightInstance::AudDecInit(int audioConfiguration, POPUS_MULTISTREAM_CONF
   s_channelCount = opusConfig->channelCount;
   s_sampleRate = opusConfig->sampleRate;
 
-  // Calculate buffer size in bytes for one decoded audio frame
-  size_t s_bufferSize = sizeof(opus_int16) * s_samplesPerFrame * s_channelCount;
+  // Size the decode buffer for one decoded frame over all channels. It holds samples, not bytes: the size in bytes that
+  // earlier versions gave it made it twice as large as needed. The decoder never writes more than the frame size that
+  // DecodeAndAppendPacket() offers it, which is this negotiated one.
+  s_DecodeBuffer.assign(s_samplesPerFrame * s_channelCount, 0);
 
-  // Resize the decode buffer based on the samples per frame and channels count
-  s_DecodeBuffer.resize(s_bufferSize);
+  // Log the rejected and dropped packets of this stream from the first one again
+  s_AppendFailures = 0;
+  s_DroppedPackets = 0;
 
   // Calculate the frame duration based on the samples per frame (240) and sample rate (48000)
   s_frameDuration = FrameDuration(opusConfig->samplesPerFrame, opusConfig->sampleRate);
@@ -367,7 +401,11 @@ void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLe
 
   // Check if audio synchronization is enabled and if packet dropping is necessary to avoid overflow
   if (s_AudioSyncEnabled && ntp + kAudioBufferMargin < s_estimatedAudioEnd) {
-    ClLogMessage("Dropping audio packet to avoid overflow: PTS=%.03f NTP=%.03f\n", s_pktPts.count(), ntp.count());
+    // Report the dropped packets in batches (the first and every 100th), see s_DroppedPackets
+    if (++s_DroppedPackets % 100 == 1) {
+      ClLogMessage("Dropping audio packets to avoid overflow: %d packets of this stream, PTS=%.03f NTP=%.03f\n",
+        s_DroppedPackets, s_pktPts.count(), ntp.count());
+    }
     return;
   }
 

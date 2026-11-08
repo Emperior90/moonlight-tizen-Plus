@@ -9,7 +9,9 @@
 // that input moves the selection), the keys for the PC (every key released again), Disconnect and 'Quit app on the PC'. It
 // stays inside the safe area of the screen with every entry showing without scrolling and every label on one line in
 // every language, also with text 10 % wider than this machine draws it (tests/browser/text-stress.js), and the video
-// keeps showing. The bitrate entry and 'Type text…' are checked by stream-menu-entries.test.js. The controller side (the
+// keeps showing, also with the surround quality entry of a 5.1 stream and the notes of a changed bitrate and quality.
+// The bitrate and surround quality entries and 'Type text…' are checked by stream-menu-entries.test.js. The controller
+// side (the
 // combo and the controller input while the menu is open) is pinned by tests/native/stream_menu_combo_test.cpp.
 
 const { after, before, test } = require('node:test');
@@ -63,10 +65,11 @@ function simulatedGamepads() {
 
 // Open the app with a simulated host and start a stream of app 8 that reaches 'Connection Established'. The host
 // records its calls in window.__hostCalls, showApps() and the snackbar are recorded, and a listener on the video
-// element records the keys that would reach the keyboard handler of the stream (window.__videoKeys).
+// element records the keys that would reach the keyboard handler of the stream (window.__videoKeys). The settings of
+// options.stored go into the storage before the app starts, e.g. the audio configuration 5.1.
 async function openStreaming(options) {
   const opts = options || {};
-  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, initScripts: [simulatedGamepads] });
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, initScripts: [simulatedGamepads], stored: opts.stored });
   if (opts.gamepad) {
     await app.page.evaluate((id) => window.__connectPad(0, id), XBOX_ID);
   }
@@ -315,7 +318,8 @@ test('a held key that closed the Stream Menu stays away from the PC until it is 
 });
 
 test('the Stream Menu stays inside the safe area of the screen', async () => {
-  const app = await openStreaming({ gamepad: true });
+  // A 5.1 stream with a controller: the most entries the menu can show
+  const app = await openStreaming({ gamepad: true, stored: { audioConfig: '51Surround' } });
   try {
     await remoteKey(app.page, ...PLAY_PAUSE);
     const box = await app.page.evaluate(() => {
@@ -324,16 +328,18 @@ test('the Stream Menu stays inside the safe area of the screen', async () => {
     });
     // 5 % on each side of the 1920 x 1080 screen of the app
     assert.ok(box.left >= box.width * 0.05 && box.right <= box.width * 0.95, JSON.stringify(box));
-    // Every entry and the hint show without scrolling, also with the mouse emulation entry of a controller and the note
-    // of a changed bitrate
+    // Every entry and the hint show without scrolling, also with the mouse emulation entry of a controller, the surround
+    // quality entry of a 5.1 stream and the notes of a changed bitrate and quality
     const fit = await app.page.evaluate(() => {
       changeStreamMenuBitrate(-1);
+      changeStreamMenuSurround(-1);
       const menu = document.getElementById('streamMenu');
       return { entries: getOverlayMenuItems('streamMenu').length, note: $('#streamMenuBitrateNote').text() !== '',
-        scrollHeight: menu.scrollHeight, clientHeight: menu.clientHeight };
+        surroundNote: $('#streamMenuSurroundNote').text() !== '', scrollHeight: menu.scrollHeight, clientHeight: menu.clientHeight };
     });
-    assert.equal(fit.entries, 13);
+    assert.equal(fit.entries, 14);
     assert.equal(fit.note, true);
+    assert.equal(fit.surroundNote, true);
     assert.ok(fit.scrollHeight <= fit.clientHeight, JSON.stringify(fit));
     assert.ok(box.top >= box.height * 0.05 && box.bottom <= box.height * 0.95, JSON.stringify(box));
     assert.ok(box.right >= box.width * 0.9, 'on the right side of the picture: ' + JSON.stringify(box));
@@ -343,8 +349,9 @@ test('the Stream Menu stays inside the safe area of the screen', async () => {
   }
 });
 
-test('in every language the Stream Menu shows every entry without scrolling, and each label and bitrate note takes one line, also with 10 % wider text', async () => {
-  const app = await openStreaming({ gamepad: true });
+test('in every language the Stream Menu shows every entry without scrolling, and each label and note takes one line, also with 10 % wider text', async () => {
+  // A 5.1 stream with a controller, so that the mouse emulation and the surround quality entries show
+  const app = await openStreaming({ gamepad: true, stored: { audioConfig: '51Surround' } });
   try {
     await remoteKey(app.page, ...PLAY_PAUSE);
     const languages = await app.page.evaluate(() => i18n.getSupportedLocales());
@@ -354,7 +361,8 @@ test('in every language the Stream Menu shows every entry without scrolling, and
       await app.page.waitForFunction((locale) => document.documentElement.getAttribute('lang') === locale, language);
       // Both notes of the bitrate entry: the one of a changed bitrate and the one of OK on an unchanged bitrate, also
       // with the widest bitrates since the entry goes up to 250 Mbps: a stream at 247.5 Mbps (chosen with the slider)
-      // and the entry one step below it or at it
+      // and the entry one step below it or at it. The surround quality entry shows the wider of its two values with the
+      // note of a change at the same time, so that both notes take their lines.
       await forEachTextWidth(app.page, async (stress) => {
         for (const note of ['changed', 'unchanged', 'widest changed', 'widest unchanged']) {
           const fit = await app.page.evaluate((which) => {
@@ -373,6 +381,19 @@ test('in every language the Stream Menu shows every entry without scrolling, and
                 applyStreamMenuBitrate();
               }
             }
+            // The surround quality entry with the note of a change, at whichever of its values is wider. It goes back to
+            // the quality of the stream below, since OK on the bitrate entry would reconnect with a change that waits.
+            const surroundStream = streamSurroundQuality;
+            const surroundValue = document.getElementById('streamMenuSurroundValue');
+            const widths = {};
+            ['High', 'Efficient'].forEach((quality) => {
+              streamMenuSurroundQuality = quality;
+              showStreamMenuSurround();
+              widths[quality] = surroundValue.getBoundingClientRect().width;
+            });
+            streamMenuSurroundQuality = widths.High > widths.Efficient ? 'High' : 'Efficient';
+            streamSurroundQuality = streamMenuSurroundQuality === 'High' ? 'Efficient' : 'High';
+            showStreamMenuSurround();
             const menu = document.getElementById('streamMenu');
             const oneLine = (element) => element.getBoundingClientRect().height < 2 * parseFloat(getComputedStyle(element).lineHeight);
             const labels = Array.prototype.filter.call(menu.querySelectorAll('.overlay-menu-label'), (label) => label.offsetParent !== null);
@@ -385,7 +406,14 @@ test('in every language the Stream Menu shows every entry without scrolling, and
               longLabels: labels.filter((label) => !oneLine(label)).map((label) => label.textContent),
               scrolls: menu.scrollHeight > menu.clientHeight,
               insideMenu: value.getBoundingClientRect().right <= menu.getBoundingClientRect().right,
+              surroundShown: getOverlayMenuItems('streamMenu').some((item) => item.id === 'streamMenuSurround'),
+              surroundNote: $('#streamMenuSurroundNote').text(),
+              surroundOneLine: oneLine(surroundValue) && oneLine(document.getElementById('streamMenuSurroundNote')),
+              surroundInsideMenu: surroundValue.getBoundingClientRect().right <= menu.getBoundingClientRect().right,
             };
+            streamSurroundQuality = surroundStream;
+            streamMenuSurroundQuality = surroundStream;
+            showStreamMenuSurround();
             // Back to the bitrate of the stream after the widest texts, where 'changed' and 'unchanged' step from
             if (which.indexOf('widest') === 0) {
               streamBitrateMbps = stream;
@@ -396,6 +424,7 @@ test('in every language the Stream Menu shows every entry without scrolling, and
           }, note);
           assert.ok(fit.open && fit.note !== '' && fit.noteOneLine && fit.valueOneLine && fit.insideMenu && fit.longLabels.length === 0 && !fit.scrolls,
             language + stress + ' ' + JSON.stringify(fit));
+          assert.ok(fit.surroundShown && fit.surroundNote !== '' && fit.surroundOneLine && fit.surroundInsideMenu, language + stress + ' ' + JSON.stringify(fit));
           if (note.indexOf('widest') === 0) {
             assert.equal(fit.value, note === 'widest changed' ? '245 Mbps' : '247.5 Mbps', language + stress);
             assert.ok(note === 'widest unchanged' || fit.note.indexOf('247.5') >= 0, language + stress + ' ' + fit.note);

@@ -362,6 +362,19 @@
                 <li class="mdl-menu__item" data-value="71Surround" data-i18n="7.1 Surround Sound">7.1 Surround Sound</li>
               </ul>
             </div>
+            <div id="surroundQualityOption" class="setting-option">
+              <label data-i18n="Surround audio quality">Surround audio quality</label>
+              <span class="mdl-list__item-text-body" data-i18n="- Efficient asks the PC for 5.1 and 7.1 at normal bitrate in 10 ms packets instead of 5 ms: about half the work to decode the sound (measured on a PC), about 5 ms more audio delay.">
+                - Efficient asks the PC for 5.1 and 7.1 at normal bitrate in 10 ms packets instead of 5 ms: about half the work to decode the sound (measured on a PC), about 5 ms more audio delay.
+              </span>
+              <div id="surroundQualityMenu">
+                <button type="button" id="selectSurroundQuality" class="mdl-button mdl-js-button" data-value="High" data-i18n="High">High</button>
+              </div>
+              <ul class="surroundQualityMenu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectSurroundQuality">
+                <li class="mdl-menu__item" data-value="High" data-i18n="High">High</li>
+                <li class="mdl-menu__item" data-value="Efficient" data-i18n="Efficient">Efficient</li>
+              </ul>
+            </div>
             <div id="audioSyncOption" class="setting-option">
               <label data-i18n="Limit audio delay">Limit audio delay</label>
               <span class="mdl-list__item-text-body" data-i18n="- Skips sound when more than 100 ms of it waits to be played, so that no delay builds up.">
@@ -1050,6 +1063,9 @@
       </button>
       <button type="button" id="streamMenuBitrate" class="overlay-menu-item" role="menuitem">
         <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-sliders"/></svg><span class="overlay-menu-label"><span data-i18n="Bitrate">Bitrate</span></span><span class="overlay-menu-stepper"><svg id="streamMenuBitrateLower" class="icon" aria-hidden="true"><use xlink:href="#i-back"/></svg><span id="streamMenuBitrateValue" class="overlay-menu-value"></span><svg id="streamMenuBitrateHigher" class="icon stepper-next" aria-hidden="true"><use xlink:href="#i-back"/></svg></span><span id="streamMenuBitrateNote" class="overlay-menu-note"></span>
+      </button>
+      <button type="button" id="streamMenuSurround" class="overlay-menu-item" role="menuitem" hidden>
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-speaker"/></svg><span class="overlay-menu-label"><span data-i18n="Surround quality">Surround quality</span></span><span class="overlay-menu-stepper"><svg id="streamMenuSurroundLower" class="icon" aria-hidden="true"><use xlink:href="#i-back"/></svg><span id="streamMenuSurroundValue" class="overlay-menu-value"></span><svg id="streamMenuSurroundHigher" class="icon stepper-next" aria-hidden="true"><use xlink:href="#i-back"/></svg></span><span id="streamMenuSurroundNote" class="overlay-menu-note"></span>
       </button>
       <button type="button" id="streamMenuRefresh" class="overlay-menu-item" role="menuitem">
         <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-refresh"/></svg><span class="overlay-menu-label" data-i18n="Refresh picture">Refresh picture</span>

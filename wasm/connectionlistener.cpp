@@ -39,6 +39,21 @@ void MoonlightInstance::ClStageStarting(int stage) {
   PostToJs(std::string("ProgressMsg: Starting ") + std::string(LiGetStageName(stage)) + std::string("..."));
 }
 
+void MoonlightInstance::ClStageComplete(int stage) {
+  // The control stream connected, which releases the start on the host: Sunshine keeps the launch session of a launch
+  // or resume request, and drops that of every other request meanwhile, until the control stream of its stream
+  // connects or ping_timeout runs out (src/stream.cpp). The video, audio and input stages still follow before
+  // "Connection Established", and a stream that ends during them (RED, or a failed stage) leaves no start behind on
+  // the host, so the front end mustn't make the next start wait for it (rememberEndedStreamStart() in index.js).
+  // PostToJs() returns once the front end handled the message, so it comes before the termination of a later stage
+  // that fails, which this thread posts once LiStartConnection() returned. Not for a stream that is already being
+  // stopped: the front end has its termination, and the message could only reach the next start.
+  if (stage != STAGE_CONTROL_STREAM_START || (g_Instance && g_Instance->m_ConnectionCancelled)) {
+    return;
+  }
+  PostToJs(std::string("ControlStreamConnected"));
+}
+
 // The ports of the host PC in the port flags of moonlight-common-c, as the stream uses them: the default ports of
 // LiStringifyPortFlags(), moved like the RTSP port in the session URL of the host (wasm/connection_ports.hpp), e.g.
 // TCP 50021 instead of TCP 48010 for a Sunshine host with the port 50000, or "" when there are none
@@ -54,6 +69,13 @@ void MoonlightInstance::ClStageFailed(int stage, int errorCode) {
   }
   // The stream termination message already explains why the video setup failed
   if (stage == STAGE_VIDEO_STREAM_START && errorCode == ERROR_VIDEO_SETUP_FAILED) {
+    return;
+  }
+  // The host answered the RTSP handshake with the key of another start, which Sunshine does while it still holds an
+  // earlier start (ML_ERROR_RTSP_DECRYPT_FAILED in Limelight.h): no port is blocked, so the dialog with the ports would
+  // mislead. The front end starts the stream once more after the hold of that start, and explains it only if that fails
+  // as well (retryStreamStart() in index.js, called for the termination that follows).
+  if (stage == STAGE_RTSP_HANDSHAKE && errorCode == ML_ERROR_RTSP_DECRYPT_FAILED) {
     return;
   }
   // Name the ports of the host PC that the stage needs, which a firewall or the router may block (e.g. TCP 48010,
@@ -131,6 +153,7 @@ void MoonlightInstance::ClConnectionStatusUpdate(int connectionStatus) {
 
 CONNECTION_LISTENER_CALLBACKS MoonlightInstance::s_ClCallbacks = {
   .stageStarting = MoonlightInstance::ClStageStarting,
+  .stageComplete = MoonlightInstance::ClStageComplete,
   .stageFailed = MoonlightInstance::ClStageFailed,
   .connectionStarted = MoonlightInstance::ClConnectionStarted,
   .connectionTerminated = MoonlightInstance::ClConnectionTerminated,

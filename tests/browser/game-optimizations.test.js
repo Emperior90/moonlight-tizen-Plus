@@ -61,6 +61,9 @@ function startAndReadSops(page, hostFields) {
     }, fields);
     startGame(host, 8);
     await new Promise((resolve) => setTimeout(resolve, 300));
+    // The stream connects before it ends, which releases its start on the host, so the next start doesn't wait
+    // (held-host-start.test.js)
+    handleMessage('Connection Established');
     Module.stopStream();
     await new Promise((resolve) => setTimeout(resolve, 100));
     return requests;

@@ -110,7 +110,8 @@ const rowLayout = (page, category) => page.evaluate((name) => {
 test('the help text runs across each row, a switch label shows only without help text, and no label takes three lines or runs out of its column, also with 10 % wider text', async () => {
   assert.ok(LANGUAGES.indexOf('pt-BR') >= 0 && LANGUAGES.indexOf('de-DE') >= 0, JSON.stringify(LANGUAGES));
   for (const language of LANGUAGES) {
-    const app = await openApp(harness, { tv: TV });
+    // With 5.1, so that the row of the surround audio quality shows as well
+    const app = await openApp(harness, { tv: TV, stored: { audioConfig: '51Surround' } });
     try {
       await openSettings(app.page, language);
       await forEachTextWidth(app.page, async (stress) => {
@@ -135,6 +136,11 @@ test('the help text runs across each row, a switch label shows only without help
           });
         }
       });
+      // The row of the surround audio quality was one of the rows checked above
+      assert.equal(await app.page.evaluate(() => {
+        handleSettingsView('audioSettings');
+        return $('#surroundQualityOption').is(':visible');
+      }), true);
       // The rows of the Input Settings without help text, the switches of rumble and mouse emulation: the label of the
       // switch takes its place. The rows of the button mapping, the input test and the controller type have help texts.
       const input = await rowLayout(app.page, 'inputSettings');

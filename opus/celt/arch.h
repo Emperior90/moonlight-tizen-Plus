@@ -109,7 +109,19 @@ void celt_fatal(const char *str, const char *file, int line)
 /* Set this if opus_int64 is a native type of the CPU. */
 /* Assume that all LP64 architectures have fast 64-bit types; also x86_64
    (which can be ILP32 for x32) and Win64 (which is LLP64). */
-#if defined(__x86_64__) || defined(__LP64__) || defined(_WIN64)
+/* Moonlight Plus: also WebAssembly (__EMSCRIPTEN__). wasm32 has 32-bit
+   pointers, so it isn't LP64, but i64 is a native type of WebAssembly with
+   its own multiply instruction. The 64-bit macros of fixed_generic.h and
+   silk/macros.h are then one multiply instead of the up to four 16-bit
+   partial products of the 32-bit fallback, which took 6 to 12 % off the
+   decoding time of 5.1 at normal quality on a PC with the compiler of the
+   app. The decoded audio is then that of libopus on 64-bit
+   systems: an x86_64 build gave the same samples bit for bit. The 32-bit
+   fallback rounds some products differently, so its samples differed by up
+   to 5 of 65536 steps, more in concealed packets.
+   tests/unit/vendored-opus-patch.test.js pins this line; keep it when the
+   vendored Opus is updated. */
+#if defined(__x86_64__) || defined(__LP64__) || defined(_WIN64) || defined(__EMSCRIPTEN__)
 #define OPUS_FAST_INT64 1
 #else
 #define OPUS_FAST_INT64 0

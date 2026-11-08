@@ -152,7 +152,8 @@ OF SUCH DAMAGE.
 
 ------------------------------------------------------------------------
 
-[6] Opus 1.5.2, the audio codec (only the decoder is built; compiled into moonlight-wasm.wasm)
+[6] Opus 1.5.2, the audio codec (only the decoder is built, with one condition in celt/arch.h changed for Moonlight
+    Plus; compiled into moonlight-wasm.wasm)
     Source: https://opus-codec.org/ and https://github.com/xiph/opus (tag v1.5.2)
     Licence: BSD 3-Clause license, with the royalty-free patent licenses named below
 

@@ -392,6 +392,16 @@ typedef void(*ConnListenerStageComplete)(int stage);
 // result in this callback being invoked, but it is not guaranteed.
 typedef void(*ConnListenerStageFailed)(int stage, int errorCode);
 
+// Moonlight Plus: this error is passed to ConnListenerStageFailed() for STAGE_RTSP_HANDSHAKE, and returned by
+// LiStartConnection(), when the host answers an encrypted RTSP request with a message that doesn't decrypt with the
+// key of this start (its AES-GCM tag doesn't verify). Sunshine answers like that while it still holds the launch
+// session of an earlier start: it keeps only one, for ping_timeout (10 seconds by default), drops the session of a
+// /launch or /resume that comes meanwhile and still answers it with success, and then checks and answers the RTSP
+// requests of that start with the key of the earlier one. Upstream reports it as -1, like most RTSP failures.
+// The value lies outside the -1xx codes above and the -2xx codes of the app (wasm/moonlight_wasm.hpp), and apart from
+// -1 the handshake fails only with socket errors and RTSP status codes, which are positive.
+#define ML_ERROR_RTSP_DECRYPT_FAILED -300
+
 // This callback is invoked after the connection is successfully established
 typedef void(*ConnListenerConnectionStarted)(void);
 

@@ -1,7 +1,7 @@
 'use strict';
 
 // Checks the silent retry of a stream that ended without video at its start (ML_ERROR_NO_VIDEO_TRAFFIC, error -100,
-// retryStreamAfterNoVideo() in wasm/platform/index.js, called by handleMessage() in messages.js): the launch screen
+// retryStreamStart() in wasm/platform/index.js, called by handleMessage() in messages.js): the launch screen
 // stays, the app is resumed and the stream started once more without a message, and the message about the ports of the
 // host PC shows only when the retry ends without video as well. Only once per launch, never while Moonlight is in the
 // background, RED during the wait cancels it, a retry that can't reach the host ends like the stream it retried, and
@@ -31,7 +31,7 @@ const PORTS_MESSAGE = 'No video received from the PC. Check that the firewall of
 async function openWithHost(options) {
   const app = await openApp(harness, Object.assign({ tv: { tv: 's90c', conn: 'wifi' } }, options));
   await app.page.evaluate(() => {
-    NO_VIDEO_RETRY_DELAY_MS = 100;
+    STREAM_RETRY_DELAY_MS = 100;
     window.__events = [];
     const record = (event) => window.__events.push(event);
     const ok = '<root status_code="200" status_message="OK"><sessionUrl0>rtsp://10.0.0.2:48010</sessionUrl0></root>';

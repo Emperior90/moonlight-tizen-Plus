@@ -3,9 +3,12 @@
 # sanitizers, with the Emscripten 1.39 and Samsung headers replaced by the stubs in tests/native/stubs, and runs them.
 # Each test includes the source file it tests (e.g. wasm/gamepad.cpp) directly. The C tests (tests/native/*_test.c)
 # include C files of moonlight-common-c and libgamestream the same way and are built with gcc and the stubs in
-# tests/native/stubs_c. A test that needs more options or a library names them in a comment line
-# '// Build with: -lcrypto'; a test that includes OpenSSL or curl is skipped with a notice when their headers are
-# missing, like the syntax check of wasm/http.cpp below.
+# tests/native/stubs_c. A test that needs more options, a library or another source file names them in a comment line
+# '// Build with: -lcrypto' (a C++ test e.g. '// Build with: -std=gnu++17' for a file with an EM_ASM block without
+# arguments, whose stub needs the GNU form of __VA_ARGS__ as the syntax check below does); the tests are built from the
+# root of the repository, so a source file there is named from it, e.g. moonlight-common-c/src/RtspParser.c. A test that
+# includes OpenSSL or curl is skipped with a notice when their headers are missing, like the syntax check of
+# wasm/http.cpp below.
 # The executables go to tests/native/build. Set CXX and CC to use other compilers.
 #
 # The vptr check of UBSan is off, because the tests call member functions of MoonlightInstance, whose virtual
@@ -36,8 +39,10 @@ export UBSAN_OPTIONS="${UBSAN_OPTIONS:-print_stacktrace=1}"
 failed=0
 for source in "$here"/*_test.cpp; do
   name="$(basename "$source" .cpp)"
+  # shellcheck disable=SC2207
+  extra=($(sed -n 's|^// Build with: ||p' "$source"))
   echo "# Building $name"
-  "$cxx" "${flags[@]}" -o "$out/$name" "$source" -lpthread
+  (cd "$repo" && "$cxx" "${flags[@]}" -o "$out/$name" "$source" ${extra[@]+"${extra[@]}"} -lpthread)
   echo "# Running $name"
   if ! "$out/$name"; then
     echo "# $name failed"
@@ -64,7 +69,7 @@ for source in "$here"/*_test.c; do
   extra=($(sed -n 's|^// Build with: ||p' "$source"))
   echo "# Building $name"
   # (the form of the expansion keeps an empty list working with 'set -u' in the bash 3.2 of macOS)
-  "$cc" "${cflags[@]}" -o "$out/$name" "$source" ${extra[@]+"${extra[@]}"} -lpthread
+  (cd "$repo" && "$cc" "${cflags[@]}" -o "$out/$name" "$source" ${extra[@]+"${extra[@]}"} -lpthread)
   echo "# Running $name"
   if ! "$out/$name"; then
     echo "# $name failed"
@@ -96,6 +101,21 @@ echo "# Running opus_decoder/decode.c"
 if ! "$cc" -std=gnu99 -O1 -I"$repo/opus/include" -o "$opus_out/decode" "$here/opus_decoder/decode.c" "$opus_out/libopus.a" -lm ||
     ! "$opus_out/decode"; then
   echo "# The Opus decoder of CMakeLists.txt doesn't link or decode"
+  failed=1
+fi
+
+# The local patch of opus/celt/arch.h (tests/unit/vendored-opus-patch.test.js): the WebAssembly build, whose pointers
+# are 32 bits wide as on a 32-bit CPU, takes the 64-bit multiplications of Opus, while a 32-bit target without
+# Emscripten keeps the 32-bit fallback of upstream. The condition is taken out of the header and evaluated on its own,
+# because the system headers of this machine can't be included for another target.
+opus_fast_int64() {
+  sed -n '/Set this if opus_int64 is a native type of the CPU/,/^#endif/p' "$repo/opus/celt/arch.h" |
+    "$cc" -x c -E -dM -U__x86_64__ -U__LP64__ -U_WIN64 "$@" - | sed -n 's/^#define OPUS_FAST_INT64 //p'
+}
+echo "# Checking OPUS_FAST_INT64 of opus/celt/arch.h for WebAssembly, a 32-bit target and an LP64 target"
+if [ "$(opus_fast_int64 -D__EMSCRIPTEN__)" != "1" ] || [ "$(opus_fast_int64)" != "0" ] ||
+    [ "$(opus_fast_int64 -D__LP64__)" != "1" ]; then
+  echo "# OPUS_FAST_INT64 of opus/celt/arch.h is not 1 for WebAssembly and LP64 and 0 for other 32-bit targets"
   failed=1
 fi
 

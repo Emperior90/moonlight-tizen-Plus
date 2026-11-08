@@ -9,6 +9,12 @@
 //   warning threshold of the TV (150 Mbps on the S90C), or above 80 Mbps over Ethernet, OK shows the warning of the
 //   slider once; RED cancels the reconnect, an app that no longer runs ends it with a message, and an end of the stream
 //   for another reason never reconnects;
+// - the surround quality entry shows only while the stream has more than 2 audio channels (getAudioChannelCount() of
+//   the module), not for stereo, a host that only offers stereo or with the audio output disabled; LEFT sets Efficient
+//   and RIGHT High, with the arrow at that end dimmed and the note that OK reconnects, a held key or D-pad stays at its
+//   end, and OK on a new quality keeps it as the setting and resumes the app with it, the same way as the bitrate; a new
+//   bitrate and a new quality that wait together reconnect once with both, whichever entry OK is pressed on, and a
+//   reconnect for a new quality that can't resume says so;
 // - 'Refresh picture' asks the module once for a keyframe (requestIdrFrame()), logs one line with its answer, closes the
 //   menu and gives the stream the focus back, without a key or a reconnect reaching the stream, also with a gamepad;
 // - 'Type text…' opens a field that takes the keys of the keyboard while nothing reaches the stream, Enter and the Done
@@ -70,7 +76,7 @@ async function openStreaming(options) {
     await app.page.evaluate((id) => window.__connectPad(0, id), XBOX_ID);
   }
   await app.page.evaluate(async () => {
-    BITRATE_RESTART_DELAY_MS = 100;
+    SETTINGS_RESTART_DELAY_MS = 100;
     window.__events = [];
     const record = (event) => window.__events.push(event);
     const ok = '<root status_code="200" status_message="OK"><sessionUrl0>rtsp://10.0.0.2:48010</sessionUrl0></root>';
@@ -436,12 +442,12 @@ test('RED cancels the reconnect, an app that no longer runs ends it with a messa
       await window.wait(300);
       handleMessage('Connection Established');
       window.__events.length = 0;
-      pendingBitrateRestartMbps = 60;
+      pendingStreamRestart = { bitrateMbps: 60 };
       handleMessage('streamTerminated: -101');
       await window.wait(300);
     });
-    state = await app.page.evaluate(() => ({ events: window.__events.slice(), isInGame, pending: pendingBitrateRestartMbps }));
-    assert.deepEqual(state, { events: ['app list'], isInGame: false, pending: 0 });
+    state = await app.page.evaluate(() => ({ events: window.__events.slice(), isInGame, pending: pendingStreamRestart }));
+    assert.deepEqual(state, { events: ['app list'], isInGame: false, pending: null });
     // 'Disconnect' ends the stream as before, without a reconnect
     await app.page.evaluate(async () => {
       startGame(window.__host, 8);
@@ -453,6 +459,217 @@ test('RED cancels the reconnect, an app that no longer runs ends it with a messa
     await remoteKey(app.page, ...ENTER);
     await app.page.waitForTimeout(300);
     assert.deepEqual(await app.page.evaluate(() => window.__events.slice()), ['stop', 'app list']);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+// What the surround quality entry shows
+const surroundEntry = (page) => page.evaluate(() => ({
+  shown: getOverlayMenuItems('streamMenu').some((item) => item.id === 'streamMenuSurround'),
+  value: $('#streamMenuSurroundValue').text(),
+  pending: $('#streamMenuSurroundValue').hasClass('is-pending'),
+  note: $('#streamMenuSurroundNote').text(),
+  lowerLimit: $('#streamMenuSurroundLower').hasClass('is-limit'),
+  higherLimit: $('#streamMenuSurroundHigher').hasClass('is-limit'),
+}));
+
+// The argument surroundQuality of the latest start request (the last one, SyncFunctions.startRequest in messages.js)
+const startRequestQuality = (page) => page.evaluate(() => window.__startStreamArgs[window.__startStreamArgs.length - 1]);
+
+test('the surround quality entry shows only for a stream with more than 2 audio channels', async () => {
+  // Stereo, the default: the menu doesn't grow
+  const stereo = await openStreaming();
+  try {
+    await remoteKey(stereo.page, ...PLAY_PAUSE);
+    assert.equal((await surroundEntry(stereo.page)).shown, false);
+    assert.equal(await startRequestQuality(stereo.page), 'High');
+    assert.deepEqual(stereo.errors, []);
+  } finally {
+    await stereo.context.close();
+  }
+  // 5.1 and 7.1, a 5.1 setting that the host answers with stereo, and 5.1 with the audio output disabled
+  for (const [stored, channels, shown] of [[{ audioConfig: '51Surround' }, null, true], [{ audioConfig: '71Surround' }, null, true],
+    [{ audioConfig: '51Surround' }, 2, false], [{ audioConfig: '51Surround', audioBackend: 'Disabled' }, null, false]]) {
+    const app = await openStreaming({ stored });
+    try {
+      if (channels !== null) {
+        await app.page.evaluate((count) => {
+          window.__audioChannels = count;
+        }, channels);
+      }
+      await remoteKey(app.page, ...PLAY_PAUSE);
+      const entry = await surroundEntry(app.page);
+      assert.equal(entry.shown, shown, JSON.stringify(stored) + ' ' + channels);
+      if (shown) {
+        assert.deepEqual(entry, { shown: true, value: 'High', pending: false, note: '', lowerLimit: false, higherLimit: true });
+        // Right after the bitrate entry
+        const entries = await app.page.evaluate(() => getOverlayMenuItems('streamMenu').map((item) => item.id));
+        assert.equal(entries[entries.indexOf('streamMenuBitrate') + 1], 'streamMenuSurround');
+      }
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
+test('LEFT sets the surround quality to Efficient and RIGHT to High, and OK keeps it as the setting and reconnects with it', async () => {
+  const app = await openStreaming({ stored: { audioConfig: '51Surround' } });
+  try {
+    await openMenuAt(app.page, 'streamMenuSurround');
+    // OK on the quality of the stream does nothing but explain
+    await remoteKey(app.page, ...ENTER);
+    assert.deepEqual(await surroundEntry(app.page),
+      { shown: true, value: 'High', pending: false, note: 'Change it with LEFT and RIGHT', lowerLimit: false, higherLimit: true });
+    assert.equal(await app.page.evaluate(() => isStreamMenuOpen), true);
+    // RIGHT at High, the higher end, keeps it
+    await remoteKey(app.page, ...RIGHT);
+    assert.deepEqual(await surroundEntry(app.page), { shown: true, value: 'High', pending: false, note: '', lowerLimit: false, higherLimit: true });
+    await remoteKey(app.page, ...LEFT);
+    const efficient = { shown: true, value: 'Efficient', pending: true, note: 'OK: reconnect', lowerLimit: true, higherLimit: false };
+    assert.deepEqual(await surroundEntry(app.page), efficient);
+    // LEFT at Efficient, the lower end, keeps it
+    await remoteKey(app.page, ...LEFT);
+    assert.deepEqual(await surroundEntry(app.page), efficient);
+    await remoteKey(app.page, ...RIGHT);
+    assert.deepEqual(await surroundEntry(app.page), { shown: true, value: 'High', pending: false, note: '', lowerLimit: false, higherLimit: true });
+    await remoteKey(app.page, ...LEFT);
+    assert.deepEqual(await surroundEntry(app.page), efficient);
+    // The bitrate entry has no change of its own
+    assert.deepEqual(await bitrateEntry(app.page), { value: '40 Mbps', pending: false, note: '', lowerLimit: false, higherLimit: false });
+
+    // OK: the setting becomes Efficient, the stream ends without a quit, and the launch screen says that it reconnects
+    await remoteKey(app.page, ...ENTER);
+    const waiting = await app.page.evaluate(() => ({
+      menu: isStreamMenuOpen, isInGame, spinner: $('#loadingSpinner').is(':visible'), message: $('#loadingSpinnerMessage').text(),
+      setting: $('#selectSurroundQuality').data('value'), events: window.__events.slice(),
+    }));
+    assert.deepEqual(waiting, { menu: false, isInGame: true, spinner: true, message: 'Reconnecting...', setting: 'Efficient', events: ['stop'] });
+    await waitForStorage(app.page, (values) => values.surroundQuality === 'Efficient');
+    await app.page.waitForTimeout(400);
+    const resumed = await app.page.evaluate(() => ({
+      events: window.__events.slice(), message: $('#loadingSpinnerMessage').text(), bitrate: window.__startStreamArgs[5],
+      snackbar: window.__snackbar.slice(),
+    }));
+    // The same app resumes, with the bitrate as it was
+    assert.deepEqual(resumed, { events: ['stop', 'resume', 'start request 40000'], message: 'Reconnecting...', bitrate: '40000', snackbar: [] });
+    assert.equal(await startRequestQuality(app.page), 'Efficient');
+    await app.page.evaluate(() => handleMessage('Connection Established'));
+    // The Stream Menu starts from the quality of the new stream
+    await remoteKey(app.page, ...PLAY_PAUSE);
+    assert.deepEqual(await surroundEntry(app.page), { shown: true, value: 'Efficient', pending: false, note: '', lowerLimit: true, higherLimit: false });
+    assert.equal(await app.page.evaluate(() => window.__host.currentGame), 8, 'the app still runs on the PC');
+    assert.deepEqual(app.errors, []);
+    assert.deepEqual(await app.page.evaluate(() => window.__videoKeys.slice()), []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+// Hold a key of the remote on the focused element: one keydown, then the given number of auto-repeat keydowns, as the TV
+// sends them while the key is held, and the keyup. Returns the value of the surround quality entry after each keydown.
+const holdRemoteKey = (page, keyCode, key, repeats) => page.evaluate(({ code, name, count }) => {
+  const send = (type, repeat) => {
+    const event = new KeyboardEvent(type, { key: name, repeat: repeat, bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'keyCode', { value: code });
+    Object.defineProperty(event, 'which', { value: code });
+    (document.activeElement || document.body).dispatchEvent(event);
+  };
+  const values = [];
+  send('keydown', false);
+  values.push($('#streamMenuSurroundValue').text());
+  for (let i = 0; i < count; i++) {
+    send('keydown', true);
+    values.push($('#streamMenuSurroundValue').text());
+  }
+  send('keyup', false);
+  return values;
+}, { code: keyCode, name: key, count: repeats });
+
+test('a held key of the remote or a held D-pad keeps the surround quality at its end instead of switching it back and forth', async () => {
+  const app = await openStreaming({ stored: { audioConfig: '51Surround' }, gamepad: true });
+  try {
+    await openMenuAt(app.page, 'streamMenuSurround');
+    // The auto-repeat of a held key of the remote, which reaches the menu during a stream
+    assert.deepEqual(await holdRemoteKey(app.page, ...LEFT, 4), ['Efficient', 'Efficient', 'Efficient', 'Efficient', 'Efficient']);
+    assert.deepEqual(await surroundEntry(app.page),
+      { shown: true, value: 'Efficient', pending: true, note: 'OK: reconnect', lowerLimit: true, higherLimit: false });
+    assert.deepEqual(await holdRemoteKey(app.page, ...RIGHT, 4), ['High', 'High', 'High', 'High', 'High']);
+    assert.deepEqual(await surroundEntry(app.page), { shown: true, value: 'High', pending: false, note: '', lowerLimit: false, higherLimit: true });
+    // A held D-pad repeats after 350 ms every 100 ms (startRepeatAction() in index.js): however long it is held, the
+    // value stays at the end of its direction
+    for (const [button, ms, value] of [[14, 520, 'Efficient'], [14, 690, 'Efficient'], [15, 520, 'High'], [15, 690, 'High'], [15, 820, 'High']]) {
+      await app.page.evaluate((index) => window.__setButton(0, index, true), button);
+      await app.page.waitForTimeout(ms);
+      await app.page.evaluate((index) => window.__setButton(0, index, false), button);
+      await app.page.waitForTimeout(AFTER_DELAY_MS);
+      const entry = await surroundEntry(app.page);
+      assert.equal(entry.value, value, button + ' held for ' + ms + ' ms');
+      assert.equal(entry.lowerLimit, value === 'Efficient', button + ' held for ' + ms + ' ms');
+      assert.equal(entry.higherLimit, value === 'High', button + ' held for ' + ms + ' ms');
+    }
+    assert.equal(await app.page.evaluate(() => isStreamMenuOpen), true);
+    assert.deepEqual(await app.page.evaluate(() => window.__events.slice()), []);
+    assert.deepEqual(app.errors, []);
+    assert.deepEqual(await app.page.evaluate(() => window.__videoKeys.slice()), []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a new bitrate and a new surround quality reconnect once with both, whichever entry OK is pressed on', async () => {
+  for (const okOn of ['streamMenuBitrate', 'streamMenuSurround']) {
+    const app = await openStreaming({ stored: { audioConfig: '71Surround' }, gamepad: true });
+    try {
+      await openMenuAt(app.page, 'streamMenuBitrate');
+      await remoteKey(app.page, ...RIGHT);
+      // DOWN to the surround quality entry, which LEFT of the D-pad of the gamepad sets to Efficient as well
+      await remoteKey(app.page, ...DOWN);
+      assert.equal(await app.page.evaluate(() => document.activeElement.id), 'streamMenuSurround');
+      await app.page.evaluate(() => window.__setButton(0, 14, true));
+      await app.page.waitForTimeout(50);
+      await app.page.evaluate(() => window.__setButton(0, 14, false));
+      await app.page.waitForTimeout(AFTER_DELAY_MS);
+      // Both entries show their notes
+      assert.deepEqual(await bitrateEntry(app.page), { value: '45 Mbps', pending: true, note: 'OK: reconnect (now 40 Mbps)', lowerLimit: false, higherLimit: false });
+      assert.deepEqual(await surroundEntry(app.page),
+        { shown: true, value: 'Efficient', pending: true, note: 'OK: reconnect', lowerLimit: true, higherLimit: false });
+      if (okOn === 'streamMenuBitrate') {
+        await remoteKey(app.page, ...UP);
+      }
+      assert.equal(await app.page.evaluate(() => document.activeElement.id), okOn);
+      await remoteKey(app.page, ...ENTER);
+      // The launch screen names the new bitrate
+      assert.equal(await app.page.evaluate(() => $('#loadingSpinnerMessage').text()), 'Reconnecting with 45 Mbps...', okOn);
+      await app.page.waitForTimeout(400);
+      assert.deepEqual(await app.page.evaluate(() => window.__events.slice()), ['stop', 'resume', 'start request 45000'], okOn);
+      assert.equal(await startRequestQuality(app.page), 'Efficient', okOn);
+      await waitForStorage(app.page, (values) => values.bitrate === '45' && values.surroundQuality === 'Efficient');
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
+test('a reconnect for a new surround quality that can\'t resume the app ends with its own message', async () => {
+  const app = await openStreaming({ stored: { audioConfig: '51Surround' } });
+  try {
+    await openMenuAt(app.page, 'streamMenuSurround');
+    await remoteKey(app.page, ...LEFT);
+    // The game closed on the PC meanwhile: nothing runs, and it isn't launched anew
+    await app.page.evaluate(() => {
+      window.__host.currentGame = 0;
+    });
+    await remoteKey(app.page, ...ENTER);
+    await app.page.waitForTimeout(400);
+    const state = await app.page.evaluate(() => ({ events: window.__events.slice(), isInGame, snackbar: window.__snackbar.slice() }));
+    assert.deepEqual(state, { events: ['stop', 'app list'], isInGame: false,
+      snackbar: ['Unable to resume Game 8 with the new settings. Start it again from the app list.'] });
+    // The setting keeps the choice for the next start
+    assert.equal(await app.page.evaluate(() => $('#selectSurroundQuality').data('value')), 'Efficient');
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

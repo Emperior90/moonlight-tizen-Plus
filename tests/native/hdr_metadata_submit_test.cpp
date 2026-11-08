@@ -3,9 +3,11 @@
 // metadata OBUs right after its sequence header (wasm/av1_hdr_metadata.hpp), and into every keyframe of an HEVC stream as
 // SEI messages before its first slice, as before; nothing goes into other frames, while the switch is off or while the
 // host has sent no metadata. A host that sends its metadata during the stream gets asked for a keyframe that carries it,
-// for AV1 as for HEVC. The stub of AppendPacket() (TestAppendPacketHook() in stubs/samsung/wasm/common.h) keeps a copy of
-// every appended frame; the functions below stand in for moonlight-common-c and the rest of the module, like in
-// stats_overlay_test.cpp.
+// for AV1 as for HEVC. Every HDR mode message after the first of a stream comes from a new encoder of the host, whose first
+// frame, a keyframe that no loss asked for, doesn't count as a recovery keyframe, whichever of the two arrives first,
+// while a keyframe after a loss still does (host_encoder_restart.hpp). The stub of AppendPacket()
+// (TestAppendPacketHook() in stubs/samsung/wasm/common.h) keeps a copy of every appended frame; the functions below
+// stand in for moonlight-common-c and the rest of the module, like in stats_overlay_test.cpp.
 
 #include "../../wasm/wasmplayer.cpp"
 
@@ -161,6 +163,10 @@ static void StartStream(int videoFormat, bool metadataSwitch) {
   total_bytes = 0;
   s_ReceivedFirstIdrFrame = false;
   s_RecoveryIdrFrames = 0;
+  s_ResetsAtLastIdr = 0;
+  s_PendingIdrCauses = 0;
+  s_ExpectedIdrFrame.store(false);
+  GetHostEncoderRestarts().Reset();
   s_SessionTvDroppedFrames = 0;
   s_SessionStartMs = nowMs;
   ResetHostFrameRate();
@@ -311,6 +317,111 @@ static void AKeyframeIsRequestedWhenTheMetadataArrivesDuringAStream() {
   CHECK_EQ(idrRequests, 0);
 }
 
+// The frames of an HEVC stream: a keyframe and a P-frame
+static void SubmitHevc(int frameNumber, bool idr) {
+  if (idr) {
+    SubmitOk(frameNumber, true, {{BUFFER_TYPE_VPS, kHevcVps}, {BUFFER_TYPE_SPS, kHevcSps}, {BUFFER_TYPE_PPS, kHevcPps},
+                                 {BUFFER_TYPE_PICDATA, kHevcSlice}});
+  } else {
+    SubmitOk(frameNumber, false, {{BUFFER_TYPE_PICDATA, kHevcSlice}});
+  }
+}
+
+// An HDR mode message of the host that arrives ms after the frame with the given number (Submit() sets the clock to
+// the time of each frame)
+static void HdrModeMessageAfter(int frameNumber, int ms) {
+  nowMs = 100000 + (uint64_t)(frameNumber * 1000 / 60) + ms;
+  g_Instance->ClSetHdrMode(true);
+}
+
+static int RestartLines() {
+  int count = 0;
+  for (const std::string& line : logged) {
+    if (line == "The PC restarted its video encoder (e.g. after a display, HDR or desktop change on the PC)\n") {
+      count++;
+    }
+  }
+  return count;
+}
+
+// The stream starts with the HDR mode message of its first encoder and a keyframe, and runs for a while
+static void StartRunningStream(bool metadataSwitch) {
+  StartStream(VIDEO_FORMAT_H265_MAIN10, metadataSwitch);
+  HdrModeMessageAfter(0, 0);
+  for (int frame = 1; frame <= 60; frame++) {
+    SubmitHevc(frame, frame == 1);
+  }
+  CHECK_EQ(s_RecoveryIdrFrames, 0u);
+  CHECK_EQ(RestartLines(), 0);
+}
+
+static void TheKeyframeOfARestartedEncoderIsNoRecoveryKeyframe() {
+  for (bool metadataSwitch : {false, true}) {
+    // The message of the restart arrives before its keyframe
+    StartRunningStream(metadataSwitch);
+    HdrModeMessageAfter(60, 5);
+    CHECK_EQ(RestartLines(), 1);
+    // The picture stands still for about half a second, then the new encoder starts with a keyframe
+    SubmitHevc(61, true);
+    for (int frame = 62; frame <= 120; frame++) {
+      // With 'HDR static metadata' on, the message also asked for a keyframe (ClSetHdrMode()), which follows
+      SubmitHevc(frame, metadataSwitch && frame == 64);
+    }
+    // (one for the message of the first encoder, one for the restart)
+    CHECK_EQ(idrRequests, metadataSwitch ? 2 : 0);
+    CHECK_EQ(s_RecoveryIdrFrames, 0u);
+    CHECK_EQ(GetHostEncoderRestarts().Restarts(), 1u);
+
+    // The keyframe of the restart arrives first, and its message 200 ms later
+    StartRunningStream(metadataSwitch);
+    SubmitHevc(61, true);
+    SubmitHevc(62, false);
+    HdrModeMessageAfter(62, 170);
+    for (int frame = 63; frame <= 120; frame++) {
+      SubmitHevc(frame, metadataSwitch && frame == 75);
+    }
+    CHECK_EQ(s_RecoveryIdrFrames, 0u);
+    CHECK_EQ(RestartLines(), 1);
+  }
+}
+
+static void AKeyframeAfterALossStillCounts() {
+  for (bool metadataSwitch : {false, true}) {
+    // Frames 61 to 64 are lost on the network, and the host recovers with a keyframe: a recovery, also after a restart
+    // of the encoder long before it
+    StartRunningStream(metadataSwitch);
+    HdrModeMessageAfter(60, 5);
+    SubmitHevc(61, true);
+    for (int frame = 62; frame <= 200; frame++) {
+      SubmitHevc(frame, metadataSwitch && frame == 64);
+    }
+    CHECK_EQ(s_RecoveryIdrFrames, 0u);
+    SubmitHevc(205, true);
+    SubmitHevc(206, false);
+    CHECK_EQ(s_RecoveryIdrFrames, 1u);
+
+    // A keyframe after a loss, with the message of a restart more than a second before it or after it: both count
+    StartRunningStream(metadataSwitch);
+    HdrModeMessageAfter(60, 5);
+    if (metadataSwitch) {
+      SubmitHevc(61, true);
+    }
+    for (int frame = 62; frame <= 135; frame++) {
+      SubmitHevc(frame, false);
+    }
+    SubmitHevc(140, true);
+    for (int frame = 141; frame <= 210; frame++) {
+      SubmitHevc(frame, false);
+    }
+    HdrModeMessageAfter(210, 0);
+    for (int frame = 211; frame <= 260; frame++) {
+      SubmitHevc(frame, false);
+    }
+    CHECK_EQ(s_RecoveryIdrFrames, 1u);
+    CHECK_EQ(RestartLines(), 2);
+  }
+}
+
 int main() {
   test_support::RunTest("AV1 keyframes get the metadata after the sequence header", Av1KeyframesGetTheMetadataAfterTheSequenceHeader);
   test_support::RunTest("a large AV1 keyframe gets the metadata within the decode buffer", ALargeAv1KeyframeGetsTheMetadataWithinTheDecodeBuffer);
@@ -318,5 +429,8 @@ int main() {
   test_support::RunTest("an AV1 keyframe without a sequence header is logged once", AnAv1KeyframeWithoutASequenceHeaderIsLoggedOnce);
   test_support::RunTest("HEVC keyframes still get the SEI before the first slice", HevcKeyframesStillGetTheSeiBeforeTheFirstSlice);
   test_support::RunTest("a keyframe is requested when the metadata arrives during a stream", AKeyframeIsRequestedWhenTheMetadataArrivesDuringAStream);
+  test_support::RunTest("the keyframe of a restarted encoder of the host is no recovery keyframe",
+                        TheKeyframeOfARestartedEncoderIsNoRecoveryKeyframe);
+  test_support::RunTest("a keyframe after a loss still counts as a recovery keyframe", AKeyframeAfterALossStillCounts);
   return test_support::Summary();
 }
