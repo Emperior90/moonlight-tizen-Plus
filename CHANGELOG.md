@@ -2,7 +2,7 @@
 
 All notable changes to Moonlight Plus, by version, newest first. Each version lists what is new since the version before it; the [patch notes](docs/PATCH_NOTES.md) sum them up for users.
 
-## 2.3.0 (unreleased)
+## 2.3.0 (2026-11-08)
 
 ### Added
 - Added *Refresh picture* in the Stream Menu, after *Bitrate* (after *Surround quality* in a 5.1 or 7.1 stream). It asks the PC for a keyframe, which replaces a broken picture at once without ending the stream, writes one line to the diagnostic log and returns to the game, like *Reset Decoder* of moonlight-xbox. Sunshine sends keyframes only on request, so a broken picture that no frame loss reported (e.g. with *Reference frame invalidation* on) stayed until the next loss. The new Embind function `requestIdrFrame()` of `wasm/main.cpp` calls `RefreshPicture()` of `wasm/wasmplayer.cpp`. It asks only while a stream runs, and goes through `RequestIdrFrame()`, so the *Last session* report doesn't count the keyframe as a recovery. The Stream Menu is tighter for it (see *Changed*)

@@ -26,6 +26,7 @@ const APP_VERSION = /<widget[^>]*\sversion="([^"]+)"/.exec(fs.readFileSync(path.
 // section gets the date (the promotion in release-development.yml stops while the section still says Pre-release).
 const RELEASES = {
   'v1.19.0-s90c.1': '2026-10-23',
+  'v2.3.0': '2026-11-08',
   'v2.2.1': '2026-11-05',
   'v2.2.0': '2026-11-03',
   'v2.1.0': '2026-10-30',
