@@ -5718,7 +5718,21 @@ var lastSessionReportOptions = {};
 function keepSessionReport(json) {
   const report = parseSessionReport(json);
   if (!report) {
-    console.warn('%c[index.js, keepSessionReport]', 'color: green;', 'Warning: The report of the session can\'t be read: ' + json);
+    // Say why, and show the whole text with its control characters escaped, in parts that fit a line of the diagnostic
+    // log (400 characters), so that a photo of the log shows what the module sent
+    let reason = 'not an object';
+    try {
+      JSON.parse(json);
+    } catch (error) {
+      reason = error.message;
+    }
+    console.warn('%c[index.js, keepSessionReport]', 'color: green;', 'Warning: The report of the session can\'t be read (' +
+      reason + ', ' + json.length + ' characters)');
+    const text = JSON.stringify(json);
+    for (let start = 0; start < text.length; start += 300) {
+      console.warn('%c[index.js, keepSessionReport]', 'color: green;', 'Report text at ' + start + ': ' +
+        text.slice(start, start + 300));
+    }
     return;
   }
   lastSessionReport = report;

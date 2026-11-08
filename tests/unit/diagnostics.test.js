@@ -2,15 +2,16 @@
 
 // Pins wasm/platform/diagnostics.js: what the log hides (the remote input keys, the pairing secrets and PIN, the unique
 // ID, the RTSP session URL, the public IP address, also by its value in a URL once utils.js or index.js hands it over,
-// and every MAC address but the all-zero one, also in a host object that the line cuts) and what it keeps (the
-// local addresses and the names of the PCs), the log of the current and the previous session (a new session for each stream, the
-// lines of the console with the style of '%c' left out and the console still getting them, the lines that only repeat
-// the overlay left out, a repeated line counted, the oldest lines dropped when a session is full, the native lines of the
-// module merged by their time and hidden the same way), the report of the last session read from the messages of
-// tests/fixtures/session-reports.tsv with their hints and its lines for System information, and the heartbeat of a stream
-// that reports once at the next start that the app ended during it (not for a stream in the background), that the
-// native lines come from the ring that every log line of the module enters, that the module sets the listener that logs
-// the errors of the media element, and that each stream starts the host figures of its report from zero.
+// and every MAC address but the all-zero one, also in a host object that the line cuts) and what it keeps (the local
+// addresses and the names of the PCs), the log of the current and the previous session (a new session for each stream,
+// the lines of the console with the style of '%c' left out and the console still getting them, the lines that only
+// repeat the overlay left out, a repeated line counted, the oldest lines dropped when a session is full, the native
+// lines of the module merged by their time and hidden the same way), the report of the last session read from the
+// messages of tests/fixtures/session-reports.tsv with their hints and its lines for System information, a report that
+// can't be read logged with the reason and its whole text, and the heartbeat of a stream that reports once at the next
+// start that the app ended during it (not for a stream in the background), that the native lines come from the ring
+// that every log line of the module enters, that the module sets the listener that logs the errors of the media
+// element, and that each stream starts the host figures of its report from zero.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -678,4 +679,26 @@ test('a long native line is cut before the redaction runs over it as well', () =
   assert.equal(line.length, 400);
   assert.match(line, /^CURL: request with PPK <hidden> p+…$/);
   assert.ok(Math.max(...lengths) < 2000, JSON.stringify(lengths));
+});
+
+test('a session report that can\'t be read is logged with the reason, its length and its escaped text in parts', () => {
+  const app = loadPlatformScripts(['wasm/platform/tv_profile.js', 'wasm/platform/diagnostics.js', 'wasm/platform/index.js'],
+    { tv: { tv: 's90c', conn: 'wifi' } });
+  const before = app.consoleMessages.length;
+  const broken = '{"durationMs":12,"codec":"AV1\u0001' + 'x'.repeat(400);
+  app.get('keepSessionReport')(broken);
+  const warnings = app.consoleMessages.slice(before).filter((message) => message.level === 'warn').map((message) => message.text);
+  assert.equal(warnings.length, 3, JSON.stringify(warnings));
+  assert.match(warnings[0], /can't be read \(.+, 430 characters\)$/);
+  // The control character shows escaped, and the parts together are the whole text as JSON
+  const parts = warnings.slice(1).map((text) => {
+    const match = /Report text at (\d+): (.*)$/.exec(text);
+    assert.ok(match, text);
+    return { start: Number(match[1]), text: match[2] };
+  });
+  assert.deepEqual(parts.map((part) => part.start), [0, 300]);
+  assert.ok(parts.every((part) => part.text.length <= 300));
+  assert.equal(parts.map((part) => part.text).join(''), JSON.stringify(broken));
+  assert.match(parts[0].text, /\\u0001/);
+  assert.equal(app.get('lastSessionReport'), null);
 });
