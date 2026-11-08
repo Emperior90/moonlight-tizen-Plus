@@ -12,10 +12,10 @@ permissions:
 concurrency:
   group: tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
-# There is a single job in this workflow. It's configured to run on the latest available version of Ubuntu, which provides g++ and gcc for the native tests.
+# There is a single job in this workflow. It runs on Ubuntu 24.04, which provides g++ and gcc for the native tests. It isn't ubuntu-latest: since that became Ubuntu 26.04, the pinned Playwright (tests/package.json) can't install Chromium with its system libraries there (`playwright install --with-deps` stops at once), so the browser tests didn't run.
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     # Every command runs in the `tests` folder, which holds the test tools and their pinned versions (`tests/package.json`).
     defaults:
