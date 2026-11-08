@@ -99,6 +99,21 @@ if ! "$cc" -std=gnu99 -O1 -I"$repo/opus/include" -o "$opus_out/decode" "$here/op
   failed=1
 fi
 
+# The local patch of opus/celt/arch.h (tests/unit/vendored-opus-patch.test.js): the WebAssembly build, whose pointers
+# are 32 bits wide as on a 32-bit CPU, takes the 64-bit multiplications of Opus, while a 32-bit target without
+# Emscripten keeps the 32-bit fallback of upstream. The condition is taken out of the header and evaluated on its own,
+# because the system headers of this machine can't be included for another target.
+opus_fast_int64() {
+  sed -n '/Set this if opus_int64 is a native type of the CPU/,/^#endif/p' "$repo/opus/celt/arch.h" |
+    "$cc" -x c -E -dM -U__x86_64__ -U__LP64__ -U_WIN64 "$@" - | sed -n 's/^#define OPUS_FAST_INT64 //p'
+}
+echo "# Checking OPUS_FAST_INT64 of opus/celt/arch.h for WebAssembly, a 32-bit target and an LP64 target"
+if [ "$(opus_fast_int64 -D__EMSCRIPTEN__)" != "1" ] || [ "$(opus_fast_int64)" != "0" ] ||
+    [ "$(opus_fast_int64 -D__LP64__)" != "1" ]; then
+  echo "# OPUS_FAST_INT64 of opus/celt/arch.h is not 1 for WebAssembly and LP64 and 0 for other 32-bit targets"
+  failed=1
+fi
+
 # Compile every source file of the WebAssembly module without linking (-fsyntax-only), with the same stubs, so that an
 # error that only the release build would see (e.g. a private member used outside its class) fails here: most of
 # these files are in no test. wasm/http.cpp needs the headers of curl and OpenSSL and is checked when they exist.

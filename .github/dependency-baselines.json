@@ -221,10 +221,10 @@
       "repo": "xiph/opus",
       "track": "tags",
       "tag_pattern": "^v\\d+\\.\\d+(\\.\\d+)?$",
-      "vendored": "v1.5.2 (ddbe483)",
+      "vendored": "v1.5.2 (ddbe483) with one local patch: OPUS_FAST_INT64 also for WebAssembly (opus/celt/arch.h)",
       "reviewed_through": "v1.6.1",
       "reviewed_on": "2026-10-30",
-      "note": "Watched by its release tags. Keep the source list of CMakeLists.txt, which leaves out the deep-learning (DNN) code.",
+      "note": "Watched by its release tags. Keep the source list of CMakeLists.txt, which leaves out the deep-learning (DNN) code, and the local patch of opus/celt/arch.h, which lets the WebAssembly build take the 64-bit multiplications of the fixed-point code (tests/unit/vendored-opus-patch.test.js).",
       "decisions": [
         {
           "range": "v1.5.2..v1.6.1",
