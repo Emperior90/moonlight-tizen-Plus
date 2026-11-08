@@ -113,9 +113,9 @@ void celt_fatal(const char *str, const char *file, int line)
    pointers, so it isn't LP64, but i64 is a native type of WebAssembly with
    its own multiply instruction. The 64-bit macros of fixed_generic.h and
    silk/macros.h are then one multiply instead of the up to four 16-bit
-   partial products of the 32-bit fallback, which made the fixed-point
-   decoder 6 to 10 % faster for 5.1 at normal quality on a PC with the
-   compiler of the app. The decoded audio is then that of libopus on 64-bit
+   partial products of the 32-bit fallback, which took 6 to 12 % off the
+   decoding time of 5.1 at normal quality on a PC with the compiler of the
+   app. The decoded audio is then that of libopus on 64-bit
    systems: an x86_64 build gave the same samples bit for bit. The 32-bit
    fallback rounds some products differently, so its samples differed by up
    to 5 of 65536 steps, more in concealed packets.

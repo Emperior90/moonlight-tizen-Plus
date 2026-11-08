@@ -99,7 +99,7 @@ class MoonlightInstance {
     bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, std::string buttonMappings,
     std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
     std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, int performanceStats,
-    bool refFrameInvalidation, bool hdrMetadata, std::string controllerType);
+    bool refFrameInvalidation, bool hdrMetadata, std::string controllerType, std::string surroundQuality);
   MessageResult StopStream();
 
   MessageResult CancelRequest();
@@ -244,6 +244,9 @@ class MoonlightInstance {
   int m_AudioConfig;
   bool m_AudioSyncEnabled;
   int m_AudioJitterMs;
+  // Whether a stream with more than 2 audio channels asks for the normal quality of the host with 10 ms packets
+  // instead of its high quality (the setting 'Surround audio quality': Efficient), see ConnectionThreadFunc()
+  bool m_EfficientSurroundAudio = false;
   bool m_DisableWarningsEnabled;
   // Level of the performance stats overlay (kPerformanceStatsOff, kPerformanceStatsCompact or kPerformanceStatsFull of
   // compact_stats.hpp). Written by TogglePerformanceStats() on the main thread or the gamepad thread and read by the
@@ -324,7 +327,7 @@ MessageResult startStream(std::string host, int httpPort, std::string width, std
   bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, std::string buttonMappings,
   std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
   std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, int performanceStats,
-  bool refFrameInvalidation, bool hdrMetadata, std::string controllerType);
+  bool refFrameInvalidation, bool hdrMetadata, std::string controllerType, std::string surroundQuality);
 MessageResult stopStream();
 
 MessageResult cancelRequest();
@@ -333,6 +336,7 @@ void toggleStats();
 void setStreamMenuOpen(bool open);
 void toggleMouseEmulation();
 bool requestIdrFrame();
+int getAudioChannelCount();
 std::string takeDiagnosticLog();
 void stun(int callbackId);
 void pair(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber, std::string uniqueId);

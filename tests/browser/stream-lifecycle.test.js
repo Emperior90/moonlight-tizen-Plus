@@ -152,7 +152,8 @@ test('a started stream sends the start request, RED stops it once, and a late co
 const START_REQUEST_FIELDS = ['host', 'httpPort', 'width', 'height', 'frameRate', 'bitrateKbps', 'rikey', 'rikeyid', 'appVersion',
   'gfeVersion', 'rtspUrl', 'codecModes', 'framePacing', 'optimizeGames', 'rumbleFeedback', 'mouseEmulation', 'controllerMappings',
   'audioBackend', 'audioConfig', 'audioSync', 'audioJitter', 'playHostAudio', 'decryptHostAudio', 'videoCodec',
-  'hdrMode', 'fullRange', 'gameMode', 'disableWarnings', 'performanceStats', 'refFrameInvalidation', 'hdrMetadata', 'controllerType'];
+  'hdrMode', 'fullRange', 'gameMode', 'disableWarnings', 'performanceStats', 'refFrameInvalidation', 'hdrMetadata', 'controllerType',
+  'surroundQuality'];
 
 test('S90C: the start request of a fresh install carries the golden video settings', async () => {
   for (const [conn, bitrateKbps] of [['ethernet', '75000'], ['wifi', '100000'], ['unknown', '80000']]) {
@@ -187,7 +188,7 @@ test('S90C: the start request of a fresh install carries the golden video settin
         framePacing: 1, optimizeGames: 1, rumbleFeedback: 1, mouseEmulation: 0, controllerMappings: '',
         audioBackend: 'EMSS', audioConfig: 'Stereo', audioSync: 0, audioJitter: 100, playHostAudio: 0, decryptHostAudio: 0,
         videoCodec: 'HEVC', hdrMode: 1, fullRange: 0, gameMode: 0, disableWarnings: 0, performanceStats: 0, refFrameInvalidation: 0,
-        hdrMetadata: 0, controllerType: 'Auto',
+        hdrMetadata: 0, controllerType: 'Auto', surroundQuality: 'High',
       }, conn);
       assert.deepEqual(app.errors, []);
     } finally {

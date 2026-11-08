@@ -89,7 +89,7 @@
       "vendored": "8599b60 (2024-06-10, the version of Moonlight Tizen 1.19.0) with the commits taken below and the patches of this fork (moonlight-common-c/)",
       "reviewed_through": "5d3c0ecca00c1bb3f587acb8060476edcf8e24aa",
       "reviewed_on": "2026-10-30",
-      "note": "The streaming library, with patches of this fork (stats, reference frame invalidation, a faster rs.c). Port commits one at a time and keep the local patches; never replace the folder.",
+      "note": "The streaming library, with patches of this fork (stats, reference frame invalidation, a faster rs.c, ML_ERROR_RTSP_DECRYPT_FAILED for an RTSP answer that doesn't decrypt with the key of the start, tests/native/rtsp_decrypt_error_test.c). Port commits one at a time and keep the local patches; never replace the folder.",
       "decisions": [
         {
           "commits": ["e80a786"],

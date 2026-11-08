@@ -269,6 +269,7 @@ function readOtherSettings(page) {
       controllerType: String($('#selectControllerType').data('value')),
       audioBackend: String($('#selectAudioBackend').data('value')),
       audioConfig: String($('#selectAudio').data('value')),
+      surroundQuality: String($('#selectSurroundQuality').data('value')),
       audioSync: switchState('audioSyncSwitch'),
       audioJitter: String($('#jitterSlider').val()),
       audioClockSync: switchState('audioClockSyncSwitch'),

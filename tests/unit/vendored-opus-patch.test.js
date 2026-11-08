@@ -1,11 +1,11 @@
 'use strict';
 
 // Pins the local patch of the vendored Opus 1.5.2 (opus/, otherwise as upstream v1.5.2): opus/celt/arch.h sets
-// OPUS_FAST_INT64 also for WebAssembly (__EMSCRIPTEN__), so that the fixed-point decoder of the app multiplies in 64 bits
-// as libopus does on 64-bit systems, instead of with the 16-bit partial products of its 32-bit fallback. A later update
-// of the vendored Opus would drop it unnoticed, so this file checks the condition, its explanation and the places that
-// record the patch: the licence notices of the package and the upstream baseline. tests/native/run.sh evaluates the
-// condition with the preprocessor for WebAssembly, a 32-bit target and an LP64 target.
+// OPUS_FAST_INT64 also for WebAssembly (__EMSCRIPTEN__), so that the fixed-point decoder of the app multiplies in 64
+// bits as libopus does on 64-bit systems, instead of with the 16-bit partial products of its 32-bit fallback. A later
+// update of the vendored Opus would drop it unnoticed, so this file checks the condition, its explanation and the
+// places that record the patch: the licence notices of the package and the upstream baseline. tests/native/run.sh
+// evaluates the condition with the preprocessor for WebAssembly, a 32-bit target and an LP64 target.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');

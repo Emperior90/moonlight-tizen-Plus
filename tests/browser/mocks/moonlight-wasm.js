@@ -15,6 +15,10 @@
   // Compact, Full, Off and reports the new level at once, like TogglePerformanceStats() of the module
   // (wasm/compact_stats.hpp). The figures that the module sends for a level are up to the tests.
   var statsLevel = 0;
+  // The channels of the audio stream (getAudioChannelCount() of wasm/main.cpp): those of the audio configuration of the
+  // start request, as a host that offers them sends them, and 0 with the audio output disabled. A test sets
+  // window.__audioChannels for a host that offers fewer.
+  var audioChannels = 0;
 
   Module.makeCert = function() {
     record('makeCert', arguments);
@@ -28,7 +32,12 @@
     record('startStream', arguments);
     window.__startStreamArgs = Array.prototype.slice.call(arguments);
     statsLevel = [0, 1, 2].indexOf(arguments[28]) >= 0 ? arguments[28] : 0;
+    audioChannels = arguments[17] === 'Disabled' ? 0 : ({ '51Surround': 6, '71Surround': 8 })[arguments[18]] || 2;
     return ok();
+  };
+  // A query like the overlay reads it, so it isn't recorded with the calls
+  Module.getAudioChannelCount = function() {
+    return typeof window.__audioChannels === 'number' ? window.__audioChannels : audioChannels;
   };
   Module.stopStream = function() {
     record('stopStream', arguments);

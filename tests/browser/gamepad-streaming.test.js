@@ -169,7 +169,8 @@ test('the controller type setting is Auto by default, chosen with the remote, st
 
     // The next stream announces every controller as a PlayStation controller
     const args = await startRequestArgs(page);
-    assert.equal(args.length, 32);
+    // The controller type before the surround audio quality, the last argument since 2.3.0
+    assert.equal(args.length, 33);
     assert.equal(args[31], 'PlayStation');
     assert.ok(app.logs.some((line) => line.indexOf('Controller type sent to the PC: PlayStation') >= 0));
     assert.deepEqual(app.errors, []);

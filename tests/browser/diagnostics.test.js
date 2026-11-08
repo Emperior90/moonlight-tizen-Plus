@@ -165,7 +165,7 @@ test('a stream starts a session of the log, keeps its report, and its heartbeat 
       const streaming = JSON.parse(localStorage.getItem('moonlightStreamHeartbeat'));
       // A start once more (the retry after no video) stays in the session of the stream
       handleMessage('streamTerminated: -100');
-      await window.wait(NO_VIDEO_RETRY_DELAY_MS + 300);
+      await window.wait(STREAM_RETRY_DELAY_MS + 300);
       handleMessage('Connection Established');
       const sessionsWhileStreaming = DiagnosticLog.getSessions().length;
       // The stream ends, and the module sends its totals after the end
@@ -229,6 +229,8 @@ test('a start that the host refuses or that fails ends its heartbeat, so the nex
       };
       host.getAppById = (id) => Promise.resolve(id === 22 ? { id: 22, title: 'Terminate', uuid: 'E16CBE1B-295D-4632-9A76-EC4180C857D3' } :
         { id: id, title: 'Game ' + id });
+      // A failed request would make the next start wait for its hold on the host (held-host-start.test.js)
+      HOST_START_HOLD_MS = 0;
       // Start an app whose launch or resume request the test answers once the heartbeat runs
       const run = async (appId, currentGame, answer) => {
         host.currentGame = currentGame;

@@ -208,6 +208,14 @@
       }
     }
 
+    const selectSurroundQuality = document.getElementById('selectSurroundQuality');
+    if (selectSurroundQuality) {
+      const selectedItem = document.querySelector(`.surroundQualityMenu li[data-value="${selectSurroundQuality.dataset.value}"]`);
+      if (selectedItem) {
+        selectSurroundQuality.textContent = t(selectedItem.getAttribute('data-i18n') || selectedItem.textContent.trim());
+      }
+    }
+
     const selectAudioBackend = document.getElementById('selectAudioBackend');
     if (selectAudioBackend) {
       const selectedItem = document.querySelector(`.audioBackendMenu li[data-value="${selectAudioBackend.dataset.value}"]`);

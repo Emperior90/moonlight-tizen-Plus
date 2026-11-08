@@ -17,6 +17,8 @@
 // - the audio path that the section on surround sound with a soundbar describes: the 5.1 entry of the audio
 //   configuration, the 6-channel PCM track that only the EMSS backend adds, the two channels of the Web Audio output and
 //   the Audio stream line that the check reads
+// - the surround audio quality: High as the default, the row only for 5.1 and 7.1, the 15 Mbps from which the host
+//   sends its high quality, the 10 ms packets of Efficient, stereo that it never touches, and the Audio CPU line
 // - what the host does with the stream: the share of the bitrate that Sunshine leaves to the encoder at a given FEC,
 //   which caps the received bitrate of the statistics, the parity packets that Moonlight asks for, the display device
 //   configuration of Sunshine that is off by default and follows the Video HDR switch that every start sends, the
@@ -25,6 +27,9 @@
 //   goes into HEVC and AV1, and the switch that keeps the sound off the speakers of the host
 // - the latency modes of the Ultra low latency switch and the Game Mode that only the ForceGM variant asks for, which
 //   the TV picture settings and the fallback for a corrupted picture above 1080p build on
+// - the wait after an abandoned start (the 11 seconds, the countdown and the starts that the app remembers), the start
+//   once more and the message after a start that the PC dropped, and the log line of a restart of the encoder of the PC,
+//   whose keyframe the statistics leave out
 // The release notes of a release (docs/RELEASE_NOTES.md) only give the essentials, so the statements that they
 // carried until 1.19.100 are checked in the guide and the patch notes (docs/PATCH_NOTES.md), where they are now.
 
@@ -243,6 +248,39 @@ test('the section on surround sound with a soundbar describes the audio path of 
   assert.ok(section.indexOf('](https://github.com/fidoboy/moonlight-tizen-ac3/blob/master/docs/Troubleshooting-Guide.md)') > 0);
 });
 
+test('the section on the surround audio quality describes the setting, the negotiation and the statistics as the code does', () => {
+  const section = guideSection('### Surround audio quality');
+  const audioSection = GUIDE.indexOf('\n## Audio\n');
+  assert.ok(audioSection > 0 && GUIDE.indexOf('\n### Surround audio quality\n') > audioSection, 'a part of the section Audio');
+  // The setting: High by default, shown only with 5.1 and 7.1
+  const index = read('wasm/platform/index.js');
+  assert.match(index, /return \$\('#selectSurroundQuality'\)\.data\('value'\) === 'Efficient' \? 'Efficient' : 'High';/);
+  assert.match(index, /return audioConfig === '51Surround' \|\| audioConfig === '71Surround';/);
+  assert.match(read('wasm/index.html'), /id="selectSurroundQuality" class="mdl-button mdl-js-button" data-value="High"/);
+  assert.match(section, /Settings → Audio Settings → \*Surround audio quality\*, shown only with 5\.1 or 7\.1:/);
+  assert.match(section, /\*\*High\*\* \(default\)/);
+  // The negotiation of moonlight-common-c: high quality surround from 15 Mbps on in 5 ms packets, unless the decoder is
+  // declared slow, which gives 10 ms packets; the app declares it only for more than 2 channels
+  const threshold = Number(/#define HIGH_AUDIO_BITRATE_THRESHOLD (\d+)/.exec(read('moonlight-common-c/src/Limelight-internal.h'))[1]);
+  assert.equal(threshold, 15000);
+  assert.match(section, /from a video bitrate of 15 Mbps on, the host sends its high quality surround in 5 ms packets/);
+  const sdp = read('moonlight-common-c/src/SdpGenerator.c');
+  assert.match(sdp, /\(AudioCallbacks\.capabilities & CAPABILITY_SLOW_OPUS_DECODER\) == 0\) \{\s+\/\/ Enable high quality mode for surround sound/);
+  assert.match(sdp, /if \(\(AudioCallbacks\.capabilities & CAPABILITY_SLOW_OPUS_DECODER\) \|\|[\s\S]{0,400}AudioPacketDuration = 10;/);
+  assert.match(section, /\*\*Efficient\*\* asks for the normal quality in 10 ms packets at every bitrate/);
+  assert.match(read('wasm/audio_capabilities.h'), /CHANNEL_COUNT_FROM_AUDIO_CONFIGURATION\(audioConfiguration\) > 2/);
+  assert.match(section, /Stereo is never affected/);
+  // The statistics it points to: the Audio stream line with its packet duration, and the Audio CPU line
+  const stats = read('wasm/audio_stream_stats.hpp');
+  assert.match(stats, /"Audio stream: Opus %s, %g ms packets, %s\\n"/);
+  assert.match(stats, /"Audio CPU: decode %\.2f ms\/s \(max %\.2f ms\), output %\.2f ms\/s \(max %\.2f ms\)\\n"/);
+  assert.match(section, /\*5 ms packets\* and about 1536 kbps for 5\.1 at \*High\*, \*10 ms packets\* and about 256 kbps at \*Efficient\*/);
+  assert.match(section, /10 ms\/s is 1 % of one CPU core\./);
+  // 7.1 links the statement of the soundbar section instead of repeating it
+  assert.match(section, /7\.1 brings nothing on a Samsung TV \(see \[what the connection carries\]\(#surround-sound-with-a-soundbar\)\)/);
+  assert.match(guideSection('### Surround sound with a soundbar'), /7\.1 PCM is not supported\./);
+});
+
 // The headings of level 2 of a Markdown document, without the contents list
 const level2Headings = (text) => text.split('\n').filter((line) => /^## /.test(line)).map((line) => line.slice(3).trim()).filter((heading) => heading !== 'Contents');
 
@@ -396,9 +434,9 @@ test('the guide says that Sunshine changes the host display only with its displa
   assert.doesNotMatch(GUIDE, /follows the selected frame rate anyway/);
   // The app reconnects on purpose (index.js), so a revert at every disconnect would switch the display back and forth
   const index = read('wasm/platform/index.js');
-  assert.match(index, /function retryStreamAfterNoVideo\(/);
-  assert.match(index, /function restartStreamWithBitrate\(/);
-  assert.match(host, /Leave `dd_config_revert_on_disconnect` off\. Moonlight Plus reconnects on purpose, for a new bitrate from the Stream Menu and once more when no video arrived at the start/);
+  assert.match(index, /function retryStreamStart\(/);
+  assert.match(index, /function restartStreamWithSettings\(/);
+  assert.match(host, /Leave `dd_config_revert_on_disconnect` off\. Moonlight Plus reconnects on purpose, for a new bitrate or surround quality from the Stream Menu and once more when no video arrived at the start/);
   // The HDR option of the configuration follows the HDR state that the app sends as hdrMode with every start: the
   // state of the Video HDR switch goes in the place of enableHdr into both requests
   const utils = read('wasm/static/js/utils.js');
@@ -528,4 +566,34 @@ test('the guide limits the HDR static metadata to HEVC and AV1, and names the sw
   assert.match(index, /if \(previousValue\.playHostAudio == null\) \{\s*document\.querySelector\('#playHostAudioBtn'\)\.MaterialSwitch\.off\(\);/);
   assert.match(read('wasm/static/js/utils.js'), /'&localAudioPlayMode=' \+ localAudio/);
   assert.match(GUIDE, /Keep \*Play audio on the PC\* \(Settings → Audio Settings, off by default\) off, so that Sunshine plays the sound into the \*Steam Streaming Speakers\* and not on the speakers of the host at the same time\./);
+});
+
+test('the guide describes the wait after an abandoned start, the held start message and the restart of the encoder as the code does them', () => {
+  const index = read('wasm/platform/index.js');
+  const messages = read('wasm/platform/messages.js');
+  const english = JSON.parse(read('wasm/static/locales/en-US.json'));
+  const troubleshooting = guideSection('## Troubleshooting');
+  // The message, the countdown and the 11 seconds after the answer of the PC (HOST_START_HOLD_MS), which cover the
+  // default ping_timeout of Sunshine
+  const message = 'The PC is still holding an earlier start, e.g. from another device. Wait a few seconds and start again.';
+  assert.ok(messages.indexOf("snackbarLogLong('" + message + "');") > 0);
+  assert.ok(troubleshooting.indexOf('| "' + message + '" (before 2.3.0: "RTSP handshake failed (error -1)" with the ports') > 0);
+  assert.match(index, /\nvar HOST_START_HOLD_MS = 11000;\n/);
+  assert.ok(troubleshooting.indexOf('wait until 11 seconds after the PC accepted the earlier one, which covers the default `ping_timeout`') > 0);
+  assert.ok(english['Waiting for the PC to release the previous start (%1$s s)...']);
+  assert.ok(troubleshooting.indexOf('(*Waiting for the PC to release the previous start*)') > 0);
+  // The starts that the app remembers, as rememberHeldHostStart() names them
+  ['it accepted a start that was cancelled', 'a start it accepted was cancelled',
+    'the stream of a start it accepted ended before it connected', 'its launch request failed', 'its resume request failed']
+    .forEach((why) => assert.ok(index.indexOf("'" + why + "'") > 0, why));
+  assert.ok(troubleshooting.indexOf('(cancelled, ended before their stream connected, or whose request failed on the TV)') > 0);
+  // One start once more, and the message only after it
+  assert.match(index, /if \(streamRetried\[restartKind\] \|\| !host/);
+  assert.ok(troubleshooting.indexOf('it starts once more by itself after the same wait, and the message shows only if that fails as well') > 0);
+  // The restart of the encoder: the log line that the guide quotes, and the keyframe that the statistics leave out
+  const player = read('wasm/wasmplayer.cpp');
+  assert.ok(player.indexOf('ClLogMessage("The PC restarted its video encoder (e.g. after a display, HDR or desktop change on the PC)\\n");') > 0);
+  assert.ok(GUIDE.indexOf('the diagnostic log shows "The PC restarted its video encoder":** Sunshine rebuilt its screen capture and its encoder during the stream') > 0);
+  assert.match(player, /\} else if \(!GetHostEncoderRestarts\(\)\.IsRestartKeyframe\(idrMs\)\) \{\s+s_RecoveryIdrFrames\+\+;/);
+  assert.ok(guideSection('## Performance statistics').indexOf('The first keyframe of a new encoder that the PC started during the stream doesn\'t count') > 0);
 });

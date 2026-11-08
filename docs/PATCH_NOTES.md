@@ -18,24 +18,24 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ## 2.3.0
 
-*Pre-release, in testing.* Smoother motion after packet loss, a way to refresh a broken picture, and a guide for the best picture.
+*Pre-release, in testing.* Smoother motion after packet loss, a way to refresh a broken picture, lighter 5.1 and 7.1 sound, and a guide for the best picture.
 
 > **Install:** by hand over 2.2.1 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >
-> **Tested:** with simulated TVs, hosts and controllers only; the new frame pacing and the AV1 HDR metadata still need a test on a TV.
+> **Tested:** with simulated TVs, hosts and controllers only; the new frame pacing, the AV1 HDR metadata and *Efficient* surround still need a test on a TV.
 
 ### New
 
 - *Refresh picture* in the Stream Menu clears a broken picture with one new keyframe, without ending the stream
-- System information shows the TV firmware and the version of its video player
-- The last-session report adds the PC frame rate and encode time, with hints for 59.94 Hz or a slow encoder
-- *HDR static metadata* (experimental) now works with AV1 as well as HEVC
+- System information shows the TV firmware and player version; the last-session report adds PC figures with hints
+- *HDR static metadata* (experimental) now works with AV1 too, and HDR streams always use the limited color range
+- *Surround audio quality* (5.1, 7.1): *Efficient* about halved the decoding work on a PC; also in the Stream Menu
 
 ### Changed
 
 - *Optimize game settings* is on for new installs, so games can render at the stream resolution
 - H.264 above 1080p at 60 FPS asks the TV for level 5.1 first; the app warns before H.264 above 60 FPS
-- With HDR on, the stream always uses the limited color range
+- The sound decoder needs less work (6–12 % for 5.1 on a PC), and the full statistics show its time
 - The guide covers TV picture settings, HDR calibration, the network, error correction (FEC) and encoder settings
 
 ### Fixed
@@ -45,6 +45,8 @@ What changed in each version of Moonlight Plus, in short, newest first.
 - When the PC ends a stream, its reason (e.g. an encoder error) is kept more often
 - At 90 and 120 FPS, a short stall of the TV player no longer costs a keyframe
 - On Tizen 5.5 (2020), the first D-pad press of a controller that is already connected no longer skips a menu entry
+- A start right after a cancelled one waits for the PC, with a countdown, instead of failing with a port hint
+- Restarts of the PC's video encoder (e.g. after a display or HDR change) no longer count as recovery keyframes
 
 ## 2.2.1
 

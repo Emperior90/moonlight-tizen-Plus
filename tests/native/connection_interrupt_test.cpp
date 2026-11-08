@@ -4,7 +4,9 @@
 // up the whole stream. LiStartConnection clears that flag when it begins (Connection.c), so a stop that came before
 // would be lost; ClStageStarting(), which runs for every stage after that, sets it again. It also checks that every line
 // that the module logs with ClLogMessage() goes into the ring of the diagnostic log (wasm/diagnostic_log.hpp), from which
-// the front end takes it. connectionlistener.cpp is included directly; the functions below stand in for
+// the front end takes it, and that a failed RTSP handshake whose answer had the key of another start
+// (ML_ERROR_RTSP_DECRYPT_FAILED, a local patch of moonlight-common-c) shows no dialog with the ports of the handshake,
+// since the front end explains it. connectionlistener.cpp is included directly; the functions below stand in for
 // moonlight-common-c and the rest of the module.
 
 #include "../../wasm/connectionlistener.cpp"
@@ -123,11 +125,31 @@ static void TestLoggedLinesGoIntoTheDiagnosticLog() {
   CHECK_EQ(rest, std::string());
 }
 
+static void TestHandshakeWithTheKeyOfAnotherStartShowsNoPortDialog() {
+  // Without an instance the ports are those of the stage (none in this stand-in), unmoved
+  g_Instance = nullptr;
+  posted.clear();
+  // The host answered with the key of another start that it still holds: the termination that follows explains it
+  // (retryStreamStart() in index.js), the ports of the handshake would mislead
+  MoonlightInstance::ClStageFailed(STAGE_RTSP_HANDSHAKE, ML_ERROR_RTSP_DECRYPT_FAILED);
+  CHECK_EQ(posted.size(), 0u);
+  // Every other error of the handshake keeps its dialog
+  MoonlightInstance::ClStageFailed(STAGE_RTSP_HANDSHAKE, -1);
+  CHECK_EQ(posted.size(), 1u);
+  CHECK_EQ(posted.back(), std::string("DialogMsg: RTSP handshake failed (error -1)"));
+  // The code means this in the RTSP handshake only
+  MoonlightInstance::ClStageFailed(STAGE_PLATFORM_INIT, ML_ERROR_RTSP_DECRYPT_FAILED);
+  CHECK_EQ(posted.size(), 2u);
+  CHECK_EQ(posted.back(), std::string("DialogMsg: platform initialization failed (error -300)"));
+}
+
 int main() {
   test_support::RunTest("a stop during the connection setup interrupts it", TestStopDuringTheSetupInterruptsIt);
   test_support::RunTest("a stop before LiStartConnection cleared the interrupt flag is not lost",
                         TestStopBeforeTheSetupBeganIsNotLost);
   test_support::RunTest("without a stop the setup is not interrupted", TestNoInterruptWithoutAStop);
   test_support::RunTest("the lines that the module logs go into the diagnostic log", TestLoggedLinesGoIntoTheDiagnosticLog);
+  test_support::RunTest("a handshake answered with the key of another start shows no dialog with the ports",
+                        TestHandshakeWithTheKeyOfAnotherStartShowsNoPortDialog);
   return test_support::Summary();
 }

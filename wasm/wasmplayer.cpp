@@ -3,6 +3,7 @@
 #include "av1_hdr_metadata.hpp"
 #include "compact_stats.hpp"
 #include "frame_intervals.hpp"
+#include "host_encoder_restart.hpp"
 #include "player_errors.hpp"
 #include "session_report.hpp"
 #include "video_config.hpp"
@@ -302,8 +303,9 @@ static int m_LastFrameNumber = 0;
 
 // IDR frames received after the first one that the host sent to recover the stream after a loss. Not counted are
 // the ones this client requested itself when the video track (re)opens or the HDR metadata changes (flagged from
-// the main thread, consumed by the decoder thread), and the ones that follow a reset of the video pipeline by
-// moonlight-common-c, which the video pipeline reset count already shows (s_ResetsAtLastIdr).
+// the main thread, consumed by the decoder thread), the ones that follow a reset of the video pipeline by
+// moonlight-common-c, which the video pipeline reset count already shows (s_ResetsAtLastIdr), and the first one of a
+// new encoder that the host started during the stream (host_encoder_restart.hpp).
 static bool s_ReceivedFirstIdrFrame = false;
 static uint32_t s_RecoveryIdrFrames = 0;
 static uint32_t s_ResetsAtLastIdr = 0;
@@ -565,6 +567,12 @@ bool MoonlightInstance::RefreshPicture() {
 // OBUs) only goes into IDR frames, so request one when the metadata becomes available during the stream. Before the
 // track is open, OnTrackOpen requests the IDR frame anyway.
 void MoonlightInstance::ClSetHdrMode(bool enabled) {
+  // Sunshine sends the HDR mode each time it creates a video encoder, so every message after the first of the stream
+  // means that it started a new one, whose first frame is a keyframe that no loss asked for (host_encoder_restart.hpp).
+  // The picture stands still meanwhile, and nothing on the TV caused it.
+  if (GetHostEncoderRestarts().OnHdrModeMessage(LiGetMillis())) {
+    ClLogMessage("The PC restarted its video encoder (e.g. after a display, HDR or desktop change on the PC)\n");
+  }
   // Only worth a keyframe when the metadata would actually go into the frame (same test as the submit path)
   SS_HDR_METADATA hdrMetadata;
   if (enabled && s_HdrMetadataEnabled && (s_VideoFormat & (VIDEO_FORMAT_MASK_H265 | VIDEO_FORMAT_MASK_AV1)) &&
@@ -1626,7 +1634,12 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
   // loss), because each one is a visible hiccup in the session. The ones this client requested itself
   // when the video track (re)opened or the HDR metadata changed are expected and not counted. Neither are the
   // ones after moonlight-common-c reset the video pipeline (a decode unit queue overflow or a frame the player
-  // rejected), which requests the IDR frame itself: the video pipeline reset count shows those hiccups.
+  // rejected), which requests the IDR frame itself: the video pipeline reset count shows those hiccups. Nor is the
+  // first one of a new encoder of the host, which no loss caused (host_encoder_restart.hpp): the message of the
+  // restart can also come up to a second after its keyframe, which then no longer counts from that frame on.
+  if (GetHostEncoderRestarts().LateRestartKeyframe(dequeueMs) && s_RecoveryIdrFrames > 0) {
+    s_RecoveryIdrFrames--;
+  }
   if (decodeUnit->frameType == FRAME_TYPE_IDR) {
     const uint64_t idrMs = LiGetMillis();
     const uint32_t resets = LiGetClientVideoResets();
@@ -1644,7 +1657,7 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
       ownCauses--;
     } else if (s_PendingIdrCauses != 0) {
       s_PendingIdrCauses--;
-    } else {
+    } else if (!GetHostEncoderRestarts().IsRestartKeyframe(idrMs)) {
       s_RecoveryIdrFrames++;
     }
     // Causes left over from this IDR frame replace older ones, so that none outlives the expiry after the IDR frame

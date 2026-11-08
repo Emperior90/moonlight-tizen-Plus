@@ -99,11 +99,13 @@ When a stream starts, and whenever a controller connects during a stream, the ap
 
 The stream only sees the first 63 characters of the id, so a controller with a very long name may lose its vendor and stay unknown.
 
-**The setting** Settings → Input Settings → *Controller type sent to the PC* (Auto, Xbox, PlayStation or Nintendo; Auto by default) overrides the detection for every controller, from the next stream on. Choose PlayStation, e.g., to get PlayStation button prompts and the touchpad button in games for a controller that the app doesn't detect, if the host supports it.
+**The setting** Settings → Input Settings → *Controller type sent to the PC* (Auto, Xbox, PlayStation or Nintendo; Auto by default) overrides the detection for every controller, from the next stream on (for a game that still runs on the PC, see below). Choose PlayStation, e.g., to get PlayStation button prompts and the touchpad button in games for a controller that the app doesn't detect, if the host supports it.
 
 - System information shows the type sent to the PC for each controller. When the setting overrides the detection, it names the detected type as well, e.g. *PlayStation (setting, detected: Xbox)*.
 - The log of the stream names the type sent to the PC in the same way. The log of the menus, when a controller connects, names the type that Auto detects.
 - With a PlayStation-style controller emulated, Sunshine by default lets Select also trigger the touchpad click (its option `ds4_back_as_touchpad_click`).
+
+**A resumed game keeps its controller.** Sunshine 2026.906 and 2026.914 keep the virtual controller of the TV between two streams, and on a resumed game they keep using it and ignore the type that the app announces. A changed setting, or a controller of another type, takes effect only once Sunshine creates a new virtual controller: after you quit the game with *Quit app on the PC*, after a restart of Sunshine, or when the controller disconnects during a stream. The Sunshine log then shows the warning *ControllerNumber already allocated [0]* at the start of each resumed stream, which is harmless: buttons, sticks and rumble work as before.
 
 ## Rumble
 

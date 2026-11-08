@@ -56,6 +56,13 @@ void MoonlightInstance::ClStageFailed(int stage, int errorCode) {
   if (stage == STAGE_VIDEO_STREAM_START && errorCode == ERROR_VIDEO_SETUP_FAILED) {
     return;
   }
+  // The host answered the RTSP handshake with the key of another start, which Sunshine does while it still holds an
+  // earlier start (ML_ERROR_RTSP_DECRYPT_FAILED in Limelight.h): no port is blocked, so the dialog with the ports would
+  // mislead. The front end starts the stream once more after the hold of that start, and explains it only if that fails
+  // as well (retryStreamStart() in index.js, called for the termination that follows).
+  if (stage == STAGE_RTSP_HANDSHAKE && errorCode == ML_ERROR_RTSP_DECRYPT_FAILED) {
+    return;
+  }
   // Name the ports of the host PC that the stage needs, which a firewall or the router may block (e.g. TCP 48010,
   // UDP 48000 and UDP 48010 for the RTSP handshake)
   PostToJs(std::string("DialogMsg: ") + FormatStageFailedMessage(LiGetStageName(stage), errorCode,

@@ -1,16 +1,20 @@
 // Checks the audio decoder of the stream (wasm/auddec.cpp, included directly) with a stand-in for the Opus decoder and
 // the audio track of the stubs: the decode buffer of the EMSS backend holds one negotiated frame over all channels (in
 // samples, not bytes) and the decoder is offered exactly that frame; a packet that the decoder rejects appends nothing
-// and leaves the buffer as it was, since the next packet carries only its own samples; the packets that the audio player
-// of the TV rejects and those that 'Limit audio delay' drops are logged for the first one and every 100th instead of
-// each one; and the time of the decoder and of the hand-over to the player (AppendPacket() of the EMSS backend, the post
-// of the Web Audio backend) reaches the audio statistics of the overlay (wasm/audio_stream_stats.hpp) with the samples
-// that were decoded.
+// and leaves the buffer as it was, since the next packet carries only its own samples; the packets that the audio
+// player of the TV rejects and those that 'Limit audio delay' drops are logged for the first one and every 100th
+// instead of each one; and the time of the decoder and of the hand-over to the player (AppendPacket() of the EMSS
+// backend, the post of the Web Audio backend) reaches the audio statistics of the overlay (wasm/audio_stream_stats.hpp)
+// with the samples that were decoded.
+//
+// auddec.cpp has an EM_ASM block without arguments, whose stub takes the GNU form of __VA_ARGS__ (run.sh):
+// Build with: -std=gnu++17
 
 #include "../../wasm/auddec.cpp"
 
 #include "test_support.h"
 
+#include <cmath>
 #include <cstdarg>
 #include <cstring>
 #include <string>
@@ -83,8 +87,8 @@ extern "C" OpusMSDecoder* opus_multistream_decoder_create(opus_int32, int channe
   return reinterpret_cast<OpusMSDecoder*>(&fakeDecoder);
 }
 
-extern "C" int opus_multistream_decode(OpusMSDecoder*, const unsigned char*, opus_int32, opus_int16* pcm, int frame_size,
-                                       int) {
+extern "C" int opus_multistream_decode(OpusMSDecoder*, const unsigned char*, opus_int32, opus_int16* pcm,
+                                       int frame_size, int) {
   decodeCalls++;
   decodeFrameSize = frame_size;
   BusyWait(decodeTimeUs);

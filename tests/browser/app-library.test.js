@@ -347,6 +347,7 @@ test('Recently played follows the starts of streams, kept per host; the switch o
         startGame(host, appId);
         await wait(600);
         streams.push(window.__wasmCalls.filter((call) => call.name === 'startStream').length);
+        handleMessage('Connection Established');
         handleMessage('streamTerminated: 0');
         await wait(800);
       }
@@ -355,6 +356,8 @@ test('Recently played follows the starts of streams, kept per host; the switch o
       host.launchApp = () => Promise.resolve('<root status_code="503" status_message="Service Unavailable"/>');
       startGame(host, 11);
       await wait(800);
+      // The next start would wait for the hold of the failed request on the host (held-host-start.test.js)
+      HOST_START_HOLD_MS = 0;
       host.launchApp = () => Promise.reject(new Error('timeout'));
       startGame(host, 11);
       await wait(800);

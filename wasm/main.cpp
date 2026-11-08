@@ -1,7 +1,10 @@
 #include "moonlight_wasm.hpp"
+#include "audio_capabilities.h"
+#include "audio_stream_stats.hpp"
 #include "compact_stats.hpp"
 #include "controller_type.hpp"
 #include "diagnostic_log.hpp"
+#include "host_encoder_restart.hpp"
 #include "video_config.hpp"
 #include "wake_on_lan.hpp"
 
@@ -280,19 +283,19 @@ void* MoonlightInstance::ConnectionThreadFunc(void* context) {
     PostToJs(std::string("Using the server codec mode support of the host: ") + hostModes);
   }
 
-  // Initialize the audio renderer capabilities with the value shared by both audio backends
-  MoonlightInstance::s_ArCallbacks.capabilities = CAPABILITY_DIRECT_SUBMIT;
-  // Handle setting of the audio renderer capabilities based on the selected audio backend
-  if (me->m_AudioBackend == AudioBackend::WebAudio) { // Web Audio
-    // The Web Audio backend reads the samples per frame from the Opus configuration, so it can
-    // render the longer frames that the RTSP negotiation may choose on low bitrate streams
-    MoonlightInstance::s_ArCallbacks.capabilities |= CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION;
-    PostToJs("Selecting the audio renderer capabilities to: CAPABILITY_DIRECT_SUBMIT | CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION");
-  } else { // EMSS, or disabled audio output
-    // The EMSS backend expects the fixed 5 ms frames that are negotiated without that capability,
-    // and the frame duration doesn't matter when the audio output is disabled
-    PostToJs("Selecting the audio renderer capabilities to: CAPABILITY_DIRECT_SUBMIT");
+  // Select the audio renderer capabilities for the backend and the setting 'Surround audio quality' (see
+  // audio_capabilities.h), and log them by name
+  const int audioCapabilities = GetAudioRendererCapabilities(me->m_AudioBackend == AudioBackend::WebAudio,
+    me->m_EfficientSurroundAudio, me->m_StreamConfig.audioConfiguration);
+  MoonlightInstance::s_ArCallbacks.capabilities = audioCapabilities;
+  std::string audioCapabilityNames = "CAPABILITY_DIRECT_SUBMIT";
+  if (audioCapabilities & CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION) {
+    audioCapabilityNames += " | CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION";
   }
+  if (audioCapabilities & CAPABILITY_SLOW_OPUS_DECODER) {
+    audioCapabilityNames += " | CAPABILITY_SLOW_OPUS_DECODER";
+  }
+  PostToJs("Selecting the audio renderer capabilities to: " + audioCapabilityNames);
 
   // Initialize the video decoder capabilities. One slice per frame (the default) gives the best compression,
   // because the hardware decoder of the TV gets whole frames anyway. Several slices only help software decoders
@@ -356,7 +359,7 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, std::string buttonMappings,
   std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
   std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, int performanceStats,
-  bool refFrameInvalidation, bool hdrMetadata, std::string controllerType) {
+  bool refFrameInvalidation, bool hdrMetadata, std::string controllerType, std::string surroundQuality) {
   
   if (m_StopThread != 0) {
     pthread_join(m_StopThread, NULL);
@@ -367,6 +370,9 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   m_SourceClosed = false;
   m_SourceAttached = false;
   m_InputThread = 0;
+  // The first HDR mode message of this stream is the one of its first encoder, which can arrive as soon as the control
+  // stream connects, before the video decoder is set up (host_encoder_restart.hpp)
+  GetHostEncoderRestarts().Reset();
 
   PostToJs("Setting the Host address to: " + host + ":" + std::to_string(httpPort));
   PostToJs("Setting the Video resolution to: " + width + "x" + height);
@@ -385,6 +391,7 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   PostToJs("Setting the Controller type sent to the PC to: " + controllerType);
   PostToJs("Setting the Audio backend to: " + audioBackend);
   PostToJs("Setting the Audio configuration to: " + audioConfig);
+  PostToJs("Setting the Surround audio quality to: " + surroundQuality);
   PostToJs("Setting the Audio synchronization to: " + std::to_string(audioSync));
   PostToJs("Setting the Audio jitter buffer to: " + std::to_string(audioJitterMs) + " ms");
   PostToJs("Setting the Play host audio to: " + std::to_string(playHostAudio));
@@ -455,6 +462,12 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   }
   // Store the audio configuration value from the stream configurations
   m_AudioConfig = m_StreamConfig.audioConfiguration;
+
+  // The quality of a stream with more than 2 channels: High (the default, also for any other value) or Efficient,
+  // which the connection thread applies to 5.1 and 7.1 only (ConnectionThreadFunc())
+  m_EfficientSurroundAudio = surroundQuality == "Efficient";
+  PostToJs(m_EfficientSurroundAudio ? "Selecting the surround audio quality to: Efficient (normal quality, 10 ms packets)" :
+    "Selecting the surround audio quality to: High");
 
   // Initialize the supported video format with default value
   m_StreamConfig.supportedVideoFormats = 0;
@@ -740,12 +753,12 @@ MessageResult startStream(std::string host, int httpPort, std::string width, std
   bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, std::string buttonMappings,
   std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
   std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, int performanceStats,
-  bool refFrameInvalidation, bool hdrMetadata, std::string controllerType) {
+  bool refFrameInvalidation, bool hdrMetadata, std::string controllerType, std::string surroundQuality) {
   PostToJs("Starting the streaming session...");
   return g_Instance->StartStream(host, httpPort, width, height, fps, bitrate, rikey, rikeyid, appversion, gfeversion, rtspurl, serverCodecModeSupport,
   framePacing, optimizeGames, rumbleFeedback, mouseEmulation, buttonMappings, audioBackend, audioConfig, audioSync,
   audioJitterMs, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange, gameMode, disableWarnings, performanceStats,
-  refFrameInvalidation, hdrMetadata, controllerType);
+  refFrameInvalidation, hdrMetadata, controllerType, surroundQuality);
 }
 
 MessageResult stopStream() {
@@ -765,6 +778,13 @@ void toggleStats() {
 // keyframe, and answers whether it did, which it doesn't without a running stream (RefreshPicture() in wasmplayer.cpp)
 bool requestIdrFrame() {
   return g_Instance->RefreshPicture();
+}
+
+// Called by the Stream Menu on the main thread (wasm/platform/menus.js), which shows its surround quality entry only for
+// more than 2 channels: the channels of the audio stream that the module decodes, as the RTSP negotiation settled on
+// them (AudDecInit() in auddec.cpp), 0 before its setup and while the audio output is disabled
+int getAudioChannelCount() {
+  return g_AudioStreamStats.channelCount.load();
 }
 
 // Called by the front end on the main thread for the diagnostic log (wasm/platform/diagnostics.js): the lines that the
@@ -854,6 +874,7 @@ EMSCRIPTEN_BINDINGS(handle_message) {
   emscripten::function("setStreamMenuOpen", &setStreamMenuOpen);
   emscripten::function("toggleMouseEmulation", &toggleMouseEmulation);
   emscripten::function("requestIdrFrame", &requestIdrFrame);
+  emscripten::function("getAudioChannelCount", &getAudioChannelCount);
   emscripten::function("takeDiagnosticLog", &takeDiagnosticLog);
   emscripten::function("stun", &stun);
   emscripten::function("pair", &pair);

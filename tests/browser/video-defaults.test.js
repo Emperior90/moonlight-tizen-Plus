@@ -138,6 +138,7 @@ const CUSTOMIZED_SETTINGS = {
   controllerType: 'PlayStation',
   audioBackend: 'WebAudio',
   audioConfig: '51Surround',
+  surroundQuality: 'Efficient',
   audioSync: true,
   audioJitter: '50',
   audioClockSync: true,
@@ -164,6 +165,8 @@ const DEFAULT_OTHER_SETTINGS = {
   controllerType: 'Auto',
   audioBackend: 'EMSS',
   audioConfig: 'Stereo',
+  // High, the quality of earlier versions, which shows only with 5.1 and 7.1
+  surroundQuality: 'High',
   audioSync: false,
   audioJitter: '100',
   audioClockSync: false,

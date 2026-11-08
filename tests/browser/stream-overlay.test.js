@@ -112,9 +112,11 @@ test('the overlay labels go through the translation', async () => {
     const labels = await translatedLabels(app.page, [
       'Bitrate: 92.10 Mbps received, 100.0 Mbps configured', 'Host frame rate (30 s): 2', 'Session frames dropped by the TV: 1', 'Session FEC recoveries: 1',
       'Worst FEC block: 1', 'TV player rejections: buffer full 1 (1 recovered)', 'WASM heap top: 40 of 128 MB (+2 MB this stream)',
+      'Audio CPU: decode 11.80 ms/s (max 0.21 ms), output 0.42 ms/s (max 0.05 ms)',
     ].join('\n'));
     ['Bitrate: %1$s Mbps received, %2$s Mbps configured', 'Host frame rate (30 s):', 'Session frames dropped by the TV:', 'Session FEC recoveries:',
-      'Worst FEC block:', 'TV player rejections:', 'WASM heap top:'].forEach((label) => {
+      'Worst FEC block:', 'TV player rejections:', 'WASM heap top:',
+      'Audio CPU: decode %1$s ms/s (max %2$s ms), output %3$s ms/s (max %4$s ms)'].forEach((label) => {
       assert.ok(labels.indexOf('T[' + label + ']') >= 0, label + ' in ' + labels);
     });
     // One line for the bitrate, with both figures in the language of the app

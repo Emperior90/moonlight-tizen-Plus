@@ -17,7 +17,9 @@
 // buildKeyComboEvents()); the menus, the gamepad combo and the handling of the input here are new.
 //
 // Its bitrate entry changes the bitrate in steps of 5 Mbps with LEFT and RIGHT, and OK reconnects the stream with it
-// (restartStreamWithBitrate() in index.js), as StreamLight does for its stream settings. 'Refresh picture' asks the host
+// (restartStreamWithSettings() in index.js), as StreamLight does for its stream settings. The surround quality entry,
+// which only shows while the stream has more than 2 audio channels, switches between High and Efficient the same way.
+// OK on either entry reconnects once with every change that waits on both. 'Refresh picture' asks the host
 // for a keyframe (requestStreamKeyframe()), like 'Reset Decoder' of the stream page of moonlight-xbox. 'Type text…' opens
 // a text field for the keyboard of the TV, whose text goes to the PC as Unicode (sendText() of wasm/input.cpp), like the
 // keyboard of the game menu of Artemis and of StreamLight 8.0.0.
@@ -40,6 +42,9 @@ var appGridApps = null;
 var appMenuTarget = null;
 // The bitrate in Mbps that the bitrate entry of the Stream Menu shows, which starts at the bitrate of the stream
 var streamMenuBitrateMbps = 0;
+// The surround audio quality that the surround quality entry of the Stream Menu shows ('High' or 'Efficient'), which
+// starts at the quality of the stream
+var streamMenuSurroundQuality = 'High';
 // Whether the text panel of 'Type text…' shows in place of the entries of the Stream Menu
 var isStreamTextOpen = false;
 
@@ -221,26 +226,81 @@ function changeStreamMenuBitrate(direction) {
   showStreamMenuBitrate();
 }
 
-// Reconnect the stream with the bitrate of the bitrate entry, which becomes the bitrate setting, as if it was chosen with
-// the slider of the settings. That includes the bitrate warnings of the slider (warnBitrate() through saveBitrate()), once
-// per crossing of the warning threshold of the TV or the limit of the Ethernet port, which show over the launch screen
-// of the reconnect. Nothing happens to an unchanged bitrate except a hint how to change it.
-function applyStreamMenuBitrate() {
-  const mbps = streamMenuBitrateMbps;
-  if (mbps === streamBitrateMbps) {
-    showStreamMenuBitrate(t('Change it with LEFT and RIGHT'));
-    return;
+// The channels of the audio stream that the module decodes (getAudioChannelCount() of wasm/main.cpp): 0 before its setup
+// and while the audio output is disabled, and also for a module without the call
+function getStreamAudioChannels() {
+  return typeof Module !== 'undefined' && typeof Module.getAudioChannelCount === 'function' ? Number(Module.getAudioChannelCount()) || 0 : 0;
+}
+
+// Show the quality of the surround quality entry, like the bitrate of the bitrate entry: the arrows of LEFT and RIGHT,
+// which switch between the two qualities and so are never at a limit, and, while it differs from the quality of the
+// stream, the note that OK reconnects. A note given replaces it, e.g. the hint after OK on an unchanged quality.
+function showStreamMenuSurround(note) {
+  const changed = streamMenuSurroundQuality !== streamSurroundQuality;
+  $('#streamMenuSurroundValue').text(streamMenuSurroundQuality === 'Efficient' ? t('Efficient') : t('High')).toggleClass('is-pending', changed);
+  $('#streamMenuSurroundNote').text(note || (changed ? t('OK: reconnect') : ''));
+}
+
+// Switch the quality of the surround quality entry with LEFT or RIGHT; OK applies it (applyStreamMenuSurround())
+function changeStreamMenuSurround() {
+  streamMenuSurroundQuality = streamMenuSurroundQuality === 'Efficient' ? 'High' : 'Efficient';
+  showStreamMenuSurround();
+}
+
+// The changes of the bitrate and surround quality entries that wait for OK, for restartStreamWithSettings() in index.js:
+// the new bitrate in Mbps (bitrateMbps) and the new quality (surroundQuality), each only when it differs from the
+// stream, and the quality only while its entry shows
+function getStreamMenuChanges() {
+  const change = {};
+  if (streamMenuBitrateMbps !== streamBitrateMbps) {
+    change.bitrateMbps = streamMenuBitrateMbps;
   }
-  $('#bitrateSlider')[0].MaterialSlider.change(String(mbps));
-  setAutoAdjustBitrate(false);
-  saveBitrate();
-  restartStreamWithBitrate(mbps);
+  const surroundEntry = document.getElementById('streamMenuSurround');
+  if (surroundEntry && !surroundEntry.hidden && streamMenuSurroundQuality !== streamSurroundQuality) {
+    change.surroundQuality = streamMenuSurroundQuality;
+  }
+  return change;
+}
+
+// Reconnect the stream once with the changes of both entries, which become the settings, as if they were chosen in the
+// settings: OK on one entry also takes the change that waits on the other, which shows its note as well, since each
+// reconnect interrupts the game for a few seconds. A new bitrate gets the warnings of the slider (warnBitrate() through
+// saveBitrate()), once per crossing of the warning threshold of the TV or the limit of the Ethernet port, which show
+// over the launch screen of the reconnect. Without a change, the entry that OK was pressed on (showHint) explains how to
+// change it. Returns whether the stream reconnects.
+function applyStreamMenuChanges(showHint) {
+  const change = getStreamMenuChanges();
+  if (change.bitrateMbps === undefined && change.surroundQuality === undefined) {
+    showHint(t('Change it with LEFT and RIGHT'));
+    return false;
+  }
+  if (change.bitrateMbps !== undefined) {
+    $('#bitrateSlider')[0].MaterialSlider.change(String(change.bitrateMbps));
+    setAutoAdjustBitrate(false);
+    saveBitrate();
+  }
+  if (change.surroundQuality !== undefined) {
+    setSurroundQuality(change.surroundQuality);
+  }
+  return restartStreamWithSettings(change);
+}
+
+// OK on the bitrate entry: reconnect with the changes that wait (applyStreamMenuChanges())
+function applyStreamMenuBitrate() {
+  return applyStreamMenuChanges(showStreamMenuBitrate);
+}
+
+// OK on the surround quality entry: reconnect with the changes that wait (applyStreamMenuChanges())
+function applyStreamMenuSurround() {
+  return applyStreamMenuChanges(showStreamMenuSurround);
 }
 
 // Fill the Stream Menu with the current state of the stream: the app and host, the level of the performance statistics
-// (Off, Compact or Full), whether the mouse emulation is on, and the mouse emulation entry only while a controller is
-// connected or the mouse emulation is on. When that entry goes while the menu shows, e.g. after the mouse emulation was
-// turned off on it and no controller is connected any more, the selection moves to the entry before it.
+// (Off, Compact or Full), whether the mouse emulation is on, the mouse emulation entry only while a controller is
+// connected or the mouse emulation is on, and the surround quality entry only while the stream has more than 2 audio
+// channels, so that the menu doesn't grow for a stereo stream. When an entry goes while the menu shows, e.g. after the
+// mouse emulation was turned off on it and no controller is connected any more, the selection moves to the entry
+// before it.
 function updateStreamMenu() {
   const host = streamLaunchHost || api;
   const subtitle = [streamLaunchAppTitle, host && host.hostname ? host.hostname : ''].filter((text) => !!text).join(' · ');
@@ -254,6 +314,10 @@ function updateStreamMenu() {
     // of 'Type text…' keeps the focus in its field (cancelStreamText() selects the entry again)
     const selected = $('#streamMenuOverlay').is(':visible') && !isStreamTextOpen ? Views.StreamMenu.view.current() : null;
     mouseEntry.hidden = !(streamMouseEmulationActive || Controller.getConnectedGamepads().length > 0);
+    const surroundEntry = document.getElementById('streamMenuSurround');
+    if (surroundEntry) {
+      surroundEntry.hidden = getStreamAudioChannels() <= 2;
+    }
     if (selected) {
       reselectStreamMenuEntry(selected);
     }
@@ -291,6 +355,8 @@ function openStreamMenu() {
   isStreamMenuOpen = true;
   streamMenuBitrateMbps = streamBitrateMbps;
   showStreamMenuBitrate();
+  streamMenuSurroundQuality = streamSurroundQuality;
+  showStreamMenuSurround();
   // Stop the controller input of the PC first, and release the pointer, which would move the mouse of the PC. The end
   // of the pointer lock also releases the keys and mouse buttons that the PC still holds (MouseLockLost() in
   // wasm/input.cpp), since their releases stay in the UI from now on.
@@ -395,6 +461,8 @@ function runStreamMenuAction(id) {
     }
   } else if (id === 'streamMenuBitrate') {
     applyStreamMenuBitrate();
+  } else if (id === 'streamMenuSurround') {
+    applyStreamMenuSurround();
   } else if (id === 'streamMenuRefresh') {
     // Back to the stream, where the new keyframe shows
     closeStreamMenu(true);
