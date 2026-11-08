@@ -1,5 +1,5 @@
 // Checks the audio stream that the app asks the host for, with the capabilities of its audio renderer
-// (GetAudioRendererCapabilities() of wasm/audio_capabilities.h, which ConnectionThreadFunc() in wasm/main.cpp uses) and
+// (GetAudioRendererCapabilities() of wasm/audio_capabilities.hpp, which ConnectionThreadFunc() in wasm/main.cpp uses) and
 // the SDP negotiation of moonlight-common-c (moonlight-common-c/src/SdpGenerator.c, included directly):
 //  - 'Surround audio quality' High, the default, keeps what earlier versions asked for: 5.1 and 7.1 in the high quality
 //    of the host from a video bitrate of 15 Mbps on, in 5 ms packets, and the normal quality below it.
@@ -15,7 +15,7 @@
 #include "test_support_c.h"
 
 #include "../../moonlight-common-c/src/SdpGenerator.c"
-#include "../../wasm/audio_capabilities.h"
+#include "../../wasm/audio_capabilities.hpp"
 
 #include <stdlib.h>
 #include <string.h>

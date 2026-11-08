@@ -274,7 +274,7 @@ test('the section on the surround audio quality describes the setting, the negot
   assert.match(sdp, /\(AudioCallbacks\.capabilities & CAPABILITY_SLOW_OPUS_DECODER\) == 0\) \{\s+\/\/ Enable high quality mode for surround sound/);
   assert.match(sdp, /if \(\(AudioCallbacks\.capabilities & CAPABILITY_SLOW_OPUS_DECODER\) \|\|[\s\S]{0,400}AudioPacketDuration = 10;/);
   assert.match(section, /\*\*Efficient\*\* asks for the normal quality in 10 ms packets at every bitrate/);
-  assert.match(read('wasm/audio_capabilities.h'), /CHANNEL_COUNT_FROM_AUDIO_CONFIGURATION\(audioConfiguration\) > 2/);
+  assert.match(read('wasm/audio_capabilities.hpp'), /CHANNEL_COUNT_FROM_AUDIO_CONFIGURATION\(audioConfiguration\) > 2/);
   assert.match(section, /Stereo is never affected: the app asks for the same stereo as at \*High\*\./);
   // The statistics it points to: the Audio stream line with its packet duration, and the Audio CPU line
   const stats = read('wasm/audio_stream_stats.hpp');

@@ -6,7 +6,7 @@
 //   of startGame() (index.js) send exactly as many arguments, with it last, and StartStream() logs whether the stream
 //   gets it (not a stereo stream, which keeps its quality);
 // - the connection thread takes the capabilities of the audio renderer from GetAudioRendererCapabilities() of
-//   wasm/audio_capabilities.h with the setting and the audio configuration of the stream, which
+//   wasm/audio_capabilities.hpp with the setting and the audio configuration of the stream, which
 //   tests/native/sdp_audio_quality_test.c runs through the SDP negotiation of moonlight-common-c;
 // - RtspConnection.c names the host 0.0.0.0 for a decoder that declares itself slow, which Sunshine reads as a request
 //   for its low quality stereo, so the header must keep the flag away from stereo;
@@ -72,9 +72,9 @@ test('startStream() takes the surround audio quality last, and both start reques
   assert.match(read('wasm/platform/messages.js'), /hdrMetadata, controllerType, surroundQuality \*\//);
 });
 
-test('the connection thread takes the capabilities of the audio renderer from audio_capabilities.h', () => {
+test('the connection thread takes the capabilities of the audio renderer from audio_capabilities.hpp', () => {
   const main = read('wasm/main.cpp');
-  assert.match(main, /#include "audio_capabilities\.h"/);
+  assert.match(main, /#include "audio_capabilities\.hpp"/);
   const thread = functionBody(main, 'void* MoonlightInstance::ConnectionThreadFunc(void* context) {');
   assert.match(thread, /const int audioCapabilities = GetAudioRendererCapabilities\(me->m_AudioBackend == AudioBackend::WebAudio,\s+me->m_EfficientSurroundAudio, me->m_StreamConfig\.audioConfiguration\);/);
   assert.match(thread, /MoonlightInstance::s_ArCallbacks\.capabilities = audioCapabilities;/);
@@ -85,9 +85,9 @@ test('the connection thread takes the capabilities of the audio renderer from au
   // The capabilities are only set there, before every connection
   assert.equal((main.replace(/\/\/.*$/gm, '').match(/s_ArCallbacks\.capabilities\s*=/g) || []).length, 1);
   // The header declares the decoder slow for more than 2 channels only
-  const header = read('wasm/audio_capabilities.h');
+  const header = read('wasm/audio_capabilities.hpp');
   assert.match(header, /if \(efficientSurround && CHANNEL_COUNT_FROM_AUDIO_CONFIGURATION\(audioConfiguration\) > 2\) \{\s+capabilities \|= CAPABILITY_SLOW_OPUS_DECODER;/);
-  assert.match(read('tests/native/sdp_audio_quality_test.c'), /#include "\.\.\/\.\.\/wasm\/audio_capabilities\.h"/);
+  assert.match(read('tests/native/sdp_audio_quality_test.c'), /#include "\.\.\/\.\.\/wasm\/audio_capabilities\.hpp"/);
 });
 
 test('RtspConnection.c names the host 0.0.0.0 for a slow decoder, which is why stereo never declares one', () => {

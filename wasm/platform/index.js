@@ -3841,7 +3841,7 @@ function startGame(host, appID, restartKind, restartChange) {
       var audioBackend = $('#selectAudioBackend').data('value').toString();
       var audioConfig = $('#selectAudio').data('value').toString();
       // The setting goes to the module for every audio configuration; the module applies it to 5.1 and 7.1 only
-      // (audio_capabilities.h)
+      // (audio_capabilities.hpp)
       var surroundQuality = getSurroundQuality();
       const audioSync = $('#audioSyncSwitch').parent().hasClass('is-checked') ? 1 : 0;
       const audioJitter = parseInt($('#jitterSlider').val());
@@ -5126,7 +5126,7 @@ function saveSurroundQuality() {
 }
 
 // Whether the surround audio quality applies to the selected audio configuration: only 5.1 and 7.1 have it, and the
-// stereo of the host keeps its high quality (audio_capabilities.h)
+// stereo of the host keeps its high quality (audio_capabilities.hpp)
 function isSurroundAudioSelected() {
   const audioConfig = $('#selectAudio').data('value');
   return audioConfig === '51Surround' || audioConfig === '71Surround';

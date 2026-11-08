@@ -1,5 +1,5 @@
 #include "moonlight_wasm.hpp"
-#include "audio_capabilities.h"
+#include "audio_capabilities.hpp"
 #include "audio_stream_stats.hpp"
 #include "compact_stats.hpp"
 #include "controller_type.hpp"
@@ -284,7 +284,7 @@ void* MoonlightInstance::ConnectionThreadFunc(void* context) {
   }
 
   // Select the audio renderer capabilities for the backend and the setting 'Surround audio quality' (see
-  // audio_capabilities.h), and log them by name
+  // audio_capabilities.hpp), and log them by name
   const int audioCapabilities = GetAudioRendererCapabilities(me->m_AudioBackend == AudioBackend::WebAudio,
     me->m_EfficientSurroundAudio, me->m_StreamConfig.audioConfiguration);
   MoonlightInstance::s_ArCallbacks.capabilities = audioCapabilities;
