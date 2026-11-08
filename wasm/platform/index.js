@@ -38,7 +38,7 @@ var streamLaunchHost = null; // Host of the latest stream launch, initial value 
 var streamLaunchAppTitle = ''; // Title of the app of the latest stream launch, which the Stream Menu shows, initial value is empty
 var streamLaunchAppId = null; // ID of the app of the latest stream launch, which a retry after no video starts again, initial value is null
 var streamRetried = {}; // The kinds of start once more that the latest stream launch already had (retryStreamStart()), e.g. { noVideo: true }, initial value is empty
-var streamLaunchAnsweredAt = 0; // When the host accepted the launch or resume request of the latest stream launch (performance.now()), until its stream connected or ended, initial value is 0 (none)
+var streamLaunchAnsweredAt = 0; // When the host accepted the launch or resume request of the latest stream launch (performance.now()), until its control stream connected or the stream ended, initial value is 0 (none)
 var heldHostStartUntil = {}; // Until when each host may still hold a start of this TV that never connected (performance.now(), rememberHeldHostStart()), keyed by server UID
 var streamBitrateMbps = 0; // Bitrate in Mbps of the latest stream launch, which the bitrate entry of the Stream Menu starts from, initial value is 0
 var streamSurroundQuality = 'High'; // Surround audio quality of the latest stream launch ('High' or 'Efficient'), which the surround quality entry of the Stream Menu starts from
@@ -4185,9 +4185,11 @@ var HOST_START_HOLD_MS = 11000;
 // answer of the host, or of the failure of the request) for HOST_START_HOLD_MS, so that the next start to this host
 // waits until then (waitForHeldHostStart()): when the host accepted a start that was cancelled meanwhile
 // (rememberCancelledStartAnswer()), when a start is cancelled after the host accepted it (cancelStreamLaunch()), when the
-// stream of a start ended before it connected (handleMessage() in messages.js) and when a launch or resume request
-// failed on the TV. Not for a stream that connected, whose control stream released its start on the host, so that the
-// reconnects of the Stream Menu and the retry after no video don't wait. why says what happened, for the log.
+// stream of a start ended before its control stream connected (handleMessage() in messages.js) and when a launch or
+// resume request failed on the TV. Not for a stream whose control stream connected ('ControlStreamConnected' in
+// messages.js), which released its start on the host, even if the stream ended before 'Connection Established', so
+// that the reconnects of the Stream Menu, the retry after no video and a start after RED during the setup of the video
+// stream don't wait. why says what happened, for the log.
 function rememberHeldHostStart(host, since, why) {
   if (!host || !host.serverUid) {
     return;
@@ -4221,12 +4223,13 @@ function rememberCancelledStartAnswer(host, launchResult) {
 var CONNECTED_STREAM_END_CODES = [-100, -101, -102, -103, -104, -200, -201];
 
 // The stream of the current start ended with errorCode (handleMessage() in messages.js): one whose start the host
-// accepted and that never connected may still be held by the host, from the answer on. streamLaunchAnsweredAt is
-// cleared once the stream connects ('Connection Established'), and the codes of CONNECTED_STREAM_END_CODES tell the
-// same, also if that message was ignored.
+// accepted and whose control stream never connected may still be held by the host, from the answer on.
+// streamLaunchAnsweredAt is cleared once the control stream connects ('ControlStreamConnected', which comes before
+// 'Connection Established'), and the codes of CONNECTED_STREAM_END_CODES tell the same, also if that message was
+// ignored.
 function rememberEndedStreamStart(errorCode) {
   if (streamLaunchAnsweredAt > 0 && CONNECTED_STREAM_END_CODES.indexOf(errorCode) < 0) {
-    rememberHeldHostStart(streamLaunchHost, streamLaunchAnsweredAt, 'the stream of a start it accepted ended before it connected');
+    rememberHeldHostStart(streamLaunchHost, streamLaunchAnsweredAt, 'the stream of a start it accepted ended before its control stream connected');
   }
   streamLaunchAnsweredAt = 0;
 }

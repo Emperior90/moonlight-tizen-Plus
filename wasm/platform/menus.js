@@ -18,11 +18,11 @@
 //
 // Its bitrate entry changes the bitrate in steps of 5 Mbps with LEFT and RIGHT, and OK reconnects the stream with it
 // (restartStreamWithSettings() in index.js), as StreamLight does for its stream settings. The surround quality entry,
-// which only shows while the stream has more than 2 audio channels, switches between High and Efficient the same way.
-// OK on either entry reconnects once with every change that waits on both. 'Refresh picture' asks the host
-// for a keyframe (requestStreamKeyframe()), like 'Reset Decoder' of the stream page of moonlight-xbox. 'Type text…' opens
-// a text field for the keyboard of the TV, whose text goes to the PC as Unicode (sendText() of wasm/input.cpp), like the
-// keyboard of the game menu of Artemis and of StreamLight 8.0.0.
+// which only shows while the stream has more than 2 audio channels, works the same way with its two values: LEFT sets
+// Efficient and RIGHT High. OK on either entry reconnects once with every change that waits on both. 'Refresh picture'
+// asks the host for a keyframe (requestStreamKeyframe()), like 'Reset Decoder' of the stream page of moonlight-xbox.
+// 'Type text…' opens a text field for the keyboard of the TV, whose text goes to the PC as Unicode (sendText() of
+// wasm/input.cpp), like the keyboard of the game menu of Artemis and of StreamLight 8.0.0.
 
 // Whether the Stream Menu is open
 var isStreamMenuOpen = false;
@@ -233,17 +233,23 @@ function getStreamAudioChannels() {
 }
 
 // Show the quality of the surround quality entry, like the bitrate of the bitrate entry: the arrows of LEFT and RIGHT,
-// which switch between the two qualities and so are never at a limit, and, while it differs from the quality of the
+// dimmed at a limit (Efficient is the lower end and High the higher one), and, while it differs from the quality of the
 // stream, the note that OK reconnects. A note given replaces it, e.g. the hint after OK on an unchanged quality.
 function showStreamMenuSurround(note) {
   const changed = streamMenuSurroundQuality !== streamSurroundQuality;
-  $('#streamMenuSurroundValue').text(streamMenuSurroundQuality === 'Efficient' ? t('Efficient') : t('High')).toggleClass('is-pending', changed);
+  const efficient = streamMenuSurroundQuality === 'Efficient';
+  $('#streamMenuSurroundValue').text(efficient ? t('Efficient') : t('High')).toggleClass('is-pending', changed);
+  $('#streamMenuSurroundLower').toggleClass('is-limit', efficient);
+  $('#streamMenuSurroundHigher').toggleClass('is-limit', !efficient);
   $('#streamMenuSurroundNote').text(note || (changed ? t('OK: reconnect') : ''));
 }
 
-// Switch the quality of the surround quality entry with LEFT or RIGHT; OK applies it (applyStreamMenuSurround())
-function changeStreamMenuSurround() {
-  streamMenuSurroundQuality = streamMenuSurroundQuality === 'Efficient' ? 'High' : 'Efficient';
+// Change the quality of the surround quality entry with LEFT (-1) to Efficient or RIGHT (1) to High, as RIGHT raises
+// the bitrate of the bitrate entry; OK applies it (applyStreamMenuSurround()). Each key sets its end instead of
+// switching the value, since a held key repeats (the auto-repeat of the remote, and startRepeatAction() in index.js for
+// the D-pad and the sticks), and a switch would leave whichever value the release happened to come on.
+function changeStreamMenuSurround(direction) {
+  streamMenuSurroundQuality = direction > 0 ? 'High' : 'Efficient';
   showStreamMenuSurround();
 }
 

@@ -53,8 +53,6 @@ Install the file with a method that works for Moonlight Tizen, e.g. **Apps2Samsu
 
 Moonlight Plus installs **next to** the regular Moonlight app, with its own settings and its own pairing. Pair your PC once on the first start, even if the regular Moonlight app is already paired.
 
-The earlier release v1.19.0-s90c.1 (*Moonlight S90C*) never offers Moonlight Plus: an update that it announces is the regular Moonlight Tizen app. Install Moonlight Plus once by hand, which installs over it ([updates](docs/GUIDE.md#updates)).
-
 ---
 
 ## Documentation

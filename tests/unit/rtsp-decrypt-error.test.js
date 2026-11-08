@@ -8,7 +8,8 @@
 // blocked port. tests/native/rtsp_decrypt_error_test.c runs the handshake against a stand-in for the RTSP server of
 // Sunshine, tests/native/connection_interrupt_test.cpp the stage failure of wasm/connectionlistener.cpp, and
 // tests/browser/held-host-start.test.js the wait, the start once more and the message. A later update of the vendored
-// copy would drop the patch unnoticed, so this file checks its code and the places that record it.
+// copy would drop the patch unnoticed, so this file checks its code and the places that record it. It also pins the
+// message of the module that the control stream connected, after which a start leaves no hold on the host.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -71,6 +72,24 @@ test('the module shows no dialog with the ports for it, and the front end starts
   assert.match(index, /const STREAM_RESTART_NO_VIDEO = 'noVideo';\nconst STREAM_RESTART_HELD_START = 'heldStart';/);
   // The hold covers ping_timeout of Sunshine (10 s by default) and a second of margin
   assert.match(index, /\nvar HOST_START_HOLD_MS = 11000;\n/);
+});
+
+test('the module tells the front end once the control stream connected, which releases the start on the host', () => {
+  // moonlight-common-c calls stageComplete for every stage (Connection.c); tests/native/connection_interrupt_test.cpp
+  // runs ClStageComplete(), which posts only the start of the control stream and nothing for a stream being stopped
+  const listener = read('wasm/connectionlistener.cpp');
+  assert.match(listener, /\n  \.stageStarting = MoonlightInstance::ClStageStarting,\n  \.stageComplete = MoonlightInstance::ClStageComplete,\n/);
+  const stageComplete = functionBody(listener, 'void MoonlightInstance::ClStageComplete(int stage) {');
+  assert.match(stageComplete, /if \(stage != STAGE_CONTROL_STREAM_START \|\| \(g_Instance && g_Instance->m_ConnectionCancelled\)\) \{\s+return;\s+\}\s+PostToJs\(std::string\("ControlStreamConnected"\)\);/);
+  // messages.js clears the answer time of the start that is still starting, so that an end of its stream before
+  // 'Connection Established' remembers no hold (rememberEndedStreamStart() in index.js), and keeps it otherwise
+  [[true, 0], [false, 1234]].forEach(([isInGame, expected]) => {
+    const platform = loadPlatformScripts(['wasm/platform/messages.js'], { globals: { isInGame, streamLaunchAnsweredAt: 1234 } });
+    platform.get('handleMessage')('ControlStreamConnected');
+    assert.equal(platform.get('streamLaunchAnsweredAt'), expected, 'isInGame ' + isInGame);
+  });
+  const index = read('wasm/platform/index.js');
+  assert.match(index, /if \(streamLaunchAnsweredAt > 0 && CONNECTED_STREAM_END_CODES\.indexOf\(errorCode\) < 0\) \{\s+rememberHeldHostStart\(streamLaunchHost, streamLaunchAnsweredAt, 'the stream of a start it accepted ended before its control stream connected'\);/);
 });
 
 // Load messages.js with a t() that translates with the given locale like i18n.js does, recording the snackbar notices

@@ -1,8 +1,9 @@
 // Checks the rule that tells the keyframe of a restart of the video encoder of the host apart from a recovery keyframe
 // (wasm/host_encoder_restart.hpp): Sunshine sends the HDR mode each time it creates an encoder, so every message after
-// the first of a stream is a restart, and one keyframe within a second of it, before or after, belongs to it. A new
-// stream starts counting again (StartStream() of wasm/main.cpp resets it). hdr_metadata_submit_test.cpp runs the rule
-// in the decoder path of wasm/wasmplayer.cpp.
+// the first of a stream is a restart, and one keyframe within a second of it, before or after, belongs to it, also when
+// the two threads read their clocks in the other order than they store their results. A new stream starts counting
+// again (StartStream() of wasm/main.cpp resets it). hdr_metadata_submit_test.cpp runs the rule in the decoder path of
+// wasm/wasmplayer.cpp.
 
 #include "host_encoder_restart.hpp"
 
@@ -55,11 +56,33 @@ static void AMessageWithinASecondAfterTheKeyframeClaimsItOnce() {
   CHECK(restarts.IsRestartKeyframe(5400 + HostEncoderRestarts::kKeyframeWindowMs + 200));
 }
 
+static void AMessageStampedJustBeforeTheKeyframeThatItMissedClaimsItOnce() {
+  HostEncoderRestarts restarts;
+  restarts.Reset();
+  restarts.OnHdrModeMessage(1000);
+  // The control thread reads its clock (5000), the decoder thread reads its clock (5001) and finds no message yet, and
+  // only then is the message stored: the keyframe counts as a recovery for now
+  CHECK(!restarts.IsRestartKeyframe(5001));
+  restarts.OnHdrModeMessage(5000);
+  // The next frame takes it back, once
+  CHECK(restarts.LateRestartKeyframe(5017));
+  CHECK(!restarts.LateRestartKeyframe(5034));
+  // The message is answered, so it can't swallow a recovery keyframe that follows within the second
+  CHECK(!restarts.IsRestartKeyframe(5500));
+  CHECK(!restarts.LateRestartKeyframe(5517));
+  // A message stored more than a second before a recovery keyframe claims nothing
+  restarts.OnHdrModeMessage(7000);
+  CHECK(!restarts.IsRestartKeyframe(7000 + HostEncoderRestarts::kKeyframeWindowMs + 1));
+  CHECK(!restarts.LateRestartKeyframe(7000 + HostEncoderRestarts::kKeyframeWindowMs + 17));
+}
+
 int main() {
   test_support::RunTest("the first HDR mode message of a stream is no restart", TheFirstMessageOfAStreamIsNoRestart);
   test_support::RunTest("one keyframe within a second after the message belongs to the restart",
                         OneKeyframeWithinASecondAfterTheMessageBelongsToIt);
   test_support::RunTest("a message within a second after a recovery keyframe claims it once",
                         AMessageWithinASecondAfterTheKeyframeClaimsItOnce);
+  test_support::RunTest("a message stamped just before a keyframe that missed it claims it once",
+                        AMessageStampedJustBeforeTheKeyframeThatItMissedClaimsItOnce);
   return test_support::Summary();
 }

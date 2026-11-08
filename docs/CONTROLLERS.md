@@ -105,7 +105,7 @@ The stream only sees the first 63 characters of the id, so a controller with a v
 - The log of the stream names the type sent to the PC in the same way. The log of the menus, when a controller connects, names the type that Auto detects.
 - With a PlayStation-style controller emulated, Sunshine by default lets Select also trigger the touchpad click (its option `ds4_back_as_touchpad_click`).
 
-**A resumed game keeps its controller.** Sunshine 2026.906 and 2026.914 keep the virtual controller of the TV between two streams, and on a resumed game they keep using it and ignore the type that the app announces. A changed setting, or a controller of another type, takes effect only once Sunshine creates a new virtual controller: after you quit the game with *Quit app on the PC*, after a restart of Sunshine, or when the controller disconnects during a stream. The Sunshine log then shows the warning *ControllerNumber already allocated [0]* at the start of each resumed stream, which is harmless: buttons, sticks and rumble work as before.
+**A resumed game keeps its controller.** Sunshine 2026.906 and 2026.914 keep the virtual controller of the TV between two streams, and on a resumed game they keep using it and ignore the type that the app announces. A changed setting, or a controller of another type, takes effect only once Sunshine creates a new virtual controller: after you quit the game with *Quit app on the PC* or the game that the app started was closed on the PC, after a restart of Sunshine, or when the controller disconnects during a stream. The Sunshine log then shows the warning *ControllerNumber already allocated [0]* at the start of each resumed stream, which is harmless: buttons, sticks and rumble work as before.
 
 ## Rumble
 

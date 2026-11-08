@@ -6,8 +6,10 @@
 // that the module logs with ClLogMessage() goes into the ring of the diagnostic log (wasm/diagnostic_log.hpp), from which
 // the front end takes it, and that a failed RTSP handshake whose answer had the key of another start
 // (ML_ERROR_RTSP_DECRYPT_FAILED, a local patch of moonlight-common-c) shows no dialog with the ports of the handshake,
-// since the front end explains it. connectionlistener.cpp is included directly; the functions below stand in for
-// moonlight-common-c and the rest of the module.
+// since the front end explains it, and that the end of the stage that connects the control stream, which releases the
+// start on the host, tells the front end ("ControlStreamConnected"), unless the stream is already being stopped.
+// connectionlistener.cpp is included directly; the functions below stand in for moonlight-common-c and the rest of the
+// module.
 
 #include "../../wasm/connectionlistener.cpp"
 
@@ -143,6 +145,22 @@ static void TestHandshakeWithTheKeyOfAnotherStartShowsNoPortDialog() {
   CHECK_EQ(posted.back(), std::string("DialogMsg: platform initialization failed (error -300)"));
 }
 
+static void TestConnectedControlStreamIsPosted() {
+  MoonlightInstance* instance = NewStream();
+  // moonlight-common-c calls it for the end of every stage (Connection.c, through s_ClCallbacks, which
+  // unit/rtsp-decrypt-error.test.js pins); only the start of the control stream is posted
+  for (int stage = STAGE_PLATFORM_INIT; stage < STAGE_MAX; stage++) {
+    MoonlightInstance::ClStageComplete(stage);
+  }
+  CHECK_EQ(posted.size(), 1u);
+  CHECK_EQ(posted.back(), std::string("ControlStreamConnected"));
+  // A stream that is being stopped already told the front end its end, which the message would only reach after it
+  posted.clear();
+  instance->CancelPendingSetup();
+  MoonlightInstance::ClStageComplete(STAGE_CONTROL_STREAM_START);
+  CHECK_EQ(posted.size(), 0u);
+}
+
 int main() {
   test_support::RunTest("a stop during the connection setup interrupts it", TestStopDuringTheSetupInterruptsIt);
   test_support::RunTest("a stop before LiStartConnection cleared the interrupt flag is not lost",
@@ -151,5 +169,7 @@ int main() {
   test_support::RunTest("the lines that the module logs go into the diagnostic log", TestLoggedLinesGoIntoTheDiagnosticLog);
   test_support::RunTest("a handshake answered with the key of another start shows no dialog with the ports",
                         TestHandshakeWithTheKeyOfAnotherStartShowsNoPortDialog);
+  test_support::RunTest("the connected control stream is posted to the front end, not for a stream being stopped",
+                        TestConnectedControlStreamIsPosted);
   return test_support::Summary();
 }

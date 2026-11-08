@@ -13,7 +13,8 @@
 // - the controller type that System information shows when the setting overrides the detection
 // - the Start of a hold that switches the mouse emulation on, which the game sees (wasm/gamepad.cpp)
 // - the buttons in the menus of docs/CONTROLLERS.md that the navigation guide of wasm/index.html leaves out
-// - the version suffix of a release promoted from a pre-release, and what the earlier release v1.19.0-s90c.1 offers
+// - the version suffix of a release promoted from a pre-release, and that the README and the guide no longer carry the
+//   install notes of the earlier release v1.19.0-s90c.1 (Moonlight S90C), which only the history of the patch notes keeps
 // - the audio path that the section on surround sound with a soundbar describes: the 5.1 entry of the audio
 //   configuration, the 6-channel PCM track that only the EMSS backend adds, the two channels of the Web Audio output and
 //   the Audio stream line that the check reads
@@ -202,14 +203,19 @@ test('the documents describe the controller type of System information and the S
   assert.doesNotMatch(controllers, /The game doesn't get the Start of the hold that switched it\./);
 });
 
-test('the documents explain the version of a promoted release and what the earlier release v1.19.0-s90c.1 offers', () => {
+test('the documents explain the version of a promoted release, and only the history mentions the earlier build Moonlight S90C', () => {
   assert.match(tableRow('App Version')[1], /a full release that was promoted from a tested pre-release, because it keeps the files of the pre-release/);
-  for (const file of ['README.md', 'docs/GUIDE.md', 'docs/PATCH_NOTES.md']) {
-    assert.match(read(file), /announces (later )?is (a release of )?the regular Moonlight Tizen app/, file);
+  // The old S90C build (v1.19.0-s90c.1) has served its purpose: the README and the guide no longer explain how to update
+  // from it, and only the history of the patch notes still says what it announces
+  assert.match(read('docs/PATCH_NOTES.md'), /announces (later )?is (a release of )?the regular Moonlight Tizen app/);
+  for (const file of ['README.md', 'docs/GUIDE.md']) {
+    const text = read(file);
+    assert.doesNotMatch(text, /announces (later )?is (a release of )?the regular Moonlight Tizen app/, file);
+    assert.doesNotMatch(text, /Moonlight S90C/, file);
+    assert.doesNotMatch(text, /The earlier release v1\.19\.0-s90c\.1/, file);
   }
-  // The German notes of v1.19.0-s90c.1 stay at its tag, whose note on the update check the guide corrects: that release
-  // will never offer Moonlight Plus
-  assert.match(GUIDE, /The earlier release v1\.19\.0-s90c\.1 \(\*Moonlight S90C\* on the TV\) checks the releases of upstream Moonlight Tizen, so it will never offer Moonlight Plus/);
+  // The archive of its German documents stays linked at its tag (see the test of the tested bitrate steps below)
+  assert.ok(GUIDE.indexOf('stays with the files of the tag [v1.19.0-s90c.1](') > 0);
   // Tizen Studio always needs a Samsung account for the Samsung certificate, Apps2Samsung only on Tizen 7.0 and newer
   assert.match(GUIDE, /Apps2Samsung asks for a Samsung account on Tizen 7\.0 and newer\. Tizen Studio always needs one/);
 });
@@ -269,7 +275,7 @@ test('the section on the surround audio quality describes the setting, the negot
   assert.match(sdp, /if \(\(AudioCallbacks\.capabilities & CAPABILITY_SLOW_OPUS_DECODER\) \|\|[\s\S]{0,400}AudioPacketDuration = 10;/);
   assert.match(section, /\*\*Efficient\*\* asks for the normal quality in 10 ms packets at every bitrate/);
   assert.match(read('wasm/audio_capabilities.h'), /CHANNEL_COUNT_FROM_AUDIO_CONFIGURATION\(audioConfiguration\) > 2/);
-  assert.match(section, /Stereo is never affected/);
+  assert.match(section, /Stereo is never affected: the app asks for the same stereo as at \*High\*\./);
   // The statistics it points to: the Audio stream line with its packet duration, and the Audio CPU line
   const stats = read('wasm/audio_stream_stats.hpp');
   assert.match(stats, /"Audio stream: Opus %s, %g ms packets, %s\\n"/);
@@ -579,14 +585,17 @@ test('the guide describes the wait after an abandoned start, the held start mess
   assert.ok(messages.indexOf("snackbarLogLong('" + message + "');") > 0);
   assert.ok(troubleshooting.indexOf('| "' + message + '" (before 2.3.0: "RTSP handshake failed (error -1)" with the ports') > 0);
   assert.match(index, /\nvar HOST_START_HOLD_MS = 11000;\n/);
-  assert.ok(troubleshooting.indexOf('wait until 11 seconds after the PC accepted the earlier one, which covers the default `ping_timeout`') > 0);
+  assert.ok(troubleshooting.indexOf('wait until 11 seconds after the PC accepted the earlier start (or after its request failed), which covers the default `ping_timeout`') > 0);
   assert.ok(english['Waiting for the PC to release the previous start (%1$s s)...']);
   assert.ok(troubleshooting.indexOf('(*Waiting for the PC to release the previous start*)') > 0);
   // The starts that the app remembers, as rememberHeldHostStart() names them
   ['it accepted a start that was cancelled', 'a start it accepted was cancelled',
-    'the stream of a start it accepted ended before it connected', 'its launch request failed', 'its resume request failed']
+    'the stream of a start it accepted ended before its control stream connected', 'its launch request failed', 'its resume request failed']
     .forEach((why) => assert.ok(index.indexOf("'" + why + "'") > 0, why));
   assert.ok(troubleshooting.indexOf('(cancelled, ended before their stream connected, or whose request failed on the TV)') > 0);
+  // Sunshine drops the new start, not the one it holds (rtsp.cpp of Sunshine), and only /cancel was checked
+  assert.ok(troubleshooting.indexOf('Sunshine keeps the earlier one and drops the new one') > 0);
+  assert.ok(troubleshooting.indexOf('*Quit app on the PC* doesn\'t release it either') > 0);
   // One start once more, and the message only after it
   assert.match(index, /if \(streamRetried\[restartKind\] \|\| !host/);
   assert.ok(troubleshooting.indexOf('it starts once more by itself after the same wait, and the message shows only if that fails as well') > 0);
@@ -594,6 +603,20 @@ test('the guide describes the wait after an abandoned start, the held start mess
   const player = read('wasm/wasmplayer.cpp');
   assert.ok(player.indexOf('ClLogMessage("The PC restarted its video encoder (e.g. after a display, HDR or desktop change on the PC)\\n");') > 0);
   assert.ok(GUIDE.indexOf('the diagnostic log shows "The PC restarted its video encoder":** Sunshine rebuilt its screen capture and its encoder during the stream') > 0);
+  // The app never asks for it, but the keys of the Stream Menu and of a keyboard reach the PC: Alt + Enter switches a
+  // game between fullscreen and a window, and Ctrl + Alt + Shift with a key other than Q and S goes to the PC as well
+  assert.ok(GUIDE.indexOf('No request of the app causes it, but keys sent to the PC can: e.g. *Alt + Enter* or *Alt + Tab* from the Stream Menu') > 0);
+  assert.match(read('wasm/platform/menus.js'), /streamMenuKeyAltEnter: \[0xA4, 0x0D\]/);
+  assert.match(read('wasm/input.cpp'), /\} else \{\s+\/\/ Wait until these keys come up to unlock the mouse\s+m_WaitingForAllModifiersUp = true;\s+\}\s+\}\s+LiSendKeyboardEvent\(/);
+  assert.equal(GUIDE.indexOf('Nothing on the TV causes it'), -1);
+  // A new controller type takes effect once Sunshine creates a new virtual controller, which the guide and
+  // CONTROLLERS.md list the same ways (input.cpp and process.cpp of Sunshine 2026.914)
+  const controllers = read('docs/CONTROLLERS.md');
+  ['the game that the app started was closed on the PC', 'a restart of Sunshine', 'the controller disconnects during a stream']
+    .forEach((way) => {
+      assert.ok(troubleshooting.indexOf(way) > 0, 'guide: ' + way);
+      assert.ok(controllers.indexOf(way) > 0, 'CONTROLLERS.md: ' + way);
+    });
   assert.match(player, /\} else if \(!GetHostEncoderRestarts\(\)\.IsRestartKeyframe\(idrMs\)\) \{\s+s_RecoveryIdrFrames\+\+;/);
   assert.ok(guideSection('## Performance statistics').indexOf('The first keyframe of a new encoder that the PC started during the stream doesn\'t count') > 0);
 });

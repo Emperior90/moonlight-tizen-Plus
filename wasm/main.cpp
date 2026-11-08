@@ -466,8 +466,14 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   // The quality of a stream with more than 2 channels: High (the default, also for any other value) or Efficient,
   // which the connection thread applies to 5.1 and 7.1 only (ConnectionThreadFunc())
   m_EfficientSurroundAudio = surroundQuality == "Efficient";
-  PostToJs(m_EfficientSurroundAudio ? "Selecting the surround audio quality to: Efficient (normal quality, 10 ms packets)" :
-    "Selecting the surround audio quality to: High");
+  if (!m_EfficientSurroundAudio) {
+    PostToJs("Selecting the surround audio quality to: High");
+  } else if (CHANNEL_COUNT_FROM_AUDIO_CONFIGURATION(m_StreamConfig.audioConfiguration) > 2) {
+    PostToJs("Selecting the surround audio quality to: Efficient (normal quality, 10 ms packets)");
+  } else {
+    // The front end passes the setting whatever the audio configuration is, and stereo keeps its quality
+    PostToJs("Selecting the surround audio quality to: Efficient (not applied: stereo)");
+  }
 
   // Initialize the supported video format with default value
   m_StreamConfig.supportedVideoFormats = 0;

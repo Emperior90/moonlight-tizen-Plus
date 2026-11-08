@@ -3,7 +3,8 @@
 // Pins how the setting 'Surround audio quality' reaches the module, which the native tests can't check since they
 // don't build the Embind registration or ConnectionThreadFunc() of wasm/main.cpp:
 // - startStream() of wasm/main.cpp and wasm/moonlight_wasm.hpp take it as their last parameter, and both start requests
-//   of startGame() (index.js) send exactly as many arguments, with it last;
+//   of startGame() (index.js) send exactly as many arguments, with it last, and StartStream() logs whether the stream
+//   gets it (not a stereo stream, which keeps its quality);
 // - the connection thread takes the capabilities of the audio renderer from GetAudioRendererCapabilities() of
 //   wasm/audio_capabilities.h with the setting and the audio configuration of the stream, which
 //   tests/native/sdp_audio_quality_test.c runs through the SDP negotiation of moonlight-common-c;
@@ -54,6 +55,9 @@ test('startStream() takes the surround audio quality last, and both start reques
   const start = functionBody(main, 'MessageResult MoonlightInstance::StartStream(');
   assert.match(start, /PostToJs\("Setting the Surround audio quality to: " \+ surroundQuality\);/);
   assert.match(start, /m_EfficientSurroundAudio = surroundQuality == "Efficient";/);
+  // The log names what the stream gets, from the final audio configuration: Efficient changes only more than 2 channels
+  assert.match(start, /\} else if \(CHANNEL_COUNT_FROM_AUDIO_CONFIGURATION\(m_StreamConfig\.audioConfiguration\) > 2\) \{\s+PostToJs\("Selecting the surround audio quality to: Efficient \(normal quality, 10 ms packets\)"\);\s+\} else \{\s+(\/\/[^\n]*\n\s+)*PostToJs\("Selecting the surround audio quality to: Efficient \(not applied: stereo\)"\);/);
+  assert.ok(start.indexOf('m_AudioConfig = m_StreamConfig.audioConfiguration;') < start.indexOf('Efficient (normal quality, 10 ms packets)'));
   assert.match(main, /emscripten::function\("startStream", &startStream\);/);
 
   // The two start requests of startGame() (resume and launch) send one argument per parameter, the setting last

@@ -569,7 +569,8 @@ bool MoonlightInstance::RefreshPicture() {
 void MoonlightInstance::ClSetHdrMode(bool enabled) {
   // Sunshine sends the HDR mode each time it creates a video encoder, so every message after the first of the stream
   // means that it started a new one, whose first frame is a keyframe that no loss asked for (host_encoder_restart.hpp).
-  // The picture stands still meanwhile, and nothing on the TV caused it.
+  // The picture stands still meanwhile. No loss and no request of this client caused it, but keys sent to the PC can
+  // (e.g. Alt + Enter from the Stream Menu, when a game then switches between exclusive fullscreen and a window).
   if (GetHostEncoderRestarts().OnHdrModeMessage(LiGetMillis())) {
     ClLogMessage("The PC restarted its video encoder (e.g. after a display, HDR or desktop change on the PC)\n");
   }

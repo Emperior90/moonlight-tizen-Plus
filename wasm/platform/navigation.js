@@ -2088,9 +2088,10 @@ const Views = {
   },
   StreamMenu: {
     // The entries of the Stream Menu that show (menus.js). Back closes it and resumes the stream, LEFT and RIGHT change
-    // the bitrate of the bitrate entry and the quality of the surround quality entry. UP and DOWN stop at the first and
-    // the last entry instead of wrapping around like the other menus: the menu opens on Resume, and the last entry quits
-    // the app on the PC without a question, so one UP too many must not select it.
+    // the bitrate of the bitrate entry and set the quality of the surround quality entry (LEFT Efficient, RIGHT High,
+    // so that a held key stays at its end). UP and DOWN stop at the first and the last entry instead of wrapping around
+    // like the other menus: the menu opens on Resume, and the last entry quits the app on the PC without a question,
+    // so one UP too many must not select it.
     view: new ListView(() => getOverlayMenuItems('streamMenu')),
     up: function() {
       this.view.prev();
@@ -2104,14 +2105,14 @@ const Views = {
       if (elementId(this.view.current()) === 'streamMenuBitrate') {
         changeStreamMenuBitrate(-1);
       } else if (elementId(this.view.current()) === 'streamMenuSurround') {
-        changeStreamMenuSurround();
+        changeStreamMenuSurround(-1);
       }
     },
     right: function() {
       if (elementId(this.view.current()) === 'streamMenuBitrate') {
         changeStreamMenuBitrate(1);
       } else if (elementId(this.view.current()) === 'streamMenuSurround') {
-        changeStreamMenuSurround();
+        changeStreamMenuSurround(1);
       }
     },
     accept: function() {

@@ -2,7 +2,8 @@
 // stub with the option `moduleScripts: ['sunshine-host.js']`. It answers the HTTP requests of the module to 10.0.0.2
 // (serverinfo, applist, launch, resume, cancel) like a paired Sunshine PC named GAMING-PC (uniqueid HOST1) does, and
 // rejects every other request at once, like an address without a host, so the startup scan of the network ends quickly.
-// A started stream connects and shows its video after 150 ms, and a stopped one ends at once. SUNSHINE_HOSTS of
+// A started stream connects (first its control stream, 'ControlStreamConnected', as the module posts it, then the rest)
+// and shows its video after 150 ms, and a stopped one ends at once. SUNSHINE_HOSTS of
 // browser/harness.js is this PC as the hosts list of an existing install stores it.
 // window.__sunshine holds the state that a test reads or changes: the running app (currentGame), the app list, the
 // requests (http, as '/path' or '/path appid'), the started streams (starts) and the stopped ones (stops). An init script
@@ -69,6 +70,7 @@
     var result = startStream.apply(this, arguments);
     state.starts.push({ width: arguments[2], height: arguments[3], fps: arguments[4], bitrate: arguments[5] });
     setTimeout(function() {
+      handleMessage('ControlStreamConnected');
       handleMessage('Connection Established');
       handleMessage('displayVideo');
     }, 150);

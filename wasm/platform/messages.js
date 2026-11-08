@@ -947,6 +947,14 @@ function dispatchMessage(msg) {
     runGuarded('showStreamTerminationMessage', function() {
       showStreamTerminationMessage(errorCode, videoTrackRejection, blockedPorts);
     });
+  } else if (msg === 'ControlStreamConnected') {
+    // The control stream of the starting stream connected (ClStageComplete() in wasm/connectionlistener.cpp), which
+    // releases the start on the host: a stream that ends from now on, before 'Connection Established' (RED while the
+    // video stream starts, or a later stage that fails), leaves no start behind that the next one would have to wait
+    // for (rememberEndedStreamStart() in index.js). Only for a stream that is still starting, as below.
+    if (isInGame === true) {
+      streamLaunchAnsweredAt = 0;
+    }
   } else if (msg === 'Connection Established') {
     // A connection that completes after the user already stopped the stream or cancelled its start must neither
     // show the video nor turn the screensaver off in the menus
@@ -954,7 +962,7 @@ function dispatchMessage(msg) {
       return;
     }
     isStreamConnected = true;
-    // The control stream connected, which releases the start on the host (rememberHeldHostStart() in index.js)
+    // The control stream connected before, which released the start on the host ('ControlStreamConnected' above)
     streamLaunchAnsweredAt = 0;
     // Keep the screensaver of the TV off during a session played only with a gamepad
     setTvScreenSaver(false);

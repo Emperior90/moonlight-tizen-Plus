@@ -65,7 +65,7 @@
   "5.1 Surround Sound": "Son surround 5.1",
   "7.1 Surround Sound": "Son surround 7.1",
   "Surround audio quality": "Qualité du son surround",
-  "- Efficient asks the PC for 5.1 and 7.1 at normal bitrate in 10 ms packets instead of 5 ms: about half the work for the TV to decode the sound, about 5 ms more audio delay.": "- Économe demande au PC le 5.1 et le 7.1 au débit normal en paquets de 10 ms au lieu de 5 ms : environ deux fois moins de travail pour le téléviseur pour décoder le son, environ 5 ms de délai audio en plus.",
+  "- Efficient asks the PC for 5.1 and 7.1 at normal bitrate in 10 ms packets instead of 5 ms: about half the work to decode the sound (measured on a PC), about 5 ms more audio delay.": "- Économe demande au PC le 5.1 et le 7.1 au débit normal en paquets de 10 ms au lieu de 5 ms : environ deux fois moins de travail de décodage du son (mesuré sur un PC), environ 5 ms de délai audio en plus.",
   "High": "Haute",
   "Efficient": "Économe",
   "Limit audio delay": "Limiter le délai audio",

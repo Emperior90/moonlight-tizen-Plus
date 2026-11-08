@@ -65,7 +65,7 @@
   "5.1 Surround Sound": "5.1 Surround Sound",
   "7.1 Surround Sound": "7.1 Surround Sound",
   "Surround audio quality": "Surround audio quality",
-  "- Efficient asks the PC for 5.1 and 7.1 at normal bitrate in 10 ms packets instead of 5 ms: about half the work for the TV to decode the sound, about 5 ms more audio delay.": "- Efficient asks the PC for 5.1 and 7.1 at normal bitrate in 10 ms packets instead of 5 ms: about half the work for the TV to decode the sound, about 5 ms more audio delay.",
+  "- Efficient asks the PC for 5.1 and 7.1 at normal bitrate in 10 ms packets instead of 5 ms: about half the work to decode the sound (measured on a PC), about 5 ms more audio delay.": "- Efficient asks the PC for 5.1 and 7.1 at normal bitrate in 10 ms packets instead of 5 ms: about half the work to decode the sound (measured on a PC), about 5 ms more audio delay.",
   "High": "High",
   "Efficient": "Efficient",
   "Limit audio delay": "Limit audio delay",

@@ -137,6 +137,7 @@ class MoonlightInstance {
   static void* StopThreadFunc(void* context);
 
   static void ClStageStarting(int stage);
+  static void ClStageComplete(int stage);
   static void ClStageFailed(int stage, int errorCode);
   static void ClConnectionStarted(void);
   static void ClConnectionTerminated(int errorCode);

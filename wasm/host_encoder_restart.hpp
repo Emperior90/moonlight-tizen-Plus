@@ -55,15 +55,19 @@ class HostEncoderRestarts {
   }
 
   // The decoder thread, for every frame: returns true once when the last keyframe that counted as a recovery turned out
-  // to be the keyframe of a restart, whose message arrived after it, within kKeyframeWindowMs. The caller then no longer
-  // counts it as a recovery.
+  // to be the keyframe of a restart, whose message arrived within kKeyframeWindowMs of it. That message was stored
+  // after the keyframe found none, usually because it arrived later, but its time can also be a moment before the
+  // keyframe's: the control thread reads the clock before it stores the message, and the decoder thread can read its
+  // clock and find no message in between. So the difference counts either way, as in IsRestartKeyframe(). The caller
+  // then no longer counts the keyframe as a recovery.
   bool LateRestartKeyframe(uint64_t nowMs) {
     if (m_RecoveryKeyframeMs == 0) {
       return false;
     }
     uint64_t restartMs = m_RestartMs.load();
-    if (restartMs != 0 && restartMs >= m_RecoveryKeyframeMs && restartMs - m_RecoveryKeyframeMs <= kKeyframeWindowMs &&
-        m_RestartMs.compare_exchange_strong(restartMs, 0)) {
+    const uint64_t apart =
+      restartMs >= m_RecoveryKeyframeMs ? restartMs - m_RecoveryKeyframeMs : m_RecoveryKeyframeMs - restartMs;
+    if (restartMs != 0 && apart <= kKeyframeWindowMs && m_RestartMs.compare_exchange_strong(restartMs, 0)) {
       m_RecoveryKeyframeMs = 0;
       return true;
     }

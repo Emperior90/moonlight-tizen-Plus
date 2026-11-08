@@ -332,7 +332,7 @@ test('the Stream Menu stays inside the safe area of the screen', async () => {
     // quality entry of a 5.1 stream and the notes of a changed bitrate and quality
     const fit = await app.page.evaluate(() => {
       changeStreamMenuBitrate(-1);
-      changeStreamMenuSurround();
+      changeStreamMenuSurround(-1);
       const menu = document.getElementById('streamMenu');
       return { entries: getOverlayMenuItems('streamMenu').length, note: $('#streamMenuBitrateNote').text() !== '',
         surroundNote: $('#streamMenuSurroundNote').text() !== '', scrollHeight: menu.scrollHeight, clientHeight: menu.clientHeight };

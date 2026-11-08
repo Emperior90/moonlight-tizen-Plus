@@ -10,10 +10,14 @@
 // tests/native/rtsp_decrypt_error_test.c runs; wasm/connectionlistener.cpp shows no dialog with the ports for it,
 // tests/native/connection_interrupt_test.cpp). So a start waits, with a countdown on the launch screen, while the host
 // may still hold a start of this TV that never connected: one that was cancelled after or while the host accepted it,
-// one whose stream ended before it connected, and one whose request failed on the TV. A stream that connected releases
-// its start, so the reconnects of the Stream Menu and the retry after no video don't wait. A start that the host still
-// dropped (e.g. for another device) starts once more without a word after the hold, and only a second failure shows
-// a message, the one about the held start instead of the ports of the handshake.
+// one whose stream ended before its control stream connected, and one whose request failed on the TV. A stream whose
+// control stream connected released its start ('ControlStreamConnected', posted by ClStageComplete() of
+// wasm/connectionlistener.cpp, which tests/native/connection_interrupt_test.cpp checks), also if it ended before
+// 'Connection Established', so the reconnects of the Stream Menu, the retry after no video and a start after RED during
+// the setup of the video stream don't wait. A start that the host still dropped (e.g. for another device) starts once
+// more without a word after the hold, and only a second failure shows a message, the one about the held start instead
+// of the ports of the handshake. The holds of the resume path (a /resume answered after RED, a failed /resume) are
+// checked as well as those of /launch.
 // The page holds a simulated Sunshine that keeps its launch sessions that way, with one thread for the requests, as the
 // HTTPS server of Sunshine and the HTTP thread of the module have, and a stub of the module whose start request runs the
 // handshake against it. The times are scaled down: ping_timeout 1000 ms, the hold that the app waits for 1100 ms (11 s
@@ -105,7 +109,10 @@ async function openWithSunshine() {
     api = host;
     // The start request runs the RTSP handshake with its key (argument 6) 50 ms later, or when the test lets it
     // (window.__connect = 'hold'), as the module does: an answer with the key of another start ends it with -300 and no
-    // dialog, no session at all with the dialog of the handshake and -1, and the key of the held start connects
+    // dialog, no session at all with the dialog of the handshake and -1, and the key of the held start connects the
+    // control stream, which clears the session on the host and tells the front end ('ControlStreamConnected'), and then
+    // the rest of the stream ('Connection Established'). With window.__connect = 'control' the start stays in the setup
+    // of the video stream after the control stream connected.
     window.__connect = 'auto';
     Module.startStream = function() {
       const key = String(arguments[6]);
@@ -119,13 +126,19 @@ async function openWithSunshine() {
         } else if (session.key !== key) {
           record('host: Failed to verify RTSP message tag');
           handleMessage('streamTerminated: -300');
+        } else if (window.__connect === 'control') {
+          sunshine.pending = null;
+          record('host: control stream connected');
+          handleMessage('ControlStreamConnected');
+          handleMessage('ProgressMsg: Starting video stream...');
         } else {
           sunshine.pending = null;
           record('host: connected');
+          handleMessage('ControlStreamConnected');
           handleMessage('Connection Established');
         }
       };
-      if (window.__connect === 'auto') {
+      if (window.__connect === 'auto' || window.__connect === 'control') {
         setTimeout(handshake, 50);
       } else {
         window.__handshake = handshake;
@@ -263,7 +276,53 @@ test('RED while the stream connects, after the host accepted its start: the next
     assert.ok(run.resumedAt - run.answeredAt >= 1095, 'resumed after ' + (run.resumedAt - run.answeredAt) + ' ms');
     assert.ok(run.screens.some((text) => COUNTDOWN.test(text)), run.screens.join(' | '));
     assert.equal(run.connected, true);
-    assert.ok(app.logs.some((line) => line.indexOf('the stream of a start it accepted ended before it connected') >= 0));
+    assert.ok(app.logs.some((line) => line.indexOf('the stream of a start it accepted ended before its control stream connected') >= 0));
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a stream whose control stream connected makes no start wait, also when it ends before Connection Established', async () => {
+  const app = await openWithSunshine();
+  try {
+    const run = await app.page.evaluate(async () => {
+      // The control stream connects, which clears the session on the host, and the TV still sets up the video stream
+      window.__connect = 'control';
+      startGame(window.__host, 7);
+      await window.wait(500);
+      const settingUp = { message: $('#loadingSpinnerMessage').text(), wasmSessionStarted, connected: isStreamConnected };
+      // The user gives up meanwhile and starts again at once
+      red();
+      const redFrom = window.__events.length;
+      const redAt = performance.now();
+      startGame(window.__host, 7);
+      await window.wait(500);
+      // A later stage of the start fails after the control stream connected, e.g. the audio stream (-1), which the module
+      // reports once LiStartConnection() returned; a new start goes out at once as well
+      handleMessage('streamTerminated: -1');
+      await window.wait(50);
+      window.__connect = 'auto';
+      const failedFrom = window.__events.length;
+      const failedAt = performance.now();
+      startGame(window.__host, 7);
+      await window.wait(500);
+      return {
+        settingUp, names: window.names(), screens: window.__screens.slice(), connected: isStreamConnected,
+        redGap: window.timeOf('tv: /resume', redFrom) - redAt, failedGap: window.timeOf('tv: /resume', failedFrom) - failedAt,
+      };
+    });
+    assert.deepEqual(run.settingUp, { message: 'Starting the video stream...', wasmSessionStarted: true, connected: false });
+    assert.deepEqual(run.names, ['tv: /launch', 'host: /launch raised its session', 'tv: start request', 'host: control stream connected',
+      'tv: stop', 'app list', 'tv: /resume', 'host: /resume raised its session', 'tv: start request', 'host: control stream connected',
+      'message: The connection to the PC was lost (error -1).', 'app list', 'tv: /resume', 'host: /resume raised its session',
+      'tv: start request', 'host: connected']);
+    // Each request goes out after the refresh of the server info, far before the hold of 1100 ms
+    assert.ok(run.redGap < 300, 'new start after RED after ' + run.redGap + ' ms');
+    assert.ok(run.failedGap < 300, 'new start after the failed stage after ' + run.failedGap + ' ms');
+    assert.ok(!run.screens.some((text) => COUNTDOWN.test(text)), run.screens.join(' | '));
+    assert.equal(run.connected, true);
+    assert.ok(!app.logs.some((line) => line.indexOf('may hold a start of this TV') >= 0 || line.indexOf('may still hold an earlier start') >= 0));
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
@@ -399,6 +458,67 @@ test('a launch request that fails on the TV makes the next start wait, since it 
     assert.ok(run.screens.some((text) => COUNTDOWN.test(text)), run.screens.join(' | '));
     assert.equal(run.connected, true);
     assert.ok(app.logs.some((line) => line.indexOf('its launch request failed') >= 0));
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('RED while the host handles /resume, then a new start: it waits until the host released the cancelled start', async () => {
+  const app = await openWithSunshine();
+  try {
+    const run = await app.page.evaluate(async () => {
+      // The game runs on the PC, so the start resumes it
+      window.__sunshine.runningApp = 8;
+      startGame(window.__host, 8);
+      // The host handles /resume (200 ms), and the user cancels the start meanwhile and starts it again at once
+      await window.wait(80);
+      red();
+      await window.wait(20);
+      startGame(window.__host, 8);
+      await window.wait(400);
+      const waiting = $('#loadingSpinnerMessage').text();
+      await window.wait(1500);
+      const resumes = window.__events.filter((entry) => entry.event === 'tv: /resume').map((entry) => entry.at);
+      return {
+        names: window.names(), screens: window.__screens.slice(), waiting, connected: isStreamConnected,
+        answeredAt: window.timeOf('host: /resume'), secondAt: resumes[1],
+      };
+    });
+    assert.deepEqual(run.names, ['tv: /resume', 'host: /resume raised its session', 'app list', 'tv: /resume',
+      'host: /resume raised its session', 'tv: start request', 'host: connected']);
+    assert.ok(run.secondAt - run.answeredAt >= 1095, 'resumed after ' + (run.secondAt - run.answeredAt) + ' ms');
+    assert.match(run.waiting, COUNTDOWN);
+    assert.equal(run.screens[run.screens.length - 1], 'Starting Game 8...');
+    assert.equal(run.connected, true);
+    assert.ok(app.logs.some((line) => line.indexOf('it accepted a start that was cancelled') >= 0));
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a resume request that fails on the TV makes the next start wait, since it may have reached the host', async () => {
+  const app = await openWithSunshine();
+  try {
+    const run = await app.page.evaluate(async () => {
+      window.__sunshine.runningApp = 8;
+      window.__sunshine.failRequests = true;
+      startGame(window.__host, 8);
+      await window.wait(300);
+      const failedAt = window.timeOf('tv: /resume failed');
+      window.__sunshine.failRequests = false;
+      startGame(window.__host, 8);
+      await window.wait(1400);
+      const resumes = window.__events.filter((entry) => entry.event === 'tv: /resume').map((entry) => entry.at);
+      return { names: window.names(), screens: window.__screens.slice(), connected: isStreamConnected, failedAt, secondAt: resumes[1] };
+    });
+    assert.deepEqual(run.names, ['tv: /resume', 'tv: /resume failed', 'message: Failed to resume Game 8', 'app list',
+      'tv: /resume', 'host: /resume raised its session', 'tv: start request', 'host: connected']);
+    assert.ok(run.secondAt - run.failedAt >= 1095, 'resumed after ' + (run.secondAt - run.failedAt) + ' ms');
+    assert.ok(run.screens.some((text) => COUNTDOWN.test(text)), run.screens.join(' | '));
+    assert.equal(run.connected, true);
+    assert.ok(app.logs.some((line) => line.indexOf('its resume request failed') >= 0));
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

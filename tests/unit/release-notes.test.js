@@ -207,15 +207,17 @@ for (const name of ['RELEASE_NOTES.md']) {
   });
 }
 
-test('the release notes keep the manual update of v1.19.0-s90c.1, and the update dialog shows them in full', () => {
+test('the release notes no longer mention the old S90C build, and the update dialog shows them in full', () => {
   const notes = fs.readFileSync(path.join(REPO_ROOT, 'docs', 'RELEASE_NOTES.md'), 'utf8');
-  assert.ok(notes.indexOf('v1.19.0-s90c.1') >= 0 && notes.indexOf('by hand') >= 0);
+  // The build v1.19.0-s90c.1 (Moonlight S90C) has served its purpose, so the notes of a new release don't tell its users
+  // how to update any more; the history of the patch notes and the changelog keeps it
+  assert.doesNotMatch(notes, /s90c/i);
   // The installs of the last release read these notes in the update dialog, which can't scroll: they fit without the
   // pointer to the release page, so nothing of them is cut
   const lines = dialogLines(notes);
   assert.notEqual(lines[lines.length - 1], MORE_CHANGES, 'the dialog cuts the release notes');
   assert.ok(lines.reduce((sum, line) => sum + rowsOf(line), 0) <= MAX_ROWS);
-  assert.ok(lines.some((line) => line.indexOf('v1.19.0-s90c.1') >= 0), 'the dialog shows the note about v1.19.0-s90c.1');
+  assert.ok(!lines.some((line) => /s90c/i.test(line)), 'the dialog shows nothing about the S90C build');
 });
 
 test('the release notes list what is new since the last full release, which the installs of it have', () => {

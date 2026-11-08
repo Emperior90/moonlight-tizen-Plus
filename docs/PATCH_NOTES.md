@@ -35,7 +35,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 - *Optimize game settings* is on for new installs, so games can render at the stream resolution
 - H.264 above 1080p at 60 FPS asks the TV for level 5.1 first; the app warns before H.264 above 60 FPS
-- The sound decoder needs less work (6–12 % for 5.1 on a PC), and the full statistics show its time
+- The sound decoder needs less work (5–12 % for 5.1 on a PC), and the full statistics show its time
 - The guide covers TV picture settings, HDR calibration, the network, error correction (FEC) and encoder settings
 
 ### Fixed
