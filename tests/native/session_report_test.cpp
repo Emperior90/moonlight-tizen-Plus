@@ -1,7 +1,8 @@
 // Checks the message with the totals of a stream (wasm/session_report.hpp) that the front end keeps as the report of the
 // last session: the totals of each line of tests/fixtures/session-reports.tsv become exactly its message, which
-// tests/unit/diagnostics.test.js reads back with the hints of the line, and the names of the video formats. That
-// VidDecCleanup() sends it with the totals of the stream is checked in stats_overlay_test.cpp.
+// tests/unit/diagnostics.test.js reads back with the hints of the line, a duration beyond 32 bits is clamped, and the
+// names of the video formats. That VidDecCleanup() sends it with the totals of the stream is checked in
+// stats_overlay_test.cpp.
 
 #include "../../wasm/session_report.hpp"
 
@@ -70,6 +71,15 @@ static void TestFixtureMessages() {
   CHECK_EQ(checked, 15);
 }
 
+// A duration beyond 32 bits (49 days) is reported as UINT32_MAX, since only 32-bit values go through snprintf
+static void TestLongDurationIsClamped() {
+  SessionReport report;
+  report.durationMs = 5000000000ull;
+  report.codec = "AV1";
+  const std::string message = FormatSessionReportMessage(report);
+  CHECK(message.find("{\"durationMs\":4294967295,\"codec\":\"AV1\",") != std::string::npos);
+}
+
 static void TestVideoFormatNames() {
   CHECK_EQ(std::string(VideoFormatReportName(0x0001)), std::string("H.264"));
   CHECK_EQ(std::string(VideoFormatReportName(0x0100)), std::string("HEVC"));
@@ -83,6 +93,7 @@ static void TestVideoFormatNames() {
 
 int main() {
   test_support::RunTest("the totals of each fixture line become its message", TestFixtureMessages);
+  test_support::RunTest("a duration beyond 32 bits is clamped", TestLongDurationIsClamped);
   test_support::RunTest("the names of the video formats in the report", TestVideoFormatNames);
   return test_support::Summary();
 }

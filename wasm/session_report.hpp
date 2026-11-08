@@ -53,13 +53,15 @@ inline const char* VideoFormatReportName(int videoFormat) {
 
 // The message to the front end with the totals of a session
 inline std::string FormatSessionReportMessage(const SessionReport& report) {
+  // Only 32-bit values go through the varargs of snprintf: a stream would need 49 days to pass UINT32_MAX ms
+  const uint32_t durationMs = report.durationMs > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(report.durationMs);
   char json[512];
   const int length = std::snprintf(json, sizeof(json),
-    "SessionReportMsg: {\"durationMs\":%llu,\"codec\":\"%s\",\"width\":%u,\"height\":%u,\"fps\":%u,\"bitrateKbps\":%u,"
+    "SessionReportMsg: {\"durationMs\":%u,\"codec\":\"%s\",\"width\":%u,\"height\":%u,\"fps\":%u,\"bitrateKbps\":%u,"
     "\"frames\":%u,\"networkDroppedFrames\":%u,\"tvDroppedFrames\":%u,\"videoResets\":%u,\"recoveryKeyframes\":%u,"
     "\"fecRecoveredBlocks\":%u,\"fecFailures\":%u,\"heapTopMb\":%u,\"heapTotalMb\":%u,\"heapGrowthMb\":%u,"
     "\"hostFrameRateX100\":%u,\"hostProcessingLatencyX10\":%u}",
-    static_cast<unsigned long long>(report.durationMs), report.codec ? report.codec : "", report.width, report.height,
+    durationMs, report.codec ? report.codec : "", report.width, report.height,
     report.fps, report.bitrateKbps, report.frames, report.networkDroppedFrames, report.tvDroppedFrames, report.videoResets,
     report.recoveryKeyframes, report.fecRecoveredBlocks, report.fecFailures, report.heapTopMb, report.heapTotalMb,
     report.heapGrowthMb, report.hostFrameRateX100, report.hostProcessingLatencyX10);
