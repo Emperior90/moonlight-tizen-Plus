@@ -2,6 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
+- [2.3.1](#231): pre-release, a one-time warning on Tizen 9 or newer, Tizen 10 in the guide and small fixes
 - [2.3.0](#230): 2026-11-08, smoother motion, a picture refresh in the Stream Menu and a longer guide
 - [2.2.1](#221): 2026-11-05, no more 144 FPS, and controllers that work on 2020 TVs
 - [2.2.0](#220): 2026-11-03, a tidier app with fixes and a smaller download
@@ -15,6 +16,30 @@ What changed in each version of Moonlight Plus, in short, newest first.
 **Which file?** `Moonlight-ForceGM.wgt` on Tizen 9 and newer, `Moonlight.wgt` on Tizen 5.5 to 8.
 
 **TV refuses an update?** If the author certificate doesn't match, uninstall the old app first; this loses its settings and pairing.
+
+## 2.3.1
+
+*Pre-release, in testing.* A one-time warning about *Ultra low latency mode* on Tizen 9 or newer, Tizen 10 in the guide, and fixes for pairing and diagnostics.
+
+> **Install:** by hand over 2.3.0 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
+>
+> **Tested:** with simulated TVs, hosts and controllers only; Tizen 10 and the one-time warning still need a test on a TV.
+
+### New
+
+- One warning on Tizen 9 or newer if *Ultra low latency mode* is on from before a TV update or from 2.3.0 or older
+
+### Changed
+
+- The README and the guide name Tizen 10 (2026 models): set up like Tizen 9, not yet tested on such a TV
+- The guide says to check *Ultra low latency mode* after an update of Tizen
+- The app starts its Smart Hub service only on Tizen 5.5 and 6.0, which have Preview tiles, and waits 5 s for it
+- The README, the guide and these notes no longer link the German documents of the first release
+
+### Fixed
+
+- A stream setup step that the TV refused now shows in the diagnostic log, not only as error -200 after 5 s
+- Pairing reads the host version up to its first dot, ready for hosts that report version 10 or later
 
 ## 2.3.0
 
@@ -261,4 +286,4 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 Moonlight Plus is based on Moonlight Tizen 1.19.0 by brightcraft, whose versions are on the [releases page of Moonlight Tizen](https://github.com/brightcraft/moonlight-tizen/releases).
 
-Every technical detail of every version is in the [changelog](../CHANGELOG.md), and the German release notes, tuning plan and quick guide of 1.19.0-s90c.1 stay with the files of its [tag](https://github.com/Emperior90/moonlight-tizen-Plus/tree/v1.19.0-s90c.1/docs).
+Every technical detail of every version is in the [changelog](../CHANGELOG.md).

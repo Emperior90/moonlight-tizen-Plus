@@ -598,8 +598,12 @@ int MoonlightInstance::MediaSetupWaitFailed(const char* step) {
 }
 
 int MoonlightInstance::StartupVidDecSetup(int videoFormat, int width, int height, int redrawRate, void* context, int drFlags) {
-  // Bind the media source to the media element
-  g_Instance->m_MediaElement.SetSrc(g_Instance->m_Source.get());
+  // Bind the media source to the media element. A player that refuses it never closes the source for the wait below,
+  // so the log says so before the wait ends with -200.
+  auto setSrcResult = g_Instance->m_MediaElement.SetSrc(g_Instance->m_Source.get());
+  if (!setSrcResult) {
+    ClLogMessage("%s", FormatPlayerSetupRejectedLog("the media source of the media element", static_cast<int>(setSrcResult.operation_result)).c_str());
+  }
   // Mark the source as attached, so that it gets closed if the connection fails from here on
   g_Instance->m_SourceAttached = true;
   ClLogMessage("Waiting to close\n");
@@ -645,7 +649,11 @@ int MoonlightInstance::StartupVidDecSetup(int videoFormat, int width, int height
     );
     if (add_track_result) {
       g_Instance->m_AudioTrack = std::move(*add_track_result);
-      g_Instance->m_AudioTrack.SetListener(&g_Instance->m_AudioTrackListener);
+      // Without its listener the app never learns that the track opened, and the wait for the audio start ends with -200
+      auto audioListenerResult = g_Instance->m_AudioTrack.SetListener(&g_Instance->m_AudioTrackListener);
+      if (!audioListenerResult) {
+        ClLogMessage("%s", FormatPlayerSetupRejectedLog("the listener of the audio track", static_cast<int>(audioListenerResult.operation_result)).c_str());
+      }
     } else {
       // Fail now, because a track that was never added will never open
       ClLogMessage("The TV rejected the audio track\n");
@@ -709,7 +717,12 @@ int MoonlightInstance::StartupVidDecSetup(int videoFormat, int width, int height
       );
       if (add_track_result) {
         g_Instance->m_VideoTrack = std::move(*add_track_result);
-        g_Instance->m_VideoTrack.SetListener(&g_Instance->m_VideoTrackListener);
+        // Without its listener the app never learns that the track opened, and the wait for the video start ends with
+        // -200
+        auto videoListenerResult = g_Instance->m_VideoTrack.SetListener(&g_Instance->m_VideoTrackListener);
+        if (!videoListenerResult) {
+          ClLogMessage("%s", FormatPlayerSetupRejectedLog("the listener of the video track", static_cast<int>(videoListenerResult.operation_result)).c_str());
+        }
         videoTrackAdded = true;
         break;
       }

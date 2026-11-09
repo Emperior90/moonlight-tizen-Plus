@@ -86,6 +86,10 @@ var _previewApps = {}; // Per-host app cache for Smart Hub Preview: {serverUid: 
 var _isSmartHubSupported = false; // Flag indicating if Smart Hub Preview is supported on this device
 const SMART_HUB_SUPPORT_KEY = 'smartHubSupported2'; // Key of localStorage that keeps the answer of the Smart Hub service whether it supports the Preview tiles (probeSmartHubSupport())
 const LEGACY_SMART_HUB_SUPPORT_KEY = 'smartHubSupported'; // Key of the same answer in 2.1.0 and earlier, which also stored 'false' after a single failed launch of the service, so it isn't trusted
+const SMART_HUB_PROBE_TIMEOUT_MS = 5000; // Longest wait in ms for the answer of the Smart Hub service to the probe, after which this start goes on without the Preview tiles
+const SMART_HUB_PREVIEW_MAX_TIZEN = 6.0; // Newest Tizen version with the Preview tiles of Smart Hub: Samsung lists the TVs of 2016 to 2021 for them, and the app installs from Tizen 5.5 (2020) on
+const GAME_MODE_PLATFORM_VERSION_KEY = 'gameModePlatformVer'; // Key of the Tizen version that the game mode switch was stored on, so that a switch left on from before an update of the TV to Tizen 9.0 or newer gets its compatibility warning once
+var isGameModeUpdateWarningPending = false; // Whether the stored settings ask for that warning, which waits until the hosts show (warnGameModeAfterTizenUpdate())
 
 const REPEAT_DELAY = 350; // Repeat delay set to 350ms (milliseconds)
 const REPEAT_INTERVAL = 100; // Repeat interval set to 100ms (milliseconds)
@@ -742,6 +746,9 @@ function restoreUiAfterWasmLoad() {
   reportUnfinishedStream();
   // Set focus to current item and/or scroll to the current host row
   setTimeout(() => Navigation.switch(), 100);
+  // Warn once about an Ultra low latency mode left on from before an update of the TV, if the stored settings ask for
+  // it (the settings load during the loading screen, so they may have asked already)
+  scheduleGameModeUpdateWarning();
 
   // Automatically check for a new update after 10 seconds delay at application startup once every 24 hours
   setTimeout(() => checkForAppUpdatesAtStartup(), 10000);
@@ -5276,22 +5283,85 @@ function saveFullRange() {
   }, 100);
 }
 
+// Store the state of the game mode switch together with the Tizen version of the TV, so that a later start can tell a
+// switch turned on before an update of the TV to Tizen 9.0 or newer from one turned on there after the compatibility
+// warning (isGameModeFromBeforeTizen9() in tv_profile.js). A version that couldn't be read is stored as null.
+function storeGameMode(gameMode) {
+  storeData('gameMode', gameMode, null);
+  storeData(GAME_MODE_PLATFORM_VERSION_KEY, platformVer, null);
+}
+
+// Show the compatibility warning of the Ultra low latency mode on Tizen 9.0 and newer, where the mode can freeze the
+// picture: when the switch is turned on, and once after an update of the TV that kept the switch on
+// (warnGameModeAfterTizenUpdate())
+function showGameModeCompatibilityWarning() {
+  warningDialog(t('Compatibility Warning'),
+    t('The Ultra low latency mode is not compatible with Tizen %1$s due to platform changes introduced by Samsung.', platformVer) +
+    t('Enabling this option may result in video freezing on the first rendered frame, black screen, unstable performance, and other streaming issues.<br><br>') +
+    t('For more information about this incompatibility and the ForceGM variant, see <b>ForceGM variant and game mode</b> in the guide of Moonlight Plus, which the Support button at the top of the screen links to.')
+  );
+}
+
+// Check at the start whether the Ultra low latency mode, which the stored settings turned on, was stored before an
+// update of the TV to Tizen 9.0 or newer, and if so warn once. The settings keep the switch through such an update
+// (Samsung moves older TVs to newer Tizen versions by firmware), while the compatibility warning used to come only when
+// the switch was turned on. A stored value that can't be read leaves the check to the next start.
+function checkGameModeAfterTizenUpdate() {
+  getData(GAME_MODE_PLATFORM_VERSION_KEY, function(storedValue, isReadFailed) {
+    if (isReadFailed) {
+      return;
+    }
+    const storedPlatformVer = storedValue[GAME_MODE_PLATFORM_VERSION_KEY];
+    if (!isGameModeFromBeforeTizen9(true, storedPlatformVer, platformVer)) {
+      return;
+    }
+    console.warn('%c[index.js, checkGameModeAfterTizenUpdate]', 'color: green;', 'Warning: The Ultra low latency mode is on from ' +
+      (storedPlatformVer ? 'Tizen ' + storedPlatformVer : 'a version that stored no Tizen version') + ', and the TV now runs Tizen ' + platformVer +
+      ', where it can freeze the picture, so its compatibility warning shows once.');
+    isGameModeUpdateWarningPending = true;
+    scheduleGameModeUpdateWarning();
+  });
+}
+
+// Show that warning once the hosts show, whichever of the settings and the hosts comes last, with a short delay so that
+// the focus of the hosts view (restoreUiAfterWasmLoad()) is set first and the dialog takes it
+function scheduleGameModeUpdateWarning() {
+  if (isGameModeUpdateWarningPending && isStartupUiShown) {
+    setTimeout(warnGameModeAfterTizenUpdate, 500);
+  }
+}
+
+// Show the compatibility warning for a switch left on from before the update, and store the current Tizen version with
+// the switch, so that it shows only once. Another open dialog (e.g. the Wake PC dialog of a PC picked as soon as the
+// hosts showed) or a stream leaves no room for it, and a switch that was turned off in the meantime needs no warning; in
+// the first two cases nothing is stored, so a later start shows it.
+function warnGameModeAfterTizenUpdate() {
+  if (!isGameModeUpdateWarningPending) {
+    return;
+  }
+  isGameModeUpdateWarningPending = false;
+  if (!$('#gameModeSwitch').parent().hasClass('is-checked')) {
+    return;
+  }
+  if (isInGame || isDialogOpen) {
+    console.log('%c[index.js, warnGameModeAfterTizenUpdate]', 'color: green;', 'Not showing the compatibility warning of the Ultra low latency mode ' +
+      (isInGame ? 'during a stream' : 'over another dialog') + ', so a later start shows it.');
+    return;
+  }
+  showGameModeCompatibilityWarning();
+  storeData(GAME_MODE_PLATFORM_VERSION_KEY, platformVer, null);
+}
+
 function saveGameMode() {
   setTimeout(() => {
     const chosenGameMode = $('#gameModeSwitch').parent().hasClass('is-checked');
     console.log('%c[index.js, saveGameMode]', 'color: green;', 'Saving game mode state: ' + chosenGameMode);
-    storeData('gameMode', chosenGameMode, null);
+    storeGameMode(chosenGameMode);
 
     // Check if the Tizen version is 9.0 or higher and the Game Mode is turned on
     if (parseFloat(platformVer) >= 9.0 && chosenGameMode) {
       // Show a warning dialog when turning on Game Mode on Tizen 9.0 or higher
-      setTimeout(() => {
-        warningDialog(t('Compatibility Warning'),
-          t('The Ultra low latency mode is not compatible with Tizen %1$s due to platform changes introduced by Samsung.', platformVer) + 
-          t('Enabling this option may result in video freezing on the first rendered frame, black screen, unstable performance, and other streaming issues.<br><br>') + 
-          t('For more information about this incompatibility and the ForceGM variant, see <b>ForceGM variant and game mode</b> in the guide of Moonlight Plus, which the Support button at the top of the screen links to.')
-        );
-      }, 250);
+      setTimeout(() => showGameModeCompatibilityWarning(), 250);
     } else if (parseFloat(platformVer) < 9.0 && !chosenGameMode) { // Check if the Tizen version is lower than 9.0 and the Game Mode is turned off
       // Show a warning message when turning off Game Mode on compatible Tizen versions
       snackbarLogLong('Warning: Turning off the Ultra low latency mode may increase latency and affect your game streaming performance!');
@@ -5519,18 +5589,19 @@ function applyOptimalStreamingSettings(connectionType) {
     // Turn off for Tizen 9.0 and newer to avoid compatibility issues, where the ForceGM variant enables the game mode
     // instead, and for Tizen 5.5 with a WASM player that offers the mode
     document.querySelector('#gameModeBtn').MaterialSwitch.off();
-    storeData('gameMode', false, null);
+    storeGameMode(false);
   } else if (optimalSettings.gameMode === true) {
     // Turn on for compatible Tizen versions (e.g., 6.0, 6.5, 7.0, 8.0)
     document.querySelector('#gameModeBtn').MaterialSwitch.on();
-    storeData('gameMode', true, null);
+    storeGameMode(true);
   } else {
     // Turn off and disable for Tizen 5.5 due to lack of support, or for a WASM player that says that it doesn't offer
     // the mode, like on a fresh install, and remove a stored value, since any stored value enables the switch again at
-    // the next start on Tizen 5.5
+    // the next start on Tizen 5.5. The Tizen version stored with it goes as well.
     document.querySelector('#gameModeBtn').MaterialSwitch.off();
     document.querySelector('#gameModeBtn').MaterialSwitch.disable();
     removeData('gameMode', null);
+    removeData(GAME_MODE_PLATFORM_VERSION_KEY, null);
   }
 
   $('#bitrateSlider')[0].MaterialSlider.change(String(optimalSettings.bitrate));
@@ -6498,6 +6569,8 @@ function loadStoredSettings() {
       document.querySelector('#gameModeBtn').MaterialSwitch.off();
     } else {
       document.querySelector('#gameModeBtn').MaterialSwitch.on();
+      // A switch stored on before an update of the TV to Tizen 9.0 or newer gets the compatibility warning once
+      checkGameModeAfterTizenUpdate();
     }
   });
 
@@ -7026,15 +7099,45 @@ function updatePreviewData() {
   }
 }
 
+// Why the Smart Hub service of the app (res/service) isn't started at all on this TV, or null when it may be asked.
+// Samsung lists the TVs of 2016 to 2021 for the Preview tiles, which are Tizen 5.5 and 6.0 among the TVs that the app
+// installs on (SMART_HUB_PREVIEW_MAX_TIZEN), and reports on Tizen 9 and 10 say that a background web service of an app
+// may not start there at all, so that the probe would never get an answer. A TV that says that it has no web services
+// (http://tizen.org/feature/web.service) can't run the service either. A version that can't be read and a feature that
+// the TV doesn't know leave the decision to the service, as before.
+function smartHubServiceSkipReason() {
+  if (parseFloat(platformVer) > SMART_HUB_PREVIEW_MAX_TIZEN) {
+    return 'Tizen ' + platformVer + ' has no Preview tiles, which exist up to Tizen ' + SMART_HUB_PREVIEW_MAX_TIZEN.toFixed(1);
+  }
+  try {
+    if (tizen.systeminfo.getCapability('http://tizen.org/feature/web.service') === false) {
+      return 'the TV reports no web services (http://tizen.org/feature/web.service)';
+    }
+  } catch (e) {
+    console.log('%c[index.js, smartHubServiceSkipReason]', 'color: green;', 'The TV did not say whether it has web services, so the Smart Hub service is asked: ' + e.message);
+  }
+  return null;
+}
+
 // Find out once whether the Smart Hub service of the app (res/service) can show the Preview tiles, and keep its answer
 // in localStorage (SMART_HUB_SUPPORT_KEY). Only a real answer of the service is kept: a launch of the service that fails
 // or throws can be passing (e.g. right after the install), so the next start asks again instead of turning the tiles off
-// for good.
+// for good. A TV without the tiles or without web services (smartHubServiceSkipReason()) doesn't start the service at
+// all, whatever an earlier start stored. The probe gives up after SMART_HUB_PROBE_TIMEOUT_MS, so that the start goes on
+// (handleDeepLink() and its appcontrol listener wait for it) when the service never answers. An answer that comes later
+// is still stored for the next start, but changes nothing in this one, whose box art and tiles have taken their way.
 function probeSmartHubSupport() {
   return new Promise(function(resolve) {
     // Forget the answer under the key of 2.1.0 and earlier, which also stored 'false' after a single failed launch of the
     // service, so that every install asks the service once more
     localStorage.removeItem(LEGACY_SMART_HUB_SUPPORT_KEY);
+    var skipReason = smartHubServiceSkipReason();
+    if (skipReason) {
+      _isSmartHubSupported = false;
+      console.log('%c[index.js, probeSmartHubSupport]', 'color: green;', 'Not starting the Smart Hub service, so no Preview tiles: ' + skipReason + '.');
+      resolve();
+      return;
+    }
     // Check localStorage cache first
     var cached = localStorage.getItem(SMART_HUB_SUPPORT_KEY);
     if (cached !== null) {
@@ -7047,9 +7150,29 @@ function probeSmartHubSupport() {
     // First launch: probe the service
     var packageId = tizen.application.getCurrentApplication().appInfo.packageId;
     var serviceId = packageId + '.service';
+    var isSettled = false;
+    var probeTimer = null;
+    // End the probe for this start once: with the answer, a failed launch or the timeout, whichever comes first
+    var settle = function(isSupported) {
+      if (isSettled) {
+        return false;
+      }
+      isSettled = true;
+      clearTimeout(probeTimer);
+      _isSmartHubSupported = isSupported;
+      resolve();
+      return true;
+    };
     
     try {
       var probePort = tizen.messageport.requestLocalMessagePort(packageId);
+      var removeProbeListener = function() {
+        try {
+          probePort.removeMessagePortListener(probeListener);
+        } catch(e) {
+          console.error('%c[index.js, probeSmartHubSupport]', 'color: green;', 'Error removing Smart Hub probe listener: ' + e.message);
+        }
+      };
       var probeListener = probePort.addMessagePortListener(function(data) {
         var key = data[0].key;
         if (key !== 'PROBE') {
@@ -7057,16 +7180,24 @@ function probeSmartHubSupport() {
         }
         
         var value = data[0].value;
-        _isSmartHubSupported = (value === 'SMART_HUB_SUPPORTED');
-        localStorage.setItem(SMART_HUB_SUPPORT_KEY, String(_isSmartHubSupported));
-        console.log('%c[index.js, probeSmartHubSupport]', 'color: green;', 'Smart Hub support (probed): ' + _isSmartHubSupported);
-        try {
-          probePort.removeMessagePortListener(probeListener);
-        } catch(e) {
-          console.error('%c[index.js, probeSmartHubSupport]', 'color: green;', 'Error removing Smart Hub probe listener: ' + e.message);
+        var isSupported = (value === 'SMART_HUB_SUPPORTED');
+        localStorage.setItem(SMART_HUB_SUPPORT_KEY, String(isSupported));
+        if (settle(isSupported)) {
+          console.log('%c[index.js, probeSmartHubSupport]', 'color: green;', 'Smart Hub support (probed): ' + isSupported);
+        } else {
+          console.log('%c[index.js, probeSmartHubSupport]', 'color: green;', 'Smart Hub support (probed after the timeout, used from the next start): ' + isSupported);
         }
-        resolve();
+        removeProbeListener();
       });
+
+      // Give up after the timeout: no tiles at this start, and the next start asks again unless a late answer is stored.
+      // The listener stays for that answer.
+      probeTimer = setTimeout(function() {
+        if (settle(false)) {
+          console.warn('%c[index.js, probeSmartHubSupport]', 'color: green;', 'Warning: The Smart Hub service did not answer the probe within ' +
+            (SMART_HUB_PROBE_TIMEOUT_MS / 1000) + ' s, so this start has no Preview tiles and the next start asks again.');
+        }
+      }, SMART_HUB_PROBE_TIMEOUT_MS);
 
       // Launch service with Probe request
       tizen.application.launchAppControl(
@@ -7079,20 +7210,14 @@ function probeSmartHubSupport() {
         }, function(err) {
           // Service launch failed: no tiles at this start, and the next start asks again
           console.warn('%c[index.js, probeSmartHubSupport]', 'color: green;', 'Probe failed, asking again at the next start: ' + err.message);
-          _isSmartHubSupported = false;
-          try {
-            probePort.removeMessagePortListener(probeListener);
-          } catch(e) {
-            console.error('%c[index.js, probeSmartHubSupport]', 'color: green;', 'Error removing Smart Hub probe listener: ' + e.message);
-          }
-          resolve();
+          settle(false);
+          removeProbeListener();
         }
       );
     } catch (e) {
       // No tiles at this start, and the next start asks again
       console.warn('%c[index.js, probeSmartHubSupport]', 'color: green;', 'Error probing Smart Hub support, asking again at the next start: ' + e.message);
-      _isSmartHubSupported = false;
-      resolve();
+      settle(false);
     }
   });
 }

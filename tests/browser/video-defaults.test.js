@@ -17,6 +17,7 @@ const assert = require('node:assert/strict');
 const {
   VIDEO_KEYS, openApp, pick, readOtherSettings, readStorage, readVideoSettings, startHarness, waitForStorage,
 } = require('./harness');
+const tvMock = require('./mocks/tv-mock');
 
 const SETTINGS_LINE_UNLOCKED = 'Video frame pacing on, limited color range, unlock all frame rates on, optimize game settings on';
 const SETTINGS_LINE_LOCKED = 'Video frame pacing on, limited color range, unlock all frame rates off, optimize game settings on';
@@ -318,6 +319,10 @@ for (const tvName of Object.keys(TVS)) {
         const customized = Object.assign({}, CUSTOMIZED_SETTINGS);
         if (tv.storedGameMode !== undefined) {
           customized.gameMode = !tv.storedGameMode;
+          // Turned on or off on the Tizen version of the TV, as since 2.3.1 stored with it, so that the S90C on Tizen
+          // 9.0 doesn't show the one-time warning for a switch left on from before an update of the TV
+          // (tizen10.test.js) while this test restores the defaults
+          customized.gameModePlatformVer = tvMock.TV_PRESETS[tvName].tizen;
         }
         const app = await openApp(harness, { tv: { tv: tvName, conn: connName }, stored: customized });
         try {

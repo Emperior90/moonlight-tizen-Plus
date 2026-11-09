@@ -228,6 +228,15 @@ async function reloadApp(app) {
   await started;
 }
 
+// Start the app again in the same browser profile, so with what it stored, on a simulated TV with other options, e.g.
+// the same TV after a firmware update to a newer Tizen version, and wait until it started
+async function restartAppOn(harness, app, tvOptions) {
+  app.url = appUrl(harness.baseUrl, tvOptions);
+  const started = appStarted(app);
+  await app.page.goto(app.url);
+  await started;
+}
+
 // Read the video settings as the settings screen shows them
 function readVideoSettings(page) {
   return page.evaluate(() => {
@@ -298,6 +307,7 @@ module.exports = {
   readStorage,
   readVideoSettings,
   reloadApp,
+  restartAppOn,
   startHarness,
   waitForStorage,
 };

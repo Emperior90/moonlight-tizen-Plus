@@ -155,7 +155,7 @@ test('System information shows the app, the model strings and what the app detec
     {
       tv: { tv: 's90c', conn: 'ethernet' },
       lines: [
-        'App Version: Moonlight Plus v2.3.0',
+        'App Version: Moonlight Plus v2.3.1',
         'Platform Version: Tizen 9.0',
         'TV Firmware Version: T-INFOLINK2023-1020',
         'TV Model Series: 23_PONTUSM_OLED',
@@ -179,7 +179,7 @@ test('System information shows the app, the model strings and what the app detec
     {
       tv: { tv: 'fhd', conn: 'wifi' },
       lines: [
-        'App Version: Moonlight Plus v2.3.0',
+        'App Version: Moonlight Plus v2.3.1',
         'Platform Version: Tizen 5.5',
         'TV Firmware Version: T-INFOLINK2020-1050',
         'TV Model Series: 20_KANTM2_FHD',
@@ -203,7 +203,7 @@ test('System information shows the app, the model strings and what the app detec
     {
       tv: { tv: '8k', conn: 'unknown', modelCode: 'NOYEAR' },
       lines: [
-        'App Version: Moonlight Plus v2.3.0',
+        'App Version: Moonlight Plus v2.3.1',
         'Platform Version: Tizen 6.5',
         'TV Firmware Version: T-INFOLINK2022-1030',
         'TV Model Series: 22_PONTUSM_8K',

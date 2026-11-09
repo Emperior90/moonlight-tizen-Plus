@@ -3,7 +3,8 @@
 // Tests of wasm/platform/tv_profile.js, loaded as a Node module:
 // - detectTvCapabilities() with the simulated TV, and with Tizen and Samsung APIs that fail or are missing (the checks of
 //   the WASM player and the video decoders that it includes are tested in runtime-checks.test.js)
-// - recommendedBitrate() and deriveOptimalSettings() over FHD / UHD / 8K panels x HDR yes / no x Tizen 5.5 to 9.0 x
+// - recommendedBitrate() and deriveOptimalSettings() over FHD / UHD / 8K panels x HDR yes / no x Tizen 5.5 to 11.0 (with
+//   10.0, 10 and 10.5, since a version with two digits before the dot must follow the rules of 9.0) x
 //   Ethernet / Wi-Fi / unknown connection, checked against expectations written out here, not computed by the same rules
 // - the golden S90C values, which must stay as they are, and that no result for a Full HD TV is above 50 Mbps
 // - the frozen defaults of settings schema 1 and 2 and the one-time snapshots for existing installs
@@ -20,7 +21,7 @@ const tvMock = require('../browser/mocks/tv-mock');
 const profile = require('../../wasm/platform/tv_profile');
 
 const CONNECTIONS = ['ethernet', 'wifi', 'unknown'];
-const TIZEN_VERSIONS = ['5.5', '6.0', '6.5', '7.0', '8.0', '9.0'];
+const TIZEN_VERSIONS = ['5.5', '6.0', '6.5', '7.0', '8.0', '9.0', '10.0', '10', '10.5', '11.0'];
 const PANELS = ['fhd', '4k', '8k'];
 const RESOLUTIONS = Object.keys(profile.STANDARD_BITRATE_PRESETS);
 // The frame rates of the frame rate menu with 'Unlock all frame rates' on; 144 FPS is gone since 2.2.1
@@ -75,8 +76,8 @@ const EXPECTED_DEFAULT_BITRATE = {
   '8k': { ethernet: 75, wifi: 80, unknown: 80 },
 };
 
-// Expected game mode per Tizen version: off on 9.0, left unset (off and disabled) on 5.5, on otherwise
-const EXPECTED_GAME_MODE = { '5.5': null, '6.0': true, '6.5': true, '7.0': true, '8.0': true, '9.0': false };
+// Expected game mode per Tizen version: off on 9.0 and newer, left unset (off and disabled) on 5.5, on otherwise
+const EXPECTED_GAME_MODE = { '5.5': null, '6.0': true, '6.5': true, '7.0': true, '8.0': true, '9.0': false, '10.0': false, '10': false, '10.5': false, '11.0': false };
 
 describe('detectTvCapabilities()', () => {
   test('reads the simulated S90C', () => {

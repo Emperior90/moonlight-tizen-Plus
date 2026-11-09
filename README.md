@@ -31,7 +31,7 @@ What changed in each version, in short: [patch notes](docs/PATCH_NOTES.md). Ever
 
 ## Requirements
 
-- **TV:** a Samsung Smart TV with Tizen 5.5 or newer (model year 2020 or later).
+- **TV:** a Samsung Smart TV with Tizen 5.5 or newer (model year 2020 or later), including Tizen 10 of the models of 2026, which Moonlight Plus has not been tested on yet (see [Installation](#installation)).
 - **Host:** a PC with [Sunshine](https://github.com/LizardByte/Sunshine) and a GPU with a hardware video encoder.
 - **Network:** the host PC on a cable, the TV on 5 GHz Wi-Fi or Ethernet. Most Samsung TVs have a 100 Mbps Ethernet port, so Wi-Fi allows higher bitrates.
 - **Controller (optional):** see [Controllers](docs/CONTROLLERS.md).
@@ -44,10 +44,12 @@ Download the file from the [releases page of this fork](https://github.com/Emper
 
 | Your TV | File |
 |---|---|
-| Tizen 9.0 or newer | `Moonlight-ForceGM.wgt` |
+| Tizen 9.0 or newer, including Tizen 10 (models of 2026) | `Moonlight-ForceGM.wgt` |
 | Tizen 5.5 to 8.0 | `Moonlight.wgt` |
 
-The ForceGM variant asks the TV for its Game Mode. Keep the *Ultra low latency mode* switch of the app off with it.
+The ForceGM variant asks the TV for its Game Mode. Keep the *Ultra low latency mode* switch of the app off with it, also after an update of the TV to a newer Tizen version.
+
+Tizen 10: in simulated tests the app behaves the same as on Tizen 9. Moonlight Plus has not been tested on a Tizen 10 TV yet. One owner of an S85H with Tizen 10 reported to Moonlight Tizen that with its regular file the stream ended without a picture, and that its ForceGM variant helped ([issue 126](https://github.com/brightcraft/moonlight-tizen/issues/126)).
 
 Install the file with a method that works for Moonlight Tizen, e.g. **Apps2Samsung** (*Custom WGT File*) or **Tizen Studio**, as described in the [Installation Guide of Moonlight Tizen](https://github.com/brightcraft/moonlight-tizen/wiki/Installation-Guide). Its Docker method installs the regular Moonlight app from the image of Moonlight Tizen, not Moonlight Plus. The [guide](docs/GUIDE.md#installation) has the steps.
 
@@ -62,7 +64,6 @@ Moonlight Plus installs **next to** the regular Moonlight app, with its own sett
 - [Patch notes](docs/PATCH_NOTES.md): what changed in each version, in short, with every detail in the [changelog](CHANGELOG.md)
 - [Translating](docs/TRANSLATING.md): the languages of the app, the rules and the German, Spanish and French glossaries for translators, and how to add a text or a language
 - [Building](docs/BUILD.md): the build commands of the releases and everything that the build downloads, with its source
-- [S90C documents of the first release](https://github.com/Emperior90/moonlight-tizen-Plus/tree/v1.19.0-s90c.1/docs): the German tuning plan and quick guide of the Samsung S90C, the model this fork was first tuned on, kept at the tag v1.19.0-s90c.1
 
 ---
 
@@ -105,7 +106,7 @@ Moonlight Plus has no analytics, telemetry, ads or accounts, and sends nothing t
 - **stun.moonlight-stream.org (the Moonlight project), UDP port 3478**, when the scan finds a new PC or a new address of a known PC, to learn the public IP address of your network (inherited from Moonlight).
 - **Wake-on-LAN broadcasts** on your local network, only when you choose *Wake PC* or open an offline PC for which you turned on *Always wake this PC automatically*, and again every 10 seconds while the *Wake PC* dialog waits for the PC.
 
-The background service of the Smart Hub tiles also serves the cached box art on port 8889 of the TV for the Smart Hub, which other devices on your network can reach as well. Settings, paired PCs, the pairing certificate and the box art stay on the TV: in the storage of the app, and the previews of the Smart Hub tiles in the shared documents folder of the TV, which the background service reads. The [diagnostic log](docs/GUIDE.md#diagnostic-log) and the report of the last session are kept in memory and shown on the screen; they leave the TV only if you photograph or share them. The log hides the keys, the public IP address of your network that the app learns from STUN or from the PC, and the MAC addresses; the local addresses and the addresses that you enter yourself stay. The privacy statement of GitHub applies to what GitHub receives.
+Where the TV has the Preview API of the Smart Hub (Samsung lists it for its TVs of 2016 to 2021), the background service of the Smart Hub tiles also serves the cached box art on port 8889 of the TV for the Smart Hub, which other devices on your network can reach as well. Settings, paired PCs, the pairing certificate and the box art stay on the TV: in the storage of the app, and the previews of the Smart Hub tiles in the shared documents folder of the TV, which the background service reads. The [diagnostic log](docs/GUIDE.md#diagnostic-log) and the report of the last session are kept in memory and shown on the screen; they leave the TV only if you photograph or share them. The log hides the keys, the public IP address of your network that the app learns from STUN or from the PC, and the MAC addresses; the local addresses and the addresses that you enter yourself stay. The privacy statement of GitHub applies to what GitHub receives.
 
 ---
 

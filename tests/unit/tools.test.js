@@ -175,7 +175,7 @@ test('the link check follows links to the default branch of this fork into the r
   assert.equal(markdownLinks.localTarget('https://github.com/Emperior90/moonlight-tizen-Plus/blob/HEAD/docs/GUIDE.md#troubleshooting'), '/docs/GUIDE.md#troubleshooting');
   assert.equal(markdownLinks.localTarget('https://github.com/Emperior90/moonlight-tizen-Plus/tree/HEAD/docs'), '/docs');
   // A tag, a branch or the issue tracker is not a file of the default branch
-  ['https://github.com/Emperior90/moonlight-tizen-Plus/tree/v1.19.0-s90c.1/docs', 'https://github.com/Emperior90/moonlight-tizen-Plus/issues',
+  ['https://github.com/Emperior90/moonlight-tizen-Plus/tree/v2.3.0/docs', 'https://github.com/Emperior90/moonlight-tizen-Plus/issues',
     'https://github.com/brightcraft/moonlight-tizen/blob/HEAD/docs/GUIDE.md'].forEach((target) => {
     assert.equal(markdownLinks.localTarget(target), target);
   });

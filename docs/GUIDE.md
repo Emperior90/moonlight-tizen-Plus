@@ -5,7 +5,7 @@ This guide covers installing Moonlight Plus, setting it up for your Samsung TV a
 How to read it:
 
 - **Untested** means that the guide describes what the code does, but nobody has checked it on that kind of TV, host or controller yet.
-- Values that were tested on one model only say so. The only tested model so far is the Samsung S90C (55-inch OLED, 2023, Tizen 9.0). Its German tuning guide from the first release stays with the files of the tag [v1.19.0-s90c.1](https://github.com/Emperior90/moonlight-tizen-Plus/tree/v1.19.0-s90c.1/docs).
+- Values that were tested on one model only say so. The only tested model so far is the Samsung S90C (55-inch OLED, 2023, Tizen 9.0).
 - Controllers have their own page: [CONTROLLERS.md](CONTROLLERS.md).
 
 ## Contents
@@ -29,7 +29,7 @@ How to read it:
 
 ## Requirements
 
-- **TV:** a Samsung Smart TV with Tizen 5.5 or newer, which means model year 2020 or later. The package requires Tizen 5.5, so older TVs can't install it.
+- **TV:** a Samsung Smart TV with Tizen 5.5 or newer, which means model year 2020 or later. The package requires Tizen 5.5, so older TVs can't install it. Newer includes Tizen 10 of the models of 2026, which Moonlight Plus has not been tested on yet (see [Which file?](#which-file)).
 - **Host:** a PC with [Sunshine](https://github.com/LizardByte/Sunshine) and a GPU with a hardware video encoder that Sunshine supports (NVIDIA NVENC, AMD AMF or Intel Quick Sync). HDR needs a GPU that can encode HEVC Main10 or AV1 Main10.
 - **Network:** connect the host PC by cable. The TV can use Ethernet or 5 GHz Wi-Fi. Most Samsung TVs have a 100 Mbps Ethernet port, so Wi-Fi can be the faster choice (see [Known limits](#known-limits)). The settings of the router that matter are in [Network and router](#network-and-router).
 - **Controller (optional):** see [CONTROLLERS.md](CONTROLLERS.md). The remote control works for the menus, and the color keys control the stream.
@@ -42,12 +42,14 @@ Every release has two files. They are the same app with the same package ID, so 
 
 | Your TV | File |
 |---|---|
-| Tizen 9.0 or newer | `Moonlight-ForceGM.wgt` |
+| Tizen 9.0 or newer, including Tizen 10 (models of 2026) | `Moonlight-ForceGM.wgt` |
 | Tizen 5.5 to 8.0 | `Moonlight.wgt` |
 
-The ForceGM variant asks the TV for its Game Mode, because the *Ultra low latency mode* switch of the app can freeze the picture on Tizen 9.0 and newer (see [ForceGM variant and game mode](#forcegm-variant-and-game-mode)). The upstream Moonlight Tizen project calls the ForceGM variant experimental, and results vary by TV model and firmware.
+The ForceGM variant asks the TV for its Game Mode, because the *Ultra low latency mode* switch of the app can freeze the picture on Tizen 9.0, and the app treats newer versions the same way (see [ForceGM variant and game mode](#forcegm-variant-and-game-mode)). The upstream Moonlight Tizen project calls the ForceGM variant experimental, and results vary by TV model and firmware.
 
-Not sure which Tizen version your TV has? Install `Moonlight.wgt`, then look at Settings → About → *System information* → *Platform Version*. On Tizen 9.0 or newer, install `Moonlight-ForceGM.wgt` instead.
+Not sure which Tizen version your TV has? Install `Moonlight.wgt`, then look at Settings → About → *System information* → *Platform Version*. On Tizen 9.0 or newer (e.g. 10.0), install `Moonlight-ForceGM.wgt` instead.
+
+**Tizen 10** runs on the models of 2026, and older models can get it by a firmware update. The app treats it like Tizen 9.0: the ForceGM variant, with the *Ultra low latency mode* switch off. How well this works is known only in part. In simulated tests the app behaves on Tizen 10 the same as on Tizen 9. One owner of an S85H with Tizen 10 reported to the upstream Moonlight Tizen project that with its regular file the stream ended without a picture, and that its ForceGM variant helped ([issue 126 of Moonlight Tizen](https://github.com/brightcraft/moonlight-tizen/issues/126)). Moonlight Plus itself has not been tested on a Tizen 10 TV yet. If you have one, please report how it works on the [issue tracker of this fork](https://github.com/Emperior90/moonlight-tizen-Plus/issues), with a photo of *System information*.
 
 ### Install the file
 
@@ -240,7 +242,7 @@ Examples:
 - **Full HD TV over Wi-Fi:** 25 → 30 → 35 → 40 Mbps.
 - **4K TV over Wi-Fi without a tested profile:** the recommendation of 80 Mbps already is the cap. Higher bitrates are untested on these TVs, and the app warns above 80 Mbps. If you still try, use the same steps (80 → 95 → 110 Mbps) and go back as soon as *Session frames dropped by the TV* or *TV player rejections* appear.
 - **Over Ethernet:** the recommendation of 75 Mbps is close to what the 100 Mbps port of the TV can carry, and the app warns above 80 Mbps. Use 5 GHz Wi-Fi for higher bitrates.
-- **Samsung S90C over Wi-Fi:** starts at 100 Mbps, the recommendation that also suits a weaker Wi-Fi link, and the app warns above 150 Mbps, which this model streams in daily use (4K HDR in AV1 over 5 GHz Wi-Fi, `fec_percentage` 5 in Sunshine). The tuning plan of this model tests 100 → 120 → 135 → 150 Mbps, 15 to 20 minutes each in the same demanding game, and goes down in 10 Mbps steps (90, 80) if 100 already fails. It keeps the highest step that passed minus 15 Mbps, but not less than 100 Mbps once 100 passed: e.g. 120 Mbps when 135 passes and 150 doesn't. Steps above 150 Mbps follow the same rule.
+- **Samsung S90C over Wi-Fi:** starts at 100 Mbps, the recommendation that also suits a weaker Wi-Fi link, and the app warns above 150 Mbps, which this model streams in daily use (4K HDR in AV1 over 5 GHz Wi-Fi, `fec_percentage` 5 in Sunshine). The tuning plan of the first release for this model tests 100 → 120 → 135 → 150 Mbps, 15 to 20 minutes each in the same demanding game, and goes down in 10 Mbps steps (90, 80) if 100 already fails. It keeps the highest step that passed minus 15 Mbps, but not less than 100 Mbps once 100 passed: e.g. 120 Mbps when 135 passes and 150 doesn't. Steps above 150 Mbps follow the same rule.
 
 If a long session stutters after a while, note the time and the lines above: they show whether the host, the network or the TV is the cause (see [Performance statistics](#performance-statistics)).
 
@@ -339,7 +341,8 @@ Two different things lower the latency of the TV:
 
 Recommendations:
 
-- **Tizen 9.0 and newer:** install the ForceGM variant and keep the *Ultra low latency mode* switch off. The switch can freeze the picture on these versions.
+- **Tizen 9.0 and newer:** install the ForceGM variant and keep the *Ultra low latency mode* switch off. The switch can freeze the picture on Tizen 9. Whether it still does on Tizen 10 is not known, so the app treats Tizen 10 the same way.
+- **After an update of Tizen** (e.g. from 8.0 to 9.0, or to 10.0): the settings of the app normally stay through the update, also an *Ultra low latency mode* switch that was on before. Check in Settings → Video Settings that the switch is off, and install the ForceGM variant. Since 2.3.1, the first start on Tizen 9.0 or newer shows the compatibility warning of the switch once when it is still on from an earlier version of Tizen. Versions up to 2.3.0 didn't store the Tizen version with the switch, so a switch that one of them stored also gets the warning once, even if you turned it on knowingly on Tizen 9.
 - **Picture corrupted above 1080p:** owners of some 2025 models (e.g. S90F and S95F) report that the lower part of the picture is corrupted above 1080p, about a quarter at 1440p and half at 4K, while 1080p works. The maintainer of Moonlight Tizen calls it a bug of the Samsung firmware. One report had it with both files and lost it only with a build that never asks for Game Mode, as `Moonlight.wgt` with the *Ultra low latency mode* switch off does. Try that, and look for a firmware update of the TV; if it stays, stream at 1080p.
 - **Tizen 6.0 to 8.0:** `Moonlight.wgt` with the *Ultra low latency mode* switch on, which is the default.
 - **Tizen 5.5:** the switch is off and disabled, since the video player of Tizen 5.5 didn't offer the mode, unless the player says that it does.
@@ -610,7 +613,7 @@ The app ends a failed stream with a message instead of a frozen or black picture
 | "… Make sure you don't have any DRM-protected content open on your host PC." (-103) | Close the protected content on the host. |
 | "The host PC reported a fatal video encoding error." (-104) | Turn off HDR, change the stream resolution, or change the resolution of the host display. |
 | "The TV rejected AV1 Main10 at 3840x2160@60 FPS. Choose HEVC as the video codec." (-200) | The TV refused this video format when the stream started. The message names the codec, resolution and frame rate, and the advice depends on them: HEVC instead of AV1, HEVC or at most 1080p instead of H.264 above 1080p, HEVC or a lower frame rate instead of H.264 within 1080p, HDR off or a lower resolution or frame rate for a 10-bit stream. |
-| "The TV was unable to start the streaming with the selected video settings." (-200) | The same error without a rejected format, or the video player kept rejecting the stream for 3 seconds before the first frame. Lower the resolution or frame rate, or change the codec. |
+| "The TV was unable to start the streaming with the selected video settings." (-200) | The same error without a rejected format, or the video player kept rejecting the stream for 3 seconds before the first frame. Lower the resolution or frame rate, or change the codec. If the [diagnostic log](#diagnostic-log) shows "The video player of the TV rejected …" before the error, the player refused a step of its setup, which other settings may not help with: please report it with a photo of the log. |
 | "The video player of the TV stopped with an error during the stream." (-201) | The video player of the TV failed, or kept rejecting the stream for 3 seconds, during the stream. Start the stream again. If it keeps happening, lower the bitrate, resolution or frame rate. |
 | "A part of the streaming engine stopped unexpectedly." | The streaming engine crashed. Moonlight restarts after you close the message, and you can resume the game. Please report it with System information. |
 | "The stream was ended because Moonlight went to the background." | See [When Moonlight goes to the background](#when-moonlight-goes-to-the-background). Select the game to resume it. |
@@ -629,7 +632,7 @@ Other problems:
 - **A button of a controller does the wrong thing in games:** change it in Settings → Input Settings → *Button mapping*; a worn stick that drifts or doesn't reach the edge can be calibrated there ([CONTROLLERS.md](CONTROLLERS.md#button-mapping-and-stick-calibration)).
 - **An app is missing from the app list:** it may be hidden. Open the menu of any app (CH+ or Play/Pause) and choose *Show hidden apps* (see [Stream Menu and app menu](#stream-menu-and-app-menu)).
 - **The PC isn't in the list, or it got a new IP address:** press UP in the PC list and select *Rescan network* (the circular arrow, the first round button of the header) to search the local network again. The app searches for PCs on its own at startup, without a notice, while the PC list shows; if you open a PC, the settings or a stream before the first check of the known PCs ended, there is no search at that start.
-- **The picture freezes on Tizen 9.0 or newer:** turn the *Ultra low latency mode* switch off, and use the ForceGM variant for the Game Mode of the TV.
+- **The picture freezes on Tizen 9.0 or newer**, e.g. after an update of the TV: turn the *Ultra low latency mode* switch off, and use the ForceGM variant for the Game Mode of the TV.
 - **The lower part of the picture is corrupted above 1080p** (reported on some 2025 models): see [ForceGM variant and game mode](#forcegm-variant-and-game-mode).
 - **Colors look washed out:** HDR is on in the app but off on the host display, or the TV doesn't support HDR (see [HDR](#hdr)). For SDR games in an HDR stream, see [SDR games in an HDR stream](#sdr-games-in-an-hdr-stream).
 - **Blocky picture although the bitrate is high:** in a demanding scene, look at *received* in the *Bitrate* line of the statistics. It counts only the video, so it tops out at the share that Sunshine leaves to the encoder (see [Error correction (FEC)](#error-correction-fec)): at 150 Mbps *configured*, about 119 Mbps at FEC 20 and about 141 Mbps at FEC 5. Only a figure clearly below that points to a saturated encoder of the host, as [Host settings](#host-settings-sunshine) describes for NVENC: a saturated encoder looks like a slow network. Also check the picture settings of the TV ([TV picture settings](#tv-picture-settings)), since sharpening makes blocks more visible.

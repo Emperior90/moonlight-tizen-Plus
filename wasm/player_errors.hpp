@@ -37,3 +37,15 @@ inline std::string FormatPlayerErrorLog(const char* origin, int error, const cha
     (streaming ? " during the stream" : " without a running stream") + ": " +
     (message != nullptr && message[0] != '\0' ? std::string(message) : std::string("(no text)")) + "\n";
 }
+
+// The line of the log for a setup call of the video player that the player refused: the listeners of the media source
+// and of the audio and video track, through which the app learns that each one opened or closed, and the media source
+// of the media element. These calls return a samsung::wasm::Result<void>, whose operation_result is a value of
+// samsung::wasm::OperationResult (in operation_result.h of the SDK, e.g. 4 for a listener that is already set or 7 for
+// a function that this TV doesn't support). Until 2.3.1 the app ignored these results, so a player that refused one let
+// the start wait out the 5 seconds of the media setup and end with -200 (unable to start the stream), with nothing in
+// the log to say why. The start still goes on as before; the line only names the cause.
+inline std::string FormatPlayerSetupRejectedLog(const char* call, int result) {
+  return std::string("The video player of the TV rejected ") + call + " (error " + std::to_string(result) +
+    "), so the start may wait in vain and end with -200\n";
+}

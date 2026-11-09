@@ -5,6 +5,7 @@
 #include "controller_type.hpp"
 #include "diagnostic_log.hpp"
 #include "host_encoder_restart.hpp"
+#include "player_errors.hpp"
 #include "video_config.hpp"
 #include "wake_on_lan.hpp"
 
@@ -563,8 +564,14 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
     selectedLatencyMode,
     EmssRenderingMode::kMediaElement
   );
-  // Set the source listener to the media source
-  m_Source->SetListener(&m_SourceListener);
+  // Set the source listener to the media source. Without it the app never learns that the source opened or closed, so
+  // the start waits out the 5 seconds of the media setup and ends with -200 (unable to start the stream). Log a player
+  // that rejects the listener, so that the diagnostic log names the cause of that -200.
+  auto sourceListenerResult = m_Source->SetListener(&m_SourceListener);
+  if (!sourceListenerResult) {
+    ClLogMessage("%s", FormatPlayerSetupRejectedLog("the listener of the media source",
+      static_cast<int>(sourceListenerResult.operation_result)).c_str());
+  }
 
   // Store the parameters from the start message
   m_Host = host;

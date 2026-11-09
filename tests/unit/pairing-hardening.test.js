@@ -2,14 +2,17 @@
 
 // Pins the parts of the hardened pairing and HTTP requests that live outside libgamestream (whose behaviour
 // native/pairing_test.c and native/http_request_test.c run): the native code doesn't log the pairing PIN or the remote
-// input key of a stream, and the box art gets the larger answer limit of libgamestream/http.h. The pairing dialog with
-// a wrong PIN is in browser/pairing-dialog.test.js.
+// input key of a stream, the box art gets the larger answer limit of libgamestream/http.h, and the major version of the
+// host that chooses the hash of the pairing is read up to the first dot of its appversion (utils.js), so that a host
+// of version 10 or later pairs with SHA-256 like one of version 7. The pairing dialog with a wrong PIN is in
+// browser/pairing-dialog.test.js.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { REPO_ROOT } = require('../lib/dev-modules');
+const { createPlatformContext } = require('./helpers/platform-loader');
 
 const read = (file) => fs.readFileSync(path.join(REPO_ROOT, file), 'utf8');
 
@@ -56,4 +59,27 @@ test('the native tests run the real pairing and request code', () => {
   // The wrong PIN code that index.js checks is the one of libgamestream
   assert.match(read('libgamestream/errors.h'), /#define GS_PIN_WRONG -7\n/);
   assert.match(read('wasm/platform/index.js'), /String\(failedPairing\) === '-7'/);
+});
+
+test('the major version of the host is read up to the first dot, so a host of version 10 pairs with SHA-256', () => {
+  const platform = createPlatformContext();
+  platform.load('wasm/static/js/utils.js');
+  const parse = platform.get('parseServerMajorVersion');
+  // Sunshine and GeForce Experience report 7.x, older GeForce Experience 3.x to 6.x
+  assert.equal(parse('7.1.431.-1'), 7);
+  assert.equal(parse('7.1.450.0'), 7);
+  assert.equal(parse('3.20.4.14'), 3);
+  // Reading only the first character gave 1 for these, which pairs with SHA-1 (libgamestream/pairing.c)
+  assert.equal(parse('10.0.1'), 10);
+  assert.equal(parse('12.3.4.5'), 12);
+  assert.equal(parse('10'), 10);
+  // Without a number it stays NaN as before, which the pairing passes as 0
+  assert.ok(Number.isNaN(parse('')));
+  assert.ok(Number.isNaN(parse('abc')));
+  // The server info sets it with this function, and the pairing takes it as it is
+  const utils = read('wasm/static/js/utils.js');
+  assert.match(utils, /this\.serverMajorVersion = parseServerMajorVersion\(this\.appVersion\);/);
+  assert.doesNotMatch(utils, /appVersion\.substring\(0, 1\)/);
+  assert.match(read('libgamestream/pairing.c'), /return serverMajorVersion >= 7 \? 32 : 20;/);
+  assert.match(read('wasm/main.cpp'), /gs_pair\(atoi\(serverMajorVersion\.c_str\(\)\)/);
 });
