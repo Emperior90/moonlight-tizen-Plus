@@ -11,7 +11,8 @@
 // can't be read logged with the reason and its whole text, and the heartbeat of a stream that reports once at the next
 // start that the app ended during it (not for a stream in the background), that the native lines come from the ring
 // that every log line of the module enters, that the module sets the listener that logs the errors of the media
-// element, and that each stream starts the host figures of its report from zero.
+// element, that every setup call of the video player whose refusal would end the start with -200 logs that refusal,
+// and that each stream starts the host figures of its report from zero.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -551,6 +552,40 @@ test('the module sets the listener that logs the errors of the media element onc
   const memberElement = header.indexOf('  samsung::html::HTMLMediaElement m_MediaElement;');
   assert.ok(memberListener > 0 && memberElement > memberListener, 'members of MoonlightInstance');
   assert.match(read('tests/native/player_errors_test.cpp'), /#include "\.\.\/\.\.\/wasm\/wasmplayer\.cpp"/);
+});
+
+test('every setup call of the video player whose result the start depends on logs a refusal', () => {
+  // A listener of the media source or of a track that the player refuses, or a media source that the media element
+  // refuses, let the start wait out the 5 seconds of the media setup and end with -200 without a word in the log (until
+  // 2.3.1). The calls run in StartStream() (main.cpp) and StartupVidDecSetup() (wasmplayer.cpp), which wait for the
+  // media pipeline of the TV and so run in no native test; native/player_errors_test.cpp checks the line itself
+  const read = (file) => fs.readFileSync(path.join(REPO_ROOT, file), 'utf8');
+  const calls = [];
+  for (const file of ['wasm/main.cpp', 'wasm/wasmplayer.cpp']) {
+    const lines = read(file).split('\n');
+    lines.forEach((line, index) => {
+      if (!/(?:\.|->)(?:SetListener|SetSrc)\(/.test(line) || /^\s*\/\//.test(line)) {
+        return;
+      }
+      calls.push(file + ': ' + line.trim());
+      // The media element listener of the constructor checks its result in the if itself (see the test above)
+      if (/if \(!m_MediaElement\.SetListener\(&m_MediaElementListener\)\)/.test(line)) {
+        return;
+      }
+      const result = /^\s*auto (\w+) = /.exec(line);
+      assert.ok(result, file + ':' + (index + 1) + ': the result is kept: ' + line.trim());
+      const next = lines.slice(index + 1, index + 4).join('\n');
+      assert.ok(next.indexOf('if (!' + result[1] + ') {') >= 0, file + ':' + (index + 1) + ': the result is checked');
+      assert.match(next, new RegExp('ClLogMessage\\("%s", FormatPlayerSetupRejectedLog\\("[^"]+",\\s*static_cast<int>\\(' + result[1] + '\\.operation_result\\)\\)\\.c_str\\(\\)\\);'),
+        file + ':' + (index + 1) + ': a refusal is logged with its result');
+    });
+  }
+  // The media element listener, the media source listener, the two track listeners and the media source of the element
+  assert.equal(calls.length, 5, calls.join('\n'));
+  assert.match(read('wasm/main.cpp'), /#include "player_errors\.hpp"/);
+  // The guide names the line where it explains the error -200
+  assert.match(read('docs/GUIDE.md'), /\(-200\) \| The same error without a rejected format[^\n]*If the \[diagnostic log\]\(#diagnostic-log\) shows "The video player of the TV rejected …" before the error/);
+  assert.match(read('wasm/player_errors.hpp'), /"The video player of the TV rejected "/);
 });
 
 test('each stream starts the host figures of its report from zero', () => {

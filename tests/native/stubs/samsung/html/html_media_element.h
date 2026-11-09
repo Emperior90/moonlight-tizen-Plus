@@ -7,7 +7,7 @@ class HTMLMediaElementListener;
 class HTMLMediaElement {
  public:
   explicit HTMLMediaElement(const char*) {}
-  void SetSrc(samsung::wasm::ElementaryMediaStreamSource*) {}
+  samsung::wasm::Result<void> SetSrc(samsung::wasm::ElementaryMediaStreamSource*) { return {samsung::wasm::OperationResult::kSuccess}; }
   void Play(std::function<void(samsung::wasm::OperationResult)>) {}
   samsung::wasm::Result<void> SetListener(HTMLMediaElementListener*) { return {samsung::wasm::OperationResult::kSuccess}; }
 };

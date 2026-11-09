@@ -3,6 +3,11 @@
 // (MediaElementListener::OnError()), both in wasm/wasmplayer.cpp (included directly) with the lines of
 // wasm/player_errors.hpp. The line names the error by its value, says whether a stream was running, and carries a copy
 // of the text, which Samsung owns only during the call. Nothing goes to the front end and the stream isn't stopped.
+// Also the line for a setup call that the player refuses (FormatPlayerSetupRejectedLog()): the listeners of the media
+// source and of the tracks and the media source of the media element, whose results the app ignored until 2.3.1, so
+// that a refusal showed only as -200 after the 5 seconds of the media setup. The calls themselves wait for the media
+// pipeline of the TV in StartStream() and StartupVidDecSetup(), which no native test runs; tests/unit/diagnostics.test.js
+// checks that each one logs this line.
 // The functions below stand in for moonlight-common-c and the rest of the module.
 
 #include "../../wasm/wasmplayer.cpp"
@@ -186,6 +191,18 @@ static void TheMediaElementErrorIsLogged() {
   CHECK_EQ(std::string(MediaElementErrorName(5)), std::string("unknown error"));
 }
 
+static void ARefusedSetupCallIsLoggedWithItsResult() {
+  // The value is that of samsung::wasm::OperationResult, e.g. 7 for a function that the TV doesn't support and 4 for a
+  // listener that is already set
+  CHECK_EQ(FormatPlayerSetupRejectedLog("the listener of the media source", 7),
+    std::string("The video player of the TV rejected the listener of the media source (error 7), so the start may wait in vain and end with -200\n"));
+  CHECK_EQ(FormatPlayerSetupRejectedLog("the listener of the video track", 4),
+    std::string("The video player of the TV rejected the listener of the video track (error 4), so the start may wait in vain and end with -200\n"));
+  // One line each, which the diagnostic log keeps as it is
+  const std::string line = FormatPlayerSetupRejectedLog("the media source of the media element", 21);
+  CHECK_EQ(line.find('\n'), line.size() - 1);
+}
+
 int main() {
   test_support::RunTest("an error of the media pipeline is logged with a copy of its text, and nothing else happens",
     ThePipelineErrorIsLoggedWithACopyOfItsText);
@@ -193,5 +210,7 @@ int main() {
     ThePipelineErrorNamesEveryValue);
   test_support::RunTest("an error of the media element is logged with a copy of its text, during and after a stream",
     TheMediaElementErrorIsLogged);
+  test_support::RunTest("a setup call that the player refuses is logged with its result",
+    ARefusedSetupCallIsLoggedWithItsResult);
   return test_support::Summary();
 }

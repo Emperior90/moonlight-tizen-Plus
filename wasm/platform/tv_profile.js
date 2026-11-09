@@ -663,6 +663,16 @@ function isGameModeUnavailable(caps) {
   return !!(caps && caps.wasmPlayer && caps.wasmPlayer.ultraLowLatency === 'no');
 }
 
+// Whether a game mode switch stored on comes from before an update of the TV to Tizen 9.0 or newer, where the Ultra
+// Low Latency mode can freeze the picture: the TV runs Tizen 9.0 or newer now, and the Tizen version stored with the
+// switch (since 2.3.1) is below 9.0 or missing. A missing version means a value stored by an earlier version of the
+// app, by the settings snapshot of settings schema 1 or on a TV whose version couldn't be read, so such an install gets
+// the warning once as well. A stored version of 9.0 or newer means that the switch was turned on there, after its
+// compatibility warning. The versions are compared as numbers, so that 10.0 counts as newer than 9.0.
+function isGameModeFromBeforeTizen9(storedGameMode, storedPlatformVer, platformVer) {
+  return storedGameMode === true && parseFloat(platformVer) >= 9.0 && !(parseFloat(storedPlatformVer) >= 9.0);
+}
+
 // Derive the optimal video settings for a TV (see detectTvCapabilities()) and the network connection type. They are the
 // defaults of a fresh install and what Restore Defaults and the optimal streaming settings button apply:
 // - the highest resolution of the panel up to 4K, at 60 FPS, because Tizen apps commonly render at around 60 FPS
@@ -1073,6 +1083,7 @@ if (typeof module === 'object' && module && module.exports) {
     presetBitrate: presetBitrate,
     getGameModeDefault: getGameModeDefault,
     isGameModeUnavailable: isGameModeUnavailable,
+    isGameModeFromBeforeTizen9: isGameModeFromBeforeTizen9,
     deriveOptimalSettings: deriveOptimalSettings,
     parseResolution: parseResolution,
     hasTested120HzProfile: hasTested120HzProfile,

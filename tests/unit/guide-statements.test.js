@@ -14,7 +14,8 @@
 // - the Start of a hold that switches the mouse emulation on, which the game sees (wasm/gamepad.cpp)
 // - the buttons in the menus of docs/CONTROLLERS.md that the navigation guide of wasm/index.html leaves out
 // - the version suffix of a release promoted from a pre-release, and that the README and the guide no longer carry the
-//   install notes of the earlier release v1.19.0-s90c.1 (Moonlight S90C), which only the history of the patch notes keeps
+//   install notes of the earlier release v1.19.0-s90c.1 (Moonlight S90C), which only the history of the patch notes keeps,
+//   and that no current document links its German documents at its tag any more (since 2.3.1)
 // - the audio path that the section on surround sound with a soundbar describes: the 5.1 entry of the audio
 //   configuration, the 6-channel PCM track that only the EMSS backend adds, the two channels of the Web Audio output and
 //   the Audio stream line that the check reads
@@ -28,6 +29,9 @@
 //   goes into HEVC and AV1, and the switch that keeps the sound off the speakers of the host
 // - the latency modes of the Ultra low latency switch and the Game Mode that only the ForceGM variant asks for, which
 //   the TV picture settings and the fallback for a corrupted picture above 1080p build on
+// - Tizen 10 in the README and the guide, which follows the rules of Tizen 9.0 and newer, with what is known about it
+//   (simulated only, one report of the upstream app on an S85H, untested with Moonlight Plus), and the check of the
+//   switch after an update of Tizen with the one-time warning of 2.3.1
 // - the wait after an abandoned start (the 11 seconds, the countdown and the starts that the app remembers), the start
 //   once more and the message after a start that the PC dropped, and the log line of a restart of the encoder of the PC,
 //   whose keyframe the statistics leave out
@@ -214,8 +218,9 @@ test('the documents explain the version of a promoted release, and only the hist
     assert.doesNotMatch(text, /Moonlight S90C/, file);
     assert.doesNotMatch(text, /The earlier release v1\.19\.0-s90c\.1/, file);
   }
-  // The archive of its German documents stays linked at its tag (see the test of the tested bitrate steps below)
-  assert.ok(GUIDE.indexOf('stays with the files of the tag [v1.19.0-s90c.1](') > 0);
+  // Its German documents are no longer linked at their tag (see the test of the tested bitrate steps below)
+  assert.equal(GUIDE.indexOf('stays with the files of the tag [v1.19.0-s90c.1]('), -1);
+  assert.match(GUIDE, /The only tested model so far is the Samsung S90C \(55-inch OLED, 2023, Tizen 9\.0\)\.\n/);
   // Tizen Studio always needs a Samsung account for the Samsung certificate, Apps2Samsung only on Tizen 7.0 and newer
   assert.match(GUIDE, /Apps2Samsung asks for a Samsung account on Tizen 7\.0 and newer\. Tizen Studio always needs one/);
 });
@@ -323,17 +328,50 @@ test('the sections of the guide that the app names by their heading exist', () =
   named.forEach((name) => assert.ok(headings.indexOf(name) >= 0, 'the guide has the heading ' + name));
 });
 
-test('the guide gives the tested bitrate steps of the S90C itself and links the documents of v1.19.0-s90c.1 at their tag', () => {
+test('the README and the guide count Tizen 10 as Tizen 9.0 or newer, as strong as the evidence, and say to check the switch after an update', () => {
+  // The rules of Tizen 9.0 and newer compare the version as a number, so 10.0 follows them (unit/tizen10.test.js)
+  assert.equal(profile.getGameModeDefault('10.0', 'unknown'), false);
+  assert.equal(profile.isGameModeFromBeforeTizen9(true, '8.0', '10.0'), true);
+  assert.equal(profile.isGameModeFromBeforeTizen9(true, '9.0', '10.0'), false);
+  const readme = read('README.md');
+  for (const [file, text] of [['README.md', readme], ['docs/GUIDE.md', GUIDE]]) {
+    assert.ok(text.indexOf('| Tizen 9.0 or newer, including Tizen 10 (models of 2026) | `Moonlight-ForceGM.wgt` |') >= 0, file + ': the table of the files');
+    // What is known: the simulation, one report of the upstream app on an S85H that needed its ForceGM variant, and no
+    // test of Moonlight Plus on such a TV
+    assert.match(text, /in simulated tests the app behaves (on Tizen 10 )?the same as on Tizen 9/i, file);
+    assert.match(text, /One owner of an S85H with Tizen 10 reported to (the upstream )?Moonlight Tizen( project)? that with its regular file the stream ended without a picture, and that its ForceGM variant helped \(\[issue 126[^\]]*\]\(https:\/\/github\.com\/brightcraft\/moonlight-tizen\/issues\/126\)\)/, file);
+    assert.match(text, /Moonlight Plus (itself )?has not been tested on a Tizen 10 TV yet/, file);
+    assert.doesNotMatch(text, /tested on Tizen 10|works on Tizen 10|Tizen 10 is supported/i, file);
+  }
+  assert.match(readme, /including Tizen 10 of the models of 2026, which Moonlight Plus has not been tested on yet/);
+  assert.match(GUIDE, /Newer includes Tizen 10 of the models of 2026, which Moonlight Plus has not been tested on yet/);
+  // The freeze is known on Tizen 9 only
+  assert.match(GUIDE, /The switch can freeze the picture on Tizen 9\. Whether it still does on Tizen 10 is not known, so the app treats Tizen 10 the same way\./);
+  // The hint after an update of Tizen, with the one-time warning of 2.3.1 as the code does it
+  const forceGm = GUIDE.slice(GUIDE.indexOf('\n## ForceGM variant and game mode\n'), GUIDE.indexOf('\n## TV picture settings\n'));
+  assert.match(forceGm, /- \*\*After an update of Tizen\*\* \(e\.g\. from 8\.0 to 9\.0, or to 10\.0\): [^\n]*Check in Settings → Video Settings that the switch is off/);
+  assert.match(forceGm, /Since 2\.3\.1, the first start on Tizen 9\.0 or newer shows the compatibility warning of the switch once when it is still on from an earlier version of Tizen\. Versions up to 2\.3\.0 didn't store the Tizen version with the switch, so a switch that one of them stored also gets the warning once/);
+  assert.match(readme, /Keep the \*Ultra low latency mode\* switch of the app off with it, also after an update of the TV to a newer Tizen version\./);
+});
+
+test('the guide gives the tested bitrate steps of the S90C itself, and no document links the documents of v1.19.0-s90c.1', () => {
   const bitrate = GUIDE.slice(GUIDE.indexOf('\n## Finding your bitrate\n'), GUIDE.indexOf('\n## ', GUIDE.indexOf('\n## Finding your bitrate\n') + 1));
-  assert.match(bitrate, /\*\*Samsung S90C over Wi-Fi:\*\* starts at 100 Mbps, the recommendation that also suits a weaker Wi-Fi link, and the app warns above 150 Mbps, which this model streams in daily use \(4K HDR in AV1 over 5 GHz Wi-Fi, `fec_percentage` 5 in Sunshine\)\. The tuning plan of this model tests 100 → 120 → 135 → 150 Mbps/);
+  assert.match(bitrate, /\*\*Samsung S90C over Wi-Fi:\*\* starts at 100 Mbps, the recommendation that also suits a weaker Wi-Fi link, and the app warns above 150 Mbps, which this model streams in daily use \(4K HDR in AV1 over 5 GHz Wi-Fi, `fec_percentage` 5 in Sunshine\)\. The tuning plan of the first release for this model tests 100 → 120 → 135 → 150 Mbps/);
   assert.equal(profile.presetBitrate('3840:2160', 60, 'wifi', capsOf({ tv: 's90c' })), 100);
   assert.equal(profile.getBitrateWarningMbps(capsOf({ tv: 's90c' })), 150);
-  // The archive of the German documents left the branch; the tag keeps them
+  // The archive of the German documents left the branch in 2.2.0, and since 2.3.1, as the owner decided, no current
+  // document links it at its tag any more (the history of the changelog and the patch notes still names the tag)
   assert.ok(!fs.existsSync(path.join(REPO_ROOT, 'docs', 'profiles')));
-  const tagLink = 'https://github.com/Emperior90/moonlight-tizen-Plus/tree/v1.19.0-s90c.1/docs';
-  for (const file of ['docs/GUIDE.md', 'README.md', 'docs/PATCH_NOTES.md']) {
-    assert.ok(read(file).indexOf('](' + tagLink + ')') >= 0, file + ' links the tag v1.19.0-s90c.1');
+  const documents = ['README.md', 'SECURITY.md', 'CODE_OF_CONDUCT.md', '.github/CONTRIBUTING.md', 'tests/README.md']
+    .concat(fs.readdirSync(path.join(REPO_ROOT, 'docs')).filter((name) => name.endsWith('.md')).map((name) => 'docs/' + name));
+  assert.ok(documents.indexOf('docs/GUIDE.md') >= 0 && documents.indexOf('docs/PATCH_NOTES.md') >= 0 && documents.indexOf('docs/RELEASE_NOTES.md') >= 0);
+  for (const file of documents) {
+    assert.doesNotMatch(read(file), /moonlight-tizen-Plus\/(?:tree|blob)\/v1\.19\.0-s90c\.1/, file + ' links the tag v1.19.0-s90c.1');
   }
+  assert.doesNotMatch(read('README.md'), /S90C documents of the first release/);
+  assert.doesNotMatch(GUIDE, /German tuning guide/);
+  // The patch notes keep their pointer to the changelog, without the documents of the tag
+  assert.match(read('docs/PATCH_NOTES.md'), /\nEvery technical detail of every version is in the \[changelog\]\(\.\.\/CHANGELOG\.md\)\.\n/);
 });
 
 test('the controller page names the menu buttons that the navigation guide leaves out', () => {

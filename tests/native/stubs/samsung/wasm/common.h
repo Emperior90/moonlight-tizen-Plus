@@ -33,7 +33,7 @@ class ElementaryMediaTrack {
   ElementaryMediaTrack(ElementaryMediaTrack&&) = default;
   ElementaryMediaTrack& operator=(ElementaryMediaTrack&&) = default;
   Result<void> AppendPacket(const ElementaryMediaPacket& packet) { const AppendPacketHook& hook = TestAppendPacketHook(); return {hook ? static_cast<OperationResult>(hook(packet)) : OperationResult::kSuccess}; }
-  void SetListener(ElementaryMediaTrackListener*) {}
+  Result<void> SetListener(ElementaryMediaTrackListener*) { return {OperationResult::kSuccess}; }
 };
 class ElementaryMediaTrackListener {
  public:
@@ -60,6 +60,6 @@ class ElementaryMediaStreamSource {
   Result<ElementaryMediaTrack> AddTrack(const ElementaryVideoTrackConfig&) { return {OperationResult::kSuccess, {}}; }
   void Open(std::function<void(OperationResult)>) {}
   void Close(std::function<void(OperationResult)>) {}
-  void SetListener(ElementaryMediaStreamSourceListener*) {}
+  Result<void> SetListener(ElementaryMediaStreamSourceListener*) { return {OperationResult::kSuccess}; }
 };
 }}

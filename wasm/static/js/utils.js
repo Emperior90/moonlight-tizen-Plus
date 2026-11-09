@@ -236,6 +236,15 @@ function runNextPreviewImage() {
   }, PREVIEW_IDLE_TIMEOUT_MS);
 }
 
+// The major version of a host from the appversion of its server info, e.g. 7 for Sunshine's '7.1.431.-1', which
+// gs_pair() of libgamestream/pairing.c takes to choose the hash of the pairing (SHA-256 from 7 on, SHA-1 before). The
+// number goes up to the first dot, so a host that reports '10.0.1' gives 10; reading only the first character, as up to
+// 2.3.0, would give 1 and pair with SHA-1, so the pairing with such a host, which like every host from version 7 on
+// expects SHA-256, would fail. Hosts report 7.x today. Gives NaN for an appversion without a number, as before.
+function parseServerMajorVersion(appVersion) {
+  return parseInt(String(appVersion).split('.')[0], 10);
+}
+
 // Safely wraps IPv6 addresses in brackets for URL construction.
 // IPv4 addresses and DNS hostnames do not contain colons, so they are untouched.
 function formatAddressForUrl(address) {
@@ -759,7 +768,7 @@ NvHTTP.prototype = {
     // These are present in all supported GFE versions
     this.paired = $root.find('PairStatus').text().trim() == 1;
     this.appVersion = $root.find('appversion').text().trim();
-    this.serverMajorVersion = parseInt(this.appVersion.substring(0, 1), 10);
+    this.serverMajorVersion = parseServerMajorVersion(this.appVersion);
 
     // This wasn't present on old GFE versions
     this.serverCodecModeSupport = parseInt($root.find('ServerCodecModeSupport').text().trim(), 10);

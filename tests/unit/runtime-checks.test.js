@@ -18,7 +18,7 @@ const { REPO_ROOT } = require('../lib/dev-modules');
 const tvMock = require('../browser/mocks/tv-mock');
 const profile = require('../../wasm/platform/tv_profile');
 
-const TIZEN_VERSIONS = ['5.5', '6.0', '6.5', '7.0', '8.0', '9.0'];
+const TIZEN_VERSIONS = ['5.5', '6.0', '6.5', '7.0', '8.0', '9.0', '10.0', '10', '10.5', '11.0'];
 const CONNECTIONS = ['ethernet', 'wifi', 'unknown'];
 
 // Run a function with console.warn captured, and return its result with the warnings
@@ -295,12 +295,12 @@ describe('detectWasmPlayerReport()', () => {
 describe('the game mode with the answer of the WASM player', () => {
   test('getGameModeDefault() keeps the rules by Tizen version unless the WASM player says it clearly', () => {
     const expected = {
-      // As before the check: off and disabled on 5.5, off on 9.0, on otherwise
-      unknown: { '5.5': null, '6.0': true, '6.5': true, '7.0': true, '8.0': true, '9.0': false },
+      // As before the check: off and disabled on 5.5, off on 9.0 and newer (also 10.0, 10, 10.5 and 11.0), on otherwise
+      unknown: { '5.5': null, '6.0': true, '6.5': true, '7.0': true, '8.0': true, '9.0': false, '10.0': false, '10': false, '10.5': false, '11.0': false },
       // A WASM player with the mode: the switch can be turned on also on 5.5, where it starts off; the rule of 9.0 stays
-      yes: { '5.5': false, '6.0': true, '6.5': true, '7.0': true, '8.0': true, '9.0': false },
+      yes: { '5.5': false, '6.0': true, '6.5': true, '7.0': true, '8.0': true, '9.0': false, '10.0': false, '10': false, '10.5': false, '11.0': false },
       // A WASM player without the mode: off and disabled everywhere
-      no: { '5.5': null, '6.0': null, '6.5': null, '7.0': null, '8.0': null, '9.0': null },
+      no: { '5.5': null, '6.0': null, '6.5': null, '7.0': null, '8.0': null, '9.0': null, '10.0': null, '10': null, '10.5': null, '11.0': null },
     };
     for (const answer of Object.keys(expected)) {
       for (const tizen of TIZEN_VERSIONS) {
