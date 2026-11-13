@@ -20,7 +20,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-// What the other files of moonlight-common-c provide
+// What the other files of moonlight-common-c provide (the listener takes the log lines in the release build, LC_LOG;
+// this test sets none)
+CONNECTION_LISTENER_CALLBACKS ListenerCallbacks;
 struct sockaddr_storage RemoteAddr;
 int AppVersionQuad[4];
 STREAM_CONFIGURATION StreamConfig;

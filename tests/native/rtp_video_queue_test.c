@@ -17,6 +17,9 @@
 // What the other files of moonlight-common-c provide to the queue
 int AppVersionQuad[4] = {7, 1, 431, 0};  // a host with multi-block FEC
 STREAM_CONFIGURATION StreamConfig;
+// The listener of the connection, which the log lines of the queue go to in the release build (LC_LOG, see
+// limelog_test.c). This test sets none, so they go to the stand-in for the console.
+CONNECTION_LISTENER_CALLBACKS ListenerCallbacks;
 
 #define PAYLOAD_SIZE 32
 #define MAX_EVENTS 64

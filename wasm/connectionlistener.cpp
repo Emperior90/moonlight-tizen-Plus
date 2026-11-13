@@ -134,12 +134,23 @@ void MoonlightInstance::ClLogMessage(const char* format, ...) {
   emscripten_log(EM_LOG_CONSOLE, "%s", message);
 }
 
+// Whether a message of moonlight-common-c is one of the two that Connection.c logs for each stage of a start and of a
+// stop: "Starting video stream..." without a line break and, once the stage is done, "done", with the lines of the stage
+// in between (tests/unit/library-log-lines.test.js checks these texts against the library)
+static bool IsLibraryStageMessage(const char* message) {
+  const size_t length = std::strlen(message);
+  return std::strcmp(message, "done\n") == 0 || (length >= 3 && std::strcmp(message + length - 3, "...") == 0);
+}
+
 // The log lines of moonlight-common-c (Limelog() of its Platform.h, which the build sends here with LC_LOG, see
 // CMakeLists.txt): the loss of packets and frames, the recovery from it, the RTSP handshake, the sockets. They come from
 // the receive, decoder and control threads of the library, so this never waits, neither for the main thread nor for a
 // lock: the ring takes its lock with try_lock, and emscripten_log() writes to the console of the calling thread, as
 // Limelog() did before. Some of the lines come once per lost packet or frame, so the ring limits them by their kind
 // (DiagnosticLogRing::TryAppendLimited()); the console still gets every line.
+// The two messages of a stage are kept like the lines of the app instead: a start and a stop log twenty "done", more
+// than a kind may keep, and never more than the stages that were run, so they can't flood the log, and a stage whose
+// "done" was left out would look as if it never ended.
 void MoonlightInstance::ClLibraryLogMessage(const char* format, ...) {
   va_list va;
   char message[1024];
@@ -148,7 +159,11 @@ void MoonlightInstance::ClLibraryLogMessage(const char* format, ...) {
   vsnprintf(message, sizeof(message), format, va);
   va_end(va);
 
-  GetDiagnosticLog().TryAppendLimited(DiagnosticLogNowMs(), message);
+  if (IsLibraryStageMessage(message)) {
+    GetDiagnosticLog().TryAppend(DiagnosticLogNowMs(), message);
+  } else {
+    GetDiagnosticLog().TryAppendLimited(DiagnosticLogNowMs(), message);
+  }
   emscripten_log(EM_LOG_CONSOLE, "%s", message);
 }
 

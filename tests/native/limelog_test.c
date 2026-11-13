@@ -63,6 +63,16 @@ static void test_a_percent_sign_in_a_line_stays(void) {
   CHECK(strcmp(listenerLine, "getaddrinfo(100%d-of-%s) failed: -2\n") == 0);
 }
 
+static void test_an_argument_named_message_is_the_one_of_the_caller(void) {
+  reset(true);
+  // The macro formats into a buffer of its own, which was named 'message' while no release built it: an argument of
+  // that name was then read from the buffer itself. No call of the library has one today.
+  const char* message = "the text of the caller";
+  Limelog("Got %s (%d)\n", message, 7);
+  CHECK_EQ_INT(listenerCalls, 1);
+  CHECK(strcmp(listenerLine, "Got the text of the caller (7)\n") == 0);
+}
+
 static void test_a_long_line_is_cut_not_overrun(void) {
   reset(true);
   // (a length that the compiler can't see, so that it doesn't warn about the cut that this test is about)
@@ -91,6 +101,8 @@ int main(void) {
   RUN_TEST("a log line of the library reaches the listener of the connection, formatted",
            test_a_line_reaches_the_listener_formatted);
   RUN_TEST("a percent sign in a line stays as it is", test_a_percent_sign_in_a_line_stays);
+  RUN_TEST("an argument named like the buffer of the macro used to be is the one of the caller",
+           test_an_argument_named_message_is_the_one_of_the_caller);
   RUN_TEST("a line longer than the buffer of the macro is cut", test_a_long_line_is_cut_not_overrun);
   RUN_TEST("before the first connection, without a listener, a line goes to the console",
            test_without_a_listener_the_line_goes_to_the_console);

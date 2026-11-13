@@ -1,16 +1,16 @@
 #pragma once
-// The native part of the diagnostic log (Settings > About > Diagnostic log): the lines that the module logs with
-// MoonlightInstance::ClLogMessage() (connectionlistener.cpp), its own and those of moonlight-common-c, kept in memory in a
-// ring of fixed size until the front end takes them with takeDiagnosticLog() (main.cpp) into the log of the current
+// The native part of the diagnostic log (Settings > About > Diagnostic log): the lines that the module logs, its own with
+// MoonlightInstance::ClLogMessage() and those of moonlight-common-c with MoonlightInstance::ClLibraryLogMessage() (both in
+// connectionlistener.cpp; the build sends Limelog() of the library there with LC_LOG, see CMakeLists.txt), kept in memory
+// in a ring of fixed size until the front end takes them with takeDiagnosticLog() (main.cpp) into the log of the current
 // session (wasm/platform/diagnostics.js). Nothing is written to a file or sent anywhere.
 // The lines come from every thread of the module, among them the video decoder, audio and receive threads, which must
 // never wait for the log: a line takes the lock with try_lock, and a line that finds it taken (by another line, or by the
 // front end taking the lines) is left out and counted instead, and the count goes in with the next line that gets in. A
 // line that repeats the one before within kRepeatWindowMs is counted as well instead of kept again, so that a flood of one
 // condition doesn't push out the lines before it. When the ring is full, the oldest line goes.
-// The lines of moonlight-common-c (Limelog() of its Platform.h, which the build sends to
-// MoonlightInstance::ClLibraryLogMessage()) are also limited by their kind, since some of them come once per lost packet
-// or frame: see TryAppendLimited().
+// The lines of moonlight-common-c are also limited by their kind, since some of them come once per lost packet or frame
+// with another number each time, which the repeat filter doesn't catch: see TryAppendLimited().
 // The ring and the repeat filter follow diagnostic_log.cpp and log_repeat_filter.hpp of the fork of mmadej20
 // (moonlight-tizen-modern), with fixed slots instead of a queue of strings, so that a line costs no allocation. The
 // header has no other dependencies, so the native tests can check it on its own (tests/native/diagnostic_log_test.cpp).
@@ -39,10 +39,11 @@ class DiagnosticLogRing {
   // A line that repeats the line before within this time is counted instead of kept
   static constexpr uint64_t kRepeatWindowMs = 1000;
   // The lines of moonlight-common-c (TryAppendLimited()): the lines of one kind that are kept in a row, the time after
-  // which one more of that kind is kept, and the kinds that are told apart at a time
+  // which one more of that kind is kept, and the kinds that are told apart at a time. A start and a stop of a stream
+  // log about 40 kinds and the loss of packets about 30 more, so in practice every kind has an entry of its own.
   static constexpr uint32_t kKindBurst = 10;
   static constexpr uint64_t kKindRefillMs = 60000;
-  static constexpr size_t kKinds = 16;
+  static constexpr size_t kKinds = 64;
 
   // Keep a line that was logged at timeMs (the wall clock in milliseconds, like Date.now() of the page). A line break at
   // its end is dropped, and one within it becomes a space. Returns false if the line was left out because the lock was
@@ -62,13 +63,12 @@ class DiagnosticLogRing {
   // Keep a line of moonlight-common-c like TryAppend() does, limited by its kind. Some lines of the library come once per
   // lost packet or frame, e.g. "Recovered 1 video data shards from frame 4521" on a network that loses a packet now and
   // then, and would push every other line out of the log of a session. The kind of a line is its text without its
-  // numbers: the first kKindBurst lines of a kind are kept, and then one per kKindRefillMs, which says how many lines
-  // like it were left out before it. When a kind ends while lines of it are left out, the last of them is kept late, by
-  // Take(), with their count. So a kind adds at most two lines per kKindRefillMs once its first lines are in, however
-  // often it is logged, and no count is lost.
-  // The library logs some lines in two parts ("Starting video stream..." and, once that is done, "done"). The second
-  // part of a line whose first part was kept isn't limited: its kind would be that of the second part of every other
-  // line.
+  // numbers. A kind may keep kKindBurst lines, and one more per kKindRefillMs, up to kKindBurst again. A line beyond that
+  // is left out and counted, and the next line of the kind that is kept says how many were. When a kind ends while lines
+  // of it are left out, the last of them is kept late, by Take(), with their count. So a kind adds kKindBurst lines and
+  // then at most two per kKindRefillMs, however often it is logged, and no count is lost. The entries of the kinds are
+  // shared without ever adding to what may be kept (FindKind()), so the same holds for any number of kinds that take
+  // turns: at most kKinds times as much.
   // Returns false if the line was left out because the lock was taken; a line that its kind leaves out counts as kept.
   bool TryAppendLimited(uint64_t timeMs, const char* message) {
     std::unique_lock<std::mutex> lock(m_Mutex, std::try_to_lock);
@@ -78,44 +78,48 @@ class DiagnosticLogRing {
     }
     char text[kLineBytes];
     CopyLine(message, text, kLineBytes);
-    const bool secondPart = m_FirstPartKept;
-    m_FirstPartKept = false;
-    if (!secondPart) {
-      Kind& kind = FindKind(HashKind(text), timeMs);
-      RefillKind(&kind, timeMs);
-      kind.lastMs = timeMs;
-      if (kind.allowed == 0) {
-        kind.leftOut++;
-        std::memcpy(kind.lastLeftOut, text, sizeof(text));
-        return true;
-      }
-      // A repeat of the line before is counted with that line and doesn't use up its kind
-      if (!IsRepeat(timeMs, text)) {
-        kind.allowed--;
-        if (kind.leftOut > 0) {
-          char note[64];
-          std::snprintf(note, sizeof(note), " (%u similar lines before it were left out)", kind.leftOut);
-          AppendNote(text, note);
-          kind.leftOut = 0;
-        }
+    Kind* kind = FindKind(HashKind(text), timeMs);
+    if (kind == nullptr) {
+      m_OtherLeftOut++;
+      return true;
+    }
+    kind->lastMs = timeMs;
+    if (kind->allowed == 0) {
+      kind->leftOut++;
+      std::memcpy(kind->lastLeftOut, text, sizeof(text));
+      return true;
+    }
+    // A repeat of the line before is counted with that line and doesn't use up its kind
+    if (!IsRepeat(timeMs, text)) {
+      kind->allowed--;
+      if (kind->leftOut > 0) {
+        char note[64];
+        std::snprintf(note, sizeof(note), " (%u similar lines before it were left out)", kind->leftOut);
+        AppendNote(text, note);
+        kind->leftOut = 0;
       }
     }
     Keep(timeMs, text);
-    // A message without a line break at its end is the first part of a line
-    m_FirstPartKept = message != nullptr && message[0] != '\0' && message[std::strlen(message) - 1] != '\n';
     return true;
   }
 
   // Take the kept lines, oldest first, and empty the ring: one line per record, "<timeMs>\t<text>\n". The notes about
   // repeated, busy and overwritten lines are lines of their own. nowMs is the wall clock: the lines of moonlight-common-c
   // that their kind left out and that no later line of the kind reported within kKindRefillMs are reported here, by the
-  // last of them (TryAppendLimited()).
+  // last of them (TryAppendLimited()), and so are those that found no entry for their kind (FindKind()).
   std::string Take(uint64_t nowMs) {
     std::lock_guard<std::mutex> lock(m_Mutex);
     for (Kind& kind : m_Kinds) {
       if (kind.leftOut > 0 && nowMs >= kind.lastMs && nowMs - kind.lastMs >= kKindRefillMs) {
         KeepLeftOut(&kind, nowMs);
       }
+    }
+    if (m_OtherLeftOut > 0) {
+      char note[96];
+      std::snprintf(note, sizeof(note), "%u more lines of moonlight-common-c were left out (too many kinds at a time)",
+                    m_OtherLeftOut);
+      m_OtherLeftOut = 0;
+      Keep(nowMs, note);
     }
     FlushNotes(m_LastTimeMs);
     std::string result;
@@ -236,27 +240,46 @@ class DiagnosticLogRing {
     return hash != 0 ? hash : 1;
   }
 
-  // The entry of a kind. A new kind takes an entry that isn't used or, when there is none, that of the kind whose last
-  // line is the oldest, whose left out lines are reported first.
-  Kind& FindKind(uint64_t hash, uint64_t timeMs) {
-    Kind* free = &m_Kinds[0];
+  // The entry of a kind, with the lines that it may keep counted up to timeMs. A new kind takes an entry that isn't used.
+  // When there is none, it takes over the entry whose last line is the oldest among those that may keep a line, as it
+  // is: with what that entry may keep, not with kKindBurst lines of its own, or kinds that take turns in an entry would
+  // keep every line (the last of the lines that the earlier kind left out, if any, is kept first). When no entry may
+  // keep a line, there is none for a new kind (nullptr), and its lines are only counted until one may again.
+  Kind* FindKind(uint64_t hash, uint64_t timeMs) {
+    Kind* unused = nullptr;
     for (Kind& kind : m_Kinds) {
       if (kind.hash == hash) {
-        return kind;
+        RefillKind(&kind, timeMs);
+        return &kind;
       }
-      if (free->hash != 0 && (kind.hash == 0 || kind.lastMs < free->lastMs)) {
-        free = &kind;
+      if (kind.hash == 0 && unused == nullptr) {
+        unused = &kind;
       }
     }
-    if (free->hash != 0 && free->leftOut > 0) {
-      KeepLeftOut(free, timeMs);
+    if (unused != nullptr) {
+      unused->hash = hash;
+      unused->lastMs = timeMs;
+      unused->refillMs = timeMs;
+      unused->allowed = kKindBurst;
+      unused->leftOut = 0;
+      return unused;
     }
-    free->hash = hash;
-    free->lastMs = timeMs;
-    free->refillMs = timeMs;
-    free->allowed = kKindBurst;
-    free->leftOut = 0;
-    return *free;
+    Kind* oldest = nullptr;
+    for (Kind& kind : m_Kinds) {
+      RefillKind(&kind, timeMs);
+      if (kind.allowed > 0 && (oldest == nullptr || kind.lastMs < oldest->lastMs)) {
+        oldest = &kind;
+      }
+    }
+    if (oldest == nullptr) {
+      return nullptr;
+    }
+    if (oldest->leftOut > 0) {
+      KeepLeftOut(oldest, timeMs);
+    }
+    oldest->hash = hash;
+    oldest->lastMs = timeMs;
+    return oldest;
   }
 
   // Count up the lines of a kind that may be kept: one more per kKindRefillMs, up to kKindBurst
@@ -333,7 +356,8 @@ class DiagnosticLogRing {
   uint64_t m_LastTimeMs = 0;
   bool m_HasLast = false;
   Kind m_Kinds[kKinds] = {};
-  bool m_FirstPartKept = false;
+  // The lines of moonlight-common-c that found no entry for their kind, which the next Take() reports
+  uint32_t m_OtherLeftOut = 0;
 };
 
 // The ring of the module

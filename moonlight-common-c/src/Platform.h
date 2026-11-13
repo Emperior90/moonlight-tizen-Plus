@@ -76,13 +76,14 @@
 // keeps them for its diagnostic log. The formatted line is passed as the argument of "%s", not as the format: the
 // listener takes a format, and a line can hold a '%' (e.g. "packet loss: 0.500000%"). Before the first connection
 // there is no listener yet (LiStartConnection() sets it), so a line of that time (e.g. of the STUN request) goes to
-// the console as it did without LC_LOG.
+// the console as it did without LC_LOG. The buffer has a name that no caller uses: an argument named like it would
+// be read from the buffer itself.
 #define Limelog(format, ...) \
     do { \
         if (ListenerCallbacks.logMessage) { \
-            char message[1024]; \
-            snprintf(message, sizeof(message), format, ##__VA_ARGS__); \
-            ListenerCallbacks.logMessage("%s", message); \
+            char limelogLine_[1024]; \
+            snprintf(limelogLine_, sizeof(limelogLine_), format, ##__VA_ARGS__); \
+            ListenerCallbacks.logMessage("%s", limelogLine_); \
         } \
         else if (EM_LOG_CONSOLE) { \
             emscripten_log(EM_LOG_CONSOLE, format, ##__VA_ARGS__); \

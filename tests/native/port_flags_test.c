@@ -12,6 +12,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+// The listener of the connection, which the log lines of the connectivity test go to in the release build (LC_LOG)
+CONNECTION_LISTENER_CALLBACKS ListenerCallbacks;
+
 int initializePlatformSockets(void) { abort(); }
 void cleanupPlatformSockets(void) { abort(); }
 int resolveHostName(const char* host, int family, int tcpTestPort, struct sockaddr_storage* addr, SOCKADDR_LEN* addrLen) {
