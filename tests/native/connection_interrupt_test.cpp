@@ -6,7 +6,9 @@
 // that the module logs with ClLogMessage() goes into the ring of the diagnostic log (wasm/diagnostic_log.hpp), from which
 // the front end takes it, that the lines of moonlight-common-c go there through the listener that the module gives the
 // library (ClLibraryLogMessage(), which Limelog() calls with the line as the argument of "%s", see limelog_test.c),
-// unchanged and limited by their kind, and that a failed RTSP handshake whose answer had the key of another start
+// unchanged and limited by their kind, except for the two messages of each stage of a start and of a stop
+// ("Starting video stream..." and "done"), which always stay, and that a failed RTSP handshake whose answer had the key
+// of another start
 // (ML_ERROR_RTSP_DECRYPT_FAILED, a local patch of moonlight-common-c) shows no dialog with the ports of the handshake,
 // since the front end explains it, and that the end of the stage that connects the control stream, which releases the
 // start on the host, tells the front end ("ControlStreamConnected"), unless the stream is already being stopped.
@@ -207,6 +209,73 @@ static void TestALineOfTheLibraryPerFrameDoesNotFillTheDiagnosticLog() {
   CHECK_EQ(appLines, 50u);
 }
 
+static void TestTheStagesOfEveryStartAndStopKeepTheirTwoMessages() {
+  TakeLogTexts();
+  const ConnListenerLogMessage logMessage = Pointer(ListenerCallbacksMember())->logMessage;
+  // The start and the stop of a stream as Connection.c logs them: "<stage>..." without a line break and, once the stage
+  // is done, "done", with the lines of the stage in between
+  const char* stages[] = { "Initializing platform...", "Resolving host name...", "Initializing audio stream...",
+                           "Starting RTSP handshake...", "Initializing control stream...", "Initializing video stream...",
+                           "Initializing input stream...", "Starting control stream...", "Starting video stream...",
+                           "Starting audio stream...", "Starting input stream...", "Stopping input stream...",
+                           "Stopping audio stream...", "Stopping video stream...", "Stopping control stream...",
+                           "Cleaning up input stream...", "Cleaning up video stream...", "Cleaning up control stream...",
+                           "Cleaning up audio stream...", "Cleaning up platform..." };
+  // Fifteen starts in a row, as of a user who tries settings: twenty "done" each, more than a kind may keep
+  size_t linesOfTheStages = 0;
+  for (int start = 0; start < 15; start++) {
+    for (const char* stage : stages) {
+      logMessage("%s", stage);
+      if (std::strcmp(stage, "Starting RTSP handshake...") == 0) {
+        logMessage("%s", "Audio port: 48000\n");
+        logMessage("%s", "Video port: 47998\n");
+        logMessage("%s", "Control port: 47999\n");
+      }
+      if (std::strcmp(stage, "Starting video stream...") == 0) {
+        logMessage("%s", "Selected receive buffer size: 786432\n");
+        logMessage("%s", "Actual receive buffer size: 425984\n");
+      }
+      logMessage("%s", "done\n");
+    }
+    const std::vector<std::string> texts = TakeLogTexts();
+    size_t firstParts = 0;
+    size_t secondParts = 0;
+    for (size_t i = 0; i < texts.size(); i++) {
+      if (texts[i].size() > 3 && texts[i].compare(texts[i].size() - 3, 3, "...") == 0) {
+        firstParts++;
+      } else if (texts[i] == "done") {
+        secondParts++;
+        // Each "done" stands after its stage or after a line of it
+        CHECK(i > 0 && texts[i - 1] != "done");
+      } else {
+        linesOfTheStages++;
+      }
+    }
+    CHECK_EQ(firstParts, 20u);
+    CHECK_EQ(secondParts, 20u);
+    if (start == 0) {
+      CHECK_EQ(texts.size(), 45u);
+      if (texts.size() == 45) {
+        CHECK_EQ(texts[6], std::string("Starting RTSP handshake..."));
+        CHECK_EQ(texts[7], std::string("Audio port: 48000"));
+        CHECK_EQ(texts[10], std::string("done"));
+      }
+    }
+  }
+  // The lines of the stages themselves are limited like every other line of the library: ten of each of the five kinds
+  CHECK_EQ(linesOfTheStages, 5u * DiagnosticLogRing::kKindBurst);
+  // A line that only ends like a stage is not one, and a "done" within another text neither
+  for (int i = 0; i < 50; i++) {
+    char line[96];
+    snprintf(line, sizeof(line), "Waiting for frame %d...\n", i);
+    logMessage("%s", line);
+    snprintf(line, sizeof(line), "Frame %d is done\n", i);
+    logMessage("%s", line);
+  }
+  const size_t otherLines = TakeLogTexts().size();
+  CHECK_EQ(otherLines, 2u * DiagnosticLogRing::kKindBurst);
+}
+
 static void TestHandshakeWithTheKeyOfAnotherStartShowsNoPortDialog() {
   // Without an instance the ports are those of the stage (none in this stand-in), unmoved
   g_Instance = nullptr;
@@ -251,6 +320,8 @@ int main() {
                         TestLinesOfTheLibraryGoIntoTheDiagnosticLog);
   test_support::RunTest("a line of moonlight-common-c that comes once per frame doesn't fill the diagnostic log",
                         TestALineOfTheLibraryPerFrameDoesNotFillTheDiagnosticLog);
+  test_support::RunTest("the stages of every start and stop keep their two messages, which a kind would leave out",
+                        TestTheStagesOfEveryStartAndStopKeepTheirTwoMessages);
   test_support::RunTest("a handshake answered with the key of another start shows no dialog with the ports",
                         TestHandshakeWithTheKeyOfAnotherStartShowsNoPortDialog);
   test_support::RunTest("the connected control stream is posted to the front end, not for a stream being stopped",
