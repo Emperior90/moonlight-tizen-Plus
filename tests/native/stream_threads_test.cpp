@@ -192,16 +192,18 @@ class Module {
   }
   void WaitUntilInStartConnection() {
     std::unique_lock<std::mutex> lock(m_Mutex);
-    m_Changed.wait(lock, [this] { return m_InStartConnection; });
+    Wait(lock, [this] { return m_InStartConnection; }, "the connection thread reached LiStartConnection()");
   }
   void WaitUntilRunning() {
     std::unique_lock<std::mutex> lock(m_Mutex);
-    m_Changed.wait(lock, [this] { return m_Running.load(); });
+    Wait(lock, [this] { return m_Running.load(); }, "the stream is running");
   }
   // The front end: waits for the next message of the module and returns it
   std::string NextMessage() {
     std::unique_lock<std::mutex> lock(m_Mutex);
-    m_Changed.wait(lock, [this] { return !m_Posted.empty(); });
+    if (!Wait(lock, [this] { return !m_Posted.empty(); }, "the module posted a message")) {
+      return "(none)";
+    }
     const std::string message = m_Posted.front();
     m_Posted.erase(m_Posted.begin());
     return message;
@@ -212,6 +214,16 @@ class Module {
   }
 
  private:
+  // What a test waits for and never comes fails the test, instead of hanging the run
+  template <typename Condition>
+  bool Wait(std::unique_lock<std::mutex>& lock, Condition condition, const char* what) {
+    const bool met = m_Changed.wait_for(lock, std::chrono::seconds(10), condition);
+    if (!met) {
+      test_support::Check(false, what, "not within 10 seconds", __FILE__, __LINE__);
+    }
+    return met;
+  }
+
   void BeginStart() {
     if (threads.BeginStart()) {
       connectionThreadsJoinedByStart++;
@@ -430,9 +442,10 @@ static void TwoStopsStartOneStopThread() {
   module.WaitUntilInStartConnection();
   module.StopStream();
   module.ReleaseStart();
-  while (module.teardowns.load() < 2) {
+  for (int waitedMs = 0; module.teardowns.load() < 2 && waitedMs < 10000; waitedMs++) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
+  CHECK_EQ(module.teardowns.load(), 2);
   module.StopStream();
   CHECK_EQ(module.ignoredStops.load(), 3);
   CHECK_MESSAGE(module, "streamTerminated: 0");
@@ -678,7 +691,7 @@ static void TheThreadsOfThePlatformAreJoined() {
 
 int main() {
   // A join that never returns would hang the run: end it instead
-  alarm(120);
+  alarm(180);
   test_support::RunTest("a stream that starts and is stopped: the stop thread joins the connection thread, the next start the stop thread",
                         AStreamThatStartsAndIsStopped);
   test_support::RunTest("a start that fails on its own: the next start joins its connection thread",
