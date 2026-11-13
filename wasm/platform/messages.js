@@ -158,6 +158,16 @@ function replaceKnownStatsLabels(text) {
     .replace(/Pending frames:/g, t('Pending frames:'))
     .replace(/Session frames dropped by network:/g, t('Session frames dropped by network:'))
     .replace(/Session frames dropped by the TV:/g, t('Session frames dropped by the TV:'))
+    // The count behind the frames that the TV dropped, and the kinds of the rejections of the player
+    // (FormatVideoStats() in wasm/wasmplayer.cpp), each as a whole, so that a language orders them its own way
+    .replace(/\(video pipeline resets: (\d+)\)/g, function(match, resets) {
+      return t('(video pipeline resets: %1$s)', resets);
+    })
+    .replace(/buffer full (\d+) \((\d+) recovered\), keyframe required (\d+), track not ready (\d+), other (\d+) \(last code (-?\d+)\)/g,
+      function(match, bufferFull, recovered, keyframeRequired, trackNotReady, other, lastCode) {
+        return t('buffer full %1$s (%2$s recovered), keyframe required %3$s, track not ready %4$s, other %5$s (last code %6$s)',
+          bufferFull, recovered, keyframeRequired, trackNotReady, other, lastCode);
+      })
     .replace(/Session recovery keyframes:/g, t('Session recovery keyframes:'))
     .replace(/Session FEC recoveries:/g, t('Session FEC recoveries:'))
     .replace(/Worst FEC block:/g, t('Worst FEC block:'))

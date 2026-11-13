@@ -283,6 +283,16 @@
       element.setAttribute('placeholder', t(key));
     });
 
+    // The names of the buttons that show an icon or have a name beyond their text, which the Voice Guide of the TV reads
+    document.querySelectorAll('[data-i18n-aria-label]').forEach((element) => {
+      const key = element.getAttribute('data-i18n-aria-label');
+      const param = element.getAttribute('data-param');
+      if (!key) {
+        return;
+      }
+      element.setAttribute('aria-label', param ? t(key, param) : t(key));
+    });
+
     updateLocalizedSelections();
     state.refreshCallbacks.forEach((cb) => cb());
   }

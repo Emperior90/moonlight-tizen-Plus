@@ -4,7 +4,9 @@
 // up the whole stream. LiStartConnection clears that flag when it begins (Connection.c), so a stop that came before
 // would be lost; ClStageStarting(), which runs for every stage after that, sets it again. It also checks that every line
 // that the module logs with ClLogMessage() goes into the ring of the diagnostic log (wasm/diagnostic_log.hpp), from which
-// the front end takes it, and that a failed RTSP handshake whose answer had the key of another start
+// the front end takes it, that the lines of moonlight-common-c go there through the listener that the module gives the
+// library (ClLibraryLogMessage(), which Limelog() calls with the line as the argument of "%s", see limelog_test.c),
+// unchanged and limited by their kind, and that a failed RTSP handshake whose answer had the key of another start
 // (ML_ERROR_RTSP_DECRYPT_FAILED, a local patch of moonlight-common-c) shows no dialog with the ports of the handshake,
 // since the front end explains it, and that the end of the stage that connects the control stream, which releases the
 // start on the host, tells the front end ("ControlStreamConnected"), unless the stream is already being stopped.
@@ -127,6 +129,84 @@ static void TestLoggedLinesGoIntoTheDiagnosticLog() {
   CHECK_EQ(rest, std::string());
 }
 
+// The callbacks that the module hands to LiStartConnection(), which are private: an explicit template instantiation is
+// the one place where C++ lets code name a private member (as in stats_overlay_test.cpp)
+template <typename Tag, typename Tag::Type Member>
+struct PrivateMember {
+  friend typename Tag::Type Pointer(Tag) {
+    return Member;
+  }
+};
+struct ListenerCallbacksMember {
+  using Type = CONNECTION_LISTENER_CALLBACKS*;
+  friend Type Pointer(ListenerCallbacksMember);
+};
+template struct PrivateMember<ListenerCallbacksMember, &MoonlightInstance::s_ClCallbacks>;
+
+// The texts of the lines in the ring, which empties it
+static std::vector<std::string> TakeLogTexts() {
+  std::vector<std::string> texts;
+  std::istringstream records(GetDiagnosticLog().Take());
+  std::string record;
+  while (std::getline(records, record)) {
+    texts.push_back(record.substr(record.find('\t') + 1));
+  }
+  return texts;
+}
+
+static void TestLinesOfTheLibraryGoIntoTheDiagnosticLog() {
+  TakeLogTexts();
+  // What moonlight-common-c calls for each of its log lines (Limelog() of Platform.h with LC_LOG)
+  const ConnListenerLogMessage logMessage = Pointer(ListenerCallbacksMember())->logMessage;
+  CHECK(logMessage == &MoonlightInstance::ClLibraryLogMessage);
+  logMessage("%s", "Video decode unit queue overflow\n");
+  logMessage("%s", "Control message took over 10 ms to send (net latency: 3 ms | packet loss: 0.500000%)\n");
+  // A text that looks like a format is kept as it is
+  logMessage("%s", "getaddrinfo(100%d-of-%s) failed: -2\n");
+  // A line that the library logs in two parts
+  logMessage("%s", "Starting video stream...");
+  logMessage("%s", "done\n");
+  const std::vector<std::string> texts = TakeLogTexts();
+  CHECK_EQ(texts.size(), 5u);
+  if (texts.size() == 5) {
+    CHECK_EQ(texts[0], std::string("Video decode unit queue overflow"));
+    CHECK_EQ(texts[1], std::string("Control message took over 10 ms to send (net latency: 3 ms | packet loss: 0.500000%)"));
+    CHECK_EQ(texts[2], std::string("getaddrinfo(100%d-of-%s) failed: -2"));
+    CHECK_EQ(texts[3], std::string("Starting video stream..."));
+    CHECK_EQ(texts[4], std::string("done"));
+  }
+}
+
+static void TestALineOfTheLibraryPerFrameDoesNotFillTheDiagnosticLog() {
+  TakeLogTexts();
+  const ConnListenerLogMessage logMessage = Pointer(ListenerCallbacksMember())->logMessage;
+  // A network that loses a packet in every frame, for a minute of a 120 FPS stream, with a line of the app in between
+  for (int frame = 0; frame < 7200; frame++) {
+    char line[96];
+    snprintf(line, sizeof(line), "Recovered 1 video data shards from frame %d\n", 100 + frame);
+    logMessage("%s", line);
+    if (frame == 3600) {
+      MoonlightInstance::ClLogMessage("Append audio packet failed: the audio player of the TV rejected %d packets of this stream\n", 1);
+    }
+  }
+  const std::vector<std::string> texts = TakeLogTexts();
+  // The first ten of their kind (DiagnosticLogRing::kKindBurst) and the line of the app: nothing was pushed out of the
+  // ring of 256 lines, and the lines left out are counted for the next line of the kind
+  CHECK_EQ(texts.size(), static_cast<size_t>(DiagnosticLogRing::kKindBurst) + 1);
+  if (texts.size() == DiagnosticLogRing::kKindBurst + 1) {
+    CHECK_EQ(texts[0], std::string("Recovered 1 video data shards from frame 100"));
+    CHECK_EQ(texts[9], std::string("Recovered 1 video data shards from frame 109"));
+    CHECK_EQ(texts[10], std::string("Append audio packet failed: the audio player of the TV rejected 1 packets of this stream"));
+  }
+  // The lines of the app themselves are never limited
+  for (int i = 0; i < 50; i++) {
+    MoonlightInstance::ClLogMessage("Line %d of the app\n", i);
+  }
+  // CHECK_EQ() evaluates its arguments twice, so the lines are taken first
+  const size_t appLines = TakeLogTexts().size();
+  CHECK_EQ(appLines, 50u);
+}
+
 static void TestHandshakeWithTheKeyOfAnotherStartShowsNoPortDialog() {
   // Without an instance the ports are those of the stage (none in this stand-in), unmoved
   g_Instance = nullptr;
@@ -167,6 +247,10 @@ int main() {
                         TestStopBeforeTheSetupBeganIsNotLost);
   test_support::RunTest("without a stop the setup is not interrupted", TestNoInterruptWithoutAStop);
   test_support::RunTest("the lines that the module logs go into the diagnostic log", TestLoggedLinesGoIntoTheDiagnosticLog);
+  test_support::RunTest("the lines of moonlight-common-c go into the diagnostic log through the listener, unchanged",
+                        TestLinesOfTheLibraryGoIntoTheDiagnosticLog);
+  test_support::RunTest("a line of moonlight-common-c that comes once per frame doesn't fill the diagnostic log",
+                        TestALineOfTheLibraryPerFrameDoesNotFillTheDiagnosticLog);
   test_support::RunTest("a handshake answered with the key of another start shows no dialog with the ports",
                         TestHandshakeWithTheKeyOfAnotherStartShowsNoPortDialog);
   test_support::RunTest("the connected control stream is posted to the front end, not for a stream being stopped",

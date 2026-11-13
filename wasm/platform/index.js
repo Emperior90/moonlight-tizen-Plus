@@ -73,6 +73,9 @@ var lastInvokeTime = 0; // Flag indicating the last invoke time, initial value i
 var repeatTimeout = null; // Flag indicating whether the repeat timeout is set, initial value is null
 var repeatFrame = null; // Animation frame request of the running repeat action, initial value is null
 var gamepadAxisDirections = {}; // Direction (-1, 0 or 1) of each gamepad stick axis of the menus past the action threshold, keyed like repeatSource, initial value is empty
+var gamepadAxisReleases = {}; // The direction that each gamepad stick axis of the menus left last and when (performance.now()), as { direction, at }, keyed like repeatSource, initial value is empty
+var gamepadReverseSteps = {}; // Timer of the step of each gamepad stick axis into the direction opposite to the one it just left, which only counts while the stick stays there, keyed like repeatSource, initial value is empty
+var gamepadButtonTimes = {}; // When each gamepad button of the menus was pressed (a D-pad button also released) last (performance.now()), as { pressedAt, releasedAt }, keyed like repeatSource, initial value is empty
 var nonStandardGamepadNotices = new Set(); // Ids of the gamepads with a non-standard layout that the notice has shown for since the app started, initial value is empty
 var navigationTimeout = null; // Flag indicating whether the navigation timeout is set, initial value is null
 const BUILD_TYPE = '__BUILD_TYPE__'; // Placeholder for build type, which should be replaced during the build process
@@ -94,8 +97,12 @@ var isGameModeUpdateWarningPending = false; // Whether the stored settings ask f
 const REPEAT_DELAY = 350; // Repeat delay set to 350ms (milliseconds)
 const REPEAT_INTERVAL = 100; // Repeat interval set to 100ms (milliseconds)
 const ACTION_THRESHOLD = 0.5; // Threshold for initial navigation set to 0.5
+const ACTION_RELEASE_THRESHOLD = 0.3; // A stick past the action threshold keeps its direction until it is back below this, so that it doesn't step again and again while it wobbles around the action threshold (gamepad.js reports the crossing, AXIS_RELEASE_THRESHOLD)
+const STICK_REVERSE_GUARD = 200; // Time in ms after a stick left a direction in which the opposite direction only counts if the stick stays there: a stick that is let go snaps back past its centre for a moment
 const NAVIGATION_DELAY = 150; // Delay in ms of a move of the left stick in the menus, so that a diagonal stick movement doesn't make two steps
 const BUTTON_NAVIGATION_DELAY = 50; // Delay in ms of A, B, Select and Start of a gamepad in the menus, close to the keys of the remote, which act at once
+const BUTTON_REPEAT_GUARD = 150; // Time in ms after a press of A, B, Select or Start of a gamepad in which another press of the same button doesn't count: one press that the controller or the TV reports twice
+const DPAD_BOUNCE_GUARD = 40; // Longest release of a D-pad button in ms that counts as a bounce of the same press, two polls of the menus (MENU_POLL_INTERVAL_MS in gamepad.js); a new press comes at least three polls after the release
 const UPDATE_TIMESTAMP = 'lastUpdateCheck'; // Use the update check timestamp key to determine the last update check
 const UPDATE_VERSION = 'latestUpdateVersion'; // // Use the update version key to cache the latest version found
 const UPDATE_NOTICE_VERSION = 'updateNoticeVersion'; // Key of the newer version that the update notice was shown for, so that it shows once per version
@@ -239,7 +246,12 @@ function attachListeners() {
       if (view.isActive()) {
         Navigation.pop();
       } else {
+        // The drop-down opens on the option that is set, and ignores an OK right after it opened (navigation.js)
+        selectDropdownValue(elementId, view);
+        Navigation.guardAccept(view);
         Navigation.push(view);
+        // Once the menu has its place and size (the click handler of the MDL menu sets them)
+        setTimeout(() => keepDropdownOnScreen(elementId), 0);
       }
     });
   }
@@ -264,14 +276,62 @@ function attachListeners() {
   window.addEventListener('gamepadinputchanged', handleGamepadMenuInput);
 }
 
+// Select the option of a drop-down of the settings that is set, i.e. the one with the data-value of the button of its
+// row (rowId), so that the drop-down opens on it instead of on its first option or the one that was highlighted the
+// last time: a second OK then chooses what is set already, instead of e.g. 480p, 30 FPS or H.264. The drop-downs of the
+// two sliders (bitrate and audio jitter) have no options, and a value that no option has keeps the selection.
+function selectDropdownValue(rowId, view) {
+  const value = document.getElementById(rowId).getAttribute('data-value');
+  if (value === null) {
+    return;
+  }
+  const options = view.view.func();
+  for (let i = 0; i < options.length; i++) {
+    if (options[i].getAttribute && options[i].getAttribute('data-value') === value) {
+      view.view.index = i;
+      return;
+    }
+  }
+}
+
+// Scroll the settings pane so far that the drop-down of a row (rowId, the id of its button) shows completely: the
+// drop-downs of the last rows of a section (Controller type sent to the PC, Statistics position) opened beyond the bottom
+// of the screen, where two of their four options couldn't be seen. The stylesheet gives the drop-down a bottom padding,
+// which keeps that distance to the edge of the screen.
+function keepDropdownOnScreen(rowId) {
+  const button = document.getElementById(rowId);
+  const row = button ? button.closest('.setting-option') : null;
+  const container = row ? row.querySelector('.mdl-menu__container') : null;
+  const pane = document.getElementById('settings-right-pane');
+  if (!container || !pane) {
+    return;
+  }
+  const overflow = container.getBoundingClientRect().bottom - Math.min(pane.getBoundingClientRect().bottom, window.innerHeight);
+  if (overflow > 0) {
+    pane.scrollTop += Math.ceil(overflow);
+  }
+}
+
 // Map the gamepad input of the menus, which gamepad.js reports as 'gamepadinputchanged' events, to Navigation operations
 // (W3C standard layout, see wasm/gamepad.cpp). A accepts, B goes back, Select presses and Start switches like CH+ and
 // CH- of the remote, each after the short delay of the buttons. The D-pad moves right away and the left stick past the
-// action threshold after the longer navigation delay, and both repeat while held. A release, or a stick back below the threshold, only
-// stops the repeat that the same input started, so a jittering resting stick or another released button no longer
-// cancels a held D-pad. An action button still ends a repeat, since its operation runs on the focused item.
+// action threshold after the longer navigation delay, and both repeat while held. A release, or a stick back below the
+// release threshold, only stops the repeat that the same input started, so a jittering resting stick or another released
+// button no longer cancels a held D-pad. An action button still ends a repeat, since its operation runs on the focused item.
+//
+// One press must count once, whatever the controller or the TV reports for it, without a delay for the press itself:
+// - A, B, Select and Start ignore another press of the same button of the same gamepad within BUTTON_REPEAT_GUARD of
+//   the press that counted. A second press within the delay of the buttons used to push the operation back instead.
+// - A D-pad button that is released for at most DPAD_BOUNCE_GUARD and pressed again is the same press: it doesn't step
+//   again, and its repeat goes on as if it had never been released. Two deliberate presses, also 150 ms apart, are
+//   released for longer and both step.
+// - A stick direction holds until the stick is back below ACTION_RELEASE_THRESHOLD, and within STICK_REVERSE_GUARD of
+//   leaving a direction the opposite one only steps if the stick is still there when its delay is over
+//   (stepStickBack()): a stick that is let go snaps back past its centre and used to step back, e.g. from the surround
+//   quality or the bitrate that was just chosen in the Stream Menu.
 function handleGamepadMenuInput(e) {
   const gamepadIndex = e.detail.gamepad;
+  const now = performance.now();
   // Iterate through each change in the gamepad input
   e.detail.changes.forEach((change) => {
     const { type, index, pressed, value } = change;
@@ -291,20 +351,35 @@ function handleGamepadMenuInput(e) {
         14: () => Navigation.left(),
         15: () => Navigation.right(),
       };
+      const times = gamepadButtonTimes[source] || (gamepadButtonTimes[source] = { pressedAt: -Infinity, releasedAt: -Infinity });
       // Handle button press
       if (pressed) {
         if (buttonMapping[index]) {
+          // The same press reported again changes nothing: the operation of the first report stays on its way
+          if (now - times.pressedAt < BUTTON_REPEAT_GUARD) {
+            return;
+          }
+          times.pressedAt = now;
           delayedNavigation(buttonMapping[index], BUTTON_NAVIGATION_DELAY);
           // Clear repeat action and timeout for non-navigation buttons
           stopRepeatAction();
         } else if (dPadMapping[index]) {
+          if (now - times.releasedAt < DPAD_BOUNCE_GUARD) {
+            // The press that bounced goes on: no step, and its repeat starts when it would have without the bounce
+            startRepeatAction(dPadMapping[index], source, Math.max(0, REPEAT_DELAY - (now - times.pressedAt)));
+            return;
+          }
+          times.pressedAt = now;
           dPadMapping[index]();
           // Set repeat action and timeout to the mapped D-Pad button
           startRepeatAction(dPadMapping[index], source);
         }
-      } else if (repeatSource === source) {
-        // Clear repeat action and timeout if the button that started it is released
-        stopRepeatAction();
+      } else {
+        times.releasedAt = now;
+        if (repeatSource === source) {
+          // Clear repeat action and timeout if the button that started it is released
+          stopRepeatAction();
+        }
       }
     } else if (type === 'axis') {
       // Handle axis mapping: the operations for the negative and the positive direction
@@ -315,41 +390,81 @@ function handleGamepadMenuInput(e) {
       if (!axisMapping[index]) {
         return;
       }
-      const direction = value < -ACTION_THRESHOLD ? -1 : (value > ACTION_THRESHOLD ? 1 : 0);
+      const previous = gamepadAxisDirections[source] || 0;
+      // A direction holds until the stick is back below the release threshold; a new one starts past the action threshold
+      const direction = previous !== 0 && value * previous > ACTION_RELEASE_THRESHOLD ? previous :
+        (value < -ACTION_THRESHOLD ? -1 : (value > ACTION_THRESHOLD ? 1 : 0));
       // A stick that stays on the same side of the threshold only moved a little, or jitters, so it changes nothing
-      if (direction === (gamepadAxisDirections[source] || 0)) {
+      if (direction === previous) {
         return;
       }
       gamepadAxisDirections[source] = direction;
+      if (previous !== 0) {
+        if (gamepadReverseSteps[source] !== undefined) {
+          // The stick only snapped back past its centre: the step back that waited for it to stay is dropped, and the
+          // direction that it left before stays the one it left last
+          clearTimeout(gamepadReverseSteps[source]);
+          delete gamepadReverseSteps[source];
+        } else {
+          gamepadAxisReleases[source] = { direction: previous, at: now };
+        }
+        if (repeatSource === source) {
+          // Clear repeat action and timeout if the axis that started it is released
+          stopRepeatAction();
+        }
+      }
       if (direction !== 0) {
         const operation = axisMapping[index][direction < 0 ? 0 : 1];
+        const released = gamepadAxisReleases[source];
+        if (released && released.direction === -direction && now - released.at < STICK_REVERSE_GUARD) {
+          stepStickBack(operation, source, Math.max(NAVIGATION_DELAY, released.at + STICK_REVERSE_GUARD - now));
+          return;
+        }
         delayedNavigation(operation, NAVIGATION_DELAY);
         // Set repeat action and timeout to the mapped axis
         startRepeatAction(operation, source);
-      } else if (repeatSource === source) {
-        // Clear repeat action and timeout if the axis that started it is released
-        stopRepeatAction();
       }
     }
   });
 }
 
-// Start repeating a navigation operation of a held gamepad input after the repeat delay, replacing the repeat that runs
-function startRepeatAction(operation, source) {
+// Step into the direction opposite to the one that a stick just left, after the given delay in ms and only if the stick
+// is still there then (the release of the direction clears the timer, see handleGamepadMenuInput()). The step has a
+// timer of its own, so that it doesn't replace the step of the direction before it that is still on its way, which a
+// short flick of the stick leaves behind. Its repeat starts as long after the step as that of any other stick move.
+function stepStickBack(operation, source, delay) {
+  clearTimeout(gamepadReverseSteps[source]);
+  gamepadReverseSteps[source] = setTimeout(() => {
+    delete gamepadReverseSteps[source];
+    operation();
+    startRepeatAction(operation, source, REPEAT_DELAY - NAVIGATION_DELAY);
+  }, delay);
+}
+
+// Start repeating a navigation operation of a held gamepad input after the repeat delay, or after the given delay in ms,
+// replacing the repeat that runs
+function startRepeatAction(operation, source, delay) {
   stopRepeatAction();
   repeatAction = operation;
   repeatSource = source;
   lastInvokeTime = Date.now();
   repeatTimeout = setTimeout(() => {
     repeatFrame = requestAnimationFrame(repeatActionHandler);
-  }, REPEAT_DELAY);
+  }, delay === undefined ? REPEAT_DELAY : delay);
 }
 
 // Drop the gamepad navigation that is on its way: the operation of a button or stick that waits for the navigation delay
 // and the repeat of a held one, e.g. of a stick that was moved for the calibration of the sticks (button_mapping.js)
 function cancelGamepadNavigation() {
   clearTimeout(navigationTimeout);
+  cancelStickStepsBack();
   stopRepeatAction();
+}
+
+// Drop the steps of the sticks that wait for the stick to stay in the direction opposite to the one it left (stepStickBack())
+function cancelStickStepsBack() {
+  Object.keys(gamepadReverseSteps).forEach((source) => clearTimeout(gamepadReverseSteps[source]));
+  gamepadReverseSteps = {};
 }
 
 // Stop the repeat action, its pending start and its animation frame loop
@@ -893,20 +1008,39 @@ function populateSelectFields(element, start, end, selectedValue) {
   }
 }
 
-// Initialize the IP address select fields with predefined values
-function initIpAddressFields() {
-  // Find the existing select fields elements and set the values
-  const ipAddressFields = [
-    { element: 'ipAddressField1', selectedValue: 192 },
-    { element: 'ipAddressField2', selectedValue: 168 },
-    { element: 'ipAddressField3', selectedValue: 0 },
-    { element: 'ipAddressField4', selectedValue: 0 },
-  ];
+// The ids of the four number fields of the Add PC dialog
+const IP_ADDRESS_FIELDS = ['ipAddressField1', 'ipAddressField2', 'ipAddressField3', 'ipAddressField4'];
 
-  // Populate each IP address field with the selected values
-  ipAddressFields.forEach(ipAddressField => {
-    const element = document.getElementById(ipAddressField.element);
-    populateSelectFields(element, 0, 255, ipAddressField.selectedValue);
+// The numbers that the number fields of the Add PC dialog start from: the first three numbers of the IPv4 address of
+// the TV with a 0, since the PC is nearly always in the same network (e.g. 192.168.178.0 for a TV at 192.168.178.20),
+// which leaves one number to set. 192.168.0.0, the start of earlier versions, when the TV doesn't tell its address.
+function getDefaultIpAddressNumbers() {
+  try {
+    const parts = String(webapis.network.getIp()).split('.');
+    const isIpv4 = parts.length === 4 && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255);
+    // Not for an address that is none (0.0.0.0) or the TV itself (127.x.x.x)
+    if (isIpv4 && Number(parts[0]) !== 0 && Number(parts[0]) !== 127) {
+      return [Number(parts[0]), Number(parts[1]), Number(parts[2]), 0];
+    }
+  } catch (error) {
+    // The address of the TV is unknown
+  }
+  return [192, 168, 0, 0];
+}
+
+// Set the number fields of the Add PC dialog back to the numbers they start from
+function resetIpAddressFields() {
+  const numbers = getDefaultIpAddressNumbers();
+  IP_ADDRESS_FIELDS.forEach((id, i) => {
+    document.getElementById(id).value = String(numbers[i]);
+  });
+}
+
+// Initialize the IP address select fields: the numbers 0 to 255 of each field, with the number it starts from selected
+function initIpAddressFields() {
+  const numbers = getDefaultIpAddressNumbers();
+  IP_ADDRESS_FIELDS.forEach((id, i) => {
+    populateSelectFields(document.getElementById(id), 0, 255, numbers[i]);
   });
 }
 
@@ -1161,6 +1295,10 @@ function parseHostAndPortInput(rawInput) {
   return { valid: true, addr: hostPart, port: 47989 };
 }
 
+// Number of the latest connection request of the Add PC dialog, which the answer to an earlier or cancelled one is
+// ignored by, initial value is 0
+var addHostAttempt = 0;
+
 // If the `Add PC +` is selected on the host grid, then show the 
 // Add PC dialog to enter the connection details for the host PC
 function addHostDialog() {
@@ -1169,29 +1307,39 @@ function addHostDialog() {
   var addHostOverlay = document.querySelector('#addHostDialogOverlay');
   var addHostDialog = document.querySelector('#addHostDialog');
   
-  // Show the dialog and push the view
+  // Show the dialog and push the view, which opens on the address (its first item) whatever was selected the last time
   addHostOverlay.style.display = 'flex';
   addHostDialog.showModal();
   isDialogOpen = true;
+  Views.AddHostDialog.view.index = 0;
   Navigation.push(Views.AddHostDialog);
   updateIpAddressInputValidationState();
   // Remove focus from any current active element
   document.activeElement.blur();
 
+  // The Continue button is disabled while the request to the address is on its way, and only then. It used to turn
+  // disabled 2 seconds after the press for 12 seconds, whatever became of the request, so that it was dead right after
+  // the message of a failed attempt.
+  var setAddHostPending = function(pending) {
+    $('#continueAddHost').toggleClass('mdl-button--disabled', pending).prop('disabled', pending);
+  };
+
   // Cancel the operation if the Cancel button is pressed
   $('#cancelAddHost').off('click');
   $('#cancelAddHost').on('click', function() {
     console.log('%c[index.js, addHostDialog]', 'color: green;', 'Closing app dialog and returning.');
+    // The answer to a request that is still on its way no longer counts
+    addHostAttempt++;
     addHostOverlay.style.display = 'none';
     addHostDialog.close();
     isDialogOpen = false;
     Navigation.pop();
     // Re-enable the Continue button after canceling the operation
-    $('#continueAddHost').removeClass('mdl-button--disabled').prop('disabled', false);
+    setAddHostPending(false);
     // Clear the input field after canceling the operation
     $('#ipAddressTextInput').val('');
     updateIpAddressInputValidationState();
-    initIpAddressFields();
+    resetIpAddressFields();
   });
 
   // Send a connection request if the Continue button is pressed
@@ -1222,22 +1370,19 @@ function addHostDialog() {
       snackbarLog(parsedHostInput.error);
       return;
     }
-    // Disable the Continue button to prevent multiple connection requests
-    setTimeout(() => {
-      // Add disabled state after 2 seconds
-      $('#continueAddHost').addClass('mdl-button--disabled').prop('disabled', true);
-      Navigation.switch();
-      // Re-enable the Continue button after 12 seconds
-      setTimeout(() => {
-        $('#continueAddHost').removeClass('mdl-button--disabled').prop('disabled', false);
-        Navigation.switch();
-      }, 12000);
-    }, 2000);
+    // Disable the Continue button to prevent multiple connection requests, until this one is answered
+    var attempt = ++addHostAttempt;
+    setAddHostPending(true);
     // Send a connection request to the Host object based on the given IP address
     var _nvhttpHost = new NvHTTP(parsedHostInput.addr, myUniqueid, parsedHostInput.addr);
     _nvhttpHost.httpPort = parsedHostInput.port;
     console.log('%c[index.js, addHostDialog]', 'color: green;', 'Sending connection request to host address ' + _nvhttpHost.hostname);
     _nvhttpHost.refreshServerInfoAtAddress(parsedHostInput.addr).then(function(success) {
+      // The dialog was cancelled meanwhile (or opened again), so this answer came too late
+      if (attempt !== addHostAttempt) {
+        console.log('%c[index.js, addHostDialog]', 'color: green;', 'Ignoring the answer of a cancelled connection request.');
+        return;
+      }
       snackbarLog('Connecting to %1$s...', _nvhttpHost.hostname);
       // Close the dialog if the user has provided the IP address
       console.log('%c[index.js, addHostDialog]', 'color: green;', 'Closing app dialog and returning.');
@@ -1249,6 +1394,13 @@ function addHostDialog() {
       stopPollingHosts();
       // Check if we already have record of this host. If so, we'll
       // need the PPK string to ensure our pairing status is accurate.
+      // The address is cleared once the PC is paired: after a pairing that failed (e.g. a wrong PIN) the dialog opens
+      // with it again, for the next attempt
+      var clearEnteredAddress = function() {
+        $('#ipAddressTextInput').val('');
+        updateIpAddressInputValidationState();
+        resetIpAddressFields();
+      };
       if (hosts[_nvhttpHost.serverUid] != null) {
         // Update the addresses
         hosts[_nvhttpHost.serverUid].address = _nvhttpHost.address;
@@ -1258,6 +1410,7 @@ function addHostDialog() {
         pairingDialog(hosts[_nvhttpHost.serverUid], function() {
           saveHosts();
           startPollingHosts();
+          clearEnteredAddress();
         }, function() {
           // Resume background polling after the pairing flow
           startPollingHosts();
@@ -1268,26 +1421,24 @@ function addHostDialog() {
           addHostToGrid(_nvhttpHost);
           saveHosts();
           startPollingHosts();
+          clearEnteredAddress();
         }, function() {
           // Resume background polling after the pairing flow
           startPollingHosts();
         });
       }
       // Re-enable the Continue button after successful processing
-      $('#continueAddHost').removeClass('mdl-button--disabled').prop('disabled', false);
-      // Clear the input field after successful processing
-      $('#ipAddressTextInput').val('');
-      updateIpAddressInputValidationState();
-      initIpAddressFields();
+      setAddHostPending(false);
     }.bind(this), function(failure) {
+      if (attempt !== addHostAttempt) {
+        return;
+      }
       console.error('%c[index.js, addHostDialog]', 'color: green;', 'Error: Failed API object:\n', _nvhttpHost, '\n' + _nvhttpHost.toString()); // Logging both object (for console) and toString-ed object (for text logs)
       snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', _nvhttpHost.hostname || t('the PC'));
-      // Re-enable the Continue button after failure processing
-      $('#continueAddHost').removeClass('mdl-button--disabled').prop('disabled', false);
-      // Clear the input field after failure processing
-      $('#ipAddressTextInput').val('');
-      updateIpAddressInputValidationState();
-      initIpAddressFields();
+      // Re-enable the Continue button after failure processing, with the focus that a disabled button loses. The
+      // address stays as it was entered, so that a wrong number can be corrected instead of entering all of them again.
+      setAddHostPending(false);
+      Navigation.switch();
     }.bind(this));
   });
 }
@@ -1410,7 +1561,9 @@ function autoWolDialog(host, onSuccess, onCancel) {
 
   // Reset the button text to their default state
   $('#cancelAutoWol').html(t('Cancel'));
-  Views.AutoWolDialog.view.reset();
+  // The dialog opens on Cancel, its second item: on the switch above it, OK turned on 'Always wake this PC
+  // automatically' for a user who only wanted to close the dialog
+  Views.AutoWolDialog.view.index = 1;
 
   // Set the checkbox state based on the host's autoWolEnabled property
   if (host.autoWolEnabled === true) {
@@ -1543,8 +1696,8 @@ function autoWolDialog(host, onSuccess, onCancel) {
       );
       // Change the button text to "OK" to indicate that the user can acknowledge the failure
       $('#cancelAutoWol').html(t('OK'));
-      // Select OK, so that OK on the remote closes the dialog: the selection starts on the Auto-WOL switch
-      // (Views.AutoWolDialog.view.reset() above), whose focus enter() of the view restores 100 ms after the dialog opened
+      // Select OK, so that OK on the remote closes the dialog, also when the selection moved up to the Auto-WOL switch
+      // meanwhile
       if (!isClosed) {
         var wolView = Views.AutoWolDialog.view;
         if (elementId(wolView.current()) !== 'cancelAutoWol') {
@@ -1708,6 +1861,10 @@ function pushConfirmationView(view) {
 
 // Show the Host Menu dialog with host button options
 function hostMenuDialog(host) {
+  // The menu opens once: a second CH+, Play/Pause or Select before it showed otherwise put a second menu over it
+  if (document.getElementById('hostMenuDialogOverlay-' + host.serverUid)) {
+    return;
+  }
   // Create an overlay for the dialog and append it to the body
   var hostMenuDialogOverlay = $('<div>', {
     id: 'hostMenuDialogOverlay-' + host.serverUid,
@@ -1896,9 +2053,12 @@ function deleteHostDialog(host) {
     deleteHostOverlay.style.display = 'none';
     deleteHostDialog.close();
     isDialogOpen = false;
-    Navigation.pop();
-    // Reset the Hosts view navigation index to prevent possible out-of-bounds errors
+    // Select the first card of the grid, which is shorter now, before the view below marks its selection again:
+    // resetting it afterwards left the mark on another card than the selection. The grid takes over, also from the
+    // menu icon of the deleted host (HostsMenuHighlight), which is gone.
     Views.Hosts.view.reset();
+    Navigation.pop();
+    Navigation.change(Views.Hosts);
     Navigation.switch();
   });
 }
@@ -2005,12 +2165,13 @@ function hostDetailsDialog(host) {
     class: 'host-details-text',
     html: [
       t('Name: %1$s', escapeHTML(host.hostname)),
-      t('State: %1$s', escapeHTML(host.online) ? t('ONLINE') : t('OFFLINE')),
+      // The state itself decides, not its text: escapeHTML() returns a text, and 'false' counted as true
+      t('State: %1$s', host.online ? t('ONLINE') : t('OFFLINE')),
       t('Active Address: %1$s', escapeHTML(host.address) && escapeHTML(host.externalPort) ? escapeHTML(host.address) + ':' + escapeHTML(host.externalPort) : t('NULL')),
       t('UUID: %1$s', escapeHTML(host.serverUid) ? escapeHTML(host.serverUid) : t('NULL')),
       t('Local Address: %1$s', escapeHTML(host.localAddress) && escapeHTML(host.externalPort) ? escapeHTML(host.localAddress) + ':' + escapeHTML(host.externalPort) : t('NULL')),
       t('MAC Address: %1$s', escapeHTML(host.macAddress) ? escapeHTML(host.macAddress) : t('NULL')),
-      t('Pair State: %1$s', escapeHTML(host.paired) ? t('PAIRED') : t('UNPAIRED')),
+      t('Pair State: %1$s', host.paired ? t('PAIRED') : t('UNPAIRED')),
       t('Running Game ID: %1$s', escapeHTML(host.currentGame)),
       t('HTTP Port: %1$s', escapeHTML(host.httpPort) ? escapeHTML(host.httpPort) : t('NULL')),
       t('HTTPS Port: %1$s', escapeHTML(host.httpsPort) ? escapeHTML(host.httpsPort) : t('NULL'))
@@ -2460,7 +2621,10 @@ function updateAppButton(latestVersion) {
     type: 'button',
     id: 'updateAppBtn',
     class: 'mdl-button mdl-js-button mdl-button--raised mdl-button--colored',
-    'aria-label': 'Update App'
+    // Named like its text, in the language of the app, also after a change of the language (refreshUI() in i18n.js)
+    'aria-label': t('New update v%1$s', latestVersion),
+    'data-i18n-aria-label': 'New update v%1$s',
+    'data-param': latestVersion
   });
   // Create the badge icon dynamically
   var updateAppBtnBadge = $('<div>', {
@@ -2489,8 +2653,13 @@ function updateAppButton(latestVersion) {
   });
   // Append elements inside the button
   updateAppBtn.append(updateAppBtnBadge, updateAppBtnText);
+  // The button becomes the first one of the header of the hosts (Views.HostsNav in navigation.js), which moves the others
+  // one place on: keep the selection on the button that has it, since OK otherwise pressed the button before the marked
+  // one (e.g. Rescan network instead of Settings)
+  var selectedHeaderButton = Views.HostsNav.view.current();
   // Insert elements after the existing layout spacer
   $('.mdl-layout-spacer').after(updateAppBtn, updateAppBtnTooltip, extraLayoutSpacer);
+  selectHostsNavButton(selectedHeaderButton);
   // Upgrade newly added elements for MDL styling
   componentHandler.upgradeElement(updateAppBtn[0]);
   componentHandler.upgradeElement(updateAppBtnTooltip[0]);
@@ -2527,6 +2696,12 @@ function updateAppDialog(latestVersion, releaseNotes) {
   // Find the existing overlay and dialog elements
   var updateAppDialogOverlay = $('#updateAppDialogOverlay');
   var updateAppDialog = $('#updateAppDialog');
+
+  // The dialog opens once, also after a second OK on Check for updates or on the update button: showModal() of an open
+  // dialog throws on older browsers, and a second view of it would swallow the keys after Close
+  if (updateAppDialog[0].open) {
+    return;
+  }
 
   // Update the dialog text dynamically
   $('#updateAppDialogText').html(
@@ -2566,8 +2741,18 @@ function checkForAppUpdates() {
     setTimeout(() => {
       // Check if a new version update is available
       if (checkVersionUpdate(appInfo.version, latestVersion)) {
-        // Show the Update Moonlight dialog with new version and release notes to inform user to update the app
-        updateAppDialog(latestVersion, releaseNotes);
+        // The answer can take seconds, and the user may have moved on. Over a stream the dialog would cover the game
+        // and take its keys, and over another dialog or menu it would stack up, so it only opens while neither shows.
+        // Otherwise a message tells about the version, except during a stream, and the update button of the hosts
+        // header opens the dialog later.
+        if (isInGame) {
+          console.log('%c[index.js, checkForAppUpdates]', 'color: green;', 'Not showing the update dialog of version ' + latestVersion + ' during a stream.');
+        } else if (isDialogOpen || isDialogShown()) {
+          snackbarLogLong('Version %1$s is now available! Check out the latest features & improvements.', latestVersion);
+        } else {
+          // Show the Update Moonlight dialog with new version and release notes to inform user to update the app
+          updateAppDialog(latestVersion, releaseNotes);
+        }
         // Create and display the Update App button so they can access it later if they close the dialog
         updateAppButton(latestVersion);
       } else {
@@ -2695,8 +2880,11 @@ function restoreDefaultsDialog() {
     isDialogOpen = false;
     Navigation.pop();
     Navigation.switch();
-    // Show the required Restart Moonlight dialog and push the view
-    setTimeout(() => requiredRestartAppDialog(), 2000);
+    // Show the required Restart Moonlight dialog and push the view, right away: it came 2 seconds later, over whatever
+    // the user had opened meanwhile. It ignores an OK right after it opened (navigation.js), the second press of a
+    // double OK on Continue, which would restart the app before the question was read.
+    Navigation.guardAccept(Views.RestartMoonlightDialog);
+    requiredRestartAppDialog();
   });
 }
 
@@ -2730,9 +2918,13 @@ function warningDialog(title, message) {
   // Add single-button class for CSS styling when only Close button is visible
   warningDialog.classList.add('single-button');
 
-  // Show the dialog and push the view, which opens on Close, its only button
+  // Show the dialog and push the view, which opens on Close, its only button. A warning that comes while the dialog is
+  // open (e.g. after a second OK on a disabled switch) replaces its text: showModal() of an open dialog throws on older
+  // browsers, and the view stays there once (Navigation.push()).
   warningDialogOverlay.style.display = 'flex';
-  warningDialog.showModal();
+  if (!warningDialog.open) {
+    warningDialog.showModal();
+  }
   isDialogOpen = true;
   Views.WarningDialog.view.index = 0;
   Navigation.push(Views.WarningDialog);
@@ -3543,7 +3735,9 @@ function showStreamMode() {
   // Cancel a held D-Pad or stick repeat, since its release can no longer be detected, and forget the stick directions,
   // since the menus take a fresh snapshot of the gamepads when they resume
   stopRepeatAction();
+  cancelStickStepsBack();
   gamepadAxisDirections = {};
+  gamepadAxisReleases = {};
 }
 
 // Maximize the size of the Wasm module by scaling and resizing appropriately
@@ -4091,9 +4285,19 @@ function startGame(host, appID, restartKind, restartChange) {
     });
   }, function(failedRefreshInfo) {
     console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to refresh server info! Returned error was: ' + failedRefreshInfo + ' and failed server was: ' + '\n', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
+    if (launchId !== streamLaunchId) {
+      return;
+    }
     // The launch screen of a start once more still shows
-    if (isRestart && launchId === streamLaunchId) {
+    if (isRestart) {
       endStreamRestart(restartKind, 'the server info of the host could not be refreshed', restartChange);
+      return;
+    }
+    // The app list still shows, where OK otherwise seemed to do nothing, e.g. for a PC that went to sleep meanwhile
+    snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', host.hostname || t('the PC'));
+    // Close the audio scheduler that the key press opened for this start, which would otherwise keep running in the menus
+    if (isWebAudioBackendSelected() && typeof stopAudioScheduler === 'function') {
+      stopAudioScheduler();
     }
   });
 }

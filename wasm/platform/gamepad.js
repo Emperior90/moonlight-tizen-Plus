@@ -6,10 +6,12 @@ const Controller = (function() {
   // Stick values in the menus. The resting sticks of worn or third-party controllers often report a few hundredths, and
   // Chromium applies no dead zone, so a value within AXIS_REST_ZONE counts as 0, and a change smaller than
   // AXIS_CHANGE_STEP is not reported unless it crosses AXIS_MOVE_THRESHOLD, past which the menus move (ACTION_THRESHOLD
-  // in index.js). Without this, a jittering stick sent up to 200 events per second to the main thread.
+  // in index.js), or AXIS_RELEASE_THRESHOLD, below which a direction of the menus ends (ACTION_RELEASE_THRESHOLD in
+  // index.js). Without this, a jittering stick sent up to 200 events per second to the main thread.
   const AXIS_REST_ZONE = 0.15;
   const AXIS_CHANGE_STEP = 0.05;
   const AXIS_MOVE_THRESHOLD = 0.5;
+  const AXIS_RELEASE_THRESHOLD = 0.3;
   // Number of characters of a gamepad id that the stream sees: the Emscripten event struct keeps 63 bytes of it, which
   // GetControllerType() in wasm/controller_type.hpp detects the controller type from
   const STREAM_ID_LENGTH = 63;
@@ -29,9 +31,12 @@ const Controller = (function() {
     return Math.abs(value) < AXIS_REST_ZONE ? 0 : value;
   }
 
-  // Side of the move threshold that a stick value is on: -1, 0 or 1
+  // Zone of the menus that a stick value is in: past the move threshold (-2 or 2), between the release and the move
+  // threshold (-1 or 1), where a direction holds but none starts, or at rest (0)
   function moveZone(value) {
-    return value < -AXIS_MOVE_THRESHOLD ? -1 : (value > AXIS_MOVE_THRESHOLD ? 1 : 0);
+    const magnitude = Math.abs(value);
+    const zone = magnitude > AXIS_MOVE_THRESHOLD ? 2 : (magnitude > AXIS_RELEASE_THRESHOLD ? 1 : 0);
+    return value < 0 ? -zone : zone;
   }
 
   class Gamepad {

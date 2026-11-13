@@ -667,15 +667,26 @@ const Views = {
       Navigation.change(Views.Hosts);
       focusElement(Views.Hosts.view.current());
     },
-    press: function() {},
+    press: function() {
+      // CH+ and Play/Pause on the remote and Select on a gamepad open the host menu from its icon too, like OK
+      this.accept();
+    },
     switch: function() {
       focusElement(this.view.current());
     },
+    // The list is empty once the card of the host is gone (e.g. the host was deleted from its menu), so there may be
+    // nothing to mark
     enter: function() {
-      mark(this.view.current());
+      const current = this.view.current();
+      if (current) {
+        mark(current);
+      }
     },
     leave: function() {
-      unmark(this.view.current());
+      const current = this.view.current();
+      if (current) {
+        unmark(current);
+      }
     },
   },
   AddHostDialog: {
@@ -1972,11 +1983,19 @@ const Views = {
     switch: function() {
       this.view.currentCardRow(6);
     },
+    // The view is entered before showApps() built the tiles of the host (hostChosen() in index.js), so there may be
+    // nothing to mark yet: the view is entered again once the grid shows
     enter: function() {
-      mark(this.view.current());
+      const current = this.view.current();
+      if (current) {
+        mark(current);
+      }
     },
     leave: function() {
-      unmark(this.view.current());
+      const current = this.view.current();
+      if (current) {
+        unmark(current);
+      }
     },
   },
   AppsNav: {
@@ -2373,6 +2392,11 @@ const Views = {
   },
 };
 
+// How long OK is ignored after a view opened that asked for it (guardAccept()): a drop-down of the settings, which the
+// second press of a double OK or A would otherwise answer at once with the option under the selection, and the restart
+// question that follows Restore Defaults. Until then the options of a drop-down may not show yet, either.
+const ACCEPT_GUARD_MS = 300;
+
 const Navigation = (function() {
   let hasFocus = false;
 
@@ -2401,11 +2425,28 @@ const Navigation = (function() {
         return;
       }
 
-      const view = Stack.get();
+      let view = Stack.get();
+      if (view.acceptGuardUntil !== undefined && performance.now() < view.acceptGuardUntil) {
+        // The view only just opened: OK is the second press of the one that opened it, not an answer
+        if (name === 'accept') {
+          return;
+        }
+      } else if (view.isActive && !view.isActive()) {
+        // The view of a drop-down of the settings whose options no longer show, since something else than its keys
+        // closed it (a click beside it, or the click that closed a dialog over it): the view goes as well, and the key
+        // acts on the row below. Otherwise every key stayed in the hidden drop-down, where OK chose an option unseen.
+        Stack.pop();
+        view = Stack.get();
+      }
       if (view[name]) {
         view[name]();
       }
     };
+  }
+
+  // Ignore OK in a view for ACCEPT_GUARD_MS from now on, for a view that is about to open
+  function guardAccept(view) {
+    view.acceptGuardUntil = performance.now() + ACCEPT_GUARD_MS;
   }
 
   const Stack = (function() {
@@ -2416,6 +2457,17 @@ const Navigation = (function() {
     }
 
     function push(view, hostname) {
+      // A view that is already on top stays there once: a second press that opens the same menu or dialog again (two
+      // CH+ on a host, two OK on Check for updates) otherwise left a second copy of it, which swallowed the keys after
+      // the first Close
+      if (get() === view) {
+        return;
+      }
+      // A dialog that opens while a drop-down of the settings is open (e.g. the answer of a check for updates) closes
+      // the drop-down first, with its view, or takes the view of one that something else closed already
+      if (get() && get().isActive && !closeActiveVisibleMenu()) {
+        pop();
+      }
       if (get()) {
         get().leave();
       }
@@ -2490,5 +2542,6 @@ const Navigation = (function() {
     pop: Stack.pop,
     start: State.start,
     stop: State.stop,
+    guardAccept,
   };
 })();

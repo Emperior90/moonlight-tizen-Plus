@@ -1570,8 +1570,11 @@ body:not([data-view="hosts"]):not([data-view="apps"]) .launcher-hero {
 .mdl-menu__container {
   z-index: 20;
 }
+/* The bottom padding is the distance that a drop-down keeps to the bottom of the screen: it counts for the size of the
+   container, which keepDropdownOnScreen() in index.js scrolls into the pane */
 .setting-option .mdl-menu__container {
   width: 440px !important;
+  padding-bottom: 24px;
 }
 .mdl-menu__outline {
   width: 100% !important;
@@ -1977,6 +1980,13 @@ dialog::backdrop {
   font-size: 20px;
   font-weight: 700;
   line-height: 1.3;
+}
+/* The selected switch: a white ring around its row, since a label takes no focus that could show it */
+#autoWolCheckboxContainer .mdl-switch.hovered, #autoWolCheckboxContainer .mdl-switch.is-focused {
+  box-shadow: inset 0 0 0 3px #fff;
+}
+#autoWolCheckboxContainer .mdl-switch.hovered .mdl-switch__label, #autoWolCheckboxContainer .mdl-switch.is-focused .mdl-switch__label {
+  color: var(--text);
 }
 /* Support QR code */
 #supportQrCode {

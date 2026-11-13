@@ -2,7 +2,11 @@
 // ring of fixed size until the front end takes them, one record per line as "<time>\t<text>"; a line never waits for the
 // lock (a line that finds it taken is counted and the count goes in with the next line); a line that repeats the one
 // before within a second is counted instead of kept; a full ring drops its oldest lines and says how many; and a long
-// line is cut on a whole UTF-8 character. The last test logs from several threads while another one takes the lines.
+// line is cut on a whole UTF-8 character. The lines of moonlight-common-c, of which some come once per lost packet or
+// frame, are limited by their kind (their text without its numbers): the first ones are kept, then one per minute with
+// the count of those left out, and the last of them once the kind ended, so that such a line can't push the others out
+// of the log however often it comes, while every other line stays; the second part of a line that the library logs in
+// two parts goes with its first part. The last test logs from several threads while another one takes the lines.
 
 #include "../../wasm/diagnostic_log.hpp"
 
@@ -152,6 +156,247 @@ static void TestLongLinesAreCutOnACharacter() {
   CHECK_EQ(taken8, "1000\t" + std::string(236, 'b') + "\xE2\x82\xAC\n");
 }
 
+// The texts of the taken lines, without their times
+static std::vector<std::string> Texts(const std::string& taken) {
+  std::vector<std::string> texts;
+  for (const std::string& line : SplitLines(taken)) {
+    texts.push_back(line.substr(line.find('\t') + 1));
+  }
+  return texts;
+}
+
+static int CountWith(const std::vector<std::string>& texts, const char* part) {
+  int count = 0;
+  for (const std::string& text : texts) {
+    count += text.find(part) != std::string::npos ? 1 : 0;
+  }
+  return count;
+}
+
+static const uint64_t kMinute = DiagnosticLogRing::kKindRefillMs;
+static const int kBurst = static_cast<int>(DiagnosticLogRing::kKindBurst);
+
+static void TestALineOfTheLibraryPerFrameIsLimitedByItsKind() {
+  DiagnosticLogRing ring;
+  uint64_t now = 1000000;
+  // A network that loses a packet in every frame of a 60 FPS stream, which the error correction recovers, for ten
+  // minutes: 36000 lines of one kind
+  int logged = 0;
+  uint64_t last = now;
+  for (int frame = 0; frame < 36000; frame++) {
+    const std::string line = "Recovered 1 video data shards from frame " + std::to_string(4521 + frame) + "\n";
+    CHECK(ring.TryAppendLimited(now, line.c_str()));
+    logged++;
+    last = now;
+    now += 1000 / 60;
+    if (frame == 600) {
+      // A line of the app in between stays, as does a line of another kind of the library
+      ring.TryAppend(now, "The PC restarted its video encoder\n");
+      ring.TryAppendLimited(now, "Network dropped 1 frame (frame 5122)\n");
+    }
+  }
+  const std::vector<std::string> texts = Texts(ring.Take(now));
+  // The first ten, and one for each of the nine minutes after the first, which says how many came in between
+  CHECK_EQ(CountWith(texts, "Recovered 1 video data shards"), kBurst + 9);
+  CHECK_EQ(texts.size(), static_cast<size_t>(kBurst + 9 + 2));
+  if (texts.size() == static_cast<size_t>(kBurst + 9 + 2)) {
+    CHECK_EQ(texts[0], std::string("Recovered 1 video data shards from frame 4521"));
+    CHECK_EQ(texts[kBurst - 1], std::string("Recovered 1 video data shards from frame 4530"));
+    CHECK_EQ(texts[kBurst], std::string("The PC restarted its video encoder"));
+    CHECK_EQ(texts[kBurst + 1], std::string("Network dropped 1 frame (frame 5122)"));
+    // 60000 / 16 ms = 3750 lines per minute, of which the first ten were kept
+    CHECK_EQ(texts[kBurst + 2],
+             std::string("Recovered 1 video data shards from frame 8271 (3740 similar lines before it were left out)"));
+    CHECK_EQ(texts[kBurst + 3],
+             std::string("Recovered 1 video data shards from frame 12021 (3749 similar lines before it were left out)"));
+  }
+  // Every line is accounted for: the kept ones and the counts they carry, and those since the last kept one, which the
+  // last of them reports once the kind was quiet for a minute
+  int leftOut = 0;
+  for (const std::string& text : texts) {
+    const size_t note = text.find(" (");
+    if (text.find("Recovered") == 0 && note != std::string::npos) {
+      leftOut += std::stoi(text.substr(note + 2));
+    }
+  }
+  const std::string soon = ring.Take(last + kMinute - 1);
+  CHECK_EQ(soon, std::string());
+  const std::vector<std::string> late = Texts(ring.Take(last + kMinute + 5000));
+  CHECK_EQ(late.size(), 1u);
+  if (late.size() == 1) {
+    const std::string expected = "Recovered 1 video data shards from frame 40520 (the last of ";
+    CHECK_EQ(late[0].substr(0, expected.size()), expected);
+    CHECK(late[0].find(" similar lines that were left out, 65 s ago)") != std::string::npos);
+    leftOut += std::stoi(late[0].substr(expected.size()));
+  }
+  CHECK_EQ(kBurst + 9 + leftOut, logged);
+  // Reported once
+  const std::string again = ring.Take(last + 10 * kMinute);
+  CHECK_EQ(again, std::string());
+}
+
+static void TestTheKindOfALineIsItsTextWithoutItsNumbers() {
+  DiagnosticLogRing ring;
+  uint64_t now = 5000000;
+  // Three kinds that take turns, as after a lost frame: each has its own count
+  for (int i = 0; i < 50; i++) {
+    ring.TryAppendLimited(now, ("Unrecoverable frame " + std::to_string(700 + i) + ": 10+1=11 received < 12 needed\n").c_str());
+    ring.TryAppendLimited(now, ("Sending RFI request for unrecoverable frame " + std::to_string(700 + i) + "\n").c_str());
+    ring.TryAppendLimited(now, ("Invalidate reference frame request sent (" + std::to_string(690 + i) + " to " +
+                                std::to_string(700 + i) + ")\n").c_str());
+    now += 20;
+  }
+  // A line without a number is a kind too
+  for (int i = 0; i < 50; i++) {
+    ring.TryAppendLimited(now, "Video decode unit queue overflow\n");
+    ring.TryAppendLimited(now, "IDR frame request sent\n");
+    now += 300;
+  }
+  std::vector<std::string> texts = Texts(ring.Take(now));
+  CHECK_EQ(CountWith(texts, "Unrecoverable frame"), kBurst);
+  CHECK_EQ(CountWith(texts, "Sending RFI request"), kBurst);
+  CHECK_EQ(CountWith(texts, "Invalidate reference frame request sent"), kBurst);
+  CHECK_EQ(CountWith(texts, "Video decode unit queue overflow"), kBurst);
+  CHECK_EQ(CountWith(texts, "IDR frame request sent"), kBurst);
+  CHECK_EQ(texts.size(), static_cast<size_t>(5 * kBurst));
+  // The same text with other words is another kind, also with the same numbers
+  ring.TryAppendLimited(now, "Unrecoverable frame 750 (block 1 of 4): 10+1=11 received < 12 needed\n");
+  texts = Texts(ring.Take(now));
+  CHECK_EQ(texts.size(), 1u);
+  // A kind that was quiet gets one more line per minute, up to the first ten again
+  now += 3 * kMinute + 1;
+  for (int i = 0; i < 50; i++) {
+    ring.TryAppendLimited(now, ("Sending RFI request for unrecoverable frame " + std::to_string(900 + i) + "\n").c_str());
+  }
+  texts = Texts(ring.Take(now));
+  // Three minutes are three lines, of which the first reports the 40 that were left out before
+  CHECK_EQ(CountWith(texts, "Sending RFI request"), 3);
+  if (texts.size() >= 2) {
+    CHECK_EQ(texts[0], std::string("Sending RFI request for unrecoverable frame 900 (40 similar lines before it were left out)"));
+    CHECK_EQ(texts[1], std::string("Sending RFI request for unrecoverable frame 901"));
+  }
+  // The four kinds that ended meanwhile report their 40 lines each by the last of them
+  CHECK_EQ(CountWith(texts, "(the last of 40 similar lines that were left out, "), 4);
+  CHECK_EQ(CountWith(texts, "Unrecoverable frame 749: 10+1=11 received < 12 needed (the last of 40 similar lines"), 1);
+  CHECK_EQ(CountWith(texts, "IDR frame request sent (the last of 40 similar lines"), 1);
+  CHECK_EQ(texts.size(), 7u);
+  now += 60 * kMinute;
+  for (int i = 0; i < 50; i++) {
+    ring.TryAppendLimited(now, ("Sending RFI request for unrecoverable frame " + std::to_string(1000 + i) + "\n").c_str());
+  }
+  texts = Texts(ring.Take(now));
+  CHECK_EQ(CountWith(texts, "Sending RFI request"), kBurst);
+  if (!texts.empty()) {
+    CHECK_EQ(texts[0], std::string("Sending RFI request for unrecoverable frame 1000 (47 similar lines before it were left out)"));
+  }
+}
+
+static void TestTheTwoPartsOfAStageLineStayTogether() {
+  DiagnosticLogRing ring;
+  uint64_t now = 9000000;
+  // The start and the stop of a stream as Connection.c logs them: "<stage>..." and, once it is done, "done". Twenty
+  // "done" in two seconds are no flood.
+  const char* stages[] = { "Initializing platform...", "Resolving host name...", "Initializing audio stream...",
+                           "Starting RTSP handshake...", "Initializing control stream...", "Initializing video stream...",
+                           "Initializing input stream...", "Starting control stream...", "Starting video stream...",
+                           "Starting audio stream...", "Starting input stream...", "Stopping input stream...",
+                           "Stopping audio stream...", "Stopping video stream...", "Stopping control stream...",
+                           "Cleaning up input stream...", "Cleaning up video stream...", "Cleaning up control stream...",
+                           "Cleaning up audio stream...", "Cleaning up platform..." };
+  for (const char* stage : stages) {
+    ring.TryAppendLimited(now, stage);
+    now += 50;
+    ring.TryAppendLimited(now, "done\n");
+    now += 50;
+  }
+  std::vector<std::string> texts = Texts(ring.Take(now));
+  CHECK_EQ(texts.size(), 40u);
+  CHECK_EQ(CountWith(texts, "done"), 20);
+  if (texts.size() == 40) {
+    CHECK_EQ(texts[16], std::string("Starting video stream..."));
+    CHECK_EQ(texts[17], std::string("done"));
+  }
+  // A stage that fails ends with its error, which isn't limited either
+  ring.TryAppendLimited(now, "Starting RTSP handshake...");
+  ring.TryAppendLimited(now + 10, "failed: -300\n");
+  texts = Texts(ring.Take(now + 10));
+  CHECK_EQ(texts.size(), 2u);
+  // A first part that its kind leaves out leaves its second part to the kind of that part: twenty starts of one stage
+  // in a row keep ten first parts with their "done" and ten more "done"
+  now += 1000;
+  for (int i = 0; i < 2 * kBurst; i++) {
+    ring.TryAppendLimited(now, "Starting input stream...");
+    ring.TryAppendLimited(now + 1, "done\n");
+    now += 1100;
+  }
+  texts = Texts(ring.Take(now));
+  // One start of this stage was logged above, so nine more first parts are kept
+  CHECK_EQ(CountWith(texts, "Starting input stream..."), kBurst - 1);
+  CHECK_EQ(CountWith(texts, "done"), kBurst - 1 + kBurst);
+}
+
+static void TestMoreKindsThanEntriesLoseNoCount() {
+  DiagnosticLogRing ring;
+  uint64_t now = 20000000;
+  // One kind floods and goes quiet
+  for (int i = 0; i < 25; i++) {
+    ring.TryAppendLimited(now, ("Failed to decrypt control packet of size " + std::to_string(40 + i) + "\n").c_str());
+  }
+  now += 1000;
+  // Then more kinds than the ring tells apart, one line each: the oldest kind gives its entry to a new one, and the
+  // lines that it left out are reported first
+  const int kinds = static_cast<int>(DiagnosticLogRing::kKinds) + 4;
+  for (int k = 0; k < kinds; k++) {
+    ring.TryAppendLimited(now, (std::string("Line of kind ") + static_cast<char>('A' + k) + " with the number " +
+                                std::to_string(k) + "\n").c_str());
+    now += 10;
+  }
+  const std::vector<std::string> texts = Texts(ring.Take(now));
+  CHECK_EQ(CountWith(texts, "Line of kind"), kinds);
+  CHECK_EQ(CountWith(texts, "Failed to decrypt control packet"), kBurst + 1);
+  CHECK_EQ(CountWith(texts, "Failed to decrypt control packet of size 64 (the last of 15 similar lines that were left out, 1 s ago)"), 1);
+  CHECK_EQ(texts.size(), static_cast<size_t>(kinds + kBurst + 1));
+}
+
+static void TestALimitedLineNeverWaitsAndKeepsItsNote() {
+  DiagnosticLogRing ring;
+  // The lock is taken: the line is left out at once and counted like any other
+  {
+    std::lock_guard<std::mutex> guard(ring.*Pointer(RingMutexMember()));
+    std::thread writer([&]() {
+      CHECK(!ring.TryAppendLimited(1000, "Waiting for IDR frame\n"));
+    });
+    writer.join();
+  }
+  CHECK_EQ(ring.BusyCount(), 1u);
+  // The repeats of the line before are counted as for a line of the app, without using up the kind
+  for (int i = 0; i < 100; i++) {
+    ring.TryAppendLimited(2000 + i, "Waiting for IDR frame\n");
+  }
+  std::vector<std::string> texts = Texts(ring.Take(3000));
+  CHECK_EQ(texts.size(), 3u);
+  if (texts.size() == 3) {
+    CHECK_EQ(texts[0], std::string("1 lines of the native log were left out while it was busy"));
+    CHECK_EQ(texts[1], std::string("Waiting for IDR frame"));
+    CHECK_EQ(texts[2], std::string("(the line before came 99 more times)"));
+  }
+  // A long line is cut for the note about the lines left out, on a whole character: the note takes 42 of the 239
+  // bytes, and the 3-byte character at byte 197 doesn't fit whole before it
+  const std::string note = " (1 similar lines before it were left out)";
+  const std::string longTail = " " + std::string(188, 'h') + "\xE2\x82\xAC tail\n";
+  for (int i = 0; i <= kBurst; i++) {
+    ring.TryAppendLimited(5000 + i, ("Line " + std::to_string(10 + i) + longTail).c_str());
+  }
+  ring.Take(6000);
+  ring.TryAppendLimited(5000 + kMinute, ("Line 77" + longTail).c_str());
+  texts = Texts(ring.Take(5000 + kMinute));
+  CHECK_EQ(texts.size(), 1u);
+  if (texts.size() == 1) {
+    CHECK_EQ(texts[0], "Line 77 " + std::string(188, 'h') + note);
+    CHECK(texts[0].size() <= DiagnosticLogRing::kLineBytes - 1);
+  }
+}
+
 static void TestManyThreads() {
   DiagnosticLogRing ring;
   std::atomic<bool> done{false};
@@ -162,7 +407,10 @@ static void TestManyThreads() {
     writers.emplace_back([&, t]() {
       for (int i = 0; i < 20000; ++i) {
         const std::string line = "Thread " + std::to_string(t) + " line " + std::to_string(i);
-        if (ring.TryAppend(static_cast<uint64_t>(i), line.c_str())) {
+        // Two threads log like the app, two like moonlight-common-c, whose lines are limited by their kind
+        const bool appended = t < 2 ? ring.TryAppend(static_cast<uint64_t>(i), line.c_str())
+                                    : ring.TryAppendLimited(static_cast<uint64_t>(i), line.c_str());
+        if (appended) {
           kept++;
         } else {
           refused++;
@@ -192,6 +440,14 @@ int main() {
   test_support::RunTest("a line never waits for the lock: it is counted and reported with the next one", TestBusyLinesAreCountedNotAwaited);
   test_support::RunTest("a full ring drops its oldest lines and says how many", TestFullRingDropsTheOldestLines);
   test_support::RunTest("a long line is cut on a whole UTF-8 character", TestLongLinesAreCutOnACharacter);
+  test_support::RunTest("a line of the library that comes once per frame is kept ten times, then once per minute with a count",
+                        TestALineOfTheLibraryPerFrameIsLimitedByItsKind);
+  test_support::RunTest("the kind of a line of the library is its text without its numbers, and each kind has its own count",
+                        TestTheKindOfALineIsItsTextWithoutItsNumbers);
+  test_support::RunTest("the two parts of a stage line of the library stay together", TestTheTwoPartsOfAStageLineStayTogether);
+  test_support::RunTest("more kinds than the ring tells apart lose no count", TestMoreKindsThanEntriesLoseNoCount);
+  test_support::RunTest("a limited line never waits for the lock, counts as a repeat first and is cut for its note",
+                        TestALimitedLineNeverWaitsAndKeepsItsNote);
   test_support::RunTest("lines from several threads while another one takes them", TestManyThreads);
   return test_support::Summary();
 }

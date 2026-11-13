@@ -3,7 +3,9 @@
 # sanitizers, with the Emscripten 1.39 and Samsung headers replaced by the stubs in tests/native/stubs, and runs them.
 # Each test includes the source file it tests (e.g. wasm/gamepad.cpp) directly. The C tests (tests/native/*_test.c)
 # include C files of moonlight-common-c and libgamestream the same way and are built with gcc and the stubs in
-# tests/native/stubs_c. A test that needs more options, a library or another source file names them in a comment line
+# tests/native/stubs_c; a test that includes a file of moonlight-common-c gets the definitions that CMakeLists.txt gives
+# that library (LC_CHROME, LC_LOG), so that it builds the library as the release does, e.g. with the log lines going to
+# the listener of the app. A test that needs more options, a library or another source file names them in a comment line
 # '// Build with: -lcrypto' (a C++ test e.g. '// Build with: -std=gnu++17' for a file with an EM_ASM block without
 # arguments, whose stub needs the GNU form of __VA_ARGS__ as the syntax check below does); the tests are built from the
 # root of the repository, so a source file there is named from it, e.g. moonlight-common-c/src/RtspParser.c. A test that
@@ -37,6 +39,18 @@ export ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=1:abort_on_error=1}"
 export UBSAN_OPTIONS="${UBSAN_OPTIONS:-print_stacktrace=1}"
 
 failed=0
+
+# The definitions that CMakeLists.txt gives the moonlight-common-c target, for the C tests that include its files and
+# for the syntax check of its files below. A test built with a definition that the release lacks can pass on code that
+# the release doesn't have: rtsp_decrypt_error_test.c was built with -DLC_LOG while the release sent no log line of the
+# library to the app.
+# shellcheck disable=SC2207
+common_c_defines=($(sed -n '/^target_compile_definitions(moonlight-common-c PUBLIC/,/)/p' "$repo/CMakeLists.txt" |
+  sed -e 's/target_compile_definitions(moonlight-common-c PUBLIC//' -e 's/)//' | tr -s ' \n' '\n' | sed -e '/^$/d' -e 's/^/-D/'))
+if [ "${#common_c_defines[@]}" -eq 0 ]; then
+  echo "# The definitions of the moonlight-common-c target were not found in CMakeLists.txt"
+  failed=1
+fi
 for source in "$here"/*_test.cpp; do
   name="$(basename "$source" .cpp)"
   # shellcheck disable=SC2207
@@ -67,9 +81,13 @@ for source in "$here"/*_test.c; do
   fi
   # shellcheck disable=SC2207
   extra=($(sed -n 's|^// Build with: ||p' "$source"))
-  echo "# Building $name"
+  defines=()
+  if grep -q 'moonlight-common-c/' "$source"; then
+    defines=(${common_c_defines[@]+"${common_c_defines[@]}"})
+  fi
+  echo "# Building $name${defines[*]+ (${defines[*]})}"
   # (the form of the expansion keeps an empty list working with 'set -u' in the bash 3.2 of macOS)
-  (cd "$repo" && "$cc" "${cflags[@]}" -o "$out/$name" "$source" ${extra[@]+"${extra[@]}"} -lpthread)
+  (cd "$repo" && "$cc" "${cflags[@]}" ${defines[@]+"${defines[@]}"} -o "$out/$name" "$source" ${extra[@]+"${extra[@]}"} -lpthread)
   echo "# Running $name"
   if ! "$out/$name"; then
     echo "# $name failed"
@@ -141,8 +159,9 @@ for source in "$repo"/wasm/*.cpp; do
 done
 for source in "$repo"/wasm/*.c "$repo"/moonlight-common-c/src/*.c; do
   echo "# Checking the syntax of ${source#"$repo"/}"
-  if ! "$cc" -std=gnu99 -fsyntax-only -I"$here/stubs_c" -I"$repo/moonlight-common-c/src" \
-      -I"$repo/moonlight-common-c/enet/include" -I"$repo/moonlight-common-c/reedsolomon" "$source"; then
+  if ! "$cc" -std=gnu99 -fsyntax-only ${common_c_defines[@]+"${common_c_defines[@]}"} -I"$here/stubs_c" \
+      -I"$repo/moonlight-common-c/src" -I"$repo/moonlight-common-c/enet/include" \
+      -I"$repo/moonlight-common-c/reedsolomon" "$source"; then
     echo "# ${source#"$repo"/} doesn't compile"
     failed=1
   fi

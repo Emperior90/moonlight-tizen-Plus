@@ -142,6 +142,7 @@ class MoonlightInstance {
   static void ClConnectionStarted(void);
   static void ClConnectionTerminated(int errorCode);
   static void ClLogMessage(const char* format, ...);
+  static void ClLibraryLogMessage(const char* format, ...);
   static void ClControllerRumble(unsigned short controllerNumber, unsigned short lowFreqMotor, unsigned short highFreqMotor);
   static void ClConnectionStatusUpdate(int connectionStatus);
   static void ClSetHdrMode(bool enabled);

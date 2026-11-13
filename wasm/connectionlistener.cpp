@@ -134,6 +134,24 @@ void MoonlightInstance::ClLogMessage(const char* format, ...) {
   emscripten_log(EM_LOG_CONSOLE, "%s", message);
 }
 
+// The log lines of moonlight-common-c (Limelog() of its Platform.h, which the build sends here with LC_LOG, see
+// CMakeLists.txt): the loss of packets and frames, the recovery from it, the RTSP handshake, the sockets. They come from
+// the receive, decoder and control threads of the library, so this never waits, neither for the main thread nor for a
+// lock: the ring takes its lock with try_lock, and emscripten_log() writes to the console of the calling thread, as
+// Limelog() did before. Some of the lines come once per lost packet or frame, so the ring limits them by their kind
+// (DiagnosticLogRing::TryAppendLimited()); the console still gets every line.
+void MoonlightInstance::ClLibraryLogMessage(const char* format, ...) {
+  va_list va;
+  char message[1024];
+
+  va_start(va, format);
+  vsnprintf(message, sizeof(message), format, va);
+  va_end(va);
+
+  GetDiagnosticLog().TryAppendLimited(DiagnosticLogNowMs(), message);
+  emscripten_log(EM_LOG_CONSOLE, "%s", message);
+}
+
 void MoonlightInstance::ClConnectionStatusUpdate(int connectionStatus) {
   // This runs on the video receive thread, so the message is posted without waiting for the main thread,
   // otherwise the UDP socket would not be drained while the main thread is busy
@@ -157,7 +175,7 @@ CONNECTION_LISTENER_CALLBACKS MoonlightInstance::s_ClCallbacks = {
   .stageFailed = MoonlightInstance::ClStageFailed,
   .connectionStarted = MoonlightInstance::ClConnectionStarted,
   .connectionTerminated = MoonlightInstance::ClConnectionTerminated,
-  .logMessage = MoonlightInstance::ClLogMessage,
+  .logMessage = MoonlightInstance::ClLibraryLogMessage,
   .rumble = MoonlightInstance::ClControllerRumble,
   .connectionStatusUpdate = MoonlightInstance::ClConnectionStatusUpdate,
   .setHdrMode = MoonlightInstance::ClSetHdrMode,

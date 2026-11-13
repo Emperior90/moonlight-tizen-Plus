@@ -306,7 +306,7 @@ test('a restart takes held input of a pad that the menus never saw as its restin
   assert.equal(pads.changes.filter((change) => change.pressed === false).length, 4);
 });
 
-test('sticks: a rest zone of 0.15, changes of at least 0.05, and every crossing of the move threshold of index.js', () => {
+test('sticks: a rest zone of 0.15, changes of at least 0.05, and every crossing of the move and release thresholds of index.js', () => {
   const pads = loadController();
   pads.controller.startWatching();
   pads.connect(makePad(0, 17, 4));
@@ -325,6 +325,12 @@ test('sticks: a rest zone of 0.15, changes of at least 0.05, and every crossing 
   pads.changes.length = 0;
   [threshold - 0.02, threshold + 0.01, threshold + 0.03, threshold - 0.01, -threshold + 0.01, -threshold - 0.01].forEach(stick);
   assert.deepEqual(pads.changes.map((change) => change.value), [threshold - 0.02, threshold + 0.01, threshold - 0.01, -threshold + 0.01, -threshold - 0.01]);
+  // So is crossing the threshold below which a direction of the menus ends (since 2.3.1), in both directions of the stick
+  const release = loadPlatformScripts(INDEX_SCRIPTS).get('ACTION_RELEASE_THRESHOLD');
+  assert.equal(release, 0.3);
+  pads.changes.length = 0;
+  [0.6, 0.33, release - 0.01, release + 0.02, release + 0.04, -0.6, -release - 0.02, -release + 0.01].forEach(stick);
+  assert.deepEqual(pads.changes.map((change) => change.value), [0.6, 0.33, release - 0.01, release + 0.02, -0.6, -release - 0.02, -release + 0.01]);
   // Back into the rest zone reports 0
   pads.changes.length = 0;
   stick(-0.1);
