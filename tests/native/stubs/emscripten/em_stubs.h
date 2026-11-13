@@ -2,7 +2,9 @@
 // Host stand-ins for the parts of the Emscripten 1.39 headers that the app's native code uses, so that its files can be
 // built with g++ for the native tests. The EM_ASM macros keep the shape of Emscripten 1.39 (the code block is one
 // macro argument), so a code block with a comma outside parentheses fails here just like in the real build. A test
-// can answer the main-thread EM_ASM calls through em_asm_sync_hook() and the gamepad calls through em_gamepad_hook().
+// can answer the main-thread EM_ASM calls through em_asm_sync_hook() and the gamepad calls through em_gamepad_hook(),
+// and read how many lines went to the console of the calling thread with em_log_calls().
+#include <atomic>
 #include <cstdint>
 #include <cstdarg>
 typedef int EM_BOOL;
@@ -27,7 +29,8 @@ inline void emscripten_asm_const_async_on_main_thread(const char*, ...) {}
 #define EM_LOG_CONSOLE 1
 #define EM_FUNC_SIG_V 0
 #define EM_FUNC_SIG_VI 1
-inline void emscripten_log(int, const char*, ...) {}
+inline std::atomic<int>& em_log_calls() { static std::atomic<int> calls{0}; return calls; }
+inline void emscripten_log(int, const char*, ...) { em_log_calls()++; }
 inline int emscripten_sync_run_in_main_runtime_thread(int, ...) { return 0; }
 struct EmscriptenMouseEvent { long screenX, screenY, clientX, clientY, movementX, movementY; unsigned short button, buttons; int ctrlKey, shiftKey, altKey, metaKey; };
 struct EmscriptenWheelEvent { EmscriptenMouseEvent mouse; double deltaX, deltaY, deltaZ; unsigned long deltaMode; };

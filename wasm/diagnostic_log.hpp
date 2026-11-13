@@ -39,8 +39,9 @@ class DiagnosticLogRing {
   // A line that repeats the line before within this time is counted instead of kept
   static constexpr uint64_t kRepeatWindowMs = 1000;
   // The lines of moonlight-common-c (TryAppendLimited()): the lines of one kind that are kept in a row, the time after
-  // which one more of that kind is kept, and the kinds that are told apart at a time. A start and a stop of a stream
-  // log about 40 kinds and the loss of packets about 30 more, so in practice every kind has an entry of its own.
+  // which one more of that kind is kept, and the kinds that are told apart at a time. Apart from its stages, a start
+  // and a stop of a stream log about 20 kinds, and the loss of packets about 30 more, so in practice every kind has an
+  // entry of its own.
   static constexpr uint32_t kKindBurst = 10;
   static constexpr uint64_t kKindRefillMs = 60000;
   static constexpr size_t kKinds = 64;

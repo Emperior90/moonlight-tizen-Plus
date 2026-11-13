@@ -7,8 +7,8 @@
 // the front end takes it, that the lines of moonlight-common-c go there through the listener that the module gives the
 // library (ClLibraryLogMessage(), which Limelog() calls with the line as the argument of "%s", see limelog_test.c),
 // unchanged and limited by their kind, except for the two messages of each stage of a start and of a stop
-// ("Starting video stream..." and "done"), which always stay, and that a failed RTSP handshake whose answer had the key
-// of another start
+// ("Starting video stream..." and "done"), which always stay, and without the console on the main thread, whose console
+// the front end keeps for the log as well, and that a failed RTSP handshake whose answer had the key of another start
 // (ML_ERROR_RTSP_DECRYPT_FAILED, a local patch of moonlight-common-c) shows no dialog with the ports of the handshake,
 // since the front end explains it, and that the end of the stage that connects the control stream, which releases the
 // start on the host, tells the front end ("ControlStreamConnected"), unless the stream is already being stopped.
@@ -22,6 +22,7 @@
 #include <cstring>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 // The interrupt flag of moonlight-common-c (ConnectionInterrupted in Connection.c)
@@ -276,6 +277,34 @@ static void TestTheStagesOfEveryStartAndStopKeepTheirTwoMessages() {
   CHECK_EQ(otherLines, 2u * DiagnosticLogRing::kKindBurst);
 }
 
+static void TestALineOfTheLibraryOnTheMainThreadIsInTheLogOnce() {
+  TakeLogTexts();
+  const ConnListenerLogMessage logMessage = Pointer(ListenerCallbacksMember())->logMessage;
+  // From a thread of the library: into the ring and to the console of that thread, which nothing else reads
+  int before = em_log_calls();
+  std::thread receiver([&]() {
+    logMessage("%s", "Network dropped 1 frame (frame 4521)\n");
+  });
+  receiver.join();
+  CHECK_EQ(em_log_calls() - before, 1);
+  // From the main thread, which loaded the module (here the one that runs the tests): into the ring only. The front end
+  // keeps what the console of the page gets as lines of the app, where this one would be a second time and unlimited.
+  before = em_log_calls();
+  logMessage("%s", "Input queue reached maximum size limit\n");
+  CHECK_EQ(em_log_calls() - before, 0);
+  const std::vector<std::string> texts = TakeLogTexts();
+  CHECK_EQ(texts.size(), 2u);
+  if (texts.size() == 2) {
+    CHECK_EQ(texts[0], std::string("Network dropped 1 frame (frame 4521)"));
+    CHECK_EQ(texts[1], std::string("Input queue reached maximum size limit"));
+  }
+  // The lines of the app go to the console of every thread as before
+  before = em_log_calls();
+  MoonlightInstance::ClLogMessage("A line of the app\n");
+  CHECK_EQ(em_log_calls() - before, 1);
+  TakeLogTexts();
+}
+
 static void TestHandshakeWithTheKeyOfAnotherStartShowsNoPortDialog() {
   // Without an instance the ports are those of the stage (none in this stand-in), unmoved
   g_Instance = nullptr;
@@ -322,6 +351,8 @@ int main() {
                         TestALineOfTheLibraryPerFrameDoesNotFillTheDiagnosticLog);
   test_support::RunTest("the stages of every start and stop keep their two messages, which a kind would leave out",
                         TestTheStagesOfEveryStartAndStopKeepTheirTwoMessages);
+  test_support::RunTest("a line of moonlight-common-c on the main thread goes to the ring only, on another thread also to its console",
+                        TestALineOfTheLibraryOnTheMainThreadIsInTheLogOnce);
   test_support::RunTest("a handshake answered with the key of another start shows no dialog with the ports",
                         TestHandshakeWithTheKeyOfAnotherStartShowsNoPortDialog);
   test_support::RunTest("the connected control stream is posted to the front end, not for a stream being stopped",
