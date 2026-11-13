@@ -14,7 +14,7 @@
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
-const { openApp, readStorage, reloadApp, startHarness, waitForStorage } = require('./harness');
+const { DROPDOWN_OK_WAIT_MS, openApp, readStorage, reloadApp, startHarness, waitForStorage } = require('./harness');
 
 let harness;
 before(async () => {
@@ -219,12 +219,14 @@ test('the setting offers the four corners, top left by default, reached with the
     }
     assert.equal(await page.evaluate(() => Views.AdvancedSettings.view.current()), 'selectStatsPosition');
     assert.equal(await page.evaluate(() => document.activeElement.id), 'selectStatsPosition');
-    // OK opens the menu, DOWN to Bottom right, OK chooses it
+    // OK opens the menu on Top left, which is set, DOWN to Bottom right, OK chooses it
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => isPopupMenuActive('statsPositionMenu'));
+    assert.equal(await page.evaluate(() => $('ul.statsPositionMenu li.hovered').attr('data-value')), 'top-left');
     for (let i = 0; i < 3; i++) {
       await page.keyboard.press('ArrowDown');
     }
+    await page.waitForTimeout(DROPDOWN_OK_WAIT_MS);
     await page.keyboard.press('Enter');
     await waitForStorage(page, (values) => values.statsPosition === 'bottom-right');
     await page.waitForFunction(() => document.activeElement && document.activeElement.id === 'selectStatsPosition', null, { timeout: 3000 });

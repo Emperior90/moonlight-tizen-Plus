@@ -382,8 +382,7 @@ function openStreamMenu() {
   // Give the menu the focus at once, so that the first key already moves in it
   Navigation.switch();
   // Read the gamepads in the menu. The polling takes a fresh snapshot, so the held Select + Start don't press anything.
-  stopRepeatAction();
-  gamepadAxisDirections = {};
+  resetGamepadMenuInput();
   Controller.startWatching();
 }
 
@@ -402,8 +401,7 @@ function closeStreamMenu(resume) {
   }
   // The WebAssembly module reads the gamepads again
   Controller.stopWatching();
-  stopRepeatAction();
-  gamepadAxisDirections = {};
+  resetGamepadMenuInput();
   clearTimeout(navigationTimeout);
   Navigation.pop();
   Navigation.stop();

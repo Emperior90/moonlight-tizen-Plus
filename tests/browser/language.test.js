@@ -17,7 +17,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { REPO_ROOT } = require('../lib/dev-modules');
-const { openApp, startHarness, waitForStorage } = require('./harness');
+const { DROPDOWN_OK_WAIT_MS, openApp, startHarness, waitForStorage } = require('./harness');
 const { forEachTextWidth } = require('./text-stress');
 
 let harness;
@@ -95,9 +95,12 @@ test('the language menu lists Auto and each language by its own name, and a choi
     assert.deepEqual(names, [{ code: 'en-US', name: 'English' }, { code: 'de-DE', name: 'Deutsch' }, { code: 'es-ES', name: 'Español' },
       { code: 'fr-FR', name: 'Français' }, { code: 'pt-BR', name: 'Português (Brasil)' }]);
 
-    // DOWN to Deutsch (Auto, English, Deutsch) and OK: the page turns German, the choice is stored
+    // The menu opens on Auto, which is set. DOWN to Deutsch (Auto, English, Deutsch) and OK: the page turns German, the
+    // choice is stored
+    assert.equal(await page.evaluate(() => $('ul.languageMenu li.hovered').attr('data-value')), 'auto');
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowDown');
+    await page.waitForTimeout(DROPDOWN_OK_WAIT_MS);
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => document.documentElement.getAttribute('lang') === 'de-DE');
     await waitForStorage(page, (values) => values.languagePreference === 'de-DE');
@@ -124,7 +127,13 @@ test('a stored language wins over the TV, Auto follows the TV again, and a langu
     assert.deepEqual(await languageButton(page), ['de-DE', 'Deutsch', 'de-DE']);
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => isPopupMenuActive('languageMenu'));
-    // The highlight starts on the first entry, Auto
+    // The highlight starts on the language that is set, Deutsch (on the first entry, Auto, before 2.3.1): UP over English
+    // to Auto
+    assert.equal(await page.evaluate(() => $('ul.languageMenu li.hovered').attr('data-value')), 'de-DE');
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowUp');
+    assert.equal(await page.evaluate(() => $('ul.languageMenu li.hovered').attr('data-value')), 'auto');
+    await page.waitForTimeout(DROPDOWN_OK_WAIT_MS);
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => document.documentElement.getAttribute('lang') === 'pt-BR');
     await waitForStorage(page, (values) => values.languagePreference === 'auto');
@@ -206,6 +215,7 @@ test('Français with the remote and Español with a gamepad translate the page, 
     for (let i = 0; i < 4; i++) {
       await page.keyboard.press('ArrowDown');
     }
+    await page.waitForTimeout(DROPDOWN_OK_WAIT_MS);
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => document.documentElement.getAttribute('lang') === 'fr-FR');
     await waitForStorage(page, (values) => values.languagePreference === 'fr-FR');

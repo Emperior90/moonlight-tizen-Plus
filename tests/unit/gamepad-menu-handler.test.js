@@ -12,6 +12,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
+const { REPO_ROOT } = require('../lib/dev-modules');
 const { INDEX_SCRIPTS, loadPlatformScripts } = require('./helpers/platform-loader');
 
 const NAVIGATION_API = ['up', 'down', 'left', 'right', 'accept', 'back', 'press', 'switch', 'push', 'change', 'pop', 'start', 'stop', 'guardAccept'];
@@ -538,4 +541,53 @@ test('the same buttons of two pads are told apart', () => {
   menus.send([release(13)], 1);
   menus.clock.advance(900);
   assert.ok(menus.count('down') > 5, 'pad 0 keeps repeating: ' + menus.count('down'));
+});
+
+test('a start or stop of the gamepad polling drops what a stick still does in the menus', () => {
+  // A stick that swung to the other side when the Stream Menu closed, or a stream started: its release is never
+  // reported, so the step back that waits for it, and the repeat after it, would run on for the rest of the stream
+  let menus = loadMenus();
+  menus.send([axis(1, 0.9)]);
+  menus.clock.advance(220);
+  menus.send([axis(1, -0.6)]);
+  menus.platform.get('resetGamepadMenuInput')();
+  menus.clock.advance(3000);
+  assert.deepEqual(menus.operations, ['down']);
+  assert.equal(menus.platform.get('repeatAction'), null);
+
+  // The direction that the stick left is forgotten as well: a short flick into the other direction right afterwards is
+  // a move like any other, not a stick that snaps back
+  menus = loadMenus();
+  menus.send([axis(1, 0.9)]);
+  menus.clock.advance(220);
+  menus.send([axis(1, 0)]);
+  menus.platform.get('resetGamepadMenuInput')();
+  menus.clock.advance(50);
+  menus.send([axis(1, -0.9)]);
+  menus.clock.advance(100);
+  menus.send([axis(1, 0)]);
+  menus.clock.advance(1000);
+  assert.deepEqual(menus.operations, ['down', 'up']);
+
+  // A held stick or D-pad stops repeating, and the stick steps again once the menus are back
+  menus = loadMenus();
+  menus.send([axis(0, 0.9)]);
+  menus.clock.advance(600);
+  const moves = menus.count('right');
+  assert.ok(moves >= 2, 'repeating: ' + moves);
+  menus.platform.get('resetGamepadMenuInput')();
+  menus.clock.advance(2000);
+  assert.equal(menus.count('right'), moves);
+  menus.send([axis(0, 0.8)]);
+  menus.clock.advance(150);
+  assert.equal(menus.count('right'), moves + 1, 'the direction held before the reset is forgotten');
+  menus.send([axis(0, 0)]);
+  assert.deepEqual(menus.errors(), []);
+
+  // The start of a stream and the Stream Menu, when it opens and closes, reset this way
+  const source = (file) => fs.readFileSync(path.join(REPO_ROOT, 'wasm/platform', file), 'utf8');
+  const body = (text, name) => text.slice(text.indexOf('function ' + name + '('), text.indexOf('\n}\n', text.indexOf('function ' + name + '(')));
+  assert.match(body(source('index.js'), 'showStreamMode'), /resetGamepadMenuInput\(\);/);
+  assert.match(body(source('menus.js'), 'openStreamMenu'), /resetGamepadMenuInput\(\);\s+Controller\.startWatching\(\);/);
+  assert.match(body(source('menus.js'), 'closeStreamMenu'), /Controller\.stopWatching\(\);\s+resetGamepadMenuInput\(\);/);
 });

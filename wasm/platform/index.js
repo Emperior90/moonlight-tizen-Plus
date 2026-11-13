@@ -467,6 +467,17 @@ function cancelStickStepsBack() {
   gamepadReverseSteps = {};
 }
 
+// Forget what the sticks of the gamepads did in the menus, and stop what a held D-pad or stick still does there: for a
+// start or stop of the polling of the gamepads (a stream starts, the Stream Menu opens or closes), after which the
+// release of a held input can no longer be detected and the menus take a fresh snapshot of the gamepads. Without it a
+// step or a repeat of a stick could run on after the menus closed.
+function resetGamepadMenuInput() {
+  stopRepeatAction();
+  cancelStickStepsBack();
+  gamepadAxisDirections = {};
+  gamepadAxisReleases = {};
+}
+
 // Stop the repeat action, its pending start and its animation frame loop
 function stopRepeatAction() {
   repeatAction = null;
@@ -2681,7 +2692,7 @@ function updateAppButton(latestVersion) {
         // Check if a new version update is available
         if (checkVersionUpdate(appInfo.version, latestVersion)) {
           // Show the Update Moonlight dialog with new version and release notes to inform user to update the app
-          updateAppDialog(latestVersion, releaseNotes);
+          offerAppUpdate(latestVersion, releaseNotes);
         }
       }, 500);
     }).catch(error => {
@@ -2732,27 +2743,42 @@ function updateAppDialog(latestVersion, releaseNotes) {
   Navigation.push(Views.UpdateMoonlightDialog);
 }
 
-// Check for updates when the Check for Updates button is pressed
+// Tell the user about a newer version once the answer of GitHub is there. The answer can take seconds, and the user may
+// have moved on: over a stream the dialog would cover the game and take its keys, and over another dialog it would stack
+// up, so the Update Moonlight dialog only opens while neither shows. Over another dialog a message names the version
+// instead, during a stream nothing shows, and the update button of the hosts header opens the dialog later.
+function offerAppUpdate(latestVersion, releaseNotes) {
+  if (isInGame) {
+    console.log('%c[index.js, offerAppUpdate]', 'color: green;', 'Not showing the update dialog of version ' + latestVersion + ' during a stream.');
+  } else if (document.querySelector('#updateAppDialog').open) {
+    console.log('%c[index.js, offerAppUpdate]', 'color: green;', 'The update dialog shows already.');
+  } else if (isDialogOpen || isDialogShown()) {
+    snackbarLogLong('Version %1$s is now available! Check out the latest features & improvements.', latestVersion);
+  } else {
+    // Show the Update Moonlight dialog with new version and release notes to inform user to update the app
+    updateAppDialog(latestVersion, releaseNotes);
+  }
+}
+
+// Whether a check for updates that the Check for Updates button started is on its way, initial value is false
+var isAppUpdateCheckRunning = false;
+
+// Check for updates when the Check for Updates button is pressed. One check runs at a time: a second press while the
+// first one waits for its answer (e.g. a double OK) neither asks GitHub again nor shows its messages a second time.
 function checkForAppUpdates() {
+  if (isAppUpdateCheckRunning) {
+    return;
+  }
+  isAppUpdateCheckRunning = true;
   console.log('%c[index.js, checkForAppUpdates]', 'color: green;', 'Checking for new application updates...');
   snackbarLog('Checking for available Moonlight updates...');
   // Fetch the latest release data from the GitHub API
   fetchLatestRelease().then(({ latestVersion, releaseNotes }) => {
     setTimeout(() => {
+      isAppUpdateCheckRunning = false;
       // Check if a new version update is available
       if (checkVersionUpdate(appInfo.version, latestVersion)) {
-        // The answer can take seconds, and the user may have moved on. Over a stream the dialog would cover the game
-        // and take its keys, and over another dialog or menu it would stack up, so it only opens while neither shows.
-        // Otherwise a message tells about the version, except during a stream, and the update button of the hosts
-        // header opens the dialog later.
-        if (isInGame) {
-          console.log('%c[index.js, checkForAppUpdates]', 'color: green;', 'Not showing the update dialog of version ' + latestVersion + ' during a stream.');
-        } else if (isDialogOpen || isDialogShown()) {
-          snackbarLogLong('Version %1$s is now available! Check out the latest features & improvements.', latestVersion);
-        } else {
-          // Show the Update Moonlight dialog with new version and release notes to inform user to update the app
-          updateAppDialog(latestVersion, releaseNotes);
-        }
+        offerAppUpdate(latestVersion, releaseNotes);
         // Create and display the Update App button so they can access it later if they close the dialog
         updateAppButton(latestVersion);
       } else {
@@ -2761,6 +2787,7 @@ function checkForAppUpdates() {
       }
     }, 1500);
   }).catch(error => {
+    isAppUpdateCheckRunning = false;
     console.error('%c[index.js, checkForAppUpdates]', 'color: green;', 'Error: Failed to fetch the release data!', error);
     snackbarLogLong('Unable to check for updates right now. Please try again later!');
   });
@@ -2903,6 +2930,12 @@ function setWarningButtonLabels(isOptimalSettings) {
 }
 
 function warningDialog(title, message) {
+  // After a failure of the streaming engine its warning stays until its Close button restarts the app
+  // (onNativeModuleFailure()): a warning that comes later would replace its text and take the restart off the button
+  if (isNativeModuleFailureShown) {
+    console.warn('%c[index.js, warningDialog]', 'color: green;', 'Warning: Not showing "' + title + '" over the warning of the streaming engine failure.');
+    return;
+  }
   // Find the existing overlay and dialog elements
   var warningDialogOverlay = document.querySelector('#warningDialogOverlay');
   var warningDialog = document.querySelector('#warningDialog');
@@ -3003,6 +3036,8 @@ function wakeOnLanWarningDialog(host) {
 // lock, so nothing here calls into it: the stream view is torn down on the JS side only, and Moonlight restarts once
 // the dialog is closed. Only the first failure is handled, because a crash can cascade into more.
 var isNativeModuleFailed = false;
+// Whether the warning of that failure shows, which stays until its Close button restarts the app, initial value is false
+var isNativeModuleFailureShown = false;
 function onNativeModuleFailure(details) {
   if (isNativeModuleFailed) {
     return;
@@ -3032,6 +3067,7 @@ function onNativeModuleFailure(details) {
   }
 
   warningDialog('Streaming engine error', 'A part of the streaming engine stopped unexpectedly. Moonlight will restart now; you can resume the game afterwards.');
+  isNativeModuleFailureShown = true;
   // Restart once the dialog is closed, after its own close handler
   $('#closeWarning').on('click', function() {
     restartApplication();
@@ -3734,10 +3770,7 @@ function showStreamMode() {
   Controller.stopWatching();
   // Cancel a held D-Pad or stick repeat, since its release can no longer be detected, and forget the stick directions,
   // since the menus take a fresh snapshot of the gamepads when they resume
-  stopRepeatAction();
-  cancelStickStepsBack();
-  gamepadAxisDirections = {};
-  gamepadAxisReleases = {};
+  resetGamepadMenuInput();
 }
 
 // Maximize the size of the Wasm module by scaling and resizing appropriately

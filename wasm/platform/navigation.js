@@ -2420,23 +2420,25 @@ const Navigation = (function() {
         return;
       }
 
+      let view = Stack.get();
+      const isGuarded = view.acceptGuardUntil !== undefined && performance.now() < view.acceptGuardUntil;
+      if (!isGuarded && view.isActive && !view.isActive()) {
+        // The view of a drop-down of the settings whose options no longer show, since something else than its keys
+        // closed it (a click beside it): the view goes as well, and the key acts on the row below. Otherwise every key
+        // stayed in the hidden drop-down, where OK chose an option unseen. Right after it opened, its options don't
+        // show yet (the menu shows them with the next frame), so the view stays.
+        Stack.pop();
+        view = Stack.get();
+      }
+
       if (!hasFocus) {
         focus();
         return;
       }
 
-      let view = Stack.get();
-      if (view.acceptGuardUntil !== undefined && performance.now() < view.acceptGuardUntil) {
-        // The view only just opened: OK is the second press of the one that opened it, not an answer
-        if (name === 'accept') {
-          return;
-        }
-      } else if (view.isActive && !view.isActive()) {
-        // The view of a drop-down of the settings whose options no longer show, since something else than its keys
-        // closed it (a click beside it, or the click that closed a dialog over it): the view goes as well, and the key
-        // acts on the row below. Otherwise every key stayed in the hidden drop-down, where OK chose an option unseen.
-        Stack.pop();
-        view = Stack.get();
+      // The view only just opened: OK is the second press of the one that opened it, not an answer
+      if (isGuarded && name === 'accept') {
+        return;
       }
       if (view[name]) {
         view[name]();

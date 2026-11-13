@@ -1,4 +1,9 @@
-FROM ubuntu:22.04 AS sdk
+# The base image is pinned by its digest, so that every build starts from the same image, while the tag ubuntu:22.04
+# moves on to newer images. The digest is the one of the image index of ubuntu:22.04 (all platforms) that Docker Hub
+# served on 13 November 2026. Docker pulls by the digest and ignores the tag next to it. The last stage of this file
+# starts from the same image with the same digest. To take a newer image, replace the digest in both FROM lines and in
+# docs/BUILD.md with the one that `docker buildx imagetools inspect ubuntu:22.04` prints.
+FROM ubuntu:22.04@sha256:74b12b11ffa550fba1929ad4d8d16533c34f6612728469671afba1b03b66881c AS sdk
 
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Etc/UTC
@@ -24,7 +29,10 @@ USER moonlight
 WORKDIR /home/moonlight
 
 # Install Tizen Studio CLI and configure the toolchain path
-RUN aria2c -x 5 -s 5 -o web-cli_Tizen_Studio_6.1_ubuntu-64.bin 'https://download.tizen.org/sdk/Installer/tizen-studio_6.1/web-cli_Tizen_Studio_6.1_ubuntu-64.bin'
+# The installer isn't checked against a checksum yet, because its SHA-256 isn't recorded (docs/BUILD.md, "What the build
+# checks", says how to add the check). Until then the build prints the SHA-256 of the file it downloaded into its log.
+RUN aria2c -x 5 -s 5 -o web-cli_Tizen_Studio_6.1_ubuntu-64.bin 'https://download.tizen.org/sdk/Installer/tizen-studio_6.1/web-cli_Tizen_Studio_6.1_ubuntu-64.bin' && \
+	sha256sum web-cli_Tizen_Studio_6.1_ubuntu-64.bin
 RUN chmod a+x web-cli_Tizen_Studio_6.1_ubuntu-64.bin
 RUN ./web-cli_Tizen_Studio_6.1_ubuntu-64.bin --accept-license /home/moonlight/tizen-studio
 ENV PATH=/home/moonlight/tizen-studio/tools/ide/bin:/home/moonlight/tizen-studio/tools:${PATH}
@@ -48,7 +56,9 @@ RUN sed -i 's|/home/moonlight/tizen-studio-data/keystore/author/Moonlight.pwd||'
 RUN sed -i 's|/home/moonlight/tizen-studio-data/tools/certificate-generator/certificates/distributor/tizen-distributor-signer.pwd|tizenpkcs12passfordsigner|' /home/moonlight/tizen-studio-data/profile/profiles.xml
 
 # Install Samsung Emscripten SDK and configure Java path for closure compiler
-RUN aria2c -x 5 -s 5 -o emscripten-1.39.4.7-linux64.zip 'https://developer.samsung.com/smarttv/file/a5013a65-af11-4b59-844f-2d34f14d19a9'
+# Like the installer of Tizen Studio, the archive isn't checked against a checksum yet: the build prints its SHA-256
+RUN aria2c -x 5 -s 5 -o emscripten-1.39.4.7-linux64.zip 'https://developer.samsung.com/smarttv/file/a5013a65-af11-4b59-844f-2d34f14d19a9' && \
+	sha256sum emscripten-1.39.4.7-linux64.zip
 RUN unzip emscripten-1.39.4.7-linux64.zip
 
 # Replace deprecated OpenSSL download URL in Emscripten SDK ports to prevent build failure caused by invalid upstream path
@@ -195,8 +205,8 @@ RUN rm -rf \
 FROM scratch AS wgt
 COPY --from=base /home/moonlight/Moonlight*.wgt /
 
-# Use a multi-stage build to reclaim space from deleted files
-FROM ubuntu:22.04
+# Use a multi-stage build to reclaim space from deleted files. The image is the one of the first stage, by the same digest
+FROM ubuntu:22.04@sha256:74b12b11ffa550fba1929ad4d8d16533c34f6612728469671afba1b03b66881c
 COPY --from=base / /
 USER moonlight
 WORKDIR /home/moonlight

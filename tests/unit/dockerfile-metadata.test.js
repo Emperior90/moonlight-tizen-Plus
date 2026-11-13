@@ -18,40 +18,14 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { REPO_ROOT } = require('../lib/dev-modules');
+const { readDockerfile, dockerRunCommands } = require('./helpers/dockerfile');
 const { createPlatformContext } = require('./helpers/platform-loader');
 
 const INDEX_PATH = 'moonlight-tizen/wasm/platform/index.js';
 
-// Return the RUN instructions of the Dockerfile as the shell commands Docker runs
-function dockerRunCommands() {
-  const lines = fs.readFileSync(path.join(REPO_ROOT, 'Dockerfile'), 'utf8').split(/\r?\n/);
-  const commands = [];
-  let current = null;
-  lines.forEach((line) => {
-    // Docker drops comment lines, also inside an instruction that continues over several lines
-    if (/^\s*#/.test(line)) {
-      return;
-    }
-    if (current === null) {
-      if (!/^RUN\s/.test(line)) {
-        return;
-      }
-      current = '';
-      line = line.replace(/^RUN\s/, '');
-    }
-    if (/\\$/.test(line)) {
-      current += line.slice(0, -1);
-    } else {
-      commands.push(current + line);
-      current = null;
-    }
-  });
-  return commands;
-}
-
 // The RUN instruction that injects the build metadata
 function metadataCommand() {
-  const matching = dockerRunCommands().filter((command) => command.includes('__REPO_OWNER__'));
+  const matching = dockerRunCommands(readDockerfile()).filter((command) => command.includes('__REPO_OWNER__'));
   assert.equal(matching.length, 1, 'expected one RUN instruction that replaces the repository placeholders');
   return matching[0];
 }

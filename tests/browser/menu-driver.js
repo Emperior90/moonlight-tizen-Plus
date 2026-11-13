@@ -74,10 +74,14 @@ function watchMenus() {
   window.__snackbars = [];
   const snackbar = document.querySelector('#snackbar').MaterialSnackbar;
   const show = snackbar.showSnackbar.bind(snackbar);
-  // showSnackbar() runs once for a message, also for one that waits behind another: the snackbar shows a waiting
-  // message itself, without this function
+  // A message that waits behind another one comes through showSnackbar() a second time, when the snackbar takes it from
+  // its queue, with the same object: it counts once, as the user sees it once
+  const counted = new WeakSet();
   snackbar.showSnackbar = (data) => {
-    window.__snackbars.push(data.message);
+    if (!counted.has(data)) {
+      counted.add(data);
+      window.__snackbars.push(data.message);
+    }
     show(data);
   };
 }

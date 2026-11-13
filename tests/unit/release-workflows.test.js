@@ -502,7 +502,8 @@ test('the release builds only the widget files, writes them to the runner and pu
 
 test('the target wgt of the Dockerfile holds only the widget file, and a plain docker build still gives the full image', () => {
   const dockerfile = fs.readFileSync(path.join(REPO_ROOT, 'Dockerfile'), 'utf8');
-  const stages = dockerfile.split('\n').filter((line) => /^FROM /.test(line));
+  // The stages, without the digest that pins the image of Ubuntu (dockerfile-downloads.test.js checks it)
+  const stages = dockerfile.split('\n').filter((line) => /^FROM /.test(line)).map((line) => line.replace(/@sha256:[0-9a-f]{64}(?= |$)/, ''));
   assert.deepEqual(stages, ['FROM ubuntu:22.04 AS sdk', 'FROM sdk AS base', 'FROM scratch AS wgt', 'FROM ubuntu:22.04']);
   const wgt = dockerfile.slice(dockerfile.indexOf('FROM scratch AS wgt'), dockerfile.lastIndexOf('FROM ubuntu:22.04'));
   assert.deepEqual(wgt.split('\n').filter((line) => line.trim() !== '' && !/^#/.test(line)),
