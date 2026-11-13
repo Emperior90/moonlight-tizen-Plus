@@ -97,7 +97,8 @@ done
 
 # Build the Opus library from the files and definitions that CMakeLists.txt gives it (only the decoder: the app never
 # encodes) into a static library, as the release build does, then link and run tests/native/opus_decoder/decode.c,
-# which decodes with the functions of the app. A file that the decoder needs and the list leaves out fails the link.
+# which decodes with the functions of the app, and the C++ tests of that folder. A file that the decoder needs and the
+# list leaves out fails the link.
 opus_out="$out/opus"
 rm -rf "$opus_out"
 mkdir -p "$opus_out"
@@ -121,6 +122,26 @@ if ! "$cc" -std=gnu99 -O1 -I"$repo/opus/include" -o "$opus_out/decode" "$here/op
   echo "# The Opus decoder of CMakeLists.txt doesn't link or decode"
   failed=1
 fi
+
+# The C++ tests that need this library instead of a stand-in (tests/native/opus_decoder/*_test.cpp), built like the
+# tests above: opus_decoder/app_decoder_test.cpp runs the audio decoder of the app (wasm/auddec.cpp) with it, so that
+# the leak check of the address sanitizer sees a decoder that the app doesn't destroy (the library itself is built
+# without the sanitizers, which still follow its allocations).
+for source in "$here"/opus_decoder/*_test.cpp; do
+  [ -e "$source" ] || continue
+  name="$(basename "$source" .cpp)"
+  echo "# Building opus_decoder/$name"
+  if ! (cd "$repo" && "$cxx" "${flags[@]}" -std=gnu++17 -o "$opus_out/$name" "$source" "$opus_out/libopus.a" -lm -lpthread); then
+    echo "# opus_decoder/$name doesn't build"
+    failed=1
+    continue
+  fi
+  echo "# Running opus_decoder/$name"
+  if ! "$opus_out/$name"; then
+    echo "# opus_decoder/$name failed"
+    failed=1
+  fi
+done
 
 # The local patch of opus/celt/arch.h (tests/unit/vendored-opus-patch.test.js): the WebAssembly build, whose pointers
 # are 32 bits wide as on a 32-bit CPU, takes the 64-bit multiplications of Opus, while a 32-bit target without

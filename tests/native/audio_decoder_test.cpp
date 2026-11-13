@@ -7,6 +7,13 @@
 // backend, the post of the Web Audio backend) reaches the audio statistics of the overlay (wasm/audio_stream_stats.hpp)
 // with the samples that were decoded.
 //
+// The decoder of a stream is destroyed when the stream ends and before another one is created, and a decoder that can't
+// be created fails the audio start with a log line instead of decoding without one. Each start logs the layout that
+// the host announced, and the 7.1 that a host with a faulty channel rotation announces for its normal quality is
+// decoded with the mapping 0 1 2 3 4 5 6 7, while every other layout reaches the decoder as it is (wasm/opus_layout.hpp;
+// opus_channel_layout_test.c derives the layouts from the tables of Sunshine, and opus_decoder/app_decoder_test.cpp
+// decodes them with the real library).
+//
 // auddec.cpp has an EM_ASM block without arguments, whose stub takes the GNU form of __VA_ARGS__ (run.sh):
 // Build with: -std=gnu++17
 
@@ -17,6 +24,7 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstring>
+#include <initializer_list>
 #include <string>
 #include <vector>
 
@@ -80,15 +88,49 @@ static int decodeFrameSize = 0;
 static int decodeResult = 0;  // 0: decode a frame, otherwise the error code to return
 static int decodeTimeUs = 0;
 
-extern "C" OpusMSDecoder* opus_multistream_decoder_create(opus_int32, int channels, int, int, const unsigned char*,
-                                                          int* error) {
+// The decoders that the app created and destroyed, the layout of the last one, and the error that the next creation
+// fails with (0: it succeeds)
+static int createCalls = 0;
+static int destroyCalls = 0;
+static int liveDecoders = 0;
+static int mostLiveDecoders = 0;
+static int createError = 0;
+static int createdStreams = 0;
+static int createdCoupledStreams = 0;
+static unsigned char createdMapping[AUDIO_CONFIGURATION_MAX_CHANNEL_COUNT];
+
+extern "C" OpusMSDecoder* opus_multistream_decoder_create(opus_int32, int channels, int streams, int coupledStreams,
+                                                          const unsigned char* mapping, int* error) {
+  createCalls++;
+  if (createError != 0) {
+    *error = createError;
+    return nullptr;
+  }
   decodeChannels = channels;
+  createdStreams = streams;
+  createdCoupledStreams = coupledStreams;
+  std::memset(createdMapping, 0xEE, sizeof(createdMapping));
+  std::memcpy(createdMapping, mapping, (size_t)channels);
+  liveDecoders++;
+  mostLiveDecoders = std::max(mostLiveDecoders, liveDecoders);
   *error = OPUS_OK;
   return reinterpret_cast<OpusMSDecoder*>(&fakeDecoder);
 }
 
-extern "C" int opus_multistream_decode(OpusMSDecoder*, const unsigned char*, opus_int32, opus_int16* pcm,
+extern "C" void opus_multistream_decoder_destroy(OpusMSDecoder* decoder) {
+  CHECK(decoder == reinterpret_cast<OpusMSDecoder*>(&fakeDecoder));
+  destroyCalls++;
+  liveDecoders--;
+}
+
+extern "C" const char* opus_strerror(int error) {
+  return error == OPUS_BAD_ARG ? "invalid argument" : error == OPUS_ALLOC_FAIL ? "memory allocation failed" : "other";
+}
+
+extern "C" int opus_multistream_decode(OpusMSDecoder* decoder, const unsigned char*, opus_int32, opus_int16* pcm,
                                        int frame_size, int) {
+  // Never without a decoder, and never with one that was destroyed
+  CHECK(decoder == reinterpret_cast<OpusMSDecoder*>(&fakeDecoder) && liveDecoders == 1);
   decodeCalls++;
   decodeFrameSize = frame_size;
   BusyWait(decodeTimeUs);
@@ -111,13 +153,31 @@ static std::vector<Appended> appended;
 static int appendResult = 0;  // 0: kSuccess, 1: kFailed
 static int appendTimeUs = 0;
 
-// A stream with the given backend and format, as StartStream() and the connection set it up, with the audio track open
-static void StartAudio(AudioBackend backend, int channels, int samplesPerFrame, bool audioSync) {
+// The layout of a stream as moonlight-common-c hands it to the audio renderer
+static OPUS_MULTISTREAM_CONFIGURATION Layout(int channels, int streams, int coupledStreams,
+                                             std::initializer_list<unsigned char> mapping, int samplesPerFrame = 240) {
+  OPUS_MULTISTREAM_CONFIGURATION config = {};
+  config.sampleRate = 48000;
+  config.channelCount = channels;
+  config.streams = streams;
+  config.coupledStreams = coupledStreams;
+  config.samplesPerFrame = samplesPerFrame;
+  std::copy(mapping.begin(), mapping.end(), config.mapping);
+  return config;
+}
+
+// Start the audio of a stream with the given backend and layout, as StartStream() and the connection set it up, with
+// the audio track open, and return what AudDecInit() answered. The instance stays the same from stream to stream, as in
+// the app, so a decoder that a stream left behind is still there for the next start.
+static int InitAudio(AudioBackend backend, OPUS_MULTISTREAM_CONFIGURATION config, bool audioSync) {
   alignas(MoonlightInstance) static unsigned char storage[sizeof(MoonlightInstance)];
-  std::memset(storage, 0, sizeof(storage));
-  g_Instance = reinterpret_cast<MoonlightInstance*>(storage);
+  if (g_Instance == nullptr) {
+    std::memset(storage, 0, sizeof(storage));
+    g_Instance = reinterpret_cast<MoonlightInstance*>(storage);
+  }
   g_Instance->*Pointer(AudioBackendMember()) = backend;
   g_Instance->*Pointer(AudioSyncMember()) = audioSync;
+  (g_Instance->*Pointer(AudioStartedMember())) = false;
   logs.clear();
   appended.clear();
   decodeCalls = 0;
@@ -130,15 +190,23 @@ static void StartAudio(AudioBackend backend, int channels, int samplesPerFrame, 
     appended.push_back({packet.pts.count(), packet.data_size, ((const opus_int16*)packet.data)[0]});
     return appendResult;
   };
-  OPUS_MULTISTREAM_CONFIGURATION config = {};
-  config.sampleRate = 48000;
-  config.channelCount = channels;
-  config.streams = channels == 2 ? 1 : 4;
-  config.coupledStreams = channels == 2 ? 1 : 2;
-  config.samplesPerFrame = samplesPerFrame;
-  CHECK_EQ(MoonlightInstance::AudDecInit(0, &config, nullptr, 0), 0);
-  CHECK((g_Instance->*Pointer(OpusDecoderMember()) != nullptr) == (backend != AudioBackend::Disabled));
+  const OPUS_MULTISTREAM_CONFIGURATION announced = config;
+  const int result = MoonlightInstance::AudDecInit(0, &config, nullptr, 0);
+  // The layout of moonlight-common-c is only read
+  CHECK(std::memcmp(&config, &announced, sizeof(config)) == 0);
   (g_Instance->*Pointer(AudioStartedMember())) = true;
+  return result;
+}
+
+// A stream with the given backend and format that starts
+static void StartAudio(AudioBackend backend, int channels, int samplesPerFrame, bool audioSync) {
+  const OPUS_MULTISTREAM_CONFIGURATION config =
+    channels == 2 ? Layout(2, 1, 1, {0, 1}, samplesPerFrame) : channels == 6
+      ? Layout(6, 4, 2, {0, 1, 2, 3, 4, 5}, samplesPerFrame) : Layout(8, 5, 3, {0, 1, 2, 3, 4, 5, 6, 7}, samplesPerFrame);
+  // (CHECK_EQ() evaluates its arguments twice, so the start is not one of them)
+  const int result = InitAudio(backend, config, audioSync);
+  CHECK_EQ(result, 0);
+  CHECK((g_Instance->*Pointer(OpusDecoderMember()) != nullptr) == (backend != AudioBackend::Disabled));
 }
 
 static void Feed(int count) {
@@ -283,6 +351,156 @@ static void DisabledAudioDecodesNothing() {
   CHECK_EQ(FormatAudioStreamStats(g_AudioStreamStats, window, 2000, text, sizeof(text)), 0);
 }
 
+static void DecoderIsDestroyedWithTheStreamAndBeforeANewOne() {
+  // Whatever the tests before left behind
+  MoonlightInstance::AudDecCleanup();
+  CHECK_EQ(liveDecoders, 0);
+  createCalls = destroyCalls = mostLiveDecoders = 0;
+
+  // A stream that ends takes its decoder with it, with both backends
+  for (AudioBackend backend : {AudioBackend::Emss, AudioBackend::WebAudio}) {
+    StartAudio(backend, 6, 240, false);
+    Feed(3);
+    CHECK_EQ(liveDecoders, 1);
+    MoonlightInstance::AudDecCleanup();
+    CHECK_EQ(liveDecoders, 0);
+    CHECK(g_Instance->*Pointer(OpusDecoderMember()) == nullptr);
+    CHECK_EQ(s_DecodeBuffer.size(), (size_t)0);
+    // A packet that arrives now is not decoded, and a second cleanup destroys nothing twice
+    const int callsBefore = decodeCalls;
+    Feed(2);
+    MoonlightInstance::AudDecDecodeAndPlaySample(nullptr, 0);
+    CHECK_EQ(decodeCalls, callsBefore);
+    MoonlightInstance::AudDecCleanup();
+    CHECK_EQ(liveDecoders, 0);
+  }
+  CHECK_EQ(createCalls, 2);
+  CHECK_EQ(destroyCalls, 2);
+
+  // 100 streams in a row, as with the Stream Menu reconnect, leave nothing behind
+  for (int i = 0; i < 100; i++) {
+    StartAudio(i % 2 == 0 ? AudioBackend::Emss : AudioBackend::WebAudio, i % 3 == 0 ? 8 : 6, 240, false);
+    MoonlightInstance::AudDecCleanup();
+  }
+  CHECK_EQ(createCalls, 102);
+  CHECK_EQ(destroyCalls, 102);
+
+  // A start that finds a decoder destroys it before it creates its own, so there is never more than one
+  StartAudio(AudioBackend::Emss, 6, 240, false);
+  StartAudio(AudioBackend::Emss, 8, 480, false);
+  CHECK_EQ(liveDecoders, 1);
+  CHECK_EQ(mostLiveDecoders, 1);
+  CHECK_EQ(destroyCalls, 103);
+  Feed(1);
+  CHECK_EQ(appended.size(), (size_t)1);
+  // Also a start with the audio output disabled, which creates none
+  StartAudio(AudioBackend::Disabled, 6, 240, false);
+  CHECK_EQ(liveDecoders, 0);
+  CHECK_EQ(createCalls, 104);
+  CHECK_EQ(destroyCalls, 104);
+  MoonlightInstance::AudDecCleanup();
+  CHECK_EQ(destroyCalls, 104);
+}
+
+static void DecoderThatCannotBeCreatedFailsTheAudioStart() {
+  MoonlightInstance::AudDecCleanup();
+  for (AudioBackend backend : {AudioBackend::Emss, AudioBackend::WebAudio}) {
+    // Opus refuses the layout (a host with surround parameters that make no sense)
+    createError = OPUS_BAD_ARG;
+    int result = InitAudio(backend, Layout(8, 1, 9, {0, 1, 2, 3, 4, 5, 6, 7}), false);
+    CHECK_EQ(result, OPUS_BAD_ARG);
+    CHECK(g_Instance->*Pointer(OpusDecoderMember()) == nullptr);
+    CHECK_EQ(liveDecoders, 0);
+    CHECK_EQ(CountLogs("Creating the Opus decoder failed with error -1 (invalid argument), so the audio stream can't start"), 1);
+    // The decode buffer of the start is not kept: moonlight-common-c calls no cleanup for a start that failed
+    CHECK_EQ(s_DecodeBuffer.size(), (size_t)0);
+    // No packet is decoded without a decoder (the stand-in checks that it is never called with none)
+    Feed(3);
+    MoonlightInstance::AudDecDecodeAndPlaySample(nullptr, 0);
+    CHECK_EQ(decodeCalls, 0);
+    CHECK(appended.empty());
+    // No memory for the decoder
+    createError = OPUS_ALLOC_FAIL;
+    result = InitAudio(backend, Layout(6, 4, 2, {0, 1, 2, 3, 4, 5}), false);
+    CHECK_EQ(result, OPUS_ALLOC_FAIL);
+    CHECK_EQ(CountLogs("failed with error -7 (memory allocation failed)"), 1);
+    CHECK(g_Instance->*Pointer(OpusDecoderMember()) == nullptr);
+    // The next start works
+    createError = 0;
+    StartAudio(backend, 6, 240, false);
+    Feed(2);
+    CHECK_EQ(decodeCalls, 2);
+    CHECK_EQ(CountLogs("Creating the Opus decoder failed"), 0);
+    MoonlightInstance::AudDecCleanup();
+  }
+  // A frame that doesn't fit the slots of the Web Audio backend fails the start too, and leaves no decoder behind
+  const int tooLarge = InitAudio(AudioBackend::WebAudio, Layout(6, 4, 2, {0, 1, 2, 3, 4, 5}, 960), false);
+  CHECK_EQ(tooLarge, -1);
+  CHECK_EQ(CountLogs("are too large for the Web Audio backend"), 1);
+  CHECK(g_Instance->*Pointer(OpusDecoderMember()) == nullptr);
+  CHECK_EQ(liveDecoders, 0);
+}
+
+// Whether the decoder of the last start got the layout with this mapping
+static bool CreatedWith(const OPUS_MULTISTREAM_CONFIGURATION& config, const std::vector<unsigned char>& mapping) {
+  return decodeChannels == config.channelCount && createdStreams == config.streams &&
+         createdCoupledStreams == config.coupledStreams &&
+         std::equal(mapping.begin(), mapping.end(), createdMapping) && (int)mapping.size() == config.channelCount;
+}
+
+static void LayoutIsLoggedAndOnlyTheMisrotated71IsCorrected() {
+  MoonlightInstance::AudDecCleanup();
+  // 7.1 in normal quality from a host that rotates only the entries 3 to 5 (surround-params=85301245367, which
+  // moonlight-common-c turns into this mapping): decoded as the host encodes it
+  const OPUS_MULTISTREAM_CONFIGURATION misrotated = Layout(8, 5, 3, {0, 1, 2, 7, 4, 5, 3, 6}, 480);
+  for (AudioBackend backend : {AudioBackend::Emss, AudioBackend::WebAudio}) {
+    const int result = InitAudio(backend, misrotated, false);
+    CHECK_EQ(result, 0);
+    CHECK(CreatedWith(misrotated, {0, 1, 2, 3, 4, 5, 6, 7}));
+    CHECK_EQ(CountLogs("Opus layout of the stream: channels 8, streams 5, coupled streams 3, mapping 0 1 2 7 4 5 3 6\n"), 1);
+    CHECK_EQ(CountLogs("Opus layout of the stream"), 1);
+    CHECK_EQ(CountLogs("mix up LFE, side left and side right: decoding with the mapping 0 1 2 3 4 5 6 7 instead\n"), 1);
+    MoonlightInstance::AudDecCleanup();
+  }
+
+  // Every other layout reaches the decoder as it is: those of Sunshine (stereo, 5.1 and 7.1 in normal and in high
+  // quality), a 5.1 and a 7.1 paired like GeForce Experience, and layouts that differ from the faulty one in one value
+  struct Case {
+    OPUS_MULTISTREAM_CONFIGURATION config;
+    std::vector<unsigned char> mapping;
+    const char* log;
+  };
+  const Case cases[] = {
+    {Layout(2, 1, 1, {0, 1}), {0, 1}, "channels 2, streams 1, coupled streams 1, mapping 0 1\n"},
+    {Layout(6, 4, 2, {0, 1, 2, 3, 4, 5}, 480), {0, 1, 2, 3, 4, 5}, "channels 6, streams 4, coupled streams 2, mapping 0 1 2 3 4 5\n"},
+    {Layout(6, 6, 0, {0, 1, 2, 3, 4, 5}), {0, 1, 2, 3, 4, 5}, "channels 6, streams 6, coupled streams 0, mapping 0 1 2 3 4 5\n"},
+    {Layout(8, 5, 3, {0, 1, 2, 3, 4, 5, 6, 7}, 480), {0, 1, 2, 3, 4, 5, 6, 7}, "channels 8, streams 5, coupled streams 3, mapping 0 1 2 3 4 5 6 7\n"},
+    {Layout(8, 8, 0, {0, 1, 2, 3, 4, 5, 6, 7}), {0, 1, 2, 3, 4, 5, 6, 7}, "channels 8, streams 8, coupled streams 0, mapping 0 1 2 3 4 5 6 7\n"},
+    {Layout(6, 4, 2, {0, 4, 1, 5, 2, 3}), {0, 4, 1, 5, 2, 3}, "channels 6, streams 4, coupled streams 2, mapping 0 4 1 5 2 3\n"},
+    {Layout(8, 5, 3, {0, 6, 1, 7, 2, 3, 4, 5}), {0, 6, 1, 7, 2, 3, 4, 5}, "channels 8, streams 5, coupled streams 3, mapping 0 6 1 7 2 3 4 5\n"},
+    {Layout(8, 8, 0, {0, 1, 2, 7, 4, 5, 3, 6}), {0, 1, 2, 7, 4, 5, 3, 6}, "channels 8, streams 8, coupled streams 0, mapping 0 1 2 7 4 5 3 6\n"},
+    {Layout(8, 6, 2, {0, 1, 2, 7, 4, 5, 3, 6}), {0, 1, 2, 7, 4, 5, 3, 6}, "channels 8, streams 6, coupled streams 2, mapping 0 1 2 7 4 5 3 6\n"},
+    {Layout(8, 5, 3, {0, 1, 2, 7, 4, 5, 6, 3}), {0, 1, 2, 7, 4, 5, 6, 3}, "channels 8, streams 5, coupled streams 3, mapping 0 1 2 7 4 5 6 3\n"},
+    {Layout(8, 5, 3, {1, 0, 2, 7, 4, 5, 3, 6}), {1, 0, 2, 7, 4, 5, 3, 6}, "channels 8, streams 5, coupled streams 3, mapping 1 0 2 7 4 5 3 6\n"},
+  };
+  for (const Case& item : cases) {
+    const int result = InitAudio(AudioBackend::Emss, item.config, false);
+    CHECK_EQ(result, 0);
+    CHECK(CreatedWith(item.config, item.mapping));
+    CHECK_EQ(CountLogs(item.log), 1);
+    CHECK_EQ(CountLogs("Opus layout of the stream"), 1);
+    CHECK_EQ(CountLogs("instead"), 0);
+    MoonlightInstance::AudDecCleanup();
+  }
+
+  // The layout is also logged for a stream whose audio output is disabled, which decodes nothing
+  const int disabled = InitAudio(AudioBackend::Disabled, misrotated, false);
+  CHECK_EQ(disabled, 0);
+  CHECK_EQ(CountLogs("Opus layout of the stream: channels 8, streams 5, coupled streams 3, mapping 0 1 2 7 4 5 3 6\n"), 1);
+  CHECK_EQ(CountLogs("instead"), 0);
+  CHECK(g_Instance->*Pointer(OpusDecoderMember()) == nullptr);
+}
+
 int main() {
   test_support::RunTest("the decode buffer of the EMSS backend holds one negotiated frame, in samples",
                         DecodeBufferHoldsOneFrameInSamples);
@@ -296,5 +514,11 @@ int main() {
                         DecodeAndOutputTimesReachTheStatistics);
   test_support::RunTest("the Web Audio backend counts the decode and the post", WebAudioCountsTheDecodeAndThePost);
   test_support::RunTest("disabled audio decodes nothing and shows no audio lines", DisabledAudioDecodesNothing);
+  test_support::RunTest("the decoder is destroyed with its stream and before a new one is created",
+                        DecoderIsDestroyedWithTheStreamAndBeforeANewOne);
+  test_support::RunTest("a decoder that can't be created fails the audio start with a log line and decodes nothing",
+                        DecoderThatCannotBeCreatedFailsTheAudioStart);
+  test_support::RunTest("each start logs the layout, and only the 7.1 of a host with the faulty rotation is corrected",
+                        LayoutIsLoggedAndOnlyTheMisrotated71IsCorrected);
   return test_support::Summary();
 }

@@ -1,12 +1,15 @@
 'use strict';
 
-// Pins three fixes of the native stream code in the code, next to the native tests that run them: the mouse movement and
+// Pins four fixes of the native stream code in the code, next to the native tests that run them: the mouse movement and
 // wheel that the main and the input thread share go through atomic exchanges (native/mouse_input_test.cpp), a stop
 // during the start of a stream interrupts the connection setup, also when it came before LiStartConnection cleared its
 // interrupt flag (native/connection_interrupt_test.cpp), and the RTSP parser of moonlight-common-c stays within its
 // buffer for an answer cut off inside a header (native/rtsp_parser_test.c). That was a local fix of the parser with
 // strtok_r() until the parser of upstream moonlight-common-c aeba988 replaced it, which reads line by line and
-// checks every read against the end of the buffer.
+// checks every read against the end of the buffer. The fourth: the connection thread and the stop thread of a stream
+// are created and joined through wasm/stream_threads.hpp only, which joins each of them once
+// (native/stream_threads_test.cpp runs the rule; wasm/main.cpp, which calls it, is built by no native test, so the
+// places and the order of its calls are pinned here).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -77,4 +80,53 @@ test('the RTSP parser checks the end of a header against its buffer before it re
   // The LF after a CR is only read when it is inside the buffer
   assert.match(functionBody(source, 'static char* getNextLine('), /if \(origEnd == '\\r' && nextLine < bufferEnd && \*nextLine == '\\n'\) \{/);
   assert.match(read('tests/native/rtsp_parser_test.c'), /test_truncated_message_is_malformed/);
+});
+
+test('the connection thread and the stop thread of a stream are created and joined through stream_threads.hpp only', () => {
+  const main = read('wasm/main.cpp');
+  const header = read('wasm/moonlight_wasm.hpp');
+  assert.match(header, /#include "stream_threads\.hpp"/);
+  assert.match(header, /\n {2}StreamThreads m_StreamThreads;\n/);
+  // No handle and no flag of these threads past the bookkeeping, in any file of the module
+  for (const file of ['wasm/main.cpp', 'wasm/moonlight_wasm.hpp', 'wasm/connectionlistener.cpp', 'wasm/wasmplayer.cpp']) {
+    assert.doesNotMatch(read(file), /m_ConnectionThread\b|m_StopThread\b|m_StopIssued\b/, file);
+  }
+  // The only thread that main.cpp still creates and joins itself is the input thread
+  assert.deepEqual(main.match(/pthread_(?:create|join)\([^;]*;/g).filter((call) => !/m_InputThread/.test(call)), []);
+
+  // StartStream(): the joins come first, before the state that the thread of the start before read is reset, and a
+  // connection thread that can't be created ends the start
+  const start = functionBody(main, 'MessageResult MoonlightInstance::StartStream(');
+  const begin = start.indexOf('if (m_StreamThreads.BeginStart()) {');
+  assert.ok(begin > 0 && begin < start.indexOf('m_ConnectionCancelled = false;'), 'BeginStart() comes before the reset');
+  assert.ok(begin < start.indexOf('PostToJs('), 'BeginStart() comes before the first message of the new stream');
+  assert.equal(start.split('m_StreamThreads.BeginStart()').length - 1, 1);
+  assert.match(start, /if \(!m_StreamThreads\.StartConnectionThread\(MoonlightInstance::ConnectionThreadFunc, this\)\) \{[^}]*OnConnectionStopped\(0\);\s+\}/);
+  assert.equal(main.split('m_StreamThreads.StartConnectionThread(').length - 1, 1);
+
+  // OnConnectionStopped(): one stop per start, and the stop thread only for the first
+  const stopped = functionBody(main, 'void MoonlightInstance::OnConnectionStopped(');
+  const issued = stopped.search(/if \(!m_StreamThreads\.IssueStop\(\)\) \{[^}]*return;\s+\}/);
+  const stopThread = stopped.indexOf('m_StreamThreads.StartStopThread(MoonlightInstance::StopThreadFunc, NULL)');
+  assert.ok(issued > 0 && stopThread > issued, 'the stop thread is created after the check for a repeated stop');
+  assert.equal(main.split('m_StreamThreads.StartStopThread(').length - 1, 1);
+
+  // StopThreadFunc(): the connection thread is joined before LiStopConnection(), which must not run during
+  // LiStartConnection()
+  const stop = functionBody(main, 'void* MoonlightInstance::StopThreadFunc(');
+  const join = stop.indexOf('g_Instance->m_StreamThreads.JoinConnectionThread();');
+  assert.ok(join > 0 && join < stop.indexOf('LiStopConnection();') && join < stop.indexOf('LiSendKeyboardEvent('));
+
+  // ConnectionThreadFunc(): joins nothing, and posts its termination without waiting for the front end, as its last
+  // step: the next StartStream() joins the thread of a start that failed on its own on the main thread, which the
+  // thread must not wait for then
+  const connection = functionBody(main, 'void* MoonlightInstance::ConnectionThreadFunc(');
+  assert.doesNotMatch(connection, /JoinConnectionThread|BeginStart|pthread_join/);
+  assert.doesNotMatch(connection, /PostToJs\(\s*(?:std::string\()?MSG_STREAM_TERMINATED/);
+  assert.match(connection, /if \(me->m_ConnectionCancelled\) \{\s+\/\/[^\n]*\n\s+if \(!me->m_StreamThreads\.IsStopIssued\(\)\) \{\s+PostToJsAsync\(MSG_STREAM_TERMINATED \+ std::to_string\(0\)\);\s+\}\s+\} else \{\s+PostToJsAsync\(MSG_STREAM_TERMINATED \+ std::to_string\(err\)\);\s+\}\s+return NULL;/);
+
+  // The rule itself is in the header, which the native test runs with real threads
+  const rule = read('wasm/stream_threads.hpp');
+  assert.match(rule, /typedef StreamThreadsOf<PlatformThreads> StreamThreads;/);
+  assert.match(read('tests/native/stream_threads_test.cpp'), /#include "stream_threads\.hpp"/);
 });

@@ -3,10 +3,11 @@
 // Pins the fixes of upstream moonlight-common-c that this fork took into its vendored copy (moonlight-common-c/, based
 // on upstream 8599b60 with local patches) in the code, so that a later sync or merge can't drop them unnoticed. The
 // RTSP option list (5ec8397), the RTSP parser of aeba988, the loss reports of the RTP video queue (d85371c), the
-// input packets of 4a95eb3, 0405384 and 448b2c6 and the interceptor of ENet disconnects (41cedb8, e80a786) also have
-// native tests that run the code (native/rtsp_parser_test.c, native/rtp_video_queue_test.c, native/input_stream_test.c
-// and native/control_stream_disconnect_test.c); the other fixes sit in functions that need a network connection, so
-// this file checks their code.
+// input packets of 4a95eb3, 0405384 and 448b2c6, the interceptor of ENet disconnects (41cedb8, e80a786) and the audio
+// socket of a failed audio start (4aa7ea4) also have native tests that run the code (native/rtsp_parser_test.c,
+// native/rtp_video_queue_test.c, native/input_stream_test.c, native/control_stream_disconnect_test.c and
+// native/audio_stream_start_test.c); the other fixes sit in functions that need a network connection, so this file
+// checks their code.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -113,4 +114,19 @@ test('aeba988, 4a95eb3, 0405384 and 448b2c6 are in the code the native tests run
     assert.ok(inputTest.includes('(upstream ' + commit + ')'), 'a test of ' + commit);
   }
   assert.ok(native('rtsp_parser_test.c').includes('(upstream aeba988)'));
+});
+
+test('4aa7ea4: a failed audio start leaves the audio socket to destroyAudioStream(), which closes it once', () => {
+  const source = read('AudioStream.c');
+  const start = functionBody(source, 'int startAudioStream(void* audioContext, int arFlags) {');
+  assert.doesNotMatch(start, /closeSocket\(/);
+  // Both error paths still stop the renderer and clean it up
+  assert.equal((start.match(/AudioCallbacks\.stop\(\);/g) || []).length, 2);
+  assert.equal((start.match(/AudioCallbacks\.cleanup\(\);/g) || []).length, 2);
+  const destroy = functionBody(source, 'void destroyAudioStream(void) {');
+  assert.match(destroy, /closeSocket\(rtpSocket\);\s+rtpSocket = INVALID_SOCKET;/);
+  assert.equal((source.match(/closeSocket\(rtpSocket\)/g) || []).length, 1);
+  const native = fs.readFileSync(path.join(REPO_ROOT, 'tests/native/audio_stream_start_test.c'), 'utf8');
+  assert.match(native, /#include "\.\.\/\.\.\/moonlight-common-c\/src\/AudioStream\.c"/);
+  assert.ok(native.includes('(upstream 4aa7ea4)'));
 });

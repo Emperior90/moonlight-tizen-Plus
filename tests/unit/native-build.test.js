@@ -48,6 +48,13 @@ test('CMakeLists.txt builds the decoder of Opus without its encoder', () => {
   // The decoder check of the native tests reads the same list
   assert.match(read('tests/native/run.sh'), /sed -n '\/\^add_library\(opus STATIC\/,\/\^\)\/p' "\$repo\/CMakeLists.txt"/);
   assert.ok(exists('tests/native/opus_decoder/decode.c'));
+  // The audio decoder of the app is linked with that library too, under the leak check, and destroys what it creates
+  assert.match(read('tests/native/run.sh'), /for source in "\$here"\/opus_decoder\/\*_test\.cpp; do/);
+  assert.match(read('tests/native/run.sh'), /"\$source" "\$opus_out\/libopus\.a" -lm -lpthread/);
+  assert.match(read('tests/native/opus_decoder/app_decoder_test.cpp'), /#include "\.\.\/\.\.\/\.\.\/wasm\/auddec\.cpp"/);
+  const auddec = read('wasm/auddec.cpp');
+  assert.equal((auddec.match(/opus_multistream_decoder_create\(/g) || []).length, 1);
+  assert.equal((auddec.match(/opus_multistream_decoder_destroy\(/g) || []).length, 1);
 });
 
 test('the Dockerfile copies only what exists, and the build context leaves out opus/dnn', () => {

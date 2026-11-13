@@ -1,5 +1,6 @@
 #include "moonlight_wasm.hpp"
 #include "audio_stream_stats.hpp"
+#include "opus_layout.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -117,8 +118,29 @@ static int DecodeTimed(OpusMSDecoder* decoder, const unsigned char* sampleData, 
   return decodeLen;
 }
 
+// Destroy the Opus decoder of a stream, if there is one, and free the decode buffer of the EMSS backend. Only called
+// where no packet can be decoded: before a stream starts (AudDecInit()) and once the receive thread of
+// moonlight-common-c, which decodes, has ended (AudDecCleanup(), called by stopAudioStream() in AudioStream.c).
+static void ReleaseDecoder(OpusMSDecoder*& decoder) {
+  if (decoder != nullptr) {
+    opus_multistream_decoder_destroy(decoder);
+    decoder = nullptr;
+  }
+
+  // Clear the decode buffer
+  s_DecodeBuffer.clear();
+
+  // Shrink the decode buffer to fit its contents
+  s_DecodeBuffer.shrink_to_fit();
+}
+
 static void DecodeAndAppendPacket(samsung::wasm::ElementaryMediaTrack* track, samsung::wasm::SessionId session_id,
   OpusMSDecoder* decoder, const unsigned char* sampleData, int sampleLength) {
+  // Nothing to decode with: a stream has no decoder before AudDecInit() and after AudDecCleanup()
+  if (!decoder) {
+    return;
+  }
+
   // Decode the incoming audio packet using Opus decoder. It writes at most the negotiated frame size per channel, which
   // the decode buffer holds (AudDecInit()).
   std::chrono::steady_clock::time_point decodeEnd;
@@ -165,7 +187,7 @@ static void DecodeAndAppendPacket(samsung::wasm::ElementaryMediaTrack* track, sa
 }
 
 static void DecodeAndScheduleFrame(OpusMSDecoder* decoder, const unsigned char* sampleData, int sampleLength) {
-  // Check if the Opus decoder failed to be created for this streaming session
+  // Nothing to decode with: a stream has no decoder before AudDecInit() and after AudDecCleanup()
   if (!decoder) {
     return;
   }
@@ -251,6 +273,17 @@ int MoonlightInstance::AudDecInit(int audioConfiguration, POPUS_MULTISTREAM_CONF
 
   ClLogMessage("MoonlightInstance::AudDecInit\n");
 
+  // Nothing decodes between two streams, so a decoder that is still there is destroyed before this start creates its
+  // own. AudDecCleanup() destroys the one of a stream that ended; moonlight-common-c only calls it for a start that got
+  // past this function.
+  ReleaseDecoder(g_Instance->m_OpusDecoder);
+
+  // Log the layout that the host announced for this stream, as moonlight-common-c read it from the DESCRIBE answer
+  char mappingText[32];
+  FormatOpusMapping(opusConfig->mapping, opusConfig->channelCount, mappingText, sizeof(mappingText));
+  ClLogMessage("Opus layout of the stream: channels %d, streams %d, coupled streams %d, mapping %s\n",
+    opusConfig->channelCount, opusConfig->streams, opusConfig->coupledStreams, mappingText);
+
   // Latch the audio backend selected for this streaming session
   s_AudioBackend = g_Instance->m_AudioBackend;
 
@@ -286,12 +319,33 @@ int MoonlightInstance::AudDecInit(int audioConfiguration, POPUS_MULTISTREAM_CONF
   // Calculate the frame duration based on the samples per frame (240) and sample rate (48000)
   s_frameDuration = FrameDuration(opusConfig->samplesPerFrame, opusConfig->sampleRate);
 
+  // The mapping to decode with is the one of the stream, except for the 7.1 that a host with a faulty channel rotation
+  // announces for its normal quality (Sunshine v2026.914, Apollo, Vibeshine), which would play three channels in the
+  // wrong place (opus_layout.hpp)
+  unsigned char mapping[AUDIO_CONFIGURATION_MAX_CHANNEL_COUNT];
+  if (GetOpusDecoderMapping(opusConfig, mapping)) {
+    FormatOpusMapping(mapping, opusConfig->channelCount, mappingText, sizeof(mappingText));
+    ClLogMessage("This is the 7.1 layout of a host that rotates the mapping of its normal quality wrongly, which would "
+      "mix up LFE, side left and side right: decoding with the mapping %s instead\n", mappingText);
+  }
+
   // Create the Opus decoder with the provided configuration parameters
+  rc = OPUS_OK;
   g_Instance->m_OpusDecoder = opus_multistream_decoder_create(
     opusConfig->sampleRate, opusConfig->channelCount,
     opusConfig->streams, opusConfig->coupledStreams,
-    opusConfig->mapping, &rc
+    mapping, &rc
   );
+
+  // Without a decoder the audio stream can't start: Opus refuses a layout that makes no sense (OPUS_BAD_ARG), or the
+  // memory for the decoder is missing (OPUS_ALLOC_FAIL). The start of the stream fails at this stage with the error.
+  if (g_Instance->m_OpusDecoder == nullptr) {
+    ClLogMessage("Creating the Opus decoder failed with error %d (%s), so the audio stream can't start\n", rc,
+      opus_strerror(rc));
+    // Free the decode buffer of this start: moonlight-common-c doesn't call AudDecCleanup() for a start that fails here
+    ReleaseDecoder(g_Instance->m_OpusDecoder);
+    return rc != OPUS_OK ? rc : -1;
+  }
 
   // Initialize the estimated audio end time
   s_estimatedAudioEnd = 0s;
@@ -309,6 +363,8 @@ int MoonlightInstance::AudDecInit(int audioConfiguration, POPUS_MULTISTREAM_CONF
     if (s_samplesPerFrame > kAudioSlotStride || s_channelCount > MAX_CHANNEL_COUNT) {
       ClLogMessage("Decoded audio frames of %d samples over %d channels are too large for the Web Audio backend!\n",
         (int)s_samplesPerFrame, (int)s_channelCount);
+      // Destroy the decoder of this start, for the same reason
+      ReleaseDecoder(g_Instance->m_OpusDecoder);
       return -1;
     }
 
@@ -357,11 +413,9 @@ void MoonlightInstance::AudDecCleanup(void) {
     });
   }
 
-  // Clear the decode buffer
-  s_DecodeBuffer.clear();
-
-  // Shrink the decode buffer to fit its contents
-  s_DecodeBuffer.shrink_to_fit();
+  // Destroy the Opus decoder of the stream and free its decode buffer. The receive thread of moonlight-common-c, which
+  // decodes, has ended before this is called (stopAudioStream() in AudioStream.c).
+  ReleaseDecoder(g_Instance->m_OpusDecoder);
 }
 
 void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLength) {

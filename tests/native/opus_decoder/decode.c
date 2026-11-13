@@ -1,8 +1,12 @@
 // Decodes with the Opus library that tests/native/run.sh builds from the source files CMakeLists.txt lists, which are
 // only those of the decoder. The program uses the functions the app calls (wasm/auddec.cpp:
 // opus_multistream_decoder_create() and opus_multistream_decode()), so it only links when no file the decoder needs is
-// missing from the list. It decodes stereo, 5.1 and 7.1 as the host sends them (the channel mappings of Sunshine),
-// with CELT, SILK and hybrid packets and with packet loss concealment, and exits with 1 when a call fails.
+// missing from the list. It decodes every layout a host sends, as moonlight-common-c hands it to the app: stereo, and
+// 5.1 and 7.1 in the normal quality (coupled streams) and the high quality (a stream per channel) of Sunshine, whose
+// mapping is 0 1 2 ..., and the 5.1 that moonlight-common-c falls back to for GeForce Experience with a 7.1 that pairs
+// the channels the same way. Each with CELT, SILK and hybrid packets and with packet loss concealment; the program
+// exits with 1 when a call fails. Where each channel of the host is played is checked by app_decoder_test.cpp in this
+// folder, which decodes with wasm/auddec.cpp itself.
 
 #include <opus_multistream.h>
 #include <stdio.h>
@@ -20,8 +24,12 @@ struct Layout {
 
 static const struct Layout kLayouts[] = {
   { "stereo", 2, 1, 1, { 0, 1 } },
-  { "5.1", 6, 4, 2, { 0, 4, 1, 5, 2, 3 } },
-  { "7.1", 8, 5, 3, { 0, 6, 1, 7, 2, 3, 4, 5 } },
+  { "5.1 of Sunshine in normal quality", 6, 4, 2, { 0, 1, 2, 3, 4, 5 } },
+  { "5.1 of Sunshine in high quality", 6, 6, 0, { 0, 1, 2, 3, 4, 5 } },
+  { "7.1 of Sunshine in normal quality", 8, 5, 3, { 0, 1, 2, 3, 4, 5, 6, 7 } },
+  { "7.1 of Sunshine in high quality", 8, 8, 0, { 0, 1, 2, 3, 4, 5, 6, 7 } },
+  { "5.1 paired like GeForce Experience", 6, 4, 2, { 0, 4, 1, 5, 2, 3 } },
+  { "7.1 paired like GeForce Experience", 8, 5, 3, { 0, 6, 1, 7, 2, 3, 4, 5 } },
 };
 
 // A multistream packet with one frame of the given configuration (TOC config, see RFC 6716 section 3.1) per stream:
