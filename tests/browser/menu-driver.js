@@ -6,6 +6,7 @@
 //   const app = await openMenus(harness, { stored: { hosts: THREE_HOSTS }, moduleScripts: ['sunshine-host.js'] });
 //   await key(app.page, 'down');            // a key of the remote
 //   await padButton(app.page, PAD.A);       // a button of the gamepad, held for 60 ms
+//   await doubleKey(app.page, 'ok');        // a double press, timed in the page (also doublePadButton() and timed())
 //   (await menuState(app.page)).view        // the name of the view that has the keys, e.g. 'BasicSettings'
 
 const { SUNSHINE_HOSTS, openApp } = require('./harness');
@@ -125,6 +126,67 @@ async function key(page, name, settleMs) {
   await page.waitForTimeout(settleMs === undefined ? 300 : settleMs);
 }
 
+// The key codes of the keys of the remote, for key events made in the page
+const KEY_CODES = {
+  up: [38, 'ArrowUp'], down: [40, 'ArrowDown'], left: [37, 'ArrowLeft'], right: [39, 'ArrowRight'], ok: [13, 'Enter'],
+  back: TV_KEYS.back, chup: TV_KEYS.chup, chdown: TV_KEYS.chdown, playpause: TV_KEYS.playpause, red: TV_KEYS.red,
+};
+
+// Run steps at their times (`at`, in ms from now) in the page, so that the time between two of them doesn't depend on
+// how long a call into the browser takes, e.g. the two presses of a double press. A step is a key of the remote
+// ({ at, key: 'ok' }, pressed and released), a button of the simulated gamepad ({ at, button: PAD.A, pressed: true }) or
+// a stick axis of it ({ at, axis: 1, value: 0.9 }). Then wait for the UI to settle (300 ms unless given).
+async function timed(page, steps, settleMs) {
+  const list = steps.map((step) => (step.key ? { at: step.at, code: KEY_CODES[step.key][0], keyName: KEY_CODES[step.key][1] } : step));
+  await page.evaluate((timedSteps) => new Promise((resolve) => {
+    const start = performance.now();
+    let index = 0;
+    const run = (step) => {
+      if (step.keyName) {
+        ['keydown', 'keyup'].forEach((type) => {
+          const event = new KeyboardEvent(type, { key: step.keyName, bubbles: true, cancelable: true });
+          Object.defineProperty(event, 'keyCode', { value: step.code });
+          Object.defineProperty(event, 'which', { value: step.code });
+          (document.activeElement || document.body).dispatchEvent(event);
+        });
+      } else if (step.axis !== undefined) {
+        window.__padAxis(step.axis, step.value);
+      } else {
+        window.__padButton(step.button, step.pressed);
+      }
+    };
+    const next = () => {
+      if (index === timedSteps.length) {
+        resolve();
+        return;
+      }
+      const wait = start + timedSteps[index].at - performance.now();
+      if (wait > 0.5) {
+        setTimeout(next, wait);
+        return;
+      }
+      run(timedSteps[index]);
+      index++;
+      next();
+    };
+    next();
+  }), list);
+  await page.waitForTimeout(settleMs === undefined ? 300 : settleMs);
+}
+
+// Two presses of a key of the remote, gapMs apart (120 ms unless given): a double press
+function doubleKey(page, name, settleMs, gapMs) {
+  return timed(page, [{ at: 0, key: name }, { at: gapMs === undefined ? 120 : gapMs, key: name }], settleMs);
+}
+
+// Two presses of a button of the simulated gamepad, each held for 35 ms (two reads of the gamepads), 70 ms from press
+// to press: a double press, well within the 150 ms in which the menus take a second press of A, B, Select or Start for
+// the same press, also when the timers of a busy machine run late
+function doublePadButton(page, button, settleMs) {
+  return timed(page, [{ at: 0, button, pressed: true }, { at: 35, button, pressed: false }, { at: 70, button, pressed: true },
+    { at: 105, button, pressed: false }], settleMs === undefined ? 350 : settleMs);
+}
+
 // Press several keys of the remote, one after the other
 async function keys(page, names, settleMs) {
   for (const name of names) {
@@ -190,15 +252,24 @@ async function selectItem(page, viewName, itemId, previousKey, nextKey) {
   throw new Error('Could not select ' + itemId + ' in the view ' + viewName);
 }
 
-// From the PC list to a section of the settings (the data-category of its tile, e.g. 'basicSettings'), with the keys:
-// UP to the header (over the menu icon of a PC, if a PC is selected), Settings, OK, the tile, OK
+// To a section of the settings (the data-category of its tile, e.g. 'basicSettings'), with the keys. From the PC list:
+// UP to the header (over the menu icon of a PC, if a PC is selected), Settings, OK. From another section: RETURN to the
+// list of the sections. Then the tile and OK.
 async function openSettingsSection(page, category) {
-  await key(page, 'up');
-  if ((await menuState(page)).view === 'HostsMenuHighlight') {
-    await key(page, 'up');
+  let view = (await menuState(page)).view;
+  if (view === 'Hosts' || view === 'HostsMenuHighlight' || view === 'HostsNav') {
+    for (let step = 0; step < 2 && view !== 'HostsNav'; step++) {
+      await key(page, 'up');
+      view = (await menuState(page)).view;
+    }
+    await selectItem(page, 'HostsNav', 'settingsBtn', 'left', 'right');
+    await key(page, 'ok', 500);
+  } else if (view !== 'Settings') {
+    await key(page, 'back', 400);
   }
-  await selectItem(page, 'HostsNav', 'settingsBtn', 'left', 'right');
-  await key(page, 'ok', 500);
+  if ((await menuState(page)).view !== 'Settings') {
+    throw new Error('The list of the settings sections did not open, the keys are in the view ' + (await menuState(page)).view);
+  }
   const index = await page.evaluate((name) => Array.prototype.findIndex.call(Views.Settings.view.func(), (tile) => tile.getAttribute('data-category') === name), category);
   for (let step = 0; step < 10; step++) {
     const current = await page.evaluate(() => Views.Settings.view.index);
@@ -211,4 +282,27 @@ async function openSettingsSection(page, category) {
   await key(page, 'ok', 600);
 }
 
-module.exports = { PAD, THREE_HOSTS, key, keys, menuState, openMenus, openSettingsSection, padButton, selectItem, takeSnackbars };
+// The options of the drop-down that is open, in their order: the value, whether it is highlighted and whether it can be
+// chosen, and where it is on the screen. An empty list when no drop-down shows.
+function dropdownOptions(page) {
+  return page.evaluate(() => {
+    const container = document.querySelector('.mdl-menu__container.is-visible');
+    return !container ? [] : Array.prototype.map.call(container.querySelectorAll('li'), (option) => {
+      const box = option.getBoundingClientRect();
+      return {
+        value: option.getAttribute('data-value'), marked: option.classList.contains('hovered'), disabled: option.hasAttribute('disabled'),
+        top: Math.round(box.top), bottom: Math.round(box.bottom),
+      };
+    });
+  });
+}
+
+// The value of a row of the settings with a drop-down, as its button holds it (e.g. '3840:2160' of 'selectResolution')
+function rowValue(page, rowId) {
+  return page.evaluate((id) => document.getElementById(id).getAttribute('data-value'), rowId);
+}
+
+module.exports = {
+  PAD, THREE_HOSTS, doubleKey, doublePadButton, dropdownOptions, key, keys, menuState, openMenus, openSettingsSection, padButton, rowValue,
+  selectItem, takeSnackbars, timed,
+};

@@ -13,6 +13,8 @@
 // The bitrate and surround quality entries and 'Type text…' are checked by stream-menu-entries.test.js. The controller
 // side (the
 // combo and the controller input while the menu is open) is pinned by tests/native/stream_menu_combo_test.cpp.
+// A stick that snaps back past its centre when it is let go steps once in the menu (it used to step back, e.g. from the
+// entry just chosen), and neither a step nor a repeat of the stick runs on after the menu closed (since 2.3.1).
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -501,6 +503,75 @@ test('the gamepad combo opens the Stream Menu, the gamepad moves in it without t
     const readsAfter = await app.page.evaluate(() => window.__padReads);
     await app.page.waitForTimeout(100);
     assert.equal(await app.page.evaluate(() => window.__padReads), readsAfter);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a stick that snaps back steps once in the Stream Menu, and no step or repeat of it runs on once the menu closed', async () => {
+  const app = await openStreaming({ gamepad: true });
+  const { page } = app;
+  // Move the left stick up (-1) or down (1), as the next read of the gamepads sees it, and wait
+  const stick = async (value, waitMs) => {
+    await page.evaluate((v) => {
+      window.__pads[0].axes[1] = v;
+      window.__pads[0].timestamp++;
+    }, value);
+    await page.waitForTimeout(waitMs);
+  };
+  try {
+    await page.evaluate(() => handleMessage('streamMenuRequested'));
+    await page.waitForTimeout(AFTER_DELAY_MS);
+    assert.equal((await menuState(page)).focused, 'streamMenuResume');
+    // Down for 100 ms, then the stick snaps back past its centre for 32 ms before it rests: one step down, none back
+    await page.evaluate(() => new Promise((resolve) => {
+      const move = (value) => {
+        window.__pads[0].axes[1] = value;
+        window.__pads[0].timestamp++;
+      };
+      move(0.9);
+      setTimeout(() => move(-0.7), 100);
+      setTimeout(() => {
+        move(0);
+        resolve();
+      }, 132);
+    }));
+    await page.waitForTimeout(600);
+    assert.equal((await menuState(page)).focused, 'streamMenuStats');
+
+    // Down again, and the menu closes while the stick swings back up: the step back that waits for the stick to stay
+    // is dropped with the menu, and nothing repeats during the stream, where the release of the stick is never seen
+    await page.evaluate(() => {
+      window.__menuSteps = [];
+      ['up', 'down'].forEach((name) => {
+        const operation = Navigation[name];
+        Navigation[name] = function() {
+          window.__menuSteps.push(name);
+          return operation.apply(this, arguments);
+        };
+      });
+    });
+    await stick(0.9, 250);
+    assert.deepEqual(await page.evaluate(() => window.__menuSteps), ['down']);
+    // The swing back and the closing 40 ms later, timed in the page
+    await page.evaluate(() => new Promise((resolve) => {
+      window.__pads[0].axes[1] = -0.7;
+      window.__pads[0].timestamp++;
+      setTimeout(() => {
+        closeStreamMenu(true);
+        resolve();
+      }, 40);
+    }));
+    await page.waitForTimeout(1200);
+    assert.equal((await menuState(page)).open, false);
+    assert.deepEqual(await page.evaluate(() => ({ steps: window.__menuSteps, isRepeating: repeatAction !== null,
+      stepsBack: Object.keys(gamepadReverseSteps).length })), { steps: ['down'], isRepeating: false, stepsBack: 0 });
+    // The menu opens again with the stick still up: its position is the resting state, so nothing moves
+    await page.evaluate(() => handleMessage('streamMenuRequested'));
+    await page.waitForTimeout(600);
+    assert.equal((await menuState(page)).focused, 'streamMenuResume');
+    assert.deepEqual(await page.evaluate(() => window.__menuSteps), ['down']);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

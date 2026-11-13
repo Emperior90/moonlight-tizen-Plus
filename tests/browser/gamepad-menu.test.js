@@ -5,10 +5,14 @@
 // the Controller of gamepad.js polls navigator.getGamepads() only while the menus are shown. Since 1.19.100 Select
 // presses and Start switches, as the in-app guide promises (before, Select threw and Start did nothing). The exact
 // repeat counts are in tests/unit/gamepad-menu-handler.test.js, the simulated controllers in gamepad-controllers.test.js.
+// Since 2.3.1 one press counts once: the last test drives the settings through the real polling with an A that comes
+// twice (which used to open the section and press its first row as well) and with a stick that snaps back past its
+// centre when it is let go (which used to step back, or the wrong way).
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { openApp, startHarness } = require('./harness');
+const { PAD, doublePadButton, key, menuState, openMenus, padButton, selectItem, timed } = require('./menu-driver');
 
 const OPERATIONS = ['up', 'down', 'left', 'right', 'accept', 'back', 'press', 'switch'];
 // delayedNavigation() runs accept and back 50 ms later (BUTTON_NAVIGATION_DELAY) and the stick moves 150 ms later
@@ -292,6 +296,45 @@ test('the menu polling reports pad input, pauses while streaming and does not re
     await page.waitForTimeout(1000);
     const perSecond = (await page.evaluate(() => window.__getGamepadsCalls)) - before;
     assert.ok(perSecond > 30 && perSecond <= 70, 'getGamepads() calls per second: ' + perSecond);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('through the real polling, an A that comes twice counts once, a later A counts, and a stick that snaps back steps once', async () => {
+  const app = await openMenus(harness, { pad: true });
+  const { page } = app;
+  try {
+    // The list of the settings sections, which opens on Basic Settings
+    await key(page, 'up');
+    await selectItem(page, 'HostsNav', 'settingsBtn', 'left', 'right');
+    await key(page, 'ok', 500);
+    assert.equal((await menuState(page)).view, 'Settings');
+    // A twice, 70 ms from press to press: the section opens, and the second A doesn't press its first row, the button
+    // of the optimal settings, whose dialog would open
+    await doublePadButton(page, PAD.A, 700);
+    let state = await menuState(page);
+    assert.deepEqual([state.view, state.current, state.openDialogs], ['BasicSettings', 'optimalSettingsBtn', []]);
+
+    // The left stick pushed down for 100 ms, which then snaps back past its centre for 32 ms before it rests: one step
+    // down, and no step back up
+    await timed(page, [{ at: 0, axis: 1, value: 0.9 }, { at: 100, axis: 1, value: -0.7 }, { at: 132, axis: 1, value: 0 }], 600);
+    state = await menuState(page);
+    assert.deepEqual([state.view, state.current, state.marked], ['BasicSettings', 'selectResolution', ['selectResolution']]);
+    // A push up on purpose afterwards steps up, once: it is let go before the repeat starts 350 ms after the push
+    await timed(page, [{ at: 0, axis: 1, value: -0.9 }, { at: 250, axis: 1, value: 0 }], 300);
+    state = await menuState(page);
+    assert.deepEqual([state.current, state.marked], ['optimalSettingsBtn', ['optimalSettingsBtn']]);
+
+    // An A on purpose, long after the last one, presses the row: the dialog of the optimal settings opens
+    await padButton(page, PAD.A, 600);
+    state = await menuState(page);
+    assert.deepEqual([state.view, state.openDialogs], ['WarningDialog', ['warningDialog']]);
+    // B twice, 70 ms from press to press, closes the dialog, and doesn't leave the section as well
+    await doublePadButton(page, PAD.B, 600);
+    state = await menuState(page);
+    assert.deepEqual([state.view, state.openDialogs], ['BasicSettings', []]);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

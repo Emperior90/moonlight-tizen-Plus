@@ -9,10 +9,16 @@
 // - the app list shows at once after OK on a PC, with the app started last selected, and OK on that tile starts it
 //   instead of being ignored for 2 seconds: only an OK within 600 ms of the one on the PC (the same press) and a second
 //   start within 2 seconds are ignored
+// - OK on an app of a PC that stopped answering (e.g. it went to sleep while its app list showed) says so, where OK
+//   seemed to do nothing before; the app list stays, and the audio output that the Web Audio backend opened with the
+//   press is closed again (the failure of the server info request in startGame())
+// - opening an app list writes no error to the console: the view of the app list used to mark a tile before the list
+//   had any (Views.Apps in wasm/platform/navigation.js)
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { SUNSHINE_HOSTS, openApp, startHarness } = require('./harness');
+const { menuState, openMenus, takeSnackbars } = require('./menu-driver');
 
 let harness;
 before(async () => {
@@ -209,6 +215,80 @@ test('OK on the selected app 0.7 s after OK on the PC launches it on the PC', as
     await remoteKey(page, OK);
     await page.waitForFunction(() => isInGame === true && window.__sunshine.starts.length === 1, null, { timeout: 5000 });
     assert.deepEqual(await page.evaluate(() => window.__sunshine.http.filter((request) => request.indexOf('/launch') === 0)), ['/launch 105']);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('OK on an app of a PC that stopped answering says so, the app list stays, and the Web Audio output is closed again', async () => {
+  for (const backend of ['EMSS', 'WebAudio']) {
+    const app = await openMenus(harness, { tv: TV, moduleScripts: ['sunshine-host.js'], stored: { hosts: SUNSHINE_HOSTS, audioBackend: backend } });
+    const { page } = app;
+    try {
+      await page.waitForFunction(() => typeof hosts !== 'undefined' && hosts.HOST1 && hosts.HOST1.online === true, null, { timeout: 10000 });
+      assert.equal(await page.evaluate(() => isWebAudioBackendSelected()), backend === 'WebAudio');
+      await selectPcCard(page);
+      await remoteKey(page, OK);
+      await appListShown(page);
+      // An OK within 600 ms of the one on the PC counts as the same press
+      await page.waitForTimeout(700);
+      // The PC goes to sleep: its requests fail from now on. Record the audio output of the Web Audio backend.
+      await page.evaluate(() => {
+        window.__audio = [];
+        const start = startAudioScheduler;
+        const stop = stopAudioScheduler;
+        startAudioScheduler = function() {
+          window.__audio.push('start');
+          return start.apply(this, arguments);
+        };
+        stopAudioScheduler = function() {
+          window.__audio.push('stop');
+          return stop.apply(this, arguments);
+        };
+        Module.openUrl = function(id) {
+          setTimeout(() => handlePromiseMessage(id, 'reject', -1), 200);
+        };
+      });
+      await takeSnackbars(page);
+      await remoteKey(page, OK);
+      await page.waitForTimeout(1200);
+      assert.deepEqual(await takeSnackbars(page),
+        ['Failed to connect to GAMING-PC. Make sure that Sunshine (or another GameStream host) is running on the PC.'], backend);
+      // The app list still shows and has the keys, and no stream started
+      const state = await menuState(page);
+      assert.deepEqual([state.view, state.openDialogs], ['Apps', []], backend);
+      assert.deepEqual(await page.evaluate(() => [isInGame, document.body.getAttribute('data-view'), $('#loadingSpinner').css('display'),
+        window.__sunshine.starts.length]), [false, 'apps', 'none', 0], backend);
+      // The Web Audio backend opened its output with the press (startAudioScheduler() first stops what was there) and
+      // closed it after the failure; the other backend has no output of its own
+      assert.deepEqual(await page.evaluate(() => ({ calls: window.__audio, isOutputOpen: !!_audContext })),
+        { calls: backend === 'WebAudio' ? ['start', 'stop', 'stop'] : [], isOutputOpen: false }, backend);
+      // RIGHT still moves the selection
+      const before = state.current;
+      await remoteKey(page, RIGHT);
+      await page.waitForTimeout(150);
+      assert.notEqual((await menuState(page)).current, before, backend);
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
+test('opening the app list of a PC writes no error of the navigation to the console, and one tile is marked', async () => {
+  const app = await openMenus(harness, { tv: TV, moduleScripts: ['sunshine-host.js'], stored: { hosts: SUNSHINE_HOSTS } });
+  const { page } = app;
+  try {
+    await page.waitForFunction(() => typeof hosts !== 'undefined' && hosts.HOST1 && hosts.HOST1.online === true, null, { timeout: 10000 });
+    await selectPcCard(page);
+    app.consoleErrors.length = 0;
+    await remoteKey(page, OK);
+    await appListShown(page);
+    await page.waitForTimeout(300);
+    assert.deepEqual(app.consoleErrors.filter((line) => line.indexOf('navigation.js') >= 0), []);
+    const state = await menuState(page);
+    assert.deepEqual([state.view, state.current, state.marked], ['Apps', 'game-container-101', ['game-container-101']]);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
