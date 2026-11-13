@@ -1092,6 +1092,13 @@ void MoonlightInstance::VidDecCleanup(void) {
   report.hostProcessingLatencyX10 = totals.framesWithHostProcessingLatency > 0 ?
     (uint32_t)(((uint64_t)totals.totalHostProcessingLatency + totals.framesWithHostProcessingLatency / 2) /
       totals.framesWithHostProcessingLatency) : 0;
+  // The load of the audio thread, which AudDecCleanup() stored when the audio stream ended before this (the audio
+  // stream stops before the video stream, stopAudioStream() and stopVideoStream() in Connection.c). Taking it empties
+  // it, so that a stream that ends before its audio starts doesn't report the figures of the stream before it.
+  report.audioChannels = g_AudioStreamStats.loadChannels.exchange(0);
+  report.audioLoadMsPerS = g_AudioStreamStats.loadMsPerSecond.exchange(0);
+  report.audioLoadPeakMsPerS = g_AudioStreamStats.loadPeakMsPerSecond.exchange(0);
+  report.audioOverloadedWindows = g_AudioStreamStats.overloadedWindows.exchange(0);
   const std::string reportMessage = FormatSessionReportMessage(report);
   if (!reportMessage.empty()) {
     PostToJsAsync(reportMessage);

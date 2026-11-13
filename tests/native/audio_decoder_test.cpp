@@ -14,6 +14,12 @@
 // opus_channel_layout_test.c derives the layouts from the tables of Sunshine, and opus_decoder/app_decoder_test.cpp
 // decodes them with the real library).
 //
+// The load of the audio thread is judged from the totals of the statistics after every packet (wasm/audio_load.hpp,
+// whose rule audio_load_test.cpp checks): a stream that needs more than 300 ms of decoding and hand-over per second of
+// audio over 10 seconds logs its figures and tells the front end once, with both backends and whatever the level of the
+// performance stats, a stream below the limit tells nothing, and every stream that decoded audio logs its figures when
+// it ends and leaves them for the report of the session.
+//
 // auddec.cpp has an EM_ASM block without arguments, whose stub takes the GNU form of __VA_ARGS__ (run.sh):
 // Build with: -std=gnu++17
 
@@ -59,6 +65,12 @@ template struct PrivateMember<AudioStartedMember, &MoonlightInstance::m_AudioSta
 template struct PrivateMember<OpusDecoderMember, &MoonlightInstance::m_OpusDecoder>;
 
 static std::vector<std::string> logs;
+
+// The messages that the audio thread posted to the front end without waiting for it
+static std::vector<std::string> posted;
+void PostToJsAsync(std::string message) {
+  posted.push_back(message);
+}
 
 void MoonlightInstance::ClLogMessage(const char* format, ...) {
   char text[512];
@@ -179,6 +191,7 @@ static int InitAudio(AudioBackend backend, OPUS_MULTISTREAM_CONFIGURATION config
   g_Instance->*Pointer(AudioSyncMember()) = audioSync;
   (g_Instance->*Pointer(AudioStartedMember())) = false;
   logs.clear();
+  posted.clear();
   appended.clear();
   decodeCalls = 0;
   decodeResult = 0;
@@ -351,6 +364,108 @@ static void DisabledAudioDecodesNothing() {
   CHECK_EQ(FormatAudioStreamStats(g_AudioStreamStats, window, 2000, text, sizeof(text)), 0);
 }
 
+// The line of the logs that holds the given text, or an empty one
+static std::string FindLog(const char* text) {
+  for (const std::string& line : logs) {
+    if (line.find(text) != std::string::npos) {
+      return line;
+    }
+  }
+  return "";
+}
+
+static void OverloadedAudioThreadTellsTheFrontEndOncePerStream() {
+  for (AudioBackend backend : {AudioBackend::Emss, AudioBackend::WebAudio}) {
+    // 7.1 in 5 ms packets: 2000 packets are the 10 seconds of a window. The stand-in of the decoder fills the frame that
+    // it is offered, which is a whole slot of 10 ms with the Web Audio backend, so 1000 packets are a window there.
+    StartAudio(backend, 8, 240, false);
+    const int window = backend == AudioBackend::WebAudio ? 1000 : 2000;
+    Feed(window / 2);
+    // The work that a slow TV would have had so far: 3.2 s of decoding and 1 s of hand-over within 10 s of audio,
+    // counted where the audio thread counts them, so that the test doesn't have to wait for it
+    g_AudioStreamStats.CountDecode(3200000, 0);
+    g_AudioStreamStats.CountOutput(1000000);
+    Feed(window / 2 - 1);
+    CHECK(posted.empty());
+    CHECK_EQ(CountLogs("Audio overload:"), 0);
+    // The packet that completes the window
+    Feed(1);
+    CHECK_EQ(posted.size(), (size_t)1);
+    int channels = 0;
+    int load = 0;
+    CHECK_EQ(sscanf(posted.empty() ? "" : posted[0].c_str(), "AudioOverloadMsg: %d,%d", &channels, &load), 2);
+    CHECK_EQ(channels, 8);
+    // 420 ms per second, and the little that the stand-ins of the decoder and the player took in this test
+    CHECK(load >= 420 && load < 500);
+    CHECK_EQ(CountLogs("Audio overload: decoding and handing over the sound of 8 channels took "), 1);
+    CHECK(FindLog("Audio overload:").find(" ms per second of audio over the last 10 s (decode 32") != std::string::npos);
+    CHECK(FindLog("Audio overload:").find("above the limit of 300 ms/s\n") != std::string::npos);
+    // The stream stays overloaded: no second message and no second line
+    g_AudioStreamStats.CountDecode(9000000, 0);
+    Feed(2 * window);
+    CHECK_EQ(posted.size(), (size_t)1);
+    CHECK_EQ(CountLogs("Audio overload:"), 1);
+    // Its end logs the figures of the stream and leaves its load for the report of the session
+    MoonlightInstance::AudDecCleanup();
+    CHECK_EQ(CountLogs("Audio thread work of this stream: decode "), 1);
+    CHECK(FindLog("Audio thread work of this stream:").find(" of 3 windows above 300 ms/s; longest hand-over 1000.") !=
+          std::string::npos);
+    CHECK_EQ(g_AudioStreamStats.loadChannels.load(), 8u);
+    CHECK(g_AudioStreamStats.loadMsPerSecond.load() >= 440u);
+    CHECK(g_AudioStreamStats.loadPeakMsPerSecond.load() >= 450u);
+    CHECK_EQ(g_AudioStreamStats.overloadedWindows.load(), 2u);
+    // A second cleanup neither logs the figures again nor changes them
+    MoonlightInstance::AudDecCleanup();
+    CHECK_EQ(CountLogs("Audio thread work of this stream:"), 1);
+    CHECK_EQ(g_AudioStreamStats.overloadedWindows.load(), 2u);
+    // The next stream is judged from its own first packet, and tells again when it is overloaded as well
+    StartAudio(backend, 6, 480, false);
+    CHECK_EQ(g_AudioStreamStats.loadChannels.load(), 0u);
+    CHECK_EQ(g_AudioStreamStats.overloadedWindows.load(), 0u);
+    g_AudioStreamStats.CountOutput(3100000);
+    Feed(999);
+    CHECK(posted.empty());
+    Feed(1);
+    CHECK_EQ(posted.size(), (size_t)1);
+    CHECK(!posted.empty() && posted[0].find("AudioOverloadMsg: 6,31") == 0);
+    MoonlightInstance::AudDecCleanup();
+  }
+}
+
+static void AudioThreadBelowTheLimitTellsNothing() {
+  // 5.1 in 10 ms packets with the work of the streams that played fine, 1.7 s within each 10 s of audio, and a single
+  // hand-over of 22 ms in each window
+  StartAudio(AudioBackend::Emss, 6, 480, false);
+  for (int window = 0; window < 3; window++) {
+    g_AudioStreamStats.CountDecode(1040000, 0);
+    g_AudioStreamStats.CountOutput(638000);
+    Feed(500);
+    g_AudioStreamStats.CountOutput(22000);
+    Feed(500);
+  }
+  CHECK(posted.empty());
+  CHECK_EQ(CountLogs("Audio overload:"), 0);
+  MoonlightInstance::AudDecCleanup();
+  CHECK_EQ(CountLogs("Audio thread work of this stream: decode 10"), 1);
+  CHECK(FindLog("Audio thread work of this stream:").find(" 0 of 3 windows above 300 ms/s; ") != std::string::npos);
+  CHECK_EQ(g_AudioStreamStats.loadChannels.load(), 6u);
+  CHECK(g_AudioStreamStats.loadMsPerSecond.load() >= 170u && g_AudioStreamStats.loadMsPerSecond.load() < 200u);
+  CHECK(g_AudioStreamStats.loadPeakMsPerSecond.load() >= 170u && g_AudioStreamStats.loadPeakMsPerSecond.load() < 200u);
+  CHECK_EQ(g_AudioStreamStats.overloadedWindows.load(), 0u);
+
+  // A stream that ends before it decoded anything, and one without an audio output, log and leave nothing
+  StartAudio(AudioBackend::Emss, 6, 480, false);
+  MoonlightInstance::AudDecCleanup();
+  CHECK_EQ(CountLogs("Audio thread work of this stream:"), 0);
+  CHECK_EQ(g_AudioStreamStats.loadChannels.load(), 0u);
+  StartAudio(AudioBackend::Disabled, 6, 480, false);
+  Feed(3000);
+  MoonlightInstance::AudDecCleanup();
+  CHECK(posted.empty());
+  CHECK_EQ(CountLogs("Audio thread work of this stream:"), 0);
+  CHECK_EQ(CountLogs("Audio overload:"), 0);
+}
+
 static void DecoderIsDestroyedWithTheStreamAndBeforeANewOne() {
   // Whatever the tests before left behind
   MoonlightInstance::AudDecCleanup();
@@ -514,6 +629,10 @@ int main() {
                         DecodeAndOutputTimesReachTheStatistics);
   test_support::RunTest("the Web Audio backend counts the decode and the post", WebAudioCountsTheDecodeAndThePost);
   test_support::RunTest("disabled audio decodes nothing and shows no audio lines", DisabledAudioDecodesNothing);
+  test_support::RunTest("an overloaded audio thread logs its figures and tells the front end once per stream",
+                        OverloadedAudioThreadTellsTheFrontEndOncePerStream);
+  test_support::RunTest("an audio thread below the limit tells nothing, and each stream logs and keeps its figures",
+                        AudioThreadBelowTheLimitTellsNothing);
   test_support::RunTest("the decoder is destroyed with its stream and before a new one is created",
                         DecoderIsDestroyedWithTheStreamAndBeforeANewOne);
   test_support::RunTest("a decoder that can't be created fails the audio start with a log line and decodes nothing",

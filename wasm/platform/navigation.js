@@ -1335,9 +1335,11 @@ const Views = {
   AudioSettings: {
     view: new ListView(() => [
       'selectAudioBackend',
-      isAudioOutputDisabled() ? null : 'selectAudio',
-      // The surround audio quality only with 5.1 and 7.1 (updateSurroundQualityOption() in index.js)
-      isAudioOutputDisabled() || !isSurroundAudioSelected() ? null : 'selectSurroundQuality',
+      // The audio configuration only with the media player of the TV, since the Web Audio backend plays stereo
+      // (isAudioConfigurationAvailable() in index.js)
+      isAudioConfigurationAvailable() ? 'selectAudio' : null,
+      // The surround audio quality only with 5.1 and 7.1 there (updateSurroundQualityOption() in index.js)
+      isAudioConfigurationAvailable() && isSurroundAudioSelected() ? 'selectSurroundQuality' : null,
       // At most one of these settings is shown at a time, as each one belongs to a single backend,
       // and neither is shown when the audio output is disabled
       isAudioOutputDisabled() ? null : isWebAudioBackendSelected() ? 'selectAudioJitter' : 'audioSyncBtn',

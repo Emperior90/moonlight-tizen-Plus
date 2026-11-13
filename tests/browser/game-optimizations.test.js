@@ -114,7 +114,7 @@ test('GeForce Experience gets it only at 720p, 1080p or 4K at up to 60 FPS, and 
 });
 
 test('switched off, no host gets it', async () => {
-  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, stored: Object.assign({ settingsSchema: 4, optimizeGames: false }, EXISTING_INSTALL) });
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, stored: Object.assign({ settingsSchema: 5, optimizeGames: false }, EXISTING_INSTALL) });
   try {
     assert.equal(await sopsSwitch(app.page), false);
     assert.deepEqual((await startAndReadSops(app.page)).map((request) => request.sops), [0]);
@@ -131,12 +131,12 @@ test('the optimal settings button names it and turns it on for an install that h
   // An install of 2.2.1 that never switched it keeps it off through the snapshot of settings schema 4
   const app = await openApp(harness, { tv: { tv: 'uhd', conn: 'wifi' }, stored: Object.assign({ settingsSchema: 3 }, EXISTING_INSTALL) });
   try {
-    await waitForStorage(app.page, (values) => values.settingsSchema === 4 && values.optimizeGames === false);
+    await waitForStorage(app.page, (values) => values.settingsSchema === 5 && values.optimizeGames === false);
     assert.equal(await sopsSwitch(app.page), false);
     await app.page.evaluate(() => $('#optimalSettingsBtn').trigger('click'));
     const text = await app.page.evaluate(() => document.getElementById('warningDialogText').innerHTML);
-    assert.ok(text.indexOf('&#8226; Video frame pacing on, limited color range, unlock all frame rates off, optimize game settings on<br>') >= 0 ||
-      text.indexOf('• Video frame pacing on, limited color range, unlock all frame rates off, optimize game settings on<br>') >= 0, text);
+    assert.ok(text.indexOf('&#8226; Video frame pacing on, limited color range, unlock all frame rates off, optimize game settings on, surround audio quality Efficient<br>') >= 0 ||
+      text.indexOf('• Video frame pacing on, limited color range, unlock all frame rates off, optimize game settings on, surround audio quality Efficient<br>') >= 0, text);
     // Cancel keeps it off
     await app.page.evaluate(() => $('#closeWarning').trigger('click'));
     assert.equal(await sopsSwitch(app.page), false);

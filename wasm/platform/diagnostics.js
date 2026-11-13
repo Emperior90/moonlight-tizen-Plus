@@ -450,6 +450,10 @@ function parseSessionReport(json) {
     heapGrowthMb: number('heapGrowthMb'),
     hostFrameRateX100: number('hostFrameRateX100'),
     hostProcessingLatencyX10: number('hostProcessingLatencyX10'),
+    audioChannels: number('audioChannels'),
+    audioLoadMsPerS: number('audioLoadMsPerS'),
+    audioLoadPeakMsPerS: number('audioLoadPeakMsPerS'),
+    audioOverloadedWindows: number('audioOverloadedWindows'),
   };
 }
 
@@ -484,6 +488,14 @@ function isHostEncoderSaturated(report) {
     report.hostProcessingLatencyX10 / 10 > HOST_HINT_FRAME_TIME_SHARE * 1000 / report.fps;
 }
 
+// Whether the sound of the stream kept its thread too busy: decoding and handing over a surround stream took more than
+// the limit per second of audio in at least one window of 10 seconds, which the module counts (IsAudioOverloaded() in
+// wasm/audio_load.hpp), and which is also when it tells the user during the stream ('AudioOverloadMsg: ' in
+// messages.js). Only for 5.1 and 7.1, which have a lighter sound to change to; a stereo stream has none.
+function isAudioThreadOverloaded(report) {
+  return report.audioChannels > 2 && report.audioOverloadedWindows > 0;
+}
+
 // The hints of a report in plain language, at most 3, most important first, as keys of SESSION_REPORT_HINTS. The options
 // say whether reference frame invalidation was on, which a hint about recovery keyframes suggests otherwise.
 function getSessionReportHints(report, options) {
@@ -501,6 +513,9 @@ function getSessionReportHints(report, options) {
   }
   if ((tvPercent >= 0.5 && report.tvDroppedFrames >= 10) || report.videoResets >= 3) {
     hints.push('tv');
+  }
+  if (isAudioThreadOverloaded(report)) {
+    hints.push('audio');
   }
   // Many frames lost on the network make the encoder look busier than it is (keyframes after a loss), so only a stream
   // without the network hint counts; the few frames that a good network loses in a long stream change nothing
@@ -532,6 +547,9 @@ function getSessionReportHintText(hint, report) {
       return t('Many frames were lost on the network: use a cable or lower the bitrate.');
     case 'tv':
       return t('The TV could not keep up with the video: lower the bitrate, the resolution or the frame rate.');
+    case 'audio':
+      return t('Decoding and playing the sound took the TV up to %1$s ms per second: if the sound stuttered, set Surround audio quality to Efficient, or Audio configuration to Stereo.',
+        formatReportNumber(figures.audioLoadPeakMsPerS || 0));
     case 'host':
       return t('The PC took %1$s ms of the %2$s ms between two frames to encode a frame, so it may have skipped frames: use a faster encoder preset on the PC, or a lower resolution or frame rate.',
         formatReportNumber((figures.hostProcessingLatencyX10 || 0) / 10, 1), formatReportNumber(figures.fps > 0 ? 1000 / figures.fps : 0, 1));

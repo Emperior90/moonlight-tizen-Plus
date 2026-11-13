@@ -901,6 +901,20 @@ function showHeldStartMessage() {
   snackbarLogLong('The PC is still holding an earlier start, e.g. from another device. Wait a few seconds and start again.');
 }
 
+// Tell the user once per session that the sound of a surround stream keeps the TV busy, with the two ways to make it
+// lighter. The module sends 'AudioOverloadMsg: <channels>,<ms per second>' once per stream start, when decoding the
+// sound and handing it to the player took more than its limit per second of audio over 10 seconds (CheckAudioLoad() in
+// wasm/auddec.cpp, whose log line has the figures), whatever the level of the performance statistics. A reconnect of the
+// Stream Menu stays in the session, so the message doesn't come again after it. A stereo stream gets none, since it has
+// no lighter sound to change to, and a message that arrives after the end of the stream is ignored.
+function showAudioOverloadMessage(channels) {
+  if (isInGame !== true || !wasmSessionStarted || audioOverloadWarning || !(channels > 2)) {
+    return;
+  }
+  audioOverloadWarning = true;
+  snackbarLogLong('The sound is keeping the TV busy. If it stutters, set Surround audio quality to Efficient, or Audio configuration to Stereo.');
+}
+
 function dispatchMessage(msg) {
   console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Message data: ', msg);
   // If it's a recognized event, notify the appropriate function
@@ -1100,6 +1114,9 @@ function dispatchMessage(msg) {
     } else {
       snackbarLogLong('Mouse emulation is deactivated');
     }
+  } else if (msg.indexOf('AudioOverloadMsg: ') === 0) {
+    // The sound of the stream keeps the audio thread of the module too busy (wasm/audio_load.hpp)
+    showAudioOverloadMessage(parseInt(msg.replace('AudioOverloadMsg: ', ''), 10));
   } else if (msg.indexOf('SessionReportMsg: ') === 0) {
     // The totals of the stream that ended, for the report of the last session in System information (index.js)
     keepSessionReport(msg.replace('SessionReportMsg: ', ''));

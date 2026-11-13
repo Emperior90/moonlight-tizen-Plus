@@ -2,7 +2,9 @@
 
 // Pins the parts of the UI around a running stream (from the earlier rounds of fixes): the network line and the labels
 // of the performance statistics overlay, the screensaver of the TV, the Back key guard, the refresh of the codec modes
-// of the host before a stream, the audio clock sync setting and the help texts that were corrected.
+// of the host before a stream, the audio clock sync setting and the help texts that were corrected. Since 2.3.1 the
+// full statistics of a translated app also translate the count of the video pipeline resets and the kinds of the TV
+// player rejections.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -128,6 +130,25 @@ test('the overlay labels go through the translation', async () => {
       window.t = original;
       return result;
     }), 'Bitrate: 61.40 Mbps empfangen, 100.0 Mbps eingestellt\nWorst FEC block: 2 of 4 parity packets used');
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('in German the full statistics name the video pipeline resets and the kinds of the TV player rejections in German', async () => {
+  // A TV set to German, which the app follows. These two parts of the lines stayed English in every language.
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi', locale: 'de_DE' } });
+  try {
+    await app.page.waitForFunction(() => document.documentElement.getAttribute('lang') === 'de-DE' && t('Settings') === 'Einstellungen', null, { timeout: 5000 });
+    await showFullStats(app.page);
+    // The two lines as FormatVideoStats() of wasm/wasmplayer.cpp writes them (tests/unit/menu-texts.test.js)
+    await app.page.evaluate(() => handleMessage('StatMsg: Session frames dropped by the TV: 4 (video pipeline resets: 1)\n' +
+      'TV player rejections: buffer full 4 (3 recovered), keyframe required 1, track not ready 0, other 2 (last code -3)\n'));
+    const stats = await overlayText(app.page);
+    assert.ok(stats.indexOf('Vom TV verworfene Frames (Sitzung): 4 (Video-Neustarts: 1)') >= 0, stats);
+    assert.ok(stats.indexOf('Ablehnungen des TV-Players: Puffer voll 4 (3 behoben), Keyframe nötig 1, Spur nicht bereit 0, sonstige 2 (letzter Code -3)') >= 0, stats);
+    assert.doesNotMatch(stats, /video pipeline resets|buffer full|recovered|keyframe required|track not ready|last code/);
+    assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
   }

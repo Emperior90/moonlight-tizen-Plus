@@ -184,12 +184,12 @@ test('S90C: the start request of a fresh install carries the golden video settin
       assert.deepEqual(request, {
         host: '10.0.0.2', httpPort: 47989, width: '3840', height: '2160', frameRate: '60', bitrateKbps,
         appVersion: '7.1.431.-1', gfeVersion: '', rtspUrl: 'rtsp://10.0.0.2:48010', codecModes: 0x1F03,
-        // The rumble is on for a fresh install since settings schema 3, and 'Optimize game settings' since settings
-        // schema 4
+        // The rumble is on for a fresh install since settings schema 3, 'Optimize game settings' since settings
+        // schema 4, and the surround audio quality is Efficient since settings schema 5
         framePacing: 1, optimizeGames: 1, rumbleFeedback: 1, mouseEmulation: 0, controllerMappings: '',
         audioBackend: 'EMSS', audioConfig: 'Stereo', audioSync: 0, audioJitter: 100, playHostAudio: 0, decryptHostAudio: 0,
         videoCodec: 'HEVC', hdrMode: 1, fullRange: 0, gameMode: 0, disableWarnings: 0, performanceStats: 0, refFrameInvalidation: 0,
-        hdrMetadata: 0, controllerType: 'Auto', surroundQuality: 'High',
+        hdrMetadata: 0, controllerType: 'Auto', surroundQuality: 'Efficient',
       }, conn);
       assert.deepEqual(app.errors, []);
     } finally {

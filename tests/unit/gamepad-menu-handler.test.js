@@ -109,9 +109,9 @@ function loadMenus(withGamepadJs) {
     operations,
     slots,
     snackbars,
-    // Send changes like gamepad.js does after a poll of the given pad
-    send(changes, gamepad) {
-      platform.context.dispatchEvent({ type: 'gamepadinputchanged', detail: { gamepad: gamepad || 0, changes } });
+    // Send changes like gamepad.js does after a poll of the given pad, which came lateBy ms late (0 unless given)
+    send(changes, gamepad, lateBy) {
+      platform.context.dispatchEvent({ type: 'gamepadinputchanged', detail: { gamepad: gamepad || 0, changes, lateBy: lateBy || 0 } });
     },
     count(operation) {
       return operations.filter((name) => name === operation).length;
@@ -502,6 +502,60 @@ test('a D-pad button that bounces steps once and keeps its repeat, and two quick
   other.clock.advance(1000);
   assert.deepEqual(other.operations, ['down', 'up']);
   assert.deepEqual(menus.errors().concat(other.errors()), []);
+});
+
+test('a D-pad press after a busy moment of the page steps: a release that a late read saw counts from when the read was due', () => {
+  // Two presses 150 ms apart, the first one held for 60 ms. The page is busy from 30 ms to 140 ms after the first press
+  // (e.g. a TV that draws the step for that long), so the read of the gamepads that sees the release comes 140 ms after
+  // the press, 92 ms later than it was due (lateBy of gamepad.js), and the second press only 16 ms after it. The press
+  // was taken for a bounce of the first one and dropped.
+  const menus = loadMenus();
+  menus.send([press(13)]);
+  menus.clock.advance(140);
+  menus.send([release(13)], 0, 92);
+  menus.clock.advance(16);
+  menus.send([press(13)]);
+  assert.deepEqual(menus.operations, ['down', 'down'], 'the second press steps at once');
+  menus.clock.advance(60);
+  menus.send([release(13)]);
+  menus.clock.advance(1000);
+  assert.deepEqual(menus.operations, ['down', 'down']);
+
+  // The second press after a late release starts its own repeat, 350 ms after it
+  const held = loadMenus();
+  held.send([press(15)]);
+  held.clock.advance(140);
+  held.send([release(15)], 0, 92);
+  held.clock.advance(16);
+  held.send([press(15)]);
+  held.clock.advance(340);
+  assert.equal(held.count('right'), 2);
+  held.clock.advance(1660);
+  held.send([release(15)]);
+  assert.equal(held.count('right'), 17);
+  held.clock.advance(1000);
+  assert.equal(held.count('right'), 17);
+
+  // A read that is late by less than what is left of the 40 ms keeps the bounce a bounce: the release counts from
+  // 20 ms before it was seen, and the press 16 ms after it comes 36 ms after that
+  const bounce = loadMenus();
+  bounce.send([press(13)]);
+  bounce.clock.advance(100);
+  bounce.send([release(13)], 0, 20);
+  bounce.clock.advance(16);
+  bounce.send([press(13)]);
+  bounce.clock.advance(100);
+  bounce.send([release(13)]);
+  bounce.clock.advance(1000);
+  assert.deepEqual(bounce.operations, ['down']);
+  // An event without the lateness (as the tests of the page send it) counts as on time
+  const plain = loadMenus();
+  plain.platform.context.dispatchEvent({ type: 'gamepadinputchanged', detail: { gamepad: 0, changes: [press(13)] } });
+  plain.platform.context.dispatchEvent({ type: 'gamepadinputchanged', detail: { gamepad: 0, changes: [release(13)] } });
+  plain.clock.advance(16);
+  plain.platform.context.dispatchEvent({ type: 'gamepadinputchanged', detail: { gamepad: 0, changes: [press(13)] } });
+  assert.deepEqual(plain.operations, ['down']);
+  assert.deepEqual(menus.errors().concat(held.errors(), bounce.errors(), plain.errors()), []);
 });
 
 test('a new repeat replaces the old one: its timer is cleared and only one repeat runs', () => {

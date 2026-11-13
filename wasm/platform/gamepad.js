@@ -18,6 +18,14 @@ const Controller = (function() {
   // How often the menus read the gamepads, in ms: about once per frame of the screen, which no real button press is
   // shorter than. The held D-pad and stick repeat by time (index.js), so it doesn't change how fast they repeat.
   const MENU_POLL_INTERVAL_MS = 16;
+  // A read of the gamepads that comes this long after the one before it is late: the page was busy meanwhile, e.g. with
+  // drawing the step of a press, and what the read finds changed can have happened that long ago
+  const LATE_POLL_MS = 3 * MENU_POLL_INTERVAL_MS;
+  // The time of the read before the one that runs (null for the first one since the polling started), and by how many
+  // ms the read that runs came later than it was due, 0 for one that is not late. The menus get it with the changes of
+  // the read (lateBy), so that they don't take a D-pad press after a busy moment for a bounce of the press before it.
+  let lastPollAt = null;
+  let pollLateBy = 0;
 
   class Button {
     constructor(button) {
@@ -125,7 +133,7 @@ const Controller = (function() {
   function reportChanges(index, changes) {
     if (changes.length > 0) {
       window.dispatchEvent(new CustomEvent('gamepadinputchanged', {
-          detail: { gamepad: index, changes },
+          detail: { gamepad: index, changes, lateBy: pollLateBy },
         })
       );
     }
@@ -420,6 +428,10 @@ const Controller = (function() {
   }
 
   function pollGamepads() {
+    const now = performance.now();
+    const sinceLastPoll = lastPollAt === null ? 0 : now - lastPollAt;
+    pollLateBy = sinceLastPoll >= LATE_POLL_MS ? sinceLastPoll - MENU_POLL_INTERVAL_MS : 0;
+    lastPollAt = now;
     const connectedGamepads = readGamepads();
     // Gather the evidence of every slot, also of a controller that the menus know from its connection event, so that
     // System information, the button mapping and the mask of a stream start count it
@@ -436,6 +448,8 @@ const Controller = (function() {
     // again through getConnectedGamepads(), whose read can be newer, or by a gamepad whose index differs from its slot
     // in the read) is told now rather than a poll later
     reportValidatedGamepads();
+    // What is reported outside a read (the end of the input of a gamepad that disconnects) is not late
+    pollLateBy = 0;
   }
 
   // Take a fresh snapshot of every known or connected gamepad without reporting any changes, so input that happened
@@ -464,6 +478,7 @@ const Controller = (function() {
     }
     if (!pollingInterval) {
       resetGamepads();
+      lastPollAt = null;
       pollingInterval = setInterval(pollGamepads, MENU_POLL_INTERVAL_MS);
       // The menus take over again: no rumble of a stream may go on here (the end of the stream already stopped them)
       Rumble.stopAll();

@@ -474,8 +474,9 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   // Store the audio configuration value from the stream configurations
   m_AudioConfig = m_StreamConfig.audioConfiguration;
 
-  // The quality of a stream with more than 2 channels: High (the default, also for any other value) or Efficient,
-  // which the connection thread applies to 5.1 and 7.1 only (ConnectionThreadFunc())
+  // The quality of a stream with more than 2 channels: Efficient, or High (also for any other value; the front end
+  // sends one of the two, and Efficient where none was chosen), which the connection thread applies to 5.1 and 7.1
+  // only (ConnectionThreadFunc())
   m_EfficientSurroundAudio = surroundQuality == "Efficient";
   if (!m_EfficientSurroundAudio) {
     PostToJs("Selecting the surround audio quality to: High");

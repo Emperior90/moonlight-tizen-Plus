@@ -19,8 +19,8 @@ const {
 } = require('./harness');
 const tvMock = require('./mocks/tv-mock');
 
-const SETTINGS_LINE_UNLOCKED = 'Video frame pacing on, limited color range, unlock all frame rates on, optimize game settings on';
-const SETTINGS_LINE_LOCKED = 'Video frame pacing on, limited color range, unlock all frame rates off, optimize game settings on';
+const SETTINGS_LINE_UNLOCKED = 'Video frame pacing on, limited color range, unlock all frame rates on, optimize game settings on, surround audio quality Efficient';
+const SETTINGS_LINE_LOCKED = 'Video frame pacing on, limited color range, unlock all frame rates off, optimize game settings on, surround audio quality Efficient';
 
 // Per simulated TV (tests/browser/mocks/tv-mock.js): the resolution, HDR, frame rates, game mode and bitrate per
 // connection it gets, and the dialog lines
@@ -139,7 +139,7 @@ const CUSTOMIZED_SETTINGS = {
   controllerType: 'PlayStation',
   audioBackend: 'WebAudio',
   audioConfig: '51Surround',
-  surroundQuality: 'Efficient',
+  surroundQuality: 'High',
   audioSync: true,
   audioJitter: '50',
   audioClockSync: true,
@@ -166,8 +166,8 @@ const DEFAULT_OTHER_SETTINGS = {
   controllerType: 'Auto',
   audioBackend: 'EMSS',
   audioConfig: 'Stereo',
-  // High, the quality of earlier versions, which shows only with 5.1 and 7.1
-  surroundQuality: 'High',
+  // Efficient, the default since 2.3.1 (2.3.0 restored High), which shows only with 5.1 and 7.1
+  surroundQuality: 'Efficient',
   audioSync: false,
   audioJitter: '100',
   audioClockSync: false,
@@ -251,7 +251,7 @@ for (const tvName of Object.keys(TVS)) {
           // change of a default is covered by the settings schema
           await app.page.waitForTimeout(300);
           assert.deepEqual(Object.keys(await readStorage(app.page)).sort(), ['autoAdjustBitrate', 'cert', 'settingsSchema', 'uniqueid']);
-          assert.equal(stored.settingsSchema, 4);
+          assert.equal(stored.settingsSchema, 5);
           // Plan D9: the bitrate of a fresh install follows the resolution and frame rate until the user picks one
           assert.equal(stored.autoAdjustBitrate, true);
           // The other settings show their defaults without being stored, e.g. the rumble on (settings schema 3)

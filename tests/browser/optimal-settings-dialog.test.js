@@ -121,6 +121,9 @@ describe('the dialog shows exactly what Apply applies', { concurrency: 3 }, () =
           const shown = await readVideoSettings(app.page);
           // 'Optimize game settings' of the Advanced Settings, which the line names as well (since 2.3.0)
           const optimizeGames = await app.page.evaluate(() => document.getElementById('optimizeGamesSwitch').checked);
+          // 'Surround audio quality' of the Audio Settings, which the line names as well (since 2.3.1)
+          const surroundQuality = await app.page.evaluate(() => $('#selectSurroundQuality').data('value'));
+          assert.equal(surroundQuality, 'Efficient');
           assert.deepEqual(dialog.tiles, [
             [shown.resolution === '3840:2160' ? '4K' : shown.resolution.split(':')[1] + 'p', shown.resolution.replace(':', ' x ')],
             [shown.frameRate, 'FPS'],
@@ -133,6 +136,7 @@ describe('the dialog shows exactly what Apply applies', { concurrency: 3 }, () =
             shown.fullRange ? 'full color range' : 'limited color range',
             'unlock all frame rates ' + (shown.unlockAllFps ? 'on' : 'off'),
             'optimize game settings ' + (optimizeGames ? 'on' : 'off'),
+            'surround audio quality ' + surroundQuality,
           ].join(', '));
           assert.equal(listed.gameMode, shown.gameMode, 'the line of the ultra low latency mode names a mode that is on');
           // A 4K or 8K TV whose higher frame rates stay locked is told how to unlock them for a 120 Hz panel, since the app can't detect the refresh rate of the panel
@@ -355,7 +359,8 @@ describe('the remote reaches the button', { concurrency: 2 }, () => {
 
 test('in pt-BR the dialog has no English line: tested S90C on Tizen 9.0, an HDR TV on Tizen 6.5, an unknown connection', async () => {
   // English texts that stayed untranslated next to translated lines before
-  const ENGLISH = ['Video frame pacing on', 'optimize game settings', 'Ultra low latency mode', 'tested model', 'could not be detected', 'Detected:', 'The following'];
+  const ENGLISH = ['Video frame pacing on', 'optimize game settings', 'surround audio quality', 'Efficient', 'Ultra low latency mode', 'tested model',
+    'could not be detected', 'Detected:', 'The following'];
   for (const tv of [{ tv: 's90c', conn: 'wifi' }, { tv: 'uhd', conn: 'unknown' }, { tv: 'fhd', conn: 'ethernet', wasmPlayer: 'ull' }]) {
     const app = await openApp(harness, { tv });
     try {
@@ -371,7 +376,7 @@ test('in pt-BR the dialog has no English line: tested S90C on Tizen 9.0, an HDR 
       assert.deepEqual(dialog.buttons, ['Cancelar', 'Aplicar'], label);
       if (tv.tv === 's90c') {
         assert.equal(lineAfter(dialog, 'Detectado: '), 'painel 4K, HDR, Tizen 9.0, Wi-Fi, modelo testado', label);
-        assert.ok(dialog.lines.indexOf('Ajuste de ritmo de quadros ativado, faixa de cores limitada, desbloquear todas as taxas de quadros ativado, otimizar configurações do jogo ativado') >= 0, label);
+        assert.ok(dialog.lines.indexOf('Ajuste de ritmo de quadros ativado, faixa de cores limitada, desbloquear todas as taxas de quadros ativado, otimizar configurações do jogo ativado, qualidade do som surround Eficiente') >= 0, label);
         assert.ok(dialog.text.indexOf('O modo de latência ultrabaixa fica desativado no Tizen 9.0, então instale a variante ForceGM para a menor latência.') >= 0, label);
       } else if (tv.tv === 'uhd') {
         assert.ok(dialog.lines.indexOf('Modo de latência ultrabaixa ligado') >= 0, label);

@@ -150,7 +150,7 @@ describe('a 2026 TV on Tizen 10.0 in detail', () => {
     assert.deepEqual([r.video.resolution, r.video.frameRate, r.video.codec, r.video.bitrate, r.video.hdr, r.video.unlockAllFps,
       r.video.gameMode, r.video.gameModeDisabled, r.video.framePacing, r.video.fullRange],
     ['3840:2160', '60', 'HEVC', '80', true, false, false, false, true, false]);
-    assert.deepEqual(r.stored.settingsSchema, 4);
+    assert.deepEqual(r.stored.settingsSchema, 5);
     assert.equal(Object.prototype.hasOwnProperty.call(r.stored, 'gameMode'), false, 'a fresh install stores no game mode');
     const lines = r.dialog.text.split('<br>');
     assert.ok(lines.indexOf('Detected: 4K panel, HDR, Tizen 10.0, Wi-Fi') >= 0, r.dialog.text);
@@ -231,7 +231,7 @@ describe('a 2026 TV on Tizen 10.0 in detail', () => {
 // update of the TV to Tizen 9.0 or newer (warnGameModeAfterTizenUpdate() in index.js)
 const COMPATIBILITY_WARNING = 'Compatibility Warning';
 const UPDATE_WARNING_LOG = 'and the TV now runs Tizen';
-const EXISTING_INSTALL = { uniqueid: '0123456789abcdef', cert: { cert: 'TEST-CERT', privateKey: 'TEST-KEY' }, settingsSchema: 4 };
+const EXISTING_INSTALL = { uniqueid: '0123456789abcdef', cert: { cert: 'TEST-CERT', privateKey: 'TEST-KEY' }, settingsSchema: 5 };
 
 // Wait for the compatibility warning and return its text
 async function waitForCompatibilityWarning(page) {

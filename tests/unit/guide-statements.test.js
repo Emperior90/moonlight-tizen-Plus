@@ -263,13 +263,15 @@ test('the section on the surround audio quality describes the setting, the negot
   const section = guideSection('### Surround audio quality');
   const audioSection = GUIDE.indexOf('\n## Audio\n');
   assert.ok(audioSection > 0 && GUIDE.indexOf('\n### Surround audio quality\n') > audioSection, 'a part of the section Audio');
-  // The setting: High by default, shown only with 5.1 and 7.1
+  // The setting: Efficient by default (since 2.3.1; 2.3.0 had High), shown only with 5.1 and 7.1
   const index = read('wasm/platform/index.js');
-  assert.match(index, /return \$\('#selectSurroundQuality'\)\.data\('value'\) === 'Efficient' \? 'Efficient' : 'High';/);
+  assert.match(index, /return loadedSurroundQuality\(\$\('#selectSurroundQuality'\)\.data\('value'\)\);/);
+  assert.match(read('wasm/platform/tv_profile.js'), /^const DEFAULT_SURROUND_QUALITY = 'Efficient';$/m);
   assert.match(index, /return audioConfig === '51Surround' \|\| audioConfig === '71Surround';/);
-  assert.match(read('wasm/index.html'), /id="selectSurroundQuality" class="mdl-button mdl-js-button" data-value="High"/);
+  assert.match(read('wasm/index.html'), /id="selectSurroundQuality" class="mdl-button mdl-js-button" data-value="Efficient"/);
   assert.match(section, /Settings → Audio Settings → \*Surround audio quality\*, shown only with 5\.1 or 7\.1:/);
-  assert.match(section, /\*\*High\*\* \(default\)/);
+  assert.match(section, /\*\*Efficient\*\* \(default\)/);
+  assert.doesNotMatch(section, /\*\*High\*\* \(default\)/);
   // The negotiation of moonlight-common-c: high quality surround from 15 Mbps on in 5 ms packets, unless the decoder is
   // declared slow, which gives 10 ms packets; the app declares it only for more than 2 channels
   const threshold = Number(/#define HIGH_AUDIO_BITRATE_THRESHOLD (\d+)/.exec(read('moonlight-common-c/src/Limelight-internal.h'))[1]);
@@ -278,7 +280,7 @@ test('the section on the surround audio quality describes the setting, the negot
   const sdp = read('moonlight-common-c/src/SdpGenerator.c');
   assert.match(sdp, /\(AudioCallbacks\.capabilities & CAPABILITY_SLOW_OPUS_DECODER\) == 0\) \{\s+\/\/ Enable high quality mode for surround sound/);
   assert.match(sdp, /if \(\(AudioCallbacks\.capabilities & CAPABILITY_SLOW_OPUS_DECODER\) \|\|[\s\S]{0,400}AudioPacketDuration = 10;/);
-  assert.match(section, /\*\*Efficient\*\* asks for the normal quality in 10 ms packets at every bitrate/);
+  assert.match(section, /\*\*Efficient\*\* \(default\) asks for the normal quality in 10 ms packets at every bitrate/);
   assert.match(read('wasm/audio_capabilities.hpp'), /CHANNEL_COUNT_FROM_AUDIO_CONFIGURATION\(audioConfiguration\) > 2/);
   assert.match(section, /Stereo is never affected: the app asks for the same stereo as at \*High\*\./);
   // The statistics it points to: the Audio stream line with its packet duration, and the Audio CPU line

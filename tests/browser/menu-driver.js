@@ -2,7 +2,9 @@
 
 // Helpers for the browser tests that drive the menus the way a user does: with the keys of the remote, and with a
 // simulated gamepad whose slots the real polling of gamepad.js reads (every 16 ms), so that a press goes the whole way
-// from navigator.getGamepads() to the moved selection.
+// from navigator.getGamepads() to the moved selection. The page of a busy machine can stand still for longer than a
+// button is held, so a press on purpose (padButton()) is held until the menus read it, and a timed sequence (timed(),
+// doublePadButton()) changes the gamepad at its times whether the page runs or not, as a real controller does.
 //   const app = await openMenus(harness, { stored: { hosts: THREE_HOSTS }, moduleScripts: ['sunshine-host.js'] });
 //   await key(app.page, 'down');            // a key of the remote
 //   await padButton(app.page, PAD.A);       // a button of the gamepad, held for 60 ms
@@ -36,10 +38,33 @@ const THREE_HOSTS = {
   }),
 };
 
-// Runs before the scripts of the app: the simulated gamepads that navigator.getGamepads() returns
+// Runs before the scripts of the app: the simulated gamepads that navigator.getGamepads() returns. Gamepad 0 follows
+// its schedule (window.__padSchedule: { at, button, pressed } or { at, axis, value }, in the order of their times `at`
+// of performance.now()): a read of the gamepads first takes the steps that are due, so it sees what a real controller
+// would report at that moment, also when the page was busy and reads late. window.__padInputs counts the times the
+// menus got input of a gamepad (the 'gamepadinputchanged' events of gamepad.js).
 function installGamepads() {
   window.__pads = [null, null, null, null];
-  Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => window.__pads.slice() });
+  window.__padSchedule = [];
+  window.__padInputs = 0;
+  window.addEventListener('gamepadinputchanged', () => {
+    window.__padInputs++;
+  });
+  Object.defineProperty(navigator, 'getGamepads', {
+    configurable: true,
+    value: () => {
+      const now = performance.now();
+      while (window.__padSchedule.length > 0 && window.__padSchedule[0].at <= now) {
+        const step = window.__padSchedule.shift();
+        if (step.axis !== undefined) {
+          window.__padAxis(step.axis, step.value);
+        } else {
+          window.__padButton(step.button, step.pressed);
+        }
+      }
+      return window.__pads.slice();
+    },
+  });
   window.__connectPad = (index) => {
     const pad = {
       index, id: 'Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)', mapping: 'standard', connected: true,
@@ -135,37 +160,34 @@ const KEY_CODES = {
 // Run steps at their times (`at`, in ms from now) in the page, so that the time between two of them doesn't depend on
 // how long a call into the browser takes, e.g. the two presses of a double press. A step is a key of the remote
 // ({ at, key: 'ok' }, pressed and released), a button of the simulated gamepad ({ at, button: PAD.A, pressed: true }) or
-// a stick axis of it ({ at, axis: 1, value: 0.9 }). Then wait for the UI to settle (300 ms unless given).
+// a stick axis of it ({ at, axis: 1, value: 0.9 }). The steps of the gamepad go to its schedule, which doesn't wait for
+// the page (see installGamepads()): a page that stands still for a moment reads the gamepad as it is by then, and
+// never a second press that came later than the sequence says. Then wait for the UI to settle (300 ms unless given).
 async function timed(page, steps, settleMs) {
   const list = steps.map((step) => (step.key ? { at: step.at, code: KEY_CODES[step.key][0], keyName: KEY_CODES[step.key][1] } : step));
   await page.evaluate((timedSteps) => new Promise((resolve) => {
     const start = performance.now();
+    const end = start + Math.max.apply(null, timedSteps.map((step) => step.at));
+    timedSteps.filter((step) => !step.keyName).forEach((step) => window.__padSchedule.push(Object.assign({}, step, { at: start + step.at })));
+    const keySteps = timedSteps.filter((step) => step.keyName);
     let index = 0;
-    const run = (step) => {
-      if (step.keyName) {
-        ['keydown', 'keyup'].forEach((type) => {
-          const event = new KeyboardEvent(type, { key: step.keyName, bubbles: true, cancelable: true });
-          Object.defineProperty(event, 'keyCode', { value: step.code });
-          Object.defineProperty(event, 'which', { value: step.code });
-          (document.activeElement || document.body).dispatchEvent(event);
-        });
-      } else if (step.axis !== undefined) {
-        window.__padAxis(step.axis, step.value);
-      } else {
-        window.__padButton(step.button, step.pressed);
-      }
-    };
     const next = () => {
-      if (index === timedSteps.length) {
-        resolve();
-        return;
-      }
-      const wait = start + timedSteps[index].at - performance.now();
+      const wait = (index === keySteps.length ? end : start + keySteps[index].at) - performance.now();
       if (wait > 0.5) {
         setTimeout(next, wait);
         return;
       }
-      run(timedSteps[index]);
+      if (index === keySteps.length) {
+        resolve();
+        return;
+      }
+      const step = keySteps[index];
+      ['keydown', 'keyup'].forEach((type) => {
+        const event = new KeyboardEvent(type, { key: step.keyName, bubbles: true, cancelable: true });
+        Object.defineProperty(event, 'keyCode', { value: step.code });
+        Object.defineProperty(event, 'which', { value: step.code });
+        (document.activeElement || document.body).dispatchEvent(event);
+      });
       index++;
       next();
     };
@@ -181,7 +203,7 @@ function doubleKey(page, name, settleMs, gapMs) {
 
 // Two presses of a button of the simulated gamepad, each held for 35 ms (two reads of the gamepads), 70 ms from press
 // to press: a double press, well within the 150 ms in which the menus take a second press of A, B, Select or Start for
-// the same press, also when the timers of a busy machine run late
+// the same press, also on a busy machine, whose page then reads less of it, not a later second press
 function doublePadButton(page, button, settleMs) {
   return timed(page, [{ at: 0, button, pressed: true }, { at: 35, button, pressed: false }, { at: 70, button, pressed: true },
     { at: 105, button, pressed: false }], settleMs === undefined ? 350 : settleMs);
@@ -194,11 +216,25 @@ async function keys(page, names, settleMs) {
   }
 }
 
-// Press a button of the simulated gamepad for holdMs (60 ms unless given) and wait for the UI to settle
+// Press a button of the simulated gamepad on purpose: for holdMs (60 ms unless given), and longer if the menus haven't
+// read the press by then (the page of a busy machine; given up after a second, e.g. during a stream, where the menus
+// don't read the gamepads). Then wait for the UI to settle.
 async function padButton(page, button, settleMs, holdMs) {
-  await page.evaluate((b) => window.__padButton(b, true), button);
-  await page.waitForTimeout(holdMs === undefined ? 60 : holdMs);
-  await page.evaluate((b) => window.__padButton(b, false), button);
+  await page.evaluate(({ b, hold }) => new Promise((resolve) => {
+    const inputs = window.__padInputs;
+    const pressedAt = performance.now();
+    window.__padButton(b, true);
+    const release = () => {
+      const held = performance.now() - pressedAt;
+      if (held < hold || (window.__padInputs === inputs && held < 1000)) {
+        setTimeout(release, Math.max(4, hold - held));
+        return;
+      }
+      window.__padButton(b, false);
+      resolve();
+    };
+    release();
+  }), { b: button, hold: holdMs === undefined ? 60 : holdMs });
   await page.waitForTimeout(settleMs === undefined ? 350 : settleMs);
 }
 

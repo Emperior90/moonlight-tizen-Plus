@@ -42,6 +42,7 @@ var streamLaunchAnsweredAt = 0; // When the host accepted the launch or resume r
 var heldHostStartUntil = {}; // Until when each host may still hold a start of this TV that never connected (performance.now(), rememberHeldHostStart()), keyed by server UID
 var streamBitrateMbps = 0; // Bitrate in Mbps of the latest stream launch, which the bitrate entry of the Stream Menu starts from, initial value is 0
 var streamSurroundQuality = 'High'; // Surround audio quality of the latest stream launch ('High' or 'Efficient'), which the surround quality entry of the Stream Menu starts from
+var audioOverloadWarning = false; // Flag indicating whether the message about sound that keeps the TV busy has shown in the current stream session (showAudioOverloadMessage() in messages.js), initial value is false
 var pendingStreamRestart = null; // The changed settings that the stream reconnects with once it ended for the Stream Menu (restartStreamWithSettings()), { bitrateMbps, surroundQuality } with either or both, or null
 var wasmSessionStarted = false; // Flag indicating whether the start request of the current stream reached the WASM module, initial value is false
 var isDialogOpen = false; // Flag indicating whether the dialog is open, initial value is false
@@ -93,6 +94,7 @@ const SMART_HUB_PROBE_TIMEOUT_MS = 5000; // Longest wait in ms for the answer of
 const SMART_HUB_PREVIEW_MAX_TIZEN = 6.0; // Newest Tizen version with the Preview tiles of Smart Hub: Samsung lists the TVs of 2016 to 2021 for them, and the app installs from Tizen 5.5 (2020) on
 const GAME_MODE_PLATFORM_VERSION_KEY = 'gameModePlatformVer'; // Key of the Tizen version that the game mode switch was stored on, so that a switch left on from before an update of the TV to Tizen 9.0 or newer gets its compatibility warning once
 var isGameModeUpdateWarningPending = false; // Whether the stored settings ask for that warning, which waits until the hosts show (warnGameModeAfterTizenUpdate())
+var isSurroundQualityNoticePending = false; // Whether the stored settings ask for the notice about the default of 'Surround audio quality' (SURROUND_QUALITY_NOTICE_KEY in tv_profile.js), which waits until the hosts show (showSurroundQualityNotice())
 
 const REPEAT_DELAY = 350; // Repeat delay set to 350ms (milliseconds)
 const REPEAT_INTERVAL = 100; // Repeat interval set to 100ms (milliseconds)
@@ -118,6 +120,16 @@ const SURROUND_AUDIO_INFO = Object.freeze({ 'Stereo': 0x030002, '51Surround': 0x
 // unknown one, which the module streams in stereo as well (wasm/main.cpp)
 function getSurroundAudioInfo(audioConfig) {
   return Object.prototype.hasOwnProperty.call(SURROUND_AUDIO_INFO, audioConfig) ? SURROUND_AUDIO_INFO[audioConfig] : SURROUND_AUDIO_INFO.Stereo;
+}
+
+// The audio configuration that a stream asks the host for, from the audio configuration of the settings and the audio
+// backend: with the Web Audio backend always stereo. That backend hands the decoded channels to an output of the
+// browser that stays at two channels (wasm/platform/audio.js), where the Web Audio rules play only front left and
+// right of a 7.1 stream, since eight channels have no down-mix, and mix 5.1 down without the LFE and without headroom,
+// which clips. Asked for stereo, the PC mixes its sound down itself, and the TV decodes 2 instead of 6 or 8 channels.
+// The audio configuration of the settings stays as it is, so that the media player of the TV plays surround again.
+function getStreamAudioConfig(audioConfig, audioBackend) {
+  return audioBackend === 'WebAudio' ? 'Stereo' : audioConfig;
 }
 
 // The resolutions whose game settings GeForce Experience knows for 'Optimize game settings', as moonlight-android
@@ -324,7 +336,8 @@ function keepDropdownOnScreen(rowId) {
 //   the press that counted. A second press within the delay of the buttons used to push the operation back instead.
 // - A D-pad button that is released for at most DPAD_BOUNCE_GUARD and pressed again is the same press: it doesn't step
 //   again, and its repeat goes on as if it had never been released. Two deliberate presses, also 150 ms apart, are
-//   released for longer and both step.
+//   released for longer and both step, also when the page was busy while the button was released: gamepad.js tells by
+//   how much a read of the gamepads came late (lateBy), and the release counts from when that read was due.
 // - A stick direction holds until the stick is back below ACTION_RELEASE_THRESHOLD, and within STICK_REVERSE_GUARD of
 //   leaving a direction the opposite one only steps if the stick is still there when its delay is over
 //   (stepStickBack()): a stick that is let go snaps back past its centre and used to step back, e.g. from the surround
@@ -375,7 +388,9 @@ function handleGamepadMenuInput(e) {
           startRepeatAction(dPadMapping[index], source);
         }
       } else {
-        times.releasedAt = now;
+        // A read of the gamepads that came late (the page was busy, e.g. with drawing the step of this press) saw the
+        // release late: it counts from when that read was due, so that a press right after it is not taken for a bounce
+        times.releasedAt = now - (e.detail.lateBy || 0);
         if (repeatSource === source) {
           // Clear repeat action and timeout if the button that started it is released
           stopRepeatAction();
@@ -875,6 +890,8 @@ function restoreUiAfterWasmLoad() {
   // Warn once about an Ultra low latency mode left on from before an update of the TV, if the stored settings ask for
   // it (the settings load during the loading screen, so they may have asked already)
   scheduleGameModeUpdateWarning();
+  // Tell an existing install once that the default of 'Surround audio quality' changed its surround stream, likewise
+  scheduleSurroundQualityNotice();
 
   // Automatically check for a new update after 10 seconds delay at application startup once every 24 hours
   setTimeout(() => checkForAppUpdatesAtStartup(), 10000);
@@ -4073,7 +4090,10 @@ function startGame(host, appID, restartKind, restartChange) {
       const controllerMappings = serializeButtonMappings(buttonMappings);
       var controllerType = $('#selectControllerType').data('value').toString();
       var audioBackend = $('#selectAudioBackend').data('value').toString();
-      var audioConfig = $('#selectAudio').data('value').toString();
+      // The audio configuration of the settings, and the one that this stream asks the host for, in the launch or resume
+      // request and in the start request: stereo with the Web Audio backend (getStreamAudioConfig())
+      const audioConfigSetting = $('#selectAudio').data('value').toString();
+      var audioConfig = getStreamAudioConfig(audioConfigSetting, audioBackend);
       // The setting goes to the module for every audio configuration; the module applies it to 5.1 and 7.1 only
       // (audio_capabilities.hpp)
       var surroundQuality = getSurroundQuality();
@@ -4109,7 +4129,7 @@ function startGame(host, appID, restartKind, restartChange) {
       '\n Mouse emulation: ' + mouseEmulation + 
       '\n Button mapping: ' + (controllerMappings ? controllerMappings.split('\n').length + ' controller lines' : 'none') +
       '\n Audio backend: ' + audioBackend + 
-      '\n Audio configuration: ' + audioConfig + 
+      '\n Audio configuration: ' + audioConfig + (audioConfig !== audioConfigSetting ? ' (the Web Audio backend plays stereo; the setting is ' + audioConfigSetting + ')' : '') +
       '\n Surround audio quality: ' + surroundQuality +
       '\n Audio synchronization: ' + audioSync + 
       '\n Audio jitter buffer: ' + audioJitter + ' ms' +
@@ -4151,6 +4171,8 @@ function startGame(host, appID, restartKind, restartChange) {
       if (!isRestart) {
         DiagnosticLog.startSession('stream');
         StreamHeartbeat.start();
+        // A new session may get the message about sound that keeps the TV busy again (messages.js)
+        audioOverloadWarning = false;
       }
       showStreamMode();
 
@@ -5302,11 +5324,15 @@ function updateAudioBackendSettings() {
     $('#audioClockSyncOption').hide();
     $('#decryptHostAudioOption').hide();
     $('#surroundQualityOption').hide();
+    $('#webAudioStereoNote').hide();
   } else {
-    // These two settings apply to all active backends, so show them normally
-    $('#audioConfigOption').show();
+    // This setting applies to all active backends, so show it normally
     $('#decryptHostAudioOption').show();
-    // The surround audio quality only with 5.1 and 7.1
+    // The audio configuration only with the media player of the TV: the Web Audio backend always plays stereo
+    // (getStreamAudioConfig()), which a line below the audio backend says in place of the two settings that don't apply
+    $('#audioConfigOption').toggle(isAudioConfigurationAvailable());
+    $('#webAudioStereoNote').toggle(!isAudioConfigurationAvailable());
+    // The surround audio quality only with 5.1 and 7.1 there
     updateSurroundQualityOption();
     // Check which backend is selected and show the appropriate setting for that backend
     if (isWebAudioBackendSelected()) {
@@ -5333,6 +5359,12 @@ function isAudioOutputDisabled() {
   return $('#selectAudioBackend').data('value') === 'Disabled';
 }
 
+// Whether the audio configuration applies to the selected audio backend: only the media player of the TV plays 5.1 and
+// 7.1, the Web Audio backend always plays stereo (getStreamAudioConfig()), and a disabled audio output plays nothing
+function isAudioConfigurationAvailable() {
+  return !isAudioOutputDisabled() && !isWebAudioBackendSelected();
+}
+
 function saveAudioConfiguration() {
   var chosenAudioConfig = $(this).data('value');
   $('#selectAudio').text($(this).text()).attr('data-value', chosenAudioConfig).data('value', chosenAudioConfig);
@@ -5345,10 +5377,10 @@ function saveAudioConfiguration() {
   updateSurroundQualityOption();
 }
 
-// The surround audio quality of the settings: 'Efficient', or 'High' (the default, also for a value the settings don't
-// know)
+// The surround audio quality of the settings: 'High', or 'Efficient' (the default, also for a value the settings don't
+// know, DEFAULT_SURROUND_QUALITY in tv_profile.js)
 function getSurroundQuality() {
-  return $('#selectSurroundQuality').data('value') === 'Efficient' ? 'Efficient' : 'High';
+  return loadedSurroundQuality($('#selectSurroundQuality').data('value'));
 }
 
 // Set the surround audio quality ('High' or 'Efficient') in the settings and store it: from its menu in the Audio
@@ -5376,9 +5408,10 @@ function isSurroundAudioSelected() {
   return audioConfig === '51Surround' || audioConfig === '71Surround';
 }
 
-// Show the surround audio quality only while the audio configuration is 5.1 or 7.1 and the audio output isn't disabled
+// Show the surround audio quality only while the audio configuration is 5.1 or 7.1 and the media player of the TV
+// plays it (isAudioConfigurationAvailable())
 function updateSurroundQualityOption() {
-  $('#surroundQualityOption').toggle(!isAudioOutputDisabled() && isSurroundAudioSelected());
+  $('#surroundQualityOption').toggle(isAudioConfigurationAvailable() && isSurroundAudioSelected());
 }
 
 function warnAudioConfiguration() {
@@ -5589,6 +5622,53 @@ function warnGameModeAfterTizenUpdate() {
   storeData(GAME_MODE_PLATFORM_VERSION_KEY, platformVer, null);
 }
 
+// Check at the start whether the stored settings still ask for the notice about the default of 'Surround audio quality'
+// (migrateSettingsSchema() stored it for an existing install whose surround stream changes by the default), and if so
+// show it once the hosts show. A stored value that can't be read leaves the check to the next start.
+function checkSurroundQualityNotice() {
+  getData(SURROUND_QUALITY_NOTICE_KEY, function(storedValue, isReadFailed) {
+    if (isReadFailed || storedValue[SURROUND_QUALITY_NOTICE_KEY] !== true) {
+      return;
+    }
+    isSurroundQualityNoticePending = true;
+    scheduleSurroundQualityNotice();
+  });
+}
+
+// Show that notice once the hosts show, whichever of the settings and the hosts comes last, a moment after the
+// compatibility warning of the Ultra low latency mode (scheduleGameModeUpdateWarning()), which goes first when both
+// wait: the notice then waits for a later start
+function scheduleSurroundQualityNotice() {
+  if (isSurroundQualityNoticePending && isStartupUiShown) {
+    setTimeout(showSurroundQualityNotice, 700);
+  }
+}
+
+// Tell the user once that surround sound now streams in the quality Efficient unless High is chosen, what that means
+// and where to change it back, and remove the stored notice. Another open dialog or a stream leaves no room for it, so
+// nothing is removed then and a later start shows it. Settings that no longer stream surround in the default quality
+// (another quality, stereo or another audio backend was chosen in the meantime) need no notice any more.
+function showSurroundQualityNotice() {
+  if (!isSurroundQualityNoticePending) {
+    return;
+  }
+  isSurroundQualityNoticePending = false;
+  if (isInGame || isDialogOpen) {
+    console.log('%c[index.js, showSurroundQualityNotice]', 'color: green;', 'Not showing the notice about the default of the surround audio quality ' +
+      (isInGame ? 'during a stream' : 'over another dialog') + ', so a later start shows it.');
+    return;
+  }
+  removeData(SURROUND_QUALITY_NOTICE_KEY, null);
+  if (!isAudioConfigurationAvailable() || !isSurroundAudioSelected() || getSurroundQuality() !== DEFAULT_SURROUND_QUALITY) {
+    return;
+  }
+  console.log('%c[index.js, showSurroundQualityNotice]', 'color: green;', 'Showing the notice about the default of the surround audio quality.');
+  warningDialog(t('Surround audio quality'),
+    t('Surround sound now streams in the quality <b>Efficient</b> unless you choose otherwise: 256 instead of 1536 kbps for 5.1 (450 instead of 2048 kbps for 7.1), which lowers the load on the TV. For music, High or Stereo (512 kbps) can sound better.') + '<br><br>' +
+    t('To get the earlier quality back, set <b>Surround audio quality</b> to <b>High</b> in the Audio Settings, or <b>Surround quality</b> in the Stream Menu during a stream.')
+  );
+}
+
 function saveGameMode() {
   setTimeout(() => {
     const chosenGameMode = $('#gameModeSwitch').parent().hasClass('is-checked');
@@ -5769,7 +5849,8 @@ function saveHdrMetadata() {
 // which are also the defaults of the video settings: the highest resolution of the panel up to 4K at 60 FPS with HEVC,
 // HDR when the TV supports it and a bitrate for the network connection, with all frame rates unlocked only for a tested
 // model with a high refresh rate panel (VERIFIED_PROFILES), and 'Optimize game settings' on. The bitrate then follows
-// later changes of the resolution and frame rate with the bitrate presets, until the user picks one by hand.
+// later changes of the resolution and frame rate with the bitrate presets, until the user picks one by hand. 'Surround
+// audio quality' gets its default as well, Efficient, which a stream uses only with 5.1 or 7.1.
 function applyOptimalStreamingSettings(connectionType) {
   console.log('%c[index.js, applyOptimalStreamingSettings]', 'color: green;', 'Applying the optimal streaming settings for the network connection: ' + connectionType);
   const optimalSettings = deriveOptimalSettings(tvCapabilities, connectionType);
@@ -5820,6 +5901,9 @@ function applyOptimalStreamingSettings(connectionType) {
     document.querySelector('#optimizeGamesBtn').MaterialSwitch.off();
   }
   storeData('optimizeGames', optimalSettings.optimizeGames, null);
+
+  // The quality of 5.1 and 7.1 that keeps the load of the sound on the TV low
+  setSurroundQuality(optimalSettings.surroundQuality);
 
   // Set the game mode based on the Tizen platform version and the WASM player (see getGameModeDefault() in tv_profile.js)
   if (optimalSettings.gameMode === false) {
@@ -5893,12 +5977,13 @@ function optimalSettingsDialog() {
   // Start with what the settings are based on, and whether they were tested on this model (describeDetectedTv())
   let message = t('Detected: %1$s', describeDetectedTv(connectionType)) + '<br><br>';
 
-  // The line names 'Optimize game settings' of the Advanced Settings as well, which the optimal settings always turn on
-  // (deriveOptimalSettings() in tv_profile.js), within the lines that the dialog had before
+  // The line names 'Optimize game settings' of the Advanced Settings as well, which the optimal settings always turn on,
+  // and 'Surround audio quality' of the Audio Settings, which they always set to Efficient (deriveOptimalSettings() in
+  // tv_profile.js), within the lines that the dialog had before
   message += t('The following streaming settings will be applied:') + '<br>' +
     '&#8226; ' + (optimalSettings.unlockAllFps
-      ? t('Video frame pacing on, limited color range, unlock all frame rates on, optimize game settings on')
-      : t('Video frame pacing on, limited color range, unlock all frame rates off, optimize game settings on')) + '<br>';
+      ? t('Video frame pacing on, limited color range, unlock all frame rates on, optimize game settings on, surround audio quality Efficient')
+      : t('Video frame pacing on, limited color range, unlock all frame rates off, optimize game settings on, surround audio quality Efficient')) + '<br>';
   // Name the state of the ultra low latency mode, which depends on the Tizen version (the note below covers Tizen 9.0
   // and newer) and on whether the WASM player offers it
   if (optimalSettings.gameMode === true) {
@@ -6047,8 +6132,8 @@ function restoreDefaultsSettingsValues() {
   $('#selectAudio').text('Stereo').attr('data-value', defaultAudioConfig).data('value', defaultAudioConfig);
   storeData('audioConfig', defaultAudioConfig, null);
 
-  // High, the quality of earlier versions, which the restored stereo hides anyway
-  setSurroundQuality('High');
+  // 'Surround audio quality' is part of the optimal streaming settings, which applyOptimalStreamingSettings() restored
+  // above (Efficient); the restored stereo hides it
   updateSurroundQualityOption();
 
   const defaultAudioSync = false;
@@ -6394,13 +6479,15 @@ function loadUserDataCb() {
 // changed (schema2Snapshot()) and what replaces the settings that settings schema 3 removed (schema3Replacements()),
 // and drops the stored values of those settings, which are logged first, so that the diagnostic log still says what was
 // set. An existing install of settings schema 3 or older stores the defaults of settings schema 3 that settings schema 4
-// changed (schema3Snapshot()), and only those: the steps of settings schema 3 already ran for an install of it. At every
+// changed (schema3Snapshot()), and only those: the steps of settings schema 3 already ran for an install of it. An
+// existing install of settings schema 4 or older stores nothing for settings schema 5, whose new default of 'Surround
+// audio quality' it gets unless it chose a quality, only the notice about it where its stream changes by it. At every
 // start, whatever the settings schema, a stored frame rate that the frame rate menu no longer offers (the 144 FPS of
 // 2.2.0 and earlier) is replaced as well (frameRateReplacements() in tv_profile.js), here where every value it depends on
 // has been read and before the loaders, which then load the replacement like any stored value.
 function migrateSettingsSchema(callbackFunction) {
   const keys = ['uniqueid', SETTINGS_SCHEMA_KEY].concat(LEGACY_SNAPSHOT_KEYS, Object.keys(SCHEMA_2_DEFAULTS), SCHEMA_3_REMOVED_KEYS,
-    Object.keys(SCHEMA_3_DEFAULTS))
+    Object.keys(SCHEMA_3_DEFAULTS), ['surroundQuality', 'audioConfig', 'audioBackend'])
     .filter(function(key, index, allKeys) {
       // Read each key once (e.g. optimizeBitrate is a key of both the snapshot and the removed settings)
       return allKeys.indexOf(key) === index;
@@ -6448,9 +6535,19 @@ function migrateSettingsSchema(callbackFunction) {
       }
       // Every existing install of an earlier settings schema keeps the defaults of settings schema 3 that changed, e.g.
       // 'Optimize game settings' off (schema3Snapshot())
-      const schema3Values = schema3Snapshot(storedValues);
-      console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Existing install of settings schema ' + installSchema + ', storing the defaults of settings schema 3 that changed: ' + JSON.stringify(schema3Values));
-      Object.assign(migratedValues, schema3Values);
+      if (installSchema < 4) {
+        const schema3Values = schema3Snapshot(storedValues);
+        console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Existing install of settings schema ' + installSchema + ', storing the defaults of settings schema 3 that changed: ' + JSON.stringify(schema3Values));
+        Object.assign(migratedValues, schema3Values);
+      }
+      // Settings schema 5 made Efficient the default of 'Surround audio quality', also for an existing install that
+      // never chose a quality, so nothing is stored for it. One whose stream changes by it, 5.1 or 7.1 with the media
+      // player of the TV, is told once, when the hosts show (needsSurroundQualityNotice() in tv_profile.js,
+      // showSurroundQualityNotice()).
+      if (needsSurroundQualityNotice(storedValues)) {
+        console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Existing install of settings schema ' + installSchema + ' with ' + storedValues.audioConfig + ' and no stored surround audio quality, which is Efficient from now on instead of High: storing the notice about it.');
+        migratedValues[SURROUND_QUALITY_NOTICE_KEY] = true;
+      }
     }
     if (!isCurrentSchema) {
       migratedValues[SETTINGS_SCHEMA_KEY] = SETTINGS_SCHEMA_VERSION;
@@ -6672,17 +6769,19 @@ function loadStoredSettings() {
     updateSurroundQualityOption();
   });
 
-  // The surround audio quality: High unless Efficient is stored. Its default keeps the audio stream of earlier versions,
-  // so an existing install needs no step of the settings schema for it.
+  // The surround audio quality: High or Efficient as stored, and Efficient, the default since settings schema 5, for an
+  // install that stored none (loadedSurroundQuality() in tv_profile.js). An existing install whose surround stream
+  // changes by that default is told once (checkSurroundQualityNotice()).
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored surroundQuality preferences.');
   getData('surroundQuality', function(previousValue) {
     $('.surroundQualityMenu li').each(function() {
-      const quality = previousValue.surroundQuality === 'Efficient' ? 'Efficient' : 'High';
+      const quality = loadedSurroundQuality(previousValue.surroundQuality);
       if ($(this).data('value') === quality) {
         $('#selectSurroundQuality').text($(this).text().trim()).attr('data-value', quality).data('value', quality);
       }
     });
   });
+  checkSurroundQualityNotice();
 
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored audioSync preferences.');
   getData('audioSync', function(previousValue) {

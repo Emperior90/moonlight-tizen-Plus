@@ -304,7 +304,8 @@ function applyStreamMenuSurround() {
 // Fill the Stream Menu with the current state of the stream: the app and host, the level of the performance statistics
 // (Off, Compact or Full), whether the mouse emulation is on, the mouse emulation entry only while a controller is
 // connected or the mouse emulation is on, and the surround quality entry only while the stream has more than 2 audio
-// channels, so that the menu doesn't grow for a stereo stream. When an entry goes while the menu shows, e.g. after the
+// channels, so that the menu doesn't grow for a stereo stream, which every stream of the Web Audio backend is
+// (getStreamAudioConfig() in index.js). When an entry goes while the menu shows, e.g. after the
 // mouse emulation was turned off on it and no controller is connected any more, the selection moves to the entry
 // before it.
 function updateStreamMenu() {

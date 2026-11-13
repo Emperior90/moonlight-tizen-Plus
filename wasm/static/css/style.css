@@ -1337,6 +1337,11 @@ body:not([data-view="hosts"]):not([data-view="apps"]) .launcher-hero {
 .setting-option > .mdl-list__item-text-body:empty {
   display: none;
 }
+/* A second line below the help text, for a note that shows only at times (e.g. what the Web Audio backend can't play) */
+.setting-option > .setting-note {
+  grid-row: 3;
+  margin-top: 6px;
+}
 .setting-option.is-current > .mdl-list__item-text-body, .setting-option.is-current .mdl-switch__label {
   color: var(--text-2);
 }

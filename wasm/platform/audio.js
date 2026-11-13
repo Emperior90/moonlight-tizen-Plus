@@ -630,8 +630,13 @@ function _audReceiveFrame(heapOffset, samples, channels, sampleRate, stride, seq
 //              reports for its own output path (not including the TV's or a soundbar's processing)
 //   session    underruns (holes in the sound), frames skipped because the schedule ran too far ahead (with
 //              clock sync off this is the drift between the host and TV clocks) or produced no samples,
-//              frames lost on the way from the decoder, and the clock sync correction. The backlog trimmed
-//              after an underrun isn't counted as skipped, it's a consequence of the underrun.
+//              frames lost on the way from the decoder, and the buffer correction: how much faster or slower
+//              Audio clock sync plays the sound at the moment to bring the schedule to the jitter buffer
+//              target (_audSteerClock()). It is no measurement of the drift between the clocks of the PC and
+//              the TV: early in a session it stays at its limit of -500 or 500 ppm while the buffer settles,
+//              since the schedule starts off the target by the delay of the hand-over to the main thread, and
+//              30 ms take a minute at 500 ppm. The backlog trimmed after an underrun isn't counted as skipped,
+//              it's a consequence of the underrun.
 //   suggested  the smallest jitter buffer that would have absorbed the largest jitter of the session plus
 //              10 ms, in steps of the buffer slider. It's only given with clock sync on, since otherwise the
 //              drift drains a small buffer into underruns, after 10 minutes without underruns, and as a
@@ -674,7 +679,7 @@ function getAudioStatsLines() {
 
     var lines = t('Audio buffer: %1$s ms, lead avg %2$s ms, min %3$s ms, browser latency %4$s ms',
       String(targetMs), format(leadAverage), format(session.windowLeadMin), format(deviceLatencyMs)) + '\n' +
-      t('Audio session: underruns %1$s, skipped %2$s, lost %3$s, clock sync %4$s, suggested buffer %5$s',
+      t('Audio session: underruns %1$s, skipped %2$s, lost %3$s, buffer correction %4$s, suggested buffer %5$s',
         String(session.underruns), String(session.droppedFull + session.droppedEmpty), String(session.decoderGaps),
         _audClockSync ? (_audCorrection * 1e6).toFixed(0) + ' ppm' : t('off'), suggestion);
 

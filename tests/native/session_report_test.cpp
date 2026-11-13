@@ -1,7 +1,8 @@
 // Checks the message with the totals of a stream (wasm/session_report.hpp) that the front end keeps as the report of the
 // last session: the totals of each line of tests/fixtures/session-reports.tsv become exactly its message, which
-// tests/unit/diagnostics.test.js reads back with the hints of the line, a duration beyond 32 bits is clamped, and the
-// names of the video formats. That VidDecCleanup() sends it with the totals of the stream is checked in
+// tests/unit/diagnostics.test.js reads back with the hints of the line, a duration beyond 32 bits is clamped, the
+// message has room for the largest figures, with those of the audio thread at its end, and the names of the video
+// formats. That VidDecCleanup() sends it with the totals of the stream is checked in
 // stats_overlay_test.cpp.
 
 #include "../../wasm/session_report.hpp"
@@ -41,8 +42,8 @@ static void TestFixtureMessages() {
       continue;
     }
     const std::vector<std::string> fields = SplitTabs(line);
-    if (fields.size() != 21) {
-      test_support::Check(false, "fixture line \"" + line + "\"", "expected 21 fields", __FILE__, __LINE__);
+    if (fields.size() != 25) {
+      test_support::Check(false, "fixture line \"" + line + "\"", "expected 25 fields", __FILE__, __LINE__);
       continue;
     }
     SessionReport report;
@@ -64,11 +65,15 @@ static void TestFixtureMessages() {
     report.heapGrowthMb = Number(fields[16]);
     report.hostFrameRateX100 = Number(fields[17]);
     report.hostProcessingLatencyX10 = Number(fields[18]);
+    report.audioChannels = Number(fields[19]);
+    report.audioLoadMsPerS = Number(fields[20]);
+    report.audioLoadPeakMsPerS = Number(fields[21]);
+    report.audioOverloadedWindows = Number(fields[22]);
     const std::string message = FormatSessionReportMessage(report);
-    CHECK_EQ(message, fields[19]);
+    CHECK_EQ(message, fields[23]);
     checked++;
   }
-  CHECK_EQ(checked, 15);
+  CHECK_EQ(checked, 22);
 }
 
 // A duration beyond 32 bits (49 days) is reported as UINT32_MAX, since only 32-bit values go through snprintf
@@ -78,6 +83,23 @@ static void TestLongDurationIsClamped() {
   report.codec = "AV1";
   const std::string message = FormatSessionReportMessage(report);
   CHECK(message.find("{\"durationMs\":4294967295,\"codec\":\"AV1\",") != std::string::npos);
+}
+
+// The message has room for every figure at its largest, since a message that doesn't fit is not sent at all
+static void TestLargestFiguresFit() {
+  SessionReport report;
+  report.durationMs = UINT64_MAX;
+  report.codec = "HEVC Main10";
+  report.width = report.height = report.fps = report.bitrateKbps = report.frames = report.networkDroppedFrames =
+    report.tvDroppedFrames = report.videoResets = report.recoveryKeyframes = report.fecRecoveredBlocks =
+    report.fecFailures = report.heapTopMb = report.heapTotalMb = report.heapGrowthMb = report.hostFrameRateX100 =
+    report.hostProcessingLatencyX10 = report.audioChannels = report.audioLoadMsPerS = report.audioLoadPeakMsPerS =
+    report.audioOverloadedWindows = UINT32_MAX;
+  const std::string message = FormatSessionReportMessage(report);
+  CHECK(message.find("SessionReportMsg: {\"durationMs\":4294967295,") == 0);
+  CHECK(message.find(",\"audioChannels\":4294967295,\"audioLoadMsPerS\":4294967295,\"audioLoadPeakMsPerS\":4294967295,"
+                     "\"audioOverloadedWindows\":4294967295}") != std::string::npos);
+  CHECK_EQ(message.back(), '}');
 }
 
 static void TestVideoFormatNames() {
@@ -94,6 +116,7 @@ static void TestVideoFormatNames() {
 int main() {
   test_support::RunTest("the totals of each fixture line become its message", TestFixtureMessages);
   test_support::RunTest("a duration beyond 32 bits is clamped", TestLongDurationIsClamped);
+  test_support::RunTest("the message has room for every figure at its largest", TestLargestFiguresFit);
   test_support::RunTest("the names of the video formats in the report", TestVideoFormatNames);
   return test_support::Summary();
 }

@@ -101,7 +101,7 @@ async function checkSnapshot(tvOptions, legacy) {
   const app = await openExisting(tvOptions);
   try {
     assert.deepEqual(await shownSettings(app.page), legacy.shown, 'first start');
-    const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 4);
+    const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 5);
     assert.deepEqual(pick(stored, VIDEO_KEYS), legacy.stored);
     assert.equal(stored.uniqueid, EXISTING_INSTALL.uniqueid);
     // The rumble stays off as before (settings schema 3), and so does 'Optimize game settings' (settings schema 4)
@@ -146,7 +146,7 @@ test('a stored 120 FPS stays selected after the unlock default turned off', asyn
       assert.equal(shown.unlockAllFps, true, tv);
       assert.equal(shown.frameRate, '120', tv);
       assert.deepEqual(shown.frameRateOptions, ['30', '60', '90', '120'], tv);
-      const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 4);
+      const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 5);
       assert.deepEqual([stored.unlockAllFps, stored.frameRate], [true, 120], tv);
     } finally {
       await app.context.close();
@@ -312,7 +312,7 @@ test('an install of settings schema 1 with 144 FPS: the snapshot still sees its 
     try {
       const shown = await readVideoSettings(app.page);
       assert.deepEqual([shown.frameRate, shown.unlockAllFps, shown.bitrate, shown.autoAdjustBitrate], ['120', true, shownBitrate, follows], bitrate);
-      const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 4 && values.frameRate !== 144);
+      const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 5 && values.frameRate !== 144);
       assert.deepEqual([stored.frameRate, stored.unlockAllFps, stored.bitrate, stored.autoAdjustBitrate], [120, true, shownBitrate, follows], bitrate);
       assert.ok(app.logs.some((line) => line.indexOf('Existing install without a settings schema') >= 0 &&
         line.indexOf('"autoAdjustBitrate":' + follows) >= 0), bitrate);
@@ -340,7 +340,7 @@ test('an install of settings schema 1 with 144 FPS on a generic 4K TV: the snaps
       const shown = await readVideoSettings(app.page);
       assert.deepEqual([shown.resolution, shown.frameRate, shown.frameRateOptions, shown.unlockAllFps, shown.bitrate, shown.autoAdjustBitrate],
         ['3840:2160', '120', ['30', '60', '90', '120'], true, entry.bitrate, entry.follows], name);
-      const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 4 && values.frameRate !== 144);
+      const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 5 && values.frameRate !== 144);
       assert.deepEqual([stored.frameRate, stored.unlockAllFps, stored.bitrate, stored.autoAdjustBitrate], [120, true, entry.bitrate, entry.follows], name);
       assert.equal(count(app, FRAME_RATE_REPLACED), 1, name);
       assert.deepEqual(notices(app), [], name);
@@ -355,7 +355,7 @@ test('an install of settings schema 1 with 144 FPS on a generic 4K TV: the snaps
 test('a partly customized existing install keeps its stored values, and only the unset ones are filled in', async () => {
   const app = await openExisting({ tv: 's90c', conn: 'ethernet' }, { videoCodec: 'H264', bitrate: '42', fullRange: true });
   try {
-    const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 4);
+    const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 5);
     assert.deepEqual(pick(stored, VIDEO_KEYS), {
       resolution: '3840:2160', unlockAllFps: true, frameRate: 60, bitrate: '42', videoCodec: 'H264',
       // HDR stays off for the stored H.264 codec, as the previous build showed it
@@ -385,7 +385,7 @@ test('the stored video settings of an existing install are loaded as stored', as
     await app.page.waitForTimeout(300);
     const values = await readStorage(app.page);
     assert.deepEqual(pick(values, VIDEO_KEYS), stored);
-    assert.equal(values.settingsSchema, 4);
+    assert.equal(values.settingsSchema, 5);
     assert.equal(Object.prototype.hasOwnProperty.call(values, 'optimizeBitrate'), false);
     assert.equal(await app.page.evaluate(() => document.getElementById('optimizeBitrateSwitch')), null);
   } finally {
@@ -412,7 +412,7 @@ test('an update from a build without the preset state decides once whether the s
   for (const entry of cases) {
     const app = await openExisting({ tv: entry.tv || 's90c', conn: entry.conn }, entry.stored);
     try {
-      const stored = await waitForStorage(app.page, (values) => 'autoAdjustBitrate' in values && values.settingsSchema === 4);
+      const stored = await waitForStorage(app.page, (values) => 'autoAdjustBitrate' in values && values.settingsSchema === 5);
       assert.equal(stored.autoAdjustBitrate, entry.follows, JSON.stringify(entry));
       assert.equal(await app.page.evaluate(() => autoAdjustBitrate), entry.follows, JSON.stringify(entry));
     } finally {
@@ -434,7 +434,7 @@ test('settings schema 3 drops the removed switch \'Optimize bitrate presets\', a
     // An install of settings schema 2 (2.1.0) on the S90C over Wi-Fi with 4K at 60 FPS
     const app = await openExisting({ tv: 's90c', conn: 'wifi' }, Object.assign({ settingsSchema: 2, resolution: '3840:2160', frameRate: 60 }, entry.stored));
     try {
-      const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 4 && !('optimizeBitrate' in values));
+      const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 5 && !('optimizeBitrate' in values));
       assert.equal(stored.autoAdjustBitrate, entry.follows, JSON.stringify(entry));
       assert.equal(stored.bitrate, '45', JSON.stringify(entry));
       assert.equal(await app.page.evaluate(() => autoAdjustBitrate), entry.follows, JSON.stringify(entry));
@@ -451,7 +451,7 @@ test('settings schema 3 drops the removed switch \'Optimize bitrate presets\', a
 
 test('an install that started with this build gets the new defaults and no snapshot', async () => {
   // A fresh install stores its unique ID together with the settings schema (loadHTTPCertsCb)
-  const app = await openExisting({ tv: 'uhd', conn: 'wifi' }, { settingsSchema: 4 });
+  const app = await openExisting({ tv: 'uhd', conn: 'wifi' }, { settingsSchema: 5 });
   try {
     const shown = await readVideoSettings(app.page);
     assert.deepEqual([shown.resolution, shown.bitrate, shown.unlockAllFps, shown.frameRateOptions, shown.autoAdjustBitrate],
@@ -504,7 +504,7 @@ test('a fresh install is never taken for an existing one, whether the unique ID 
       await app.page.waitForTimeout(300);
       const stored = await readStorage(app.page);
       assert.deepEqual(Object.keys(stored).sort(), ['autoAdjustBitrate', 'cert', 'settingsSchema', 'uniqueid'], variant.name);
-      assert.equal(stored.settingsSchema, 4, variant.name);
+      assert.equal(stored.settingsSchema, 5, variant.name);
       assert.ok(!app.logs.some((line) => line.indexOf('Existing install without a settings schema') >= 0), variant.name);
       assert.deepEqual(app.errors, [], variant.name);
     } finally {
@@ -518,7 +518,7 @@ test('an install of settings schema 2 keeps the rumble off that it showed, and a
   // Never switched: the earlier default is stored once
   let app = await openExisting({ tv: 's90c', conn: 'wifi' }, { settingsSchema: 2, framePacing: false });
   try {
-    const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 4);
+    const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 5);
     assert.equal(stored.rumbleFeedback, false);
     assert.equal(await rumble(app.page), false);
     // Nothing else changes
@@ -535,7 +535,7 @@ test('an install of settings schema 2 keeps the rumble off that it showed, and a
   for (const value of [true, false]) {
     app = await openExisting({ tv: 's90c', conn: 'wifi' }, { settingsSchema: 2, rumbleFeedback: value });
     try {
-      const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 4);
+      const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 5);
       assert.equal(stored.rumbleFeedback, value);
       assert.equal(await rumble(app.page), value);
     } finally {
@@ -547,7 +547,7 @@ test('an install of settings schema 2 keeps the rumble off that it showed, and a
 test('a fresh install has the rumble and \'Optimize game settings\' on without storing them', async () => {
   const app = await openApp(harness, { tv: { tv: 'uhd', conn: 'wifi' } });
   try {
-    await waitForStorage(app.page, (values) => values.settingsSchema === 4);
+    await waitForStorage(app.page, (values) => values.settingsSchema === 5);
     assert.equal(await app.page.evaluate(() => document.getElementById('rumbleFeedbackSwitch').checked), true);
     assert.equal(await app.page.evaluate(() => document.getElementById('optimizeGamesSwitch').checked), true);
     await app.page.waitForTimeout(300);
@@ -566,7 +566,7 @@ test('an install of settings schema 3 keeps \'Optimize game settings\' off that 
   // so the rumble that it showed on stays on without being stored
   let app = await openExisting({ tv: 's90c', conn: 'wifi' }, { settingsSchema: 3, framePacing: false });
   try {
-    const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 4);
+    const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 5);
     assert.equal(stored.optimizeGames, false);
     assert.equal(await sops(app.page), false);
     assert.equal('rumbleFeedback' in stored, false);
@@ -590,7 +590,7 @@ test('an install of settings schema 3 keeps \'Optimize game settings\' off that 
   for (const value of [true, false]) {
     app = await openExisting({ tv: 's90c', conn: 'wifi' }, { settingsSchema: 3, optimizeGames: value });
     try {
-      const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 4);
+      const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 5);
       assert.equal(stored.optimizeGames, value);
       assert.equal(await sops(app.page), value);
     } finally {

@@ -330,7 +330,7 @@ function readReports() {
   return fs.readFileSync(path.join(REPO_ROOT, 'tests/fixtures/session-reports.tsv'), 'utf8')
     .split('\n').filter((line) => line && line[0] !== '#').map((line) => {
       const fields = line.split('\t');
-      return { name: fields[0], fields, message: fields[19], hints: fields[20].split(',') };
+      return { name: fields[0], fields, message: fields[23], hints: fields[24].split(',') };
     });
 }
 
@@ -339,7 +339,7 @@ test('the report of each message of the fixture, with its hints', () => {
   const parse = app.platform.get('parseSessionReport');
   const hints = app.platform.get('getSessionReportHints');
   const reports = readReports();
-  assert.equal(reports.length, 15);
+  assert.equal(reports.length, 22);
   reports.forEach((entry) => {
     assert.ok(entry.message.indexOf('SessionReportMsg: ') === 0, entry.name);
     const report = plain(parse(entry.message.slice('SessionReportMsg: '.length)));
@@ -349,6 +349,8 @@ test('the report of each message of the fixture, with its hints', () => {
     assert.equal(report.heapGrowthMb, Number(entry.fields[16]), entry.name);
     assert.equal(report.hostFrameRateX100, Number(entry.fields[17]), entry.name);
     assert.equal(report.hostProcessingLatencyX10, Number(entry.fields[18]), entry.name);
+    assert.deepEqual([report.audioChannels, report.audioLoadMsPerS, report.audioLoadPeakMsPerS, report.audioOverloadedWindows],
+      entry.fields.slice(19, 23).map(Number), entry.name);
     assert.deepEqual(plain(hints(report, { refFrameInvalidation: false })), entry.hints, entry.name);
   });
   // With reference frame invalidation already on, the recovery keyframes give no hint of their own
@@ -358,6 +360,36 @@ test('the report of each message of the fixture, with its hints', () => {
   assert.equal(parse('{broken'), null);
   assert.equal(parse('42'), null);
   assert.equal(plain(parse('{"frames":"many","durationMs":-5}')).frames, 0);
+  // The report of a module without the figures of the audio thread gives no hint about them
+  const older = plain(parse('{"durationMs":600000,"codec":"HEVC","fps":60,"frames":36000}'));
+  assert.deepEqual([older.audioChannels, older.audioLoadMsPerS, older.audioLoadPeakMsPerS, older.audioOverloadedWindows], [0, 0, 0, 0]);
+  assert.deepEqual(plain(hints(older, {})), ['ok']);
+});
+
+test('the hint about the sound comes for a surround stream with a window above the limit of the module, with its busiest window', () => {
+  const app = loadDiagnostics();
+  const hints = app.platform.get('getSessionReportHints');
+  const text = app.platform.get('getSessionReportHintText');
+  const audio = (channels, windows, extra) => hostReport(60, 60, 4, Object.assign({ audioChannels: channels, audioLoadMsPerS: 250,
+    audioLoadPeakMsPerS: 340, audioOverloadedWindows: windows }, extra || {}));
+  const cases = [
+    // The module counts the windows above its limit (wasm/audio_load.hpp), so the front end keeps no limit of its own:
+    // one window is enough, none gives no hint whatever the figures say
+    [audio(6, 1), ['audio']], [audio(8, 1), ['audio']], [audio(8, 200), ['audio']],
+    [audio(6, 0), ['ok']], [audio(8, 0, { audioLoadMsPerS: 900, audioLoadPeakMsPerS: 900 }), ['ok']],
+    // Stereo and mono have no lighter sound to change to, and without an audio output nothing was decoded
+    [audio(2, 50), ['ok']], [audio(1, 50), ['ok']], [audio(0, 0), ['ok']],
+    // It comes after the hints about the network and the TV and before the others
+    [audio(8, 5, { networkDroppedFrames: 2000, tvDroppedFrames: 2000 }), ['network', 'tv', 'audio']],
+    [audio(8, 5, { hostProcessingLatencyX10: 140, hostFrameRateX100: 5994 }), ['audio', 'host', 'hostRefresh']],
+  ];
+  cases.forEach(([report, expected]) => assert.deepEqual(plain(hints(report)), expected, JSON.stringify(report)));
+  assert.equal(text('audio', audio(8, 5, { audioLoadPeakMsPerS: 447 })),
+    'Decoding and playing the sound took the TV up to 447 ms per second: if the sound stuttered, set Surround audio quality to Efficient, or Audio configuration to Stereo.');
+  // In System information, after the figures of the session
+  const lines = plain(app.platform.get('describeSessionReport')(audio(6, 1), {}));
+  assert.equal(lines[lines.length - 1],
+    'Hint: Decoding and playing the sound took the TV up to 340 ms per second: if the sound stuttered, set Surround audio quality to Efficient, or Audio configuration to Stereo.');
 });
 
 // A clean report of a long stream at a frame rate, with the best host frame rate and the host processing latency given

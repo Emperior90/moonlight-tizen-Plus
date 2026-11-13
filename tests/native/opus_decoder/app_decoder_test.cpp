@@ -74,6 +74,10 @@ void MoonlightInstance::ClLogMessage(const char* format, ...) {
 uint64_t LiGetMillis(void) {
   return 1000;
 }
+// The message of an overloaded audio thread (CheckAudioLoad() in auddec.cpp), which no stream of this test is long
+// enough for; audio_decoder_test.cpp checks it
+void PostToJsAsync(std::string) {
+}
 
 static int CountLogs(const char* text) {
   int count = 0;

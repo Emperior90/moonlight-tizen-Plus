@@ -345,6 +345,11 @@
                 <li class="mdl-menu__item" data-value="WebAudio" data-i18n="Browser (Web Audio)">Browser (Web Audio)</li>
                 <li class="mdl-menu__item" data-value="Disabled" data-i18n="Disabled">Disabled</li>
               </ul>
+              <!-- A line that shows only with Web Audio, below the help text (.setting-note). It comes after the menu, since the
+                   navigation finds the options of a menu by the position of the menu in its row (navigation.js) -->
+              <span id="webAudioStereoNote" class="mdl-list__item-text-body setting-note" style="display: none" data-i18n="- Web Audio always plays stereo, so Audio configuration and Surround audio quality are not available.">
+                - Web Audio always plays stereo, so Audio configuration and Surround audio quality are not available.
+              </span>
             </div>
             <div id="audioConfigOption" class="setting-option">
               <label><span data-i18n="Audio configuration">Audio configuration</span>
@@ -364,11 +369,11 @@
             </div>
             <div id="surroundQualityOption" class="setting-option">
               <label data-i18n="Surround audio quality">Surround audio quality</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Efficient asks the PC for 5.1 and 7.1 at normal bitrate in 10 ms packets instead of 5 ms: about half the work to decode the sound (measured on a PC), about 5 ms more audio delay.">
-                - Efficient asks the PC for 5.1 and 7.1 at normal bitrate in 10 ms packets instead of 5 ms: about half the work to decode the sound (measured on a PC), about 5 ms more audio delay.
+              <span class="mdl-list__item-text-body" data-i18n="- Efficient: 256 instead of 1536 kbps for 5.1 (450 instead of 2048 kbps for 7.1), which lowers the load on the TV. For music, High or Stereo (512 kbps) can sound better. No listening test has compared them.">
+                - Efficient: 256 instead of 1536 kbps for 5.1 (450 instead of 2048 kbps for 7.1), which lowers the load on the TV. For music, High or Stereo (512 kbps) can sound better. No listening test has compared them.
               </span>
               <div id="surroundQualityMenu">
-                <button type="button" id="selectSurroundQuality" class="mdl-button mdl-js-button" data-value="High" data-i18n="High">High</button>
+                <button type="button" id="selectSurroundQuality" class="mdl-button mdl-js-button" data-value="Efficient" data-i18n="Efficient">Efficient</button>
               </div>
               <ul class="surroundQualityMenu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectSurroundQuality">
                 <li class="mdl-menu__item" data-value="High" data-i18n="High">High</li>

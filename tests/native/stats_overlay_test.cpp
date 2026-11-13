@@ -321,13 +321,18 @@ static void TheGraphPointCountsTheFramesLostInTheLastWindow() {
 
 static void TheEndOfTheStreamSendsTheSessionReport() {
   // A stream of about 2 seconds, in which 4 frames never arrived, sends its totals once its decoder is cleaned up, with
-  // the window that was still open, without waiting for the main thread
+  // the window that was still open, without waiting for the main thread. Its audio stream, which ended before the
+  // video stream, left the load of the audio thread for it (AudDecCleanup() in wasm/auddec.cpp).
   StartStream(kPerformanceStatsOff);
   nextFrame = 1;
   SubmitFrames(70);
   nextFrame += 4;
   SubmitFrames(20);
   CHECK(postedAsync.empty());
+  g_AudioStreamStats.loadChannels = 8;
+  g_AudioStreamStats.loadMsPerSecond = 412;
+  g_AudioStreamStats.loadPeakMsPerSecond = 447;
+  g_AudioStreamStats.overloadedWindows = 3;
   MoonlightInstance::VidDecCleanup();
   CHECK_EQ(postedAsync.size(), 1u);
   CHECK(posted.empty());
@@ -341,9 +346,21 @@ static void TheEndOfTheStreamSendsTheSessionReport() {
     std::printf("  # got %s\n  # expected %s...\n", postedAsync.back().c_str(), expected.c_str());
   }
   // No 30 s window of the host frame rate was completed in 2 seconds; each frame took the host 4 ms
-  const std::string end = ",\"hostFrameRateX100\":0,\"hostProcessingLatencyX10\":40}";
+  const std::string end = ",\"hostFrameRateX100\":0,\"hostProcessingLatencyX10\":40,\"audioChannels\":8,"
+    "\"audioLoadMsPerS\":412,\"audioLoadPeakMsPerS\":447,\"audioOverloadedWindows\":3}";
   CHECK(!postedAsync.empty() && postedAsync.back().size() > end.size() &&
     postedAsync.back().compare(postedAsync.back().size() - end.size(), end.size(), end) == 0);
+
+  // The report took the load of the audio thread: a stream that ends before its audio stream started (the video stream
+  // starts first) reports none, instead of the figures of the stream before it
+  CHECK_EQ(g_AudioStreamStats.loadChannels.load(), 0u);
+  StartStream(kPerformanceStatsOff);
+  postedAsync.clear();
+  MoonlightInstance::VidDecCleanup();
+  const std::string noAudio = ",\"audioChannels\":0,\"audioLoadMsPerS\":0,\"audioLoadPeakMsPerS\":0,"
+    "\"audioOverloadedWindows\":0}";
+  CHECK(!postedAsync.empty() && postedAsync.back().size() > noAudio.size() &&
+    postedAsync.back().compare(postedAsync.back().size() - noAudio.size(), noAudio.size(), noAudio) == 0);
 }
 
 // The number after "key": in a message of JSON figures, or -1

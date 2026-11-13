@@ -1,4 +1,5 @@
 #include "moonlight_wasm.hpp"
+#include "audio_load.hpp"
 #include "audio_stream_stats.hpp"
 #include "opus_layout.hpp"
 
@@ -41,6 +42,10 @@ static constexpr int kDefaultAudioJitterMs = 100;
 static std::vector<opus_int16> s_DecodeBuffer;
 
 AudioStreamStats g_AudioStreamStats;
+
+// The load of the audio stream on this thread, from the totals of the statistics above (audio_load.hpp). Only touched
+// where the statistics are counted: on the audio thread, and before it starts and after it ended.
+static AudioLoadMonitor s_AudioLoad;
 
 static TimeStamp s_frameDuration;
 static TimeStamp s_pktPts;
@@ -116,6 +121,25 @@ static int DecodeTimed(OpusMSDecoder* decoder, const unsigned char* sampleData, 
   *decodeEnd = std::chrono::steady_clock::now();
   g_AudioStreamStats.CountDecode(ElapsedUs(decodeStart, *decodeEnd), decodeLen);
   return decodeLen;
+}
+
+// Judge the load of the audio thread after a packet (audio_load.hpp), from the totals that DecodeTimed() and the
+// hand-over just raised. Once per stream, when the first window ends in which decoding and hand-over took more than the
+// limit per second of audio, the figures go to the log and the front end is told, which shows the user a message once
+// per session ('AudioOverloadMsg: ' in wasm/platform/messages.js). The message doesn't wait for the main thread, and it
+// comes whatever the level of the performance stats, since the statistics are always counted.
+static void CheckAudioLoad() {
+  if (!s_AudioLoad.Update(g_AudioStreamStats.decodeUs.load(std::memory_order_relaxed),
+        g_AudioStreamStats.outputUs.load(std::memory_order_relaxed),
+        g_AudioStreamStats.decodedSamples.load(std::memory_order_relaxed))) {
+    return;
+  }
+  char line[320];
+  if (FormatAudioOverloadLog(s_AudioLoad, (int)s_channelCount, line, sizeof(line)) > 0) {
+    MoonlightInstance::ClLogMessage("%s", line);
+  }
+  PostToJsAsync("AudioOverloadMsg: " + std::to_string(s_channelCount) + "," +
+    std::to_string(s_AudioLoad.lastWindowMsPerSecond));
 }
 
 // Destroy the Opus decoder of a stream, if there is one, and free the decode buffer of the EMSS backend. Only called
@@ -287,6 +311,9 @@ int MoonlightInstance::AudDecInit(int audioConfiguration, POPUS_MULTISTREAM_CONF
   // Latch the audio backend selected for this streaming session
   s_AudioBackend = g_Instance->m_AudioBackend;
 
+  // Judge the load of this stream from its first packet; without an audio output nothing is decoded and nothing judged
+  s_AudioLoad.Reset(s_AudioBackend == AudioBackend::Disabled ? 0 : opusConfig->sampleRate);
+
   // Skip creating the Opus decoder when the audio output is disabled, as every audio packet is discarded
   if (s_AudioBackend == AudioBackend::Disabled) {
     // No audio lines in the performance stats
@@ -416,6 +443,21 @@ void MoonlightInstance::AudDecCleanup(void) {
   // Destroy the Opus decoder of the stream and free its decode buffer. The receive thread of moonlight-common-c, which
   // decodes, has ended before this is called (stopAudioStream() in AudioStream.c).
   ReleaseDecoder(g_Instance->m_OpusDecoder);
+
+  // Log the work of the audio thread over the stream, and keep its load for the report of the session, which
+  // VidDecCleanup() sends after this (audio_load.hpp). A stream that decoded nothing has neither.
+  const AudioLoadSummary load = s_AudioLoad.Summary();
+  if (s_AudioLoad.samples != 0) {
+    char line[320];
+    if (FormatAudioLoadSummaryLog(load, line, sizeof(line)) > 0) {
+      ClLogMessage("%s", line);
+    }
+    g_AudioStreamStats.loadChannels = (uint32_t)s_channelCount;
+    g_AudioStreamStats.loadMsPerSecond = load.averageMsPerSecond;
+    g_AudioStreamStats.loadPeakMsPerSecond = load.peakMsPerSecond;
+    g_AudioStreamStats.overloadedWindows = load.overloadedWindows;
+  }
+  s_AudioLoad.Reset(0);
 }
 
 void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLength) {
@@ -433,6 +475,7 @@ void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLe
     DecodeAndScheduleFrame(g_Instance->m_OpusDecoder,
       reinterpret_cast<unsigned char*>(sampleData), sampleLength
     );
+    CheckAudioLoad();
     return;
   }
 
@@ -468,6 +511,7 @@ void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLe
     g_Instance->m_AudioSessionId.load(), g_Instance->m_OpusDecoder,
     reinterpret_cast<unsigned char*>(sampleData), sampleLength
   );
+  CheckAudioLoad();
 
   // Update the estimated audio end time to prevent future overflow
   s_estimatedAudioEnd = std::max(s_estimatedAudioEnd, ntp) + s_frameDuration;

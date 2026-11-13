@@ -2,11 +2,13 @@
 
 // Checks the setting 'Surround audio quality' of the Audio Settings (wasm/index.html, index.js, navigation.js) in the
 // real page: its row and its place in the navigation show only while the audio configuration is 5.1 or 7.1 and the
-// audio output isn't disabled; its menu stores High or Efficient, which a restart loads (High for a value the settings
-// don't know, and for an install that never stored one, which keeps the audio stream of earlier versions); its button
-// follows the language; and every start request carries it as its last argument, which the module applies to 5.1 and
-// 7.1 only (tests/native/sdp_audio_quality_test.c). Restore Defaults is checked with the other settings by
-// video-defaults.test.js, the Stream Menu entry by stream-menu-entries.test.js.
+// media player of the TV plays it (not with the Web Audio backend, which plays stereo, and not with the audio output
+// disabled); its menu stores High or Efficient, which a restart loads (Efficient, the default since 2.3.1, for a value
+// the settings don't know and for an install that never stored one); its button follows the language; and every start
+// request carries it as its last argument, which the module applies to 5.1 and 7.1 only
+// (tests/native/sdp_audio_quality_test.c). What an update from 2.3.0 does with the default, Restore Defaults and the
+// optimal settings button are checked by surround-quality-default.test.js, the Web Audio backend by
+// web-audio-stereo.test.js, the Stream Menu entry by stream-menu-entries.test.js.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -64,23 +66,26 @@ const startRequest = (page) => page.evaluate(async () => {
   return args;
 });
 
-test('the row shows only with 5.1 and 7.1 and an audio output, right below the audio configuration', async () => {
+test('the row shows only with 5.1 and 7.1 and the media player of the TV, right below the audio configuration', async () => {
   const app = await openApp(harness, { tv: TV });
   try {
     await openSettings(app.page);
     // Stereo, the default
     assert.deepEqual(await audioSettings(app.page), { row: false, items: ['selectAudioBackend', 'selectAudio', 'audioSyncBtn', 'playHostAudioBtn'],
-      value: 'High', label: 'High' });
+      value: 'Efficient', label: 'Efficient' });
     for (const config of ['51Surround', '71Surround']) {
       await choose(app.page, 'audioConfigMenu', config);
       assert.deepEqual(await audioSettings(app.page), { row: true,
-        items: ['selectAudioBackend', 'selectAudio', 'selectSurroundQuality', 'audioSyncBtn', 'playHostAudioBtn'], value: 'High', label: 'High' }, config);
+        items: ['selectAudioBackend', 'selectAudio', 'selectSurroundQuality', 'audioSyncBtn', 'playHostAudioBtn'],
+        value: 'Efficient', label: 'Efficient' }, config);
     }
-    // The Web Audio backend has it too, and no audio output hides it with the audio configuration
+    // The Web Audio backend plays stereo, so it hides the row with the audio configuration, and so does no audio output
     await choose(app.page, 'audioBackendMenu', 'WebAudio');
-    assert.equal((await audioSettings(app.page)).items[2], 'selectSurroundQuality');
+    assert.deepEqual(await audioSettings(app.page), { row: false,
+      items: ['selectAudioBackend', 'selectAudioJitter', 'audioClockSyncBtn', 'playHostAudioBtn'], value: 'Efficient', label: 'Efficient' });
     await choose(app.page, 'audioBackendMenu', 'Disabled');
-    assert.deepEqual(await audioSettings(app.page), { row: false, items: ['selectAudioBackend', 'playHostAudioBtn'], value: 'High', label: 'High' });
+    assert.deepEqual(await audioSettings(app.page), { row: false, items: ['selectAudioBackend', 'playHostAudioBtn'],
+      value: 'Efficient', label: 'Efficient' });
     await choose(app.page, 'audioBackendMenu', 'EMSS');
     assert.equal((await audioSettings(app.page)).row, true);
     await choose(app.page, 'audioConfigMenu', 'Stereo');
@@ -93,11 +98,11 @@ test('the row shows only with 5.1 and 7.1 and an audio output, right below the a
   }
 });
 
-test('Efficient is stored, loads after a restart, follows the language and goes to the module with every start', async () => {
+test('a chosen quality is stored, loads after a restart, follows the language and goes to the module with every start', async () => {
   const app = await openApp(harness, { tv: TV, stored: { audioConfig: '51Surround' } });
   try {
     await openSettings(app.page);
-    assert.equal((await startRequest(app.page)).slice(-1)[0], 'High', 'High for an install that never stored the setting');
+    assert.equal((await startRequest(app.page)).slice(-1)[0], 'Efficient', 'Efficient for an install that never stored the setting');
     await app.page.evaluate(() => {
       handleSettingsView('audioSettings');
       document.getElementById('selectSurroundQuality').click();
@@ -106,15 +111,25 @@ test('Efficient is stored, loads after a restart, follows the language and goes 
     await app.page.waitForFunction(() => Views.SelectSurroundQualityMenu.isActive(), null, { timeout: 2000 });
     assert.deepEqual(await app.page.evaluate(() => Array.prototype.map.call(Views.SelectSurroundQualityMenu.view.func(),
       (item) => item.getAttribute('data-value'))), ['High', 'Efficient']);
-    await choose(app.page, 'surroundQualityMenu', 'Efficient');
-    await waitForStorage(app.page, (values) => values.surroundQuality === 'Efficient');
-    assert.equal((await audioSettings(app.page)).label, 'Efficient');
+    await choose(app.page, 'surroundQualityMenu', 'High');
+    await waitForStorage(app.page, (values) => values.surroundQuality === 'High');
+    assert.equal((await audioSettings(app.page)).label, 'High');
     const args = await startRequest(app.page);
     assert.equal(args.length, 33);
-    assert.deepEqual([args[18], args[32]], ['51Surround', 'Efficient']);
-    assert.ok(app.logs.some((line) => line.indexOf('Surround audio quality: Efficient') >= 0));
+    assert.deepEqual([args[18], args[32]], ['51Surround', 'High']);
+    assert.ok(app.logs.some((line) => line.indexOf('Surround audio quality: High') >= 0));
 
     // A restart loads it, and German names it
+    await reloadApp(app);
+    await app.page.evaluate((locale) => i18n.setLanguage(locale), 'de-DE');
+    await app.page.waitForFunction(() => document.documentElement.getAttribute('lang') === 'de-DE');
+    await openSettings(app.page);
+    assert.deepEqual(await audioSettings(app.page), { row: true,
+      items: ['selectAudioBackend', 'selectAudio', 'selectSurroundQuality', 'audioSyncBtn', 'playHostAudioBtn'], value: 'High', label: 'Hoch' });
+    assert.equal((await startRequest(app.page)).slice(-1)[0], 'High');
+    // Efficient from the menu is stored like High, not left to the default
+    await choose(app.page, 'surroundQualityMenu', 'Efficient');
+    await waitForStorage(app.page, (values) => values.surroundQuality === 'Efficient');
     await reloadApp(app);
     await app.page.evaluate((locale) => i18n.setLanguage(locale), 'de-DE');
     await app.page.waitForFunction(() => document.documentElement.getAttribute('lang') === 'de-DE');
@@ -132,13 +147,13 @@ test('Efficient is stored, loads after a restart, follows the language and goes 
   }
 });
 
-test('a stored value the settings don\'t know counts as High', async () => {
+test('a stored value the settings don\'t know counts as Efficient, the default', async () => {
   const app = await openApp(harness, { tv: TV, stored: { audioConfig: '71Surround', surroundQuality: 'Ultra' } });
   try {
     await openSettings(app.page);
     assert.deepEqual(await audioSettings(app.page), { row: true,
-      items: ['selectAudioBackend', 'selectAudio', 'selectSurroundQuality', 'audioSyncBtn', 'playHostAudioBtn'], value: 'High', label: 'High' });
-    assert.equal((await startRequest(app.page)).slice(-1)[0], 'High');
+      items: ['selectAudioBackend', 'selectAudio', 'selectSurroundQuality', 'audioSyncBtn', 'playHostAudioBtn'], value: 'Efficient', label: 'Efficient' });
+    assert.equal((await startRequest(app.page)).slice(-1)[0], 'Efficient');
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

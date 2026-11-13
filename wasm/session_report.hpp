@@ -4,7 +4,7 @@
 // wasm/wasmplayer.cpp gathers them when the stream ends and sends them as one small JSON object, e.g.
 //   SessionReportMsg: {"durationMs":754000,"codec":"HEVC Main10","width":3840,"height":2160,"fps":60,...}
 // so the front end never parses the text of the performance statistics, which only exists while they are shown. The
-// figures are those of the session lines of the full statistics. The idea of a report at the end of a stream comes from
+// figures are those of the session lines of the full statistics, and the load of the audio thread (audio_load.hpp). The idea of a report at the end of a stream comes from
 // the fork of samirmartins (moonlight-tizen, 1d8f2e3 and bcdcda5, diagnostics.js). The header has no other dependencies,
 // so the native tests can check it on its own (tests/native/session_report_test.cpp).
 
@@ -37,6 +37,14 @@ struct SessionReport {
   // The average time the host needed to capture and encode a frame, in tenths of a millisecond (the unit of
   // frameHostProcessingLatency of moonlight-common-c), or 0 when the host sent none
   uint32_t hostProcessingLatencyX10 = 0;
+  // The audio stream: its channels (0 when no audio was decoded), and the work of the audio thread on it in
+  // milliseconds per second of audio, decoding plus hand-over to the player, over the whole stream and in its busiest
+  // window of 10 seconds (0 for a stream that ended before one), with the number of windows above the limit of an
+  // overload (AudioLoadMonitor in audio_load.hpp)
+  uint32_t audioChannels = 0;
+  uint32_t audioLoadMsPerS = 0;
+  uint32_t audioLoadPeakMsPerS = 0;
+  uint32_t audioOverloadedWindows = 0;
 };
 
 // Name of a video format of moonlight-common-c (the VIDEO_FORMAT_* values of Limelight.h) for the report
@@ -55,15 +63,17 @@ inline const char* VideoFormatReportName(int videoFormat) {
 inline std::string FormatSessionReportMessage(const SessionReport& report) {
   // Only 32-bit values go through the varargs of snprintf: a stream would need 49 days to pass UINT32_MAX ms
   const uint32_t durationMs = report.durationMs > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(report.durationMs);
-  char json[512];
+  char json[768];
   const int length = std::snprintf(json, sizeof(json),
     "SessionReportMsg: {\"durationMs\":%u,\"codec\":\"%s\",\"width\":%u,\"height\":%u,\"fps\":%u,\"bitrateKbps\":%u,"
     "\"frames\":%u,\"networkDroppedFrames\":%u,\"tvDroppedFrames\":%u,\"videoResets\":%u,\"recoveryKeyframes\":%u,"
     "\"fecRecoveredBlocks\":%u,\"fecFailures\":%u,\"heapTopMb\":%u,\"heapTotalMb\":%u,\"heapGrowthMb\":%u,"
-    "\"hostFrameRateX100\":%u,\"hostProcessingLatencyX10\":%u}",
+    "\"hostFrameRateX100\":%u,\"hostProcessingLatencyX10\":%u,\"audioChannels\":%u,\"audioLoadMsPerS\":%u,"
+    "\"audioLoadPeakMsPerS\":%u,\"audioOverloadedWindows\":%u}",
     durationMs, report.codec ? report.codec : "", report.width, report.height,
     report.fps, report.bitrateKbps, report.frames, report.networkDroppedFrames, report.tvDroppedFrames, report.videoResets,
     report.recoveryKeyframes, report.fecRecoveredBlocks, report.fecFailures, report.heapTopMb, report.heapTotalMb,
-    report.heapGrowthMb, report.hostFrameRateX100, report.hostProcessingLatencyX10);
+    report.heapGrowthMb, report.hostFrameRateX100, report.hostProcessingLatencyX10, report.audioChannels,
+    report.audioLoadMsPerS, report.audioLoadPeakMsPerS, report.audioOverloadedWindows);
   return length > 0 && length < static_cast<int>(sizeof(json)) ? std::string(json) : std::string();
 }

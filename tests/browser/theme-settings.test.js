@@ -152,6 +152,57 @@ test('the help text runs across each row, a switch label shows only without help
   }
 });
 
+test('the line about Web Audio takes its own lines below the help text of the audio backend in every language, also with 10 % wider text', async () => {
+  for (const language of LANGUAGES) {
+    const app = await openApp(harness, { tv: TV, stored: { audioBackend: 'WebAudio', audioConfig: '51Surround' } });
+    try {
+      await openSettings(app.page, language);
+      await forEachTextWidth(app.page, async (stress) => {
+        const note = await app.page.evaluate(() => {
+          handleSettingsView('audioSettings');
+          const element = document.getElementById('webAudioStereoNote');
+          const row = element.closest('.setting-option');
+          const help = row.querySelector(':scope > .mdl-list__item-text-body');
+          const box = element.getBoundingClientRect();
+          const rowBox = row.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          const helpStyle = getComputedStyle(help);
+          return { shown: element.offsetParent !== null, text: element.textContent.trim(),
+            // Below the help text and inside the row, across the row like the help text (the row without its padding)
+            belowHelp: box.top >= help.getBoundingClientRect().bottom, insideRow: box.bottom <= rowBox.bottom - 23 && box.right <= rowBox.right - 27,
+            acrossRow: Math.abs(box.width - (rowBox.width - 56)) < 2,
+            notCut: element.scrollWidth <= element.clientWidth + 1,
+            lines: Math.round(box.height / parseFloat(style.lineHeight)),
+            // It reads like the help text above it, with its leading dash hidden as well
+            sameLook: [style.fontSize, style.fontWeight, style.color].join() === [helpStyle.fontSize, helpStyle.fontWeight, helpStyle.color].join(),
+            dash: element.textContent.trim().indexOf('- ') === 0 && getComputedStyle(element, '::first-letter').fontSize === '0px',
+            // The control of the row stays on the line of its title
+            control: Math.abs(row.querySelector(':scope > div[id]').getBoundingClientRect().top - row.querySelector(':scope > label').getBoundingClientRect().top) < 40 };
+        });
+        const where = (language || 'en-US') + stress + ' ' + JSON.stringify(note);
+        assert.deepEqual([note.shown, note.belowHelp, note.insideRow, note.acrossRow, note.notCut, note.sameLook, note.dash, note.control],
+          [true, true, true, true, true, true, true, true], where);
+        assert.ok(note.lines >= 1 && note.lines <= 2, where);
+        // The other rows of the section keep their layout next to it
+        const rows = await rowLayout(app.page, 'audioSettings');
+        assert.deepEqual(rows.map((row) => row.titleInside && row.controlInside && row.titleLines <= 2), rows.map(() => true), where + JSON.stringify(rows));
+      });
+      // With the media player of the TV the line is gone and the row is as tall as before
+      const heights = await app.page.evaluate(() => {
+        handleSettingsView('audioSettings');
+        const row = document.getElementById('webAudioStereoNote').closest('.setting-option');
+        const withNote = row.getBoundingClientRect().height;
+        $('.audioBackendMenu li[data-value="EMSS"]').click();
+        return [withNote, row.getBoundingClientRect().height, $('#webAudioStereoNote').is(':visible')];
+      });
+      assert.ok(heights[0] > heights[1] + 20 && heights[2] === false, (language || 'en-US') + ' ' + JSON.stringify(heights));
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
 test('a badge stays on the line of its title in every language: the button of the optimal settings wraps instead, also with 10 % wider text', async () => {
   for (const language of LANGUAGES) {
     const app = await openApp(harness, { tv: TV });

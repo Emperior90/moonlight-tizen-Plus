@@ -37,11 +37,13 @@ function makePad(index, buttonCount, axisCount, pressedButtons, axes, extra) {
   }, extra || {});
 }
 
-// Load gamepad.js with a simulated navigator and a polling timer that the test advances by hand
+// Load gamepad.js with a simulated navigator, a polling timer that the test advances by hand and a clock
+// (performance.now()) that stands still unless the test moves it (time.now, in ms)
 function loadController() {
   const slots = [null, null, null, null];
   const changes = [];
   const intervals = [];
+  const time = { now: 1000 };
   function CustomEvent(type, init) {
     this.type = type;
     this.detail = init && init.detail;
@@ -50,6 +52,7 @@ function loadController() {
     globals: {
       navigator: { getGamepads: () => slots },
       CustomEvent,
+      performance: { now: () => time.now },
       setInterval: (callback, ms) => {
         intervals.push({ callback, ms, active: true });
         return intervals.length;
@@ -62,8 +65,11 @@ function loadController() {
     },
   });
   const events = [];
+  // By how many ms the read of each event came late (lateBy of the event)
+  const lateBy = [];
   platform.context.addEventListener('gamepadinputchanged', (event) => {
     events.push({ gamepad: event.detail.gamepad, count: event.detail.changes.length });
+    lateBy.push(event.detail.lateBy);
     event.detail.changes.forEach((change) => changes.push(Object.assign({}, change)));
   });
   const controller = platform.get('Controller');
@@ -74,6 +80,8 @@ function loadController() {
     changes,
     events,
     intervals,
+    time,
+    lateBy,
     // Run one polling round of every active interval
     poll(rounds) {
       for (let round = 0; round < (rounds || 1); round++) {
@@ -335,6 +343,44 @@ test('sticks: a rest zone of 0.15, changes of at least 0.05, and every crossing 
   pads.changes.length = 0;
   stick(-0.1);
   assert.deepEqual(pads.changes, [{ type: 'axis', index: 0, value: 0 }]);
+});
+
+test('a read of the gamepads that comes late tells the menus by how much, so that a release it saw is not dated too late', () => {
+  const pads = loadController();
+  pads.controller.startWatching();
+  pads.connect(makePad(0, 17, 4));
+  // Reads on time, 16 ms apart, and one that a busy page delays a little (40 ms, less than three intervals): not late
+  const readAfter = (ms, pressedButtons) => {
+    pads.time.now += ms;
+    pads.slots[0] = makePad(0, 17, 4, pressedButtons);
+    pads.poll();
+  };
+  readAfter(16, [13]);
+  readAfter(16, []);
+  readAfter(40, [13]);
+  assert.deepEqual(pads.lateBy, [0, 0, 0]);
+  // The page is busy for 100 ms, in which the D-pad is released: the read after it is 84 ms late, and says so
+  readAfter(100, []);
+  assert.deepEqual(pads.lateBy.slice(-1), [84]);
+  // The read after it is on time again, also one that is just short of three intervals
+  readAfter(16, [13]);
+  readAfter(47, []);
+  readAfter(48, [13]);
+  assert.deepEqual(pads.lateBy.slice(-3), [0, 0, 32]);
+  // The polling pauses for a stream and starts again: its first read is not late, however long the pause was
+  pads.controller.stopWatching();
+  pads.time.now += 60000;
+  pads.controller.startWatching();
+  readAfter(16, []);
+  readAfter(16, [13]);
+  assert.deepEqual(pads.lateBy.slice(-2), [0, 0]);
+  // The end of the input of a gamepad that disconnects is reported outside a read, also after a late one: not late
+  readAfter(200, [13, 0]);
+  assert.deepEqual(pads.lateBy.slice(-1), [184]);
+  pads.disconnect(0);
+  assert.deepEqual(pads.changes.slice(-2), [{ type: 'button', index: 0, pressed: false }, { type: 'button', index: 13, pressed: false }]);
+  assert.deepEqual(pads.lateBy.slice(-1), [0]);
+  assert.deepEqual(pads.errors(), []);
 });
 
 test('a jittering resting stick sends no events, a held stick at full deflection none after the first', () => {

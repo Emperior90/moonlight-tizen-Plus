@@ -8,6 +8,9 @@
 // - two presses 150 ms apart both move it
 // - a held key or D-pad repeats: every repeat of the remote moves, the D-pad repeats after 350 ms every 100 ms, and the
 //   selection stops with the release
+// - two presses of the D-pad, 150 ms and 250 ms apart, both move it when the page was busy while the D-pad was released
+//   (a TV that takes that long to draw the step of the first press): the page reads the gamepads late then, and used to
+//   take the second press for a bounce of the first one (DPAD_BOUNCE_GUARD in index.js, lateBy of gamepad.js)
 // The times are taken in the page, from the key event (or from the change of the gamepad state that the next poll
 // reads) to the moved highlight, and to the first frame after it. The limits are fixed (see below): the typical step
 // (the median) must be fast and no step may take long, so a navigation that waits before a step, drops a press or runs
@@ -54,7 +57,14 @@ const KEYS = { up: [38, 'ArrowUp'], down: [40, 'ArrowDown'], left: [37, 'ArrowLe
 // Runs in the page: record every move of the highlight (an element that gets the class 'hovered') with its time and
 // the time of the first frame after it, and offer the key and gamepad sequences, timed in the page
 function installProbe() {
-  const probe = window.__speed = { inputs: [], moves: [] };
+  const probe = window.__speed = { inputs: [], moves: [], reads: [] };
+  // What the menus got from the gamepads, for the message of a failed check: the time, the buttons that changed and by
+  // how much the read came late
+  window.addEventListener('gamepadinputchanged', (event) => {
+    probe.isPadUnread = false;
+    probe.reads.push(Math.round(performance.now()) + ' ms: ' + event.detail.changes.map((change) => (change.pressed ? 'pressed' : 'released')).join(', ') +
+      (event.detail.lateBy ? ', read ' + Math.round(event.detail.lateBy) + ' ms late' : ''));
+  });
   new MutationObserver((records) => {
     const at = performance.now();
     records.forEach((record) => {
@@ -79,29 +89,42 @@ function installProbe() {
     (document.activeElement || document.body).dispatchEvent(event);
   };
   const padButton = (button, pressed) => {
+    probe.padChangedAt = performance.now();
+    probe.isPadUnread = true;
     if (pressed) {
-      probe.inputs.push({ at: performance.now(), repeat: false });
+      probe.inputs.push({ at: probe.padChangedAt, repeat: false });
     }
     window.__padButton(button, pressed);
   };
   // Run the steps [time in ms, action] at their times after now, then wait settleMs and resolve with what was recorded
-  // and the time of the last step (the release)
+  // and the time of the last step (the release). The page of a busy machine can stand still for longer than a button
+  // is held, and the app would be measured with a press that it could not see. So a step that ran late moves the ones
+  // after it (each keeps its distance to the step before it), and a change of the gamepad waits until the menus read
+  // the one before it (they read every 16 ms; given up after a second): every press and release reaches the app.
   const run = (steps, settleMs) => new Promise((resolve) => {
     probe.inputs = [];
     probe.moves = [];
+    probe.reads = [];
     const start = performance.now();
     let index = 0;
+    let ranAt = 0;
     let releasedAt = 0;
     const next = () => {
       if (index === steps.length) {
-        setTimeout(() => resolve({ inputs: probe.inputs, moves: probe.moves, releasedAt }), settleMs);
+        setTimeout(() => resolve({ inputs: probe.inputs, moves: probe.moves, reads: probe.reads, releasedAt }), settleMs);
         return;
       }
-      const wait = start + steps[index][0] - performance.now();
+      const due = index === 0 ? start + steps[0][0] : Math.max(start + steps[index][0], ranAt + steps[index][0] - steps[index - 1][0]);
+      const wait = due - performance.now();
       if (wait > 0.5) {
         setTimeout(next, wait);
         return;
       }
+      if (probe.isPadUnread && performance.now() - probe.padChangedAt < 1000) {
+        setTimeout(next, 2);
+        return;
+      }
+      ranAt = performance.now();
       steps[index][1]();
       releasedAt = performance.now();
       index++;
@@ -125,6 +148,22 @@ function installProbe() {
   // Presses of a gamepad button at the given times, each held for holdMs
   probe.pressPad = (button, times, holdMs) => run([].concat.apply([], times.map((time) => [
     [time, () => padButton(button, true)], [time + holdMs, () => padButton(button, false)]])), holdMs >= 1000 ? 400 : 300);
+  // Two presses of a gamepad button, gapMs from press to press, the first one held for 60 ms, with a page that is busy
+  // from 30 ms after the first press until 10 ms before the second one: the button is released while the page can't
+  // read the gamepads, as on a TV that needs that long to draw the step of the first press. The second press comes
+  // once the page has read the release, which is 16 ms or 32 ms before it reads that press.
+  probe.pressPadWhileBusy = (button, gapMs) => run([
+    [0, () => padButton(button, true)],
+    [30, () => {
+      const busyFor = (ms) => {
+        const end = performance.now() + ms;
+        while (performance.now() < end) { /* The page is busy */ }
+      };
+      busyFor(30);
+      padButton(button, false);
+      busyFor(gapMs - 70);
+    }],
+    [gapMs, () => padButton(button, true)], [gapMs + 60, () => padButton(button, false)]], 300);
 }
 
 // The times of the moves of a run, each from the last input before it
@@ -186,6 +225,19 @@ async function checkList(t, page, label, remoteKey, padButton) {
   // Two presses 150 ms apart
   result = await page.evaluate(([button]) => window.__speed.pressPad(button, [0, 150], 60), [PAD[padButton]]);
   report.padDouble = rounded(assertWithin(result, LIMITS.padToMark, LIMITS.padToFrame, 'two presses of the D-pad 150 ms apart').map((time) => time.toFrame));
+  // Two presses 150 ms and 250 ms apart with a page that is busy in between, where the D-pad is released: both move.
+  // The release that the page sees late, just before the second press, used to make that press a bounce of the first.
+  for (const gapMs of [150, 250]) {
+    result = await page.evaluate(([button, gap]) => window.__speed.pressPadWhileBusy(button, gap), [PAD[padButton], gapMs]);
+    assert.equal(result.moves.length, 2, label + ', two presses of the D-pad ' + gapMs + ' ms apart with a busy page in between: 2 presses moved the selection ' +
+      result.moves.length + ' times. Pressed at ' + rounded(result.inputs.map((input) => input.at)).join(' and ') + ' ms, moved at ' +
+      rounded(result.moves.map((move) => move.at)).join(', ') + ' ms, the menus got: ' + result.reads.join('; '));
+    assert.ok(isMovingOn(result), label + ': every step selects another item, ' + moved(result).join(', '));
+    // The second press, which the page was free for, moves as fast as any other
+    const second = latencies(result)[1];
+    assert.ok(second.toMark <= LIMITS.slowestStep, label + ': the press after the busy page moved the highlight after ' + Math.round(second.toMark) + ' ms');
+    report['padBusy' + gapMs] = Math.round(second.toFrame);
+  }
   // Held for 2 seconds: the first step at once, the repeats after 350 ms every 100 ms
   result = await page.evaluate(([button]) => window.__speed.pressPad(button, [0], 2000), [PAD[padButton]]);
   const pressedAt = result.inputs[0].at;

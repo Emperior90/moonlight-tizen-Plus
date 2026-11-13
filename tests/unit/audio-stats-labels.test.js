@@ -5,6 +5,11 @@
 // wasm/platform/messages.js translates their labels, the channel layout, the channel count, the packet duration and
 // the line of the time of the decoder and the hand-over to the player, with the real locale files. The video lines
 // around them keep their translation.
+//
+// The lines of the Web Audio backend come from getAudioStatsLines() of wasm/platform/audio.js: its session line names
+// the correction that Audio clock sync applies at the moment 'buffer correction', in every language with a word for a
+// correction of the buffer, since the value is no measurement of the drift between the clocks of the PC and the TV
+// (it stays at -500 ppm early in a session while the buffer settles), which 'clock sync -500 ppm' read like.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -85,5 +90,50 @@ test('every layout name that the native code writes has a translation key', () =
     'Audio CPU: decode %1$s ms/s (max %2$s ms), output %3$s ms/s (max %4$s ms)']).forEach((key) => {
     assert.ok(Object.prototype.hasOwnProperty.call(en, key), 'en-US misses ' + key);
     assert.ok(Object.prototype.hasOwnProperty.call(pt, key), 'pt-BR misses ' + key);
+  });
+});
+
+// audio.js with a t() that translates with the given locale, and the state of a Web Audio stream early in a session
+// with Audio clock sync on or off: the schedule lies below the jitter buffer target, so the correction is at its limit
+function webAudioLines(locale, clockSync) {
+  const messages = locale === 'en-US' ? {} : readLocale(locale);
+  const t = (key, ...values) => {
+    const text = Object.prototype.hasOwnProperty.call(messages, key) ? messages[key] : key;
+    return text.replace(/%(\d+)\$s/g, (match, index) => String(values[Number(index) - 1]));
+  };
+  const platform = loadPlatformScripts(['wasm/platform/audio.js'], { globals: { t } });
+  platform.run(`_audRunning = true; _audContext = { state: 'running', baseLatency: 0.01, outputLatency: 0.02 };
+    _audSession = { underruns: 0, droppedFull: 1, droppedEmpty: 2, decoderGaps: 4, windowLeadCount: 2, windowLeadSum: 140,
+      windowLeadMin: 16, since: Date.now(), maxDeficitMs: 12 };
+    _audClockSync = ${clockSync}; _audCorrection = ${clockSync ? '-500e-6' : '0'}; window._mlAudioTargetMs = 100;`);
+  return platform.get('getAudioStatsLines')().split('\n');
+}
+
+test('the session line of the Web Audio backend names the correction of the buffer, not a clock sync figure', () => {
+  assert.deepEqual(webAudioLines('en-US', true), [
+    'Audio buffer: 100 ms, lead avg 70 ms, min 16 ms, browser latency 30 ms',
+    'Audio session: underruns 0, skipped 3, lost 4, buffer correction -500 ppm, suggested buffer measuring',
+  ]);
+  // With Audio clock sync off there is no correction
+  assert.equal(webAudioLines('en-US', false)[1],
+    'Audio session: underruns 0, skipped 3, lost 4, buffer correction off, suggested buffer needs Audio clock sync');
+  // Each language names it as a correction of the buffer, and none keeps the word of its clock sync setting for it
+  const expected = {
+    'de-DE': ['Pufferkorrektur -500 ppm', /Taktabgleich -?\d/],
+    'es-ES': ['corrección del búfer -500 ppm', /sincronización[^,]* -?\d/],
+    'fr-FR': ['correction du tampon -500 ppm', /synchronisation[^,]* -?\d/],
+    'pt-BR': ['correção do buffer -500 ppm', /sincronização[^,]* -?\d/],
+  };
+  Object.keys(expected).forEach((locale) => {
+    const line = webAudioLines(locale, true)[1];
+    assert.ok(line.indexOf(', ' + expected[locale][0] + ', ') > 0, locale + ': ' + line);
+    assert.doesNotMatch(line, expected[locale][1], locale);
+    assert.doesNotMatch(line, /clock sync|buffer correction/, locale);
+  });
+  // The old key is gone from the code and from every locale file
+  const oldKey = 'Audio session: underruns %1$s, skipped %2$s, lost %3$s, clock sync %4$s, suggested buffer %5$s';
+  assert.equal(fs.readFileSync(path.join(REPO_ROOT, 'wasm/platform/audio.js'), 'utf8').indexOf('clock sync %4$s'), -1);
+  ['en-US', 'de-DE', 'es-ES', 'fr-FR', 'pt-BR'].forEach((locale) => {
+    assert.equal(Object.prototype.hasOwnProperty.call(readLocale(locale), oldKey), false, locale);
   });
 });
