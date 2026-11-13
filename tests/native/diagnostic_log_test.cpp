@@ -3,10 +3,11 @@
 // lock (a line that finds it taken is counted and the count goes in with the next line); a line that repeats the one
 // before within a second is counted instead of kept; a full ring drops its oldest lines and says how many; and a long
 // line is cut on a whole UTF-8 character. The lines of moonlight-common-c, of which some come once per lost packet or
-// frame, are limited by their kind (their text without its numbers): the first ones are kept, then one per minute with
+// frame, are limited by their kind (their text without its numbers): the first ten are kept, then one per minute with
 // the count of those left out, and the last of them once the kind ended, so that such a line can't push the others out
-// of the log however often it comes, while every other line stays; the second part of a line that the library logs in
-// two parts goes with its first part. The last test logs from several threads while another one takes the lines.
+// of the log however often it comes, while every other line stays. The ring tells 64 kinds apart; more kinds than
+// that share the entries without ever keeping more than the entries allow, and every line that is left out is counted
+// in a note. The last test logs from several threads while another one takes the lines.
 
 #include "../../wasm/diagnostic_log.hpp"
 
@@ -291,51 +292,29 @@ static void TestTheKindOfALineIsItsTextWithoutItsNumbers() {
   }
 }
 
-static void TestTheTwoPartsOfAStageLineStayTogether() {
+static void TestALineWithoutALineBreakIsLimitedLikeAnyOther() {
   DiagnosticLogRing ring;
   uint64_t now = 9000000;
-  // The start and the stop of a stream as Connection.c logs them: "<stage>..." and, once it is done, "done". Twenty
-  // "done" in two seconds are no flood.
-  const char* stages[] = { "Initializing platform...", "Resolving host name...", "Initializing audio stream...",
-                           "Starting RTSP handshake...", "Initializing control stream...", "Initializing video stream...",
-                           "Initializing input stream...", "Starting control stream...", "Starting video stream...",
-                           "Starting audio stream...", "Starting input stream...", "Stopping input stream...",
-                           "Stopping audio stream...", "Stopping video stream...", "Stopping control stream...",
-                           "Cleaning up input stream...", "Cleaning up video stream...", "Cleaning up control stream...",
-                           "Cleaning up audio stream...", "Cleaning up platform..." };
-  for (const char* stage : stages) {
-    ring.TryAppendLimited(now, stage);
-    now += 50;
-    ring.TryAppendLimited(now, "done\n");
-    now += 50;
+  // VideoDepacketizer.c logs a corrupt frame without a line break at the end of its text, once per frame of a stream
+  // that arrives damaged, and then waits for a keyframe: 58 seconds of a 60 FPS stream
+  for (int frame = 0; frame < 3480; frame++) {
+    ring.TryAppendLimited(now, ("Depacketizer detected corrupt frame: " + std::to_string(100 + frame)).c_str());
+    ring.TryAppendLimited(now, "Waiting for IDR frame\n");
+    now += 1000 / 60;
   }
-  std::vector<std::string> texts = Texts(ring.Take(now));
-  CHECK_EQ(texts.size(), 40u);
-  CHECK_EQ(CountWith(texts, "done"), 20);
-  if (texts.size() == 40) {
-    CHECK_EQ(texts[16], std::string("Starting video stream..."));
-    CHECK_EQ(texts[17], std::string("done"));
-  }
-  // A stage that fails ends with its error, which isn't limited either
-  ring.TryAppendLimited(now, "Starting RTSP handshake...");
-  ring.TryAppendLimited(now + 10, "failed: -300\n");
-  texts = Texts(ring.Take(now + 10));
-  CHECK_EQ(texts.size(), 2u);
-  // A first part that its kind leaves out leaves its second part to the kind of that part: twenty starts of one stage
-  // in a row keep ten first parts with their "done" and ten more "done"
-  now += 1000;
-  for (int i = 0; i < 2 * kBurst; i++) {
-    ring.TryAppendLimited(now, "Starting input stream...");
-    ring.TryAppendLimited(now + 1, "done\n");
-    now += 1100;
-  }
-  texts = Texts(ring.Take(now));
-  // One start of this stage was logged above, so nine more first parts are kept
-  CHECK_EQ(CountWith(texts, "Starting input stream..."), kBurst - 1);
-  CHECK_EQ(CountWith(texts, "done"), kBurst - 1 + kBurst);
+  const std::vector<std::string> texts = Texts(ring.Take(now));
+  CHECK_EQ(CountWith(texts, "Depacketizer detected corrupt frame"), kBurst);
+  CHECK_EQ(CountWith(texts, "Waiting for IDR frame"), kBurst);
+  CHECK_EQ(texts.size(), static_cast<size_t>(2 * kBurst));
 }
 
-static void TestMoreKindsThanEntriesLoseNoCount() {
+// A line of one of many kinds: the kinds differ by their letters, the lines of a kind by their number
+static std::string LineOfKind(int kind, int number) {
+  return std::string("Line of kind ") + static_cast<char>('A' + kind / 26) + static_cast<char>('A' + kind % 26) +
+         " with the number " + std::to_string(number) + "\n";
+}
+
+static void TestAKindThatIsLeftOutKeepsItsEntryAndItsCount() {
   DiagnosticLogRing ring;
   uint64_t now = 20000000;
   // One kind floods and goes quiet
@@ -343,19 +322,84 @@ static void TestMoreKindsThanEntriesLoseNoCount() {
     ring.TryAppendLimited(now, ("Failed to decrypt control packet of size " + std::to_string(40 + i) + "\n").c_str());
   }
   now += 1000;
-  // Then more kinds than the ring tells apart, one line each: the oldest kind gives its entry to a new one, and the
-  // lines that it left out are reported first
+  // Then more kinds than the ring tells apart, one line each. All of them are kept: a new kind takes over the entry of
+  // the kind that was quiet longest among those that may keep a line. The kind that flooded may keep none, so it keeps
+  // its entry and with it the count of its lines.
   const int kinds = static_cast<int>(DiagnosticLogRing::kKinds) + 4;
   for (int k = 0; k < kinds; k++) {
-    ring.TryAppendLimited(now, (std::string("Line of kind ") + static_cast<char>('A' + k) + " with the number " +
-                                std::to_string(k) + "\n").c_str());
+    ring.TryAppendLimited(now, LineOfKind(k, k).c_str());
     now += 10;
   }
-  const std::vector<std::string> texts = Texts(ring.Take(now));
+  std::vector<std::string> texts = Texts(ring.Take(now));
   CHECK_EQ(CountWith(texts, "Line of kind"), kinds);
-  CHECK_EQ(CountWith(texts, "Failed to decrypt control packet"), kBurst + 1);
-  CHECK_EQ(CountWith(texts, "Failed to decrypt control packet of size 64 (the last of 15 similar lines that were left out, 1 s ago)"), 1);
-  CHECK_EQ(texts.size(), static_cast<size_t>(kinds + kBurst + 1));
+  CHECK_EQ(CountWith(texts, "Failed to decrypt control packet"), kBurst);
+  CHECK_EQ(texts.size(), static_cast<size_t>(kinds + kBurst));
+  // A minute later its entry may keep a line again and is the oldest: a new kind takes it over, after the last of the
+  // lines that were left out with their count
+  now += kMinute;
+  ring.TryAppendLimited(now, "A line of another kind\n");
+  texts = Texts(ring.Take(now));
+  CHECK_EQ(texts.size(), 2u);
+  if (texts.size() == 2) {
+    CHECK_EQ(texts[0], std::string("Failed to decrypt control packet of size 64 (the last of 15 similar lines that were left out, 61 s ago)"));
+    CHECK_EQ(texts[1], std::string("A line of another kind"));
+  }
+}
+
+static void TestKindsThatTakeTurnsStayLimitedAndLoseNoCount() {
+  DiagnosticLogRing ring;
+  uint64_t now = 40000000;
+  int logged = 0;
+  int kept = 0;
+  int leftOut = 0;
+  int unexpected = 0;
+  // Take the lines and count the kept ones and those that the notes report as left out
+  const auto take = [&](uint64_t time) {
+    for (const std::string& text : Texts(ring.Take(time))) {
+      const size_t last = text.find(" (the last of ");
+      const size_t before = text.find(" similar lines before it were left out)");
+      if (text.find("Line of kind ") == 0 && last != std::string::npos) {
+        leftOut += std::stoi(text.substr(last + 14));
+      } else if (text.find("Line of kind ") == 0) {
+        kept++;
+        if (before != std::string::npos) {
+          leftOut += std::stoi(text.substr(text.rfind('(', before) + 1));
+        }
+      } else if (text.find(" more lines of moonlight-common-c were left out (too many kinds at a time)") != std::string::npos) {
+        leftOut += std::stoi(text);
+      } else {
+        unexpected++;
+      }
+    }
+  };
+  // A network that breaks down, seen by more kinds of lines than the ring tells apart, each of them once per frame for
+  // 20 seconds of a 60 FPS stream. If a kind that comes back got the lines of a new kind each time, every line would be
+  // kept; the entries only ever hand on what they may still keep.
+  const int kinds = static_cast<int>(DiagnosticLogRing::kKinds) + 16;
+  for (int frame = 0; frame < 1200; frame++) {
+    for (int k = 0; k < kinds; k++) {
+      CHECK(ring.TryAppendLimited(now, LineOfKind(k, frame).c_str()));
+      logged++;
+    }
+    now += 1000 / 60;
+    take(now);
+  }
+  // Ten lines for each entry, of 96000
+  CHECK_EQ(kept, static_cast<int>(DiagnosticLogRing::kKinds) * kBurst);
+  CHECK_EQ(logged, kinds * 1200);
+  // A minute later every line that was left out is reported, by the last line of its kind or, for a kind that found no
+  // entry, by a note of its own
+  now += kMinute;
+  take(now);
+  CHECK_EQ(kept + leftOut, logged);
+  CHECK_EQ(unexpected, 0);
+  // And each entry may keep one more line, whichever kinds come
+  kept = 0;
+  for (int k = 0; k < kinds; k++) {
+    ring.TryAppendLimited(now, LineOfKind(k, 5000).c_str());
+  }
+  take(now);
+  CHECK_EQ(kept, static_cast<int>(DiagnosticLogRing::kKinds));
 }
 
 static void TestALimitedLineNeverWaitsAndKeepsItsNote() {
@@ -444,8 +488,12 @@ int main() {
                         TestALineOfTheLibraryPerFrameIsLimitedByItsKind);
   test_support::RunTest("the kind of a line of the library is its text without its numbers, and each kind has its own count",
                         TestTheKindOfALineIsItsTextWithoutItsNumbers);
-  test_support::RunTest("the two parts of a stage line of the library stay together", TestTheTwoPartsOfAStageLineStayTogether);
-  test_support::RunTest("more kinds than the ring tells apart lose no count", TestMoreKindsThanEntriesLoseNoCount);
+  test_support::RunTest("a line of the library without a line break at its end is limited like any other",
+                        TestALineWithoutALineBreakIsLimitedLikeAnyOther);
+  test_support::RunTest("a kind that is left out keeps its entry and its count while other kinds come and go",
+                        TestAKindThatIsLeftOutKeepsItsEntryAndItsCount);
+  test_support::RunTest("more kinds than the ring tells apart, taking turns, stay limited and lose no count",
+                        TestKindsThatTakeTurnsStayLimitedAndLoseNoCount);
   test_support::RunTest("a limited line never waits for the lock, counts as a repeat first and is cut for its note",
                         TestALimitedLineNeverWaitsAndKeepsItsNote);
   test_support::RunTest("lines from several threads while another one takes them", TestManyThreads);

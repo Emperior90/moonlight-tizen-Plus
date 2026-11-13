@@ -114,14 +114,14 @@ class DiagnosticLogRing {
         KeepLeftOut(&kind, nowMs);
       }
     }
+    FlushNotes(m_LastTimeMs);
     if (m_OtherLeftOut > 0) {
       char note[96];
       std::snprintf(note, sizeof(note), "%u more lines of moonlight-common-c were left out (too many kinds at a time)",
                     m_OtherLeftOut);
+      Push(nowMs, note);
       m_OtherLeftOut = 0;
-      Keep(nowMs, note);
     }
-    FlushNotes(m_LastTimeMs);
     std::string result;
     if (m_Overwritten > 0) {
       char note[96];
