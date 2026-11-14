@@ -3,7 +3,8 @@
 // built with g++ for the native tests. The EM_ASM macros keep the shape of Emscripten 1.39 (the code block is one
 // macro argument), so a code block with a comma outside parentheses fails here just like in the real build. A test
 // can answer the main-thread EM_ASM calls through em_asm_sync_hook() and the gamepad calls through em_gamepad_hook(),
-// and read how many lines went to the console of the calling thread with em_log_calls().
+// read how many lines went to the console of the calling thread with em_log_calls(), and make the thread that calls
+// em_main_browser_thread() = true play the main thread of the page for emscripten_is_main_browser_thread().
 #include <atomic>
 #include <cstdint>
 #include <cstdarg>
@@ -32,6 +33,8 @@ inline void emscripten_asm_const_async_on_main_thread(const char*, ...) {}
 inline std::atomic<int>& em_log_calls() { static std::atomic<int> calls{0}; return calls; }
 inline void emscripten_log(int, const char*, ...) { em_log_calls()++; }
 inline int emscripten_sync_run_in_main_runtime_thread(int, ...) { return 0; }
+inline bool& em_main_browser_thread() { static thread_local bool isMain = false; return isMain; }
+inline int emscripten_is_main_browser_thread() { return em_main_browser_thread() ? 1 : 0; }
 struct EmscriptenMouseEvent { long screenX, screenY, clientX, clientY, movementX, movementY; unsigned short button, buttons; int ctrlKey, shiftKey, altKey, metaKey; };
 struct EmscriptenWheelEvent { EmscriptenMouseEvent mouse; double deltaX, deltaY, deltaZ; unsigned long deltaMode; };
 struct EmscriptenKeyboardEvent { char key[32]; char code[32]; unsigned long location; int ctrlKey, shiftKey, altKey, metaKey, repeat; unsigned long charCode, keyCode, which; };

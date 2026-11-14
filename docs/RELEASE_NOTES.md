@@ -1,9 +1,10 @@
 **New since 2.3.0:**
-- One warning on Tizen 9 or 10 if *Ultra low latency mode* is on from before a TV update or from 2.3.0 or older
-- Tizen 10 (2026 models) in the guide: set up like Tizen 9, not yet tested on such a TV
-- Pairing is ready for PCs whose host reports version 10 or later
-- The diagnostic log names a stream setup step that the TV refused
-- The app starts its Smart Hub service only on Tizen 5.5 and 6.0, with Preview tiles
+- A double press of OK or A no longer changes a setting; a controller press counts once
+- *Surround audio quality* is *Efficient* unless you chose one; Web Audio streams stereo
+- 7.1 at *Efficient* plays every channel from its own speaker
+- Lighter statistics, a fuller diagnostic log, a warning when the sound overloads the TV
+- One warning on Tizen 9 or 10 if *Ultra low latency mode* is on from before a TV update
+- Safer against devices on the home network that pose as your PC
 
 **Which file?** Tizen 9 and newer (also 10): `Moonlight-ForceGM.wgt` (keep *Ultra low latency mode* off). Tizen 5.5 to 8: `Moonlight.wgt`.
 

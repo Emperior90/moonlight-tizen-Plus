@@ -76,7 +76,7 @@ var repeatTimeout = null; // Flag indicating whether the repeat timeout is set, 
 var repeatFrame = null; // Animation frame request of the running repeat action, initial value is null
 var gamepadAxisDirections = {}; // Direction (-1, 0 or 1) of each gamepad stick axis of the menus past the action threshold, keyed like repeatSource, initial value is empty
 var gamepadAxisReleases = {}; // The direction that each gamepad stick axis of the menus left last and when (performance.now()), as { direction, at }, keyed like repeatSource, initial value is empty
-var gamepadReverseSteps = {}; // Timer of the step of each gamepad stick axis into the direction opposite to the one it just left, which only counts while the stick stays there, keyed like repeatSource, initial value is empty
+var gamepadReverseSteps = {}; // The step of each gamepad stick axis into the direction opposite to the one it just left, which waits to see whether the stick only snapped back ({ timer, since, operation }), keyed like repeatSource, initial value is empty
 var gamepadButtonTimes = {}; // When each gamepad button of the menus was pressed (a D-pad button also released) last (performance.now()), as { pressedAt, releasedAt }, keyed like repeatSource, initial value is empty
 var nonStandardGamepadNotices = new Set(); // Ids of the gamepads with a non-standard layout that the notice has shown for since the app started, initial value is empty
 var navigationTimeout = null; // Flag indicating whether the navigation timeout is set, initial value is null
@@ -101,7 +101,8 @@ const REPEAT_DELAY = 350; // Repeat delay set to 350ms (milliseconds)
 const REPEAT_INTERVAL = 100; // Repeat interval set to 100ms (milliseconds)
 const ACTION_THRESHOLD = 0.5; // Threshold for initial navigation set to 0.5
 const ACTION_RELEASE_THRESHOLD = 0.3; // A stick past the action threshold keeps its direction until it is back below this, so that it doesn't step again and again while it wobbles around the action threshold (gamepad.js reports the crossing, AXIS_RELEASE_THRESHOLD)
-const STICK_REVERSE_GUARD = 200; // Time in ms after a stick left a direction in which the opposite direction only counts if the stick stays there: a stick that is let go snaps back past its centre for a moment
+const STICK_REVERSE_GUARD = 200; // Time in ms after a stick left a direction in which the opposite direction only counts if the stick stays there for STICK_SNAP_BACK: a stick that is let go snaps back past its centre for a moment
+const STICK_SNAP_BACK = 60; // Longest time in ms that a stick which is let go stays past its centre on the other side (30 to 40 ms measured); a quick correction into the opposite direction stays there longer
 const NAVIGATION_DELAY = 150; // Delay in ms of a move of the left stick in the menus, so that a diagonal stick movement doesn't make two steps
 const BUTTON_NAVIGATION_DELAY = 50; // Delay in ms of A, B, Select and Start of a gamepad in the menus, close to the keys of the remote, which act at once
 const BUTTON_REPEAT_GUARD = 150; // Time in ms after a press of A, B, Select or Start of a gamepad in which another press of the same button doesn't count: one press that the controller or the TV reports twice
@@ -359,9 +360,10 @@ function keepDropdownOnScreen(rowId) {
 //   released for longer and both step, also when the page was busy while the button was released: gamepad.js tells by
 //   how much a read of the gamepads came late (lateBy), and the release counts from when that read was due.
 // - A stick direction holds until the stick is back below ACTION_RELEASE_THRESHOLD, and within STICK_REVERSE_GUARD of
-//   leaving a direction the opposite one only steps if the stick is still there when its delay is over
+//   leaving a direction the opposite one only steps if the stick stays there for more than STICK_SNAP_BACK
 //   (stepStickBack()): a stick that is let go snaps back past its centre and used to step back, e.g. from the surround
-//   quality or the bitrate that was just chosen in the Stream Menu.
+//   quality or the bitrate that was just chosen in the Stream Menu. A quick correction to the other side lasts longer
+//   and steps when the stick leaves it, or after the delay of the stick if it stays.
 function handleGamepadMenuInput(e) {
   const gamepadIndex = e.detail.gamepad;
   const now = performance.now();
@@ -435,11 +437,18 @@ function handleGamepadMenuInput(e) {
       }
       gamepadAxisDirections[source] = direction;
       if (previous !== 0) {
-        if (gamepadReverseSteps[source] !== undefined) {
-          // The stick only snapped back past its centre: the step back that waited for it to stay is dropped, and the
-          // direction that it left before stays the one it left last
-          clearTimeout(gamepadReverseSteps[source]);
+        const reverseStep = gamepadReverseSteps[source];
+        if (reverseStep !== undefined) {
+          clearTimeout(reverseStep.timer);
           delete gamepadReverseSteps[source];
+          // A read that came late (the page was busy) saw the stick leave late: it counts from when that read was due
+          if (now - (e.detail.lateBy || 0) - reverseStep.since > STICK_SNAP_BACK) {
+            // A quick correction into the opposite direction: its step comes now
+            reverseStep.operation();
+            gamepadAxisReleases[source] = { direction: previous, at: now };
+          }
+          // Otherwise the stick only snapped back past its centre: its step is dropped, and the direction that it left
+          // before stays the one it left last
         } else {
           gamepadAxisReleases[source] = { direction: previous, at: now };
         }
@@ -452,7 +461,7 @@ function handleGamepadMenuInput(e) {
         const operation = axisMapping[index][direction < 0 ? 0 : 1];
         const released = gamepadAxisReleases[source];
         if (released && released.direction === -direction && now - released.at < STICK_REVERSE_GUARD) {
-          stepStickBack(operation, source, Math.max(NAVIGATION_DELAY, released.at + STICK_REVERSE_GUARD - now));
+          stepStickBack(operation, source, now);
           return;
         }
         delayedNavigation(operation, NAVIGATION_DELAY);
@@ -463,17 +472,21 @@ function handleGamepadMenuInput(e) {
   });
 }
 
-// Step into the direction opposite to the one that a stick just left, after the given delay in ms and only if the stick
-// is still there then (the release of the direction clears the timer, see handleGamepadMenuInput()). The step has a
-// timer of its own, so that it doesn't replace the step of the direction before it that is still on its way, which a
-// short flick of the stick leaves behind. Its repeat starts as long after the step as that of any other stick move.
-function stepStickBack(operation, source, delay) {
-  clearTimeout(gamepadReverseSteps[source]);
-  gamepadReverseSteps[source] = setTimeout(() => {
+// Step into the direction opposite to the one that a stick just left (at `since`, from performance.now()) after the delay
+// of the stick if it stays there, or when it leaves it after more than STICK_SNAP_BACK (handleGamepadMenuInput(), which
+// drops the step of a shorter stay). The step has a timer of its own, so that it doesn't replace the step of the
+// direction before it that is still on its way, which a short flick of the stick leaves behind. Its repeat starts as
+// long after the step as that of any other stick move.
+function stepStickBack(operation, source, since) {
+  if (gamepadReverseSteps[source] !== undefined) {
+    clearTimeout(gamepadReverseSteps[source].timer);
+  }
+  const timer = setTimeout(() => {
     delete gamepadReverseSteps[source];
     operation();
     startRepeatAction(operation, source, REPEAT_DELAY - NAVIGATION_DELAY);
-  }, delay);
+  }, NAVIGATION_DELAY);
+  gamepadReverseSteps[source] = { timer, since, operation };
 }
 
 // Start repeating a navigation operation of a held gamepad input after the repeat delay, or after the given delay in ms,
@@ -498,7 +511,7 @@ function cancelGamepadNavigation() {
 
 // Drop the steps of the sticks that wait for the stick to stay in the direction opposite to the one it left (stepStickBack())
 function cancelStickStepsBack() {
-  Object.keys(gamepadReverseSteps).forEach((source) => clearTimeout(gamepadReverseSteps[source]));
+  Object.keys(gamepadReverseSteps).forEach((source) => clearTimeout(gamepadReverseSteps[source].timer));
   gamepadReverseSteps = {};
 }
 
@@ -1632,6 +1645,9 @@ function autoWolDialog(host, onSuccess, onCancel) {
   autoWolOverlay.style.display = 'flex';
   autoWolDialog.showModal();
   isDialogOpen = true;
+  // It ignores an OK right after it opened (navigation.js): the second press of a double OK on the PC or on Wake PC
+  // landed on Cancel and closed it at once, and nothing waited for the PC any more
+  Navigation.guardAccept(Views.AutoWolDialog);
   Navigation.push(Views.AutoWolDialog);
   focusElement('cancelAutoWol');
 
@@ -2261,6 +2277,8 @@ function hostDetailsDialog(host) {
   $(hostDetailsDialogOverlay).css('display', 'flex');
   hostDetailsDialog[0].showModal();
   isDialogOpen = true;
+  // The second press of a double OK on View Details doesn't close the details at once (navigation.js)
+  Navigation.guardAccept(Views.HostDetailsDialog);
   Navigation.push(Views.HostDetailsDialog);
   setTimeout(() => Navigation.switch(), 5);
 }
@@ -5710,7 +5728,7 @@ function showSurroundQualityNotice() {
   }
   console.log('%c[index.js, showSurroundQualityNotice]', 'color: green;', 'Showing the notice about the default of the surround audio quality.');
   warningDialog(t('Surround audio quality'),
-    t('Surround sound now streams in the quality <b>Efficient</b> unless you choose otherwise: 256 instead of 1536 kbps for 5.1 (450 instead of 2048 kbps for 7.1), which lowers the load on the TV. For music, High or Stereo (512 kbps) can sound better.') + '<br><br>' +
+    t('Surround sound now streams in the quality <b>Efficient</b> unless you choose otherwise: 256 instead of 1536 kbps for 5.1 (450 instead of 2048 kbps for 7.1), which lowers the load on the TV. For 5.1, High takes about twice the decoding time (measured on a PC). For music, High or Stereo (512 kbps) can sound better.') + '<br><br>' +
     t('To get the earlier quality back, set <b>Surround audio quality</b> to <b>High</b> in the Audio Settings, or <b>Surround quality</b> in the Stream Menu during a stream.')
   );
 }
@@ -6060,7 +6078,7 @@ function optimalSettingsDialog() {
     // 0.6 to 0.8 ms per 10 Mbps in the one measurement there is, a 4K stream at 60 FPS over 5 GHz Wi-Fi)
     const raiseLimit = bitrateRaiseLimit(optimalSettings.resolution, optimalSettings.frameRate, tvCapabilities);
     if (raiseLimit > optimalSettings.bitrate) {
-      message += t('Raise the bitrate only if fast scenes look blocky, up to %1$s Mbps: every 10 Mbps more add about 0.6 to 0.8 ms of latency, measured on one fast Wi-Fi connection.', raiseLimit);
+      message += t('Raise the bitrate only if fast scenes look blocky, up to %1$s Mbps: each additional 10 Mbps adds about 0.6 to 0.8 ms of latency, measured on one fast Wi-Fi connection.', raiseLimit);
     } else {
       message += t('This is the highest bitrate recommended for the video decoder of this TV. More would also add latency: about 0.6 to 0.8 ms per 10 Mbps, measured on one fast Wi-Fi connection.');
     }

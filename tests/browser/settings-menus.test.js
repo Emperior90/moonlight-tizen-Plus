@@ -7,7 +7,7 @@
 // - a drop-down opens with the highlight on the value that is set, instead of on its first option (480p, 30 FPS, H.264)
 //   or on the option that was highlighted the last time
 // - the second press of a double OK, or of a double A of a gamepad, changes nothing: the drop-down stays open on the value
-//   that is set, and a later OK chooses
+//   that is set, and a later OK chooses, or one right after UP or DOWN
 // - once something else closed a drop-down (a click beside it, a dialog that opened over it), the keys act on the row
 //   again, instead of on the options that no longer show
 // - the last drop-down of the Input Settings and of the Advanced Settings shows completely, on the S90C and on a Full HD
@@ -22,6 +22,7 @@ const assert = require('node:assert/strict');
 const { DROPDOWN_OK_WAIT_MS, startHarness, waitForStorage } = require('./harness');
 const {
   PAD, doubleKey, doublePadButton, dropdownOptions, key, menuState, openMenus, openSettingsSection, padButton, rowValue, selectItem, takeSnackbars,
+  timed,
 } = require('./menu-driver');
 
 let harness;
@@ -105,6 +106,34 @@ test('the second press of a double OK or a double A leaves the drop-down open an
     assert.equal((await menuState(page)).view, 'BasicSettings');
     const stored = await waitForStorage(page, (values) => String(values.frameRate) === '30');
     assert.equal(stored.resolution, '3840:2160');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('OK right after UP or DOWN in a drop-down that just opened chooses the highlighted option', async () => {
+  const app = await openMenus(harness, { stored: STORED_4K, pad: true });
+  const { page } = app;
+  try {
+    await openSettingsSection(page, 'basicSettings');
+    // Remote: OK opens the resolutions on 4K, UP 120 ms later highlights 1800p, OK 250 ms after the first chooses it (the
+    // drop-down stayed open and needed a third OK before)
+    await selectItem(page, 'BasicSettings', 'selectResolution', 'up', 'down');
+    await timed(page, [{ at: 0, key: 'ok' }, { at: 120, key: 'up' }, { at: 250, key: 'ok' }], 500);
+    let state = await menuState(page);
+    assert.deepEqual([state.view, state.dropdowns], ['BasicSettings', []]);
+    assert.equal(await rowValue(page, 'selectResolution'), '3200:1800');
+
+    // Gamepad: A opens the frame rates on 60 FPS, the D-pad UP highlights 30 FPS, A 250 ms after the first chooses it
+    await selectItem(page, 'BasicSettings', 'selectFramerate', 'up', 'down');
+    await timed(page, [{ at: 0, button: PAD.A, pressed: true }, { at: 50, button: PAD.A, pressed: false },
+      { at: 120, button: PAD.UP, pressed: true }, { at: 170, button: PAD.UP, pressed: false },
+      { at: 250, button: PAD.A, pressed: true }, { at: 300, button: PAD.A, pressed: false }], 500);
+    state = await menuState(page);
+    assert.deepEqual([state.view, state.dropdowns], ['BasicSettings', []]);
+    assert.equal(await rowValue(page, 'selectFramerate'), '30');
+    await waitForStorage(page, (values) => String(values.frameRate) === '30' && values.resolution === '3200:1800');
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

@@ -5,7 +5,6 @@
 #include <cstdarg>
 #include <cstring>
 #include <string>
-#include <thread>
 
 #include <emscripten.h>
 #include <emscripten/threading.h>
@@ -143,9 +142,6 @@ static bool IsLibraryStageMessage(const char* message) {
   return std::strcmp(message, "done\n") == 0 || (length >= 3 && std::strcmp(message + length - 3, "...") == 0);
 }
 
-// The thread that loaded the module, which is the main thread of the page
-static const std::thread::id s_MainThreadId = std::this_thread::get_id();
-
 // The log lines of moonlight-common-c (Limelog() of its Platform.h, which the build sends here with LC_LOG, see
 // CMakeLists.txt): the loss of packets and frames, the recovery from it, the RTSP handshake, the sockets. They come from
 // the receive, decoder and control threads of the library, so this never waits, neither for the main thread nor for a
@@ -155,10 +151,11 @@ static const std::thread::id s_MainThreadId = std::this_thread::get_id();
 // The two messages of a stage are kept like the lines of the app instead: a start and a stop log twenty "done", more
 // than a kind may keep, and never more than the stages that were run, so they can't flood the log, and a stage whose
 // "done" was left out would look as if it never ended.
-// A line that the library logs on the main thread (in the input calls of the front end, e.g. "Input queue reached
-// maximum size limit" for each event while the control stream is stuck) goes to the ring only: the front end keeps what
-// the console of the page gets (captureConsole() in wasm/platform/diagnostics.js), so the line would be in the log a
-// second time, as a line of the app and without the limit by kind.
+// A line that the library logs on the main thread of the page (in the input calls of the front end, e.g. "Input queue
+// reached maximum size limit" for each event while the control stream is stuck) goes to the ring only: the front end
+// keeps what the console of the page gets (captureConsole() in wasm/platform/diagnostics.js), so the line would be in the
+// log a second time, as a line of the app and without the limit by kind. The runtime tells that thread apart itself, so
+// this doesn't depend on a thread id taken while the global constructors run.
 void MoonlightInstance::ClLibraryLogMessage(const char* format, ...) {
   va_list va;
   char message[1024];
@@ -172,7 +169,7 @@ void MoonlightInstance::ClLibraryLogMessage(const char* format, ...) {
   } else {
     GetDiagnosticLog().TryAppendLimited(DiagnosticLogNowMs(), message);
   }
-  if (std::this_thread::get_id() != s_MainThreadId) {
+  if (!emscripten_is_main_browser_thread()) {
     emscripten_log(EM_LOG_CONSOLE, "%s", message);
   }
 }

@@ -125,3 +125,14 @@ test('Limelog() hands the listener the line as the argument of "%s", and the app
   assert.match(listener, /\.logMessage = MoonlightInstance::ClLibraryLogMessage,/);
   assert.match(read('wasm/moonlight_wasm.hpp'), /static void ClLibraryLogMessage\(const char\* format, \.\.\.\);/);
 });
+
+test('a line of the library on the main thread of the page skips the console, and the runtime tells that thread apart', () => {
+  // The native test (connection_interrupt_test.cpp) runs the two paths, but on a PC a thread id taken while the global
+  // constructors run is always valid; whether the Emscripten 1.39 runtime has set up the main thread by then can't be run
+  // there. emscripten_is_main_browser_thread() needs no such id.
+  const listener = read('wasm/connectionlistener.cpp');
+  const body = /void MoonlightInstance::ClLibraryLogMessage\(const char\* format, \.\.\.\) \{([\s\S]*?)\n\}/.exec(listener);
+  assert.ok(body, 'ClLibraryLogMessage()');
+  assert.match(body[1], /if \(!emscripten_is_main_browser_thread\(\)\) \{\s+emscripten_log\(EM_LOG_CONSOLE, "%s", message\);\s+\}/);
+  assert.doesNotMatch(listener, /std::this_thread::get_id\(\)|static const std::thread::id/);
+});

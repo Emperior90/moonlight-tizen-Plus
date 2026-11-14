@@ -106,8 +106,8 @@ test('an install of 2.3.0 that streams 5.1 or 7.1 and never chose a quality gets
       const text = await waitForNotice(page);
       // What changed, with its figures, and where to change it back
       assert.equal(text, 'Surround sound now streams in the quality <b>Efficient</b> unless you choose otherwise: 256 instead of 1536 kbps ' +
-        'for 5.1 (450 instead of 2048 kbps for 7.1), which lowers the load on the TV. For music, High or Stereo (512 kbps) can sound ' +
-        'better.<br><br>To get the earlier quality back, set <b>Surround audio quality</b> to <b>High</b> in the Audio Settings, or ' +
+        'for 5.1 (450 instead of 2048 kbps for 7.1), which lowers the load on the TV. For 5.1, High takes about twice the decoding ' +
+        'time (measured on a PC). For music, High or Stereo (512 kbps) can sound better.<br><br>To get the earlier quality back, set <b>Surround audio quality</b> to <b>High</b> in the Audio Settings, or ' +
         '<b>Surround quality</b> in the Stream Menu during a stream.');
       // It is one warning dialog with a single button, which only informs
       assert.equal(await page.evaluate(() => $('#continueWarning').is(':visible')), false);

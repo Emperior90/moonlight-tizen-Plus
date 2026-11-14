@@ -2396,7 +2396,8 @@ const Views = {
 
 // How long OK is ignored after a view opened that asked for it (guardAccept()): a drop-down of the settings, which the
 // second press of a double OK or A would otherwise answer at once with the option under the selection, and the restart
-// question that follows Restore Defaults. Until then the options of a drop-down may not show yet, either.
+// question that follows Restore Defaults and the Wake PC dialog. Until then the options of a drop-down may not show yet,
+// either. A key that moves the selection ends it early.
 const ACCEPT_GUARD_MS = 300;
 
 const Navigation = (function() {
@@ -2438,9 +2439,14 @@ const Navigation = (function() {
         return;
       }
 
-      // The view only just opened: OK is the second press of the one that opened it, not an answer
-      if (isGuarded && name === 'accept') {
+      // The view only just opened: OK is the second press of the one that opened it, not an answer. A key that moves the
+      // selection in between shows a choice, so OK counts again from then on (a double press has no key in between); the
+      // view still counts as just opened for the check of its options above.
+      if (isGuarded && name === 'accept' && !view.acceptGuardEnded) {
         return;
+      }
+      if (isGuarded && (name === 'up' || name === 'down' || name === 'left' || name === 'right')) {
+        view.acceptGuardEnded = true;
       }
       if (view[name]) {
         view[name]();
@@ -2451,6 +2457,7 @@ const Navigation = (function() {
   // Ignore OK in a view for ACCEPT_GUARD_MS from now on, for a view that is about to open
   function guardAccept(view) {
     view.acceptGuardUntil = performance.now() + ACCEPT_GUARD_MS;
+    view.acceptGuardEnded = false;
   }
 
   const Stack = (function() {

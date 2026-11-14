@@ -9,13 +9,14 @@
 // - a second CH+, or a second Select of a gamepad, opens the menu of a PC once, so that one RETURN closes it; CH+,
 //   Play/Pause and Select open the menu from the menu icon of a PC too, like OK
 // - the PC details name the real state of the PC
+// - the second press of a double OK or A that opens the Wake PC dialog or the PC details doesn't close them at once
 // - UP keeps the highlight on the only button of a dialog (PC details, navigation guide, support, Update, pairing)
 // - after a PC was deleted, from CH+ or from its menu icon, one card is highlighted, the one that is selected
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { startHarness } = require('./harness');
-const { PAD, THREE_HOSTS, doubleKey, doublePadButton, key, menuState, openMenus, padButton, selectItem, takeSnackbars } = require('./menu-driver');
+const { PAD, THREE_HOSTS, doubleKey, doublePadButton, key, menuState, openMenus, padButton, selectItem, takeSnackbars, timed } = require('./menu-driver');
 
 let harness;
 before(async () => {
@@ -161,6 +162,67 @@ test('the PC details name the real state of the PC, like its card', async () => 
       await key(page, 'ok', 400);
       assert.equal((await menuState(page)).view, 'Hosts');
     }
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a double OK or A that opens the Wake PC dialog or the PC details keeps them open', async () => {
+  // OFFICE-PC (HOST2) is offline; with 'Always wake this PC automatically' on, OK on its card opens the Wake PC dialog
+  const hostsWithAutoWake = JSON.parse(JSON.stringify(THREE_HOSTS));
+  hostsWithAutoWake.HOST2.autoWolEnabled = true;
+  const app = await openWithPcs({ pad: true, stored: { hosts: hostsWithAutoWake } });
+  const { page } = app;
+  try {
+    await page.evaluate(() => {
+      window.__wol = 0;
+      hosts.HOST2.sendWOL = () => {
+        window.__wol++;
+        return Promise.resolve('Sent the magic packets');
+      };
+    });
+    const wakeDialog = () => page.evaluate(() => ({ open: document.getElementById('autoWolDialog').open, wol: window.__wol,
+      autoWake: hosts.HOST2.autoWolEnabled === true }));
+    // The dialog opens on Cancel, so the second OK of a double press closed it at once before (nothing waited for the PC
+    // any more); a later OK closes it
+    const closeWakeDialog = async () => {
+      await key(page, 'ok', 400);
+      assert.equal((await wakeDialog()).open, false);
+      assert.equal((await menuState(page)).view, 'Hosts');
+    };
+
+    // OK twice, 120 ms apart, on the offline PC
+    await selectItem(page, 'Hosts', 'host-container-HOST2', 'left', 'right');
+    await doubleKey(page, 'ok', 400);
+    let state = await menuState(page);
+    assert.deepEqual([state.view, state.current, state.openDialogs], ['AutoWolDialog', 'cancelAutoWol', ['autoWolDialog']]);
+    assert.deepEqual(await wakeDialog(), { open: true, wol: 1, autoWake: true });
+    await closeWakeDialog();
+
+    // Wake PC, the first entry of the menu of an offline PC: OK twice 120 ms apart, and A twice 170 ms apart (later
+    // than the 150 ms in which the menus take a second A for the same press)
+    const doubleA = () => timed(page, [{ at: 0, button: PAD.A, pressed: true }, { at: 60, button: PAD.A, pressed: false },
+      { at: 170, button: PAD.A, pressed: true }, { at: 230, button: PAD.A, pressed: false }], 400);
+    for (const press of [() => doubleKey(page, 'ok', 400), doubleA]) {
+      await key(page, 'chup', 600);
+      await selectItem(page, 'HostMenuDialog', 'wakeHost-OFFICE-PC', 'up', 'down');
+      await press();
+      state = await menuState(page);
+      assert.deepEqual([state.view, state.openDialogs], ['AutoWolDialog', ['autoWolDialog']]);
+      assert.equal((await wakeDialog()).open, true);
+      await closeWakeDialog();
+    }
+    assert.equal((await wakeDialog()).autoWake, true, 'the switch of the dialog was never pressed');
+
+    // View Details, OK twice 120 ms apart: the details stay, and a later OK closes them
+    await key(page, 'chup', 600);
+    await selectItem(page, 'HostMenuDialog', 'viewDetails-OFFICE-PC', 'up', 'down');
+    await doubleKey(page, 'ok', 400);
+    state = await menuState(page);
+    assert.deepEqual([state.view, state.openDialogs], ['HostDetailsDialog', ['hostDetailsDialog-HOST2']]);
+    await key(page, 'ok', 400);
+    assert.deepEqual([(await menuState(page)).view, (await menuState(page)).openDialogs], ['Hosts', []]);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

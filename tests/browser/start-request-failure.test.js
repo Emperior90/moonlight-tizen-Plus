@@ -7,6 +7,9 @@
 // handled it: the launch screen stayed on 'Starting ...' for good, since no stream started that could end, and only RED
 // left it. Now the app returns to the app list with a message that points to the diagnostic log, which holds the error,
 // the host is remembered as holding the start that it accepted, and the next start works.
+// The same for the start once more that the app makes on its own: the silent retry after a stream without video
+// (retryStreamStart()) and the reconnect of the Stream Menu after a change of the settings
+// (resumeStreamAfterSettingsChange()), which reach the handler with the launch state set again.
 // It also checks, in the real page, that an uncaught error and an unhandled promise rejection reach the diagnostic log
 // (DiagnosticLog.captureUncaught() of wasm/platform/diagnostics.js; tests/unit/diagnostics.test.js has the details): the
 // browser reports both without a call of console.error, so they left no trace in the log.
@@ -193,6 +196,52 @@ test('a start request that the module rejects ends the launch the same way, for 
     [run.launched.log, run.resumed.log].forEach((log) => {
       assert.equal(log.filter((line) => /^E .*The start request to the WASM module failed.*Returned error was: the module is busy$/.test(line)).length, 1);
     });
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a start request that throws during the silent retry or the reconnect of the Stream Menu ends the start the same way', async () => {
+  const app = await openWithHost();
+  try {
+    const run = await app.page.evaluate(async () => {
+      STREAM_RETRY_DELAY_MS = 100;
+      SETTINGS_RESTART_DELAY_MS = 100;
+      const runs = {};
+      // A stream starts, and no video arrives: the module ends it with -100, which the app retries once, and that start
+      // request throws
+      window.failStart = '';
+      startGame(window.__host, 7);
+      await window.wait(400);
+      handleMessage('ControlStreamConnected');
+      window.failStart = 'throw';
+      handleMessage('streamTerminated: -100');
+      await window.backInAppList();
+      await window.wait(400);
+      runs.retry = { events: window.__events.splice(0), screen: window.screen_() };
+
+      // A stream runs, and the Stream Menu changes the bitrate, which reconnects it with a start request that throws
+      window.failStart = '';
+      startGame(window.__host, 7);
+      await window.wait(700);
+      handleMessage('ControlStreamConnected');
+      handleMessage('Connection Established');
+      window.failStart = 'throw';
+      runs.restarting = restartStreamWithSettings({ bitrateMbps: 50 });
+      handleMessage('streamTerminated: 0');
+      await window.backInAppList();
+      await window.wait(400);
+      runs.reconnect = { events: window.__events.splice(0), screen: window.screen_() };
+      return runs;
+    });
+    assert.deepEqual(run.retry.events, ['launch', 'start request with 33 arguments', 'resume', 'start request with 33 arguments',
+      'message: ' + MESSAGE, 'app list']);
+    assert.deepEqual(run.retry.screen, ENDED);
+    assert.equal(run.restarting, true);
+    assert.deepEqual(run.reconnect.events, ['resume', 'start request with 33 arguments', 'stop', 'resume',
+      'start request with 33 arguments', 'message: ' + MESSAGE, 'app list']);
+    assert.deepEqual(run.reconnect.screen, ENDED);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

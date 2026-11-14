@@ -7,8 +7,8 @@
 // checks the mapping in the real page.
 // Since 2.3.1 one press counts once: A, B, Select and Start ignore the same button within 150 ms of the press that
 // counted, a D-pad button that bounces (released for at most 40 ms) doesn't step again, a stick direction holds until
-// the stick is back below 0.3, and a stick that snaps back past its centre doesn't step back. None of it delays the
-// first press or changes the repeat of a held input.
+// the stick is back below 0.3, and a stick that snaps back past its centre doesn't step back, while a quick correction
+// into the opposite direction does. None of it delays the first press or changes the repeat of a held input.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -370,13 +370,65 @@ test('a stick that snaps back past its centre when it is let go does not step ba
   assert.deepEqual(menus.errors(), []);
 });
 
+test('a quick correction of the stick into the opposite direction steps back, unlike a snap-back', () => {
+  assert.equal(loadMenus().platform.get('STICK_SNAP_BACK'), 60);
+  // One step too far and back: down for 120 ms, centre for 80 ms, up for 120 ms (only 'down' in 2.3.1 before this fix)
+  let menus = loadMenus();
+  menus.send([axis(1, 0.9)]);
+  menus.clock.advance(120);
+  menus.send([axis(1, 0)]);
+  menus.clock.advance(80);
+  menus.send([axis(1, -0.9)]);
+  menus.clock.advance(119);
+  assert.deepEqual(menus.operations, ['down']);
+  // The step back comes when the stick leaves the other side
+  menus.clock.advance(1);
+  menus.send([axis(1, 0)]);
+  assert.deepEqual(menus.operations, ['down', 'up']);
+  menus.clock.advance(1000);
+  assert.deepEqual(menus.operations, ['down', 'up'], 'no repeat after the release');
+
+  // Down for 120 ms and straight up for 150 ms: both steps, the second after the delay of the stick
+  menus = loadMenus();
+  menus.send([axis(1, 0.9)]);
+  menus.clock.advance(120);
+  menus.send([axis(1, -0.9)]);
+  menus.clock.advance(150);
+  menus.send([axis(1, 0)]);
+  menus.clock.advance(1000);
+  assert.deepEqual(menus.operations, ['down', 'up']);
+
+  // Longer than STICK_SNAP_BACK on the other side steps, at most that long doesn't
+  [[61, ['right', 'left']], [60, ['right']], [45, ['right']]].forEach(([stay, expected]) => {
+    menus = loadMenus();
+    menus.send([axis(0, 0.9)]);
+    menus.clock.advance(220);
+    menus.send([axis(0, -0.8)]);
+    menus.clock.advance(stay);
+    menus.send([axis(0, 0)]);
+    menus.clock.advance(1000);
+    assert.deepEqual(menus.operations, expected, 'on the other side for ' + stay + ' ms');
+  });
+
+  // A snap-back of 30 ms that a read 84 ms late sees end only after 100 ms: it counts from when that read was due
+  menus = loadMenus();
+  menus.send([axis(1, 0.9)]);
+  menus.clock.advance(220);
+  menus.send([axis(1, -0.6)]);
+  menus.clock.advance(100);
+  menus.send([axis(1, 0)], 0, 84);
+  menus.clock.advance(1000);
+  assert.deepEqual(menus.operations, ['down']);
+  assert.deepEqual(menus.errors(), []);
+});
+
 test('a stick that is moved to the other side and held there steps and repeats in the new direction', () => {
   const menus = loadMenus();
   menus.send([axis(0, -0.9)]);
   menus.clock.advance(200);
-  // Straight to the other side: the step comes once the stick stayed for the guard time, 200 ms (150 ms before 2.3.1)
+  // Straight to the other side: the step comes after the delay of the stick, 150 ms, as for any move
   menus.send([axis(0, 0.9)]);
-  menus.clock.advance(199);
+  menus.clock.advance(149);
   assert.deepEqual(menus.operations, ['left']);
   menus.clock.advance(1);
   assert.deepEqual(menus.operations, ['left', 'right']);

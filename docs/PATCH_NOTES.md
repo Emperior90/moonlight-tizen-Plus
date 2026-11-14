@@ -2,7 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
-- [2.3.1](#231): pre-release, a one-time warning on Tizen 9 or newer, Tizen 10 in the guide and small fixes
+- [2.3.1](#231): pre-release, lighter sound and statistics, fewer double presses in the menus, and fixes from a review
 - [2.3.0](#230): 2026-11-08, smoother motion, a picture refresh in the Stream Menu and a longer guide
 - [2.2.1](#221): 2026-11-05, no more 144 FPS, and controllers that work on 2020 TVs
 - [2.2.0](#220): 2026-11-03, a tidier app with fixes and a smaller download
@@ -19,27 +19,38 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ## 2.3.1
 
-*Pre-release, in testing.* A one-time warning about *Ultra low latency mode* on Tizen 9 or newer, Tizen 10 in the guide, and fixes for pairing and diagnostics.
+*Pre-release, in testing.* Lighter surround sound and statistics, fewer double presses in the menus, a fuller diagnostic log and fixes from a review of the app.
 
 > **Install:** by hand over 2.3.0 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >
-> **Tested:** with simulated TVs, hosts and controllers only; Tizen 10 and the one-time warning still need a test on a TV.
+> **Tested:** with simulated TVs, hosts and controllers only; Tizen 10, the sound changes and the controller guards still need a test on a TV.
 
 ### New
 
 - One warning on Tizen 9 or newer if *Ultra low latency mode* is on from before a TV update or from 2.3.0 or older
+- A message when the sound of a 5.1 or 7.1 stream keeps the TV too busy, with the setting that helps
+- Statistics: app version and audio setting, how long a frame takes to arrive, the lowest frame rate of the PC
+
+### Sound
+
+- *Surround audio quality* is now *Efficient* unless you chose one; a notice tells you if your stream changes
+- With Web Audio the app always asks for stereo: 7.1 no longer loses its dialogue, and 5.1 no longer distorts
+- 7.1 at *Efficient* plays every channel from its own speaker (checked with test signals, not yet by ear)
 
 ### Changed
 
-- The README and the guide name Tizen 10 (2026 models): set up like Tizen 9, not yet tested on such a TV
-- The guide says to check *Ultra low latency mode* after an update of Tizen
+- The full statistics update every 2 seconds, without text shadow and in a smaller box; the graph shows 2 minutes
+- The bitrate texts name the latency that more bitrate costs instead of saying to raise it until frames drop
+- The guide names Tizen 10 (set up like Tizen 9, untested) and says to check the switch after a TV update
 - The app starts its Smart Hub service only on Tizen 5.5 and 6.0, which have Preview tiles, and waits 5 s for it
-- The README, the guide and these notes no longer link the German documents of the first release
 
 ### Fixed
 
-- A stream setup step that the TV refused now shows in the diagnostic log, not only as error -200 after 5 s
-- Pairing reads the host version up to its first dot, ready for hosts that report version 10 or later
+- A double OK or A no longer changes a setting or closes the Wake PC dialog; a controller press counts once
+- Dialogs no longer open twice, trap the keys or lose their selection; Add PC starts from the network of the TV
+- A failed start or a PC that doesn't answer now gives a message, and failed starts no longer cost memory
+- The diagnostic log shows the streaming engine, script errors and refused setup steps; fewer misleading hints
+- Safer against devices that pose as a PC or send odd details; pairing is ready for hosts with version 10 or later
 
 ## 2.3.0
 

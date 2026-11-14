@@ -699,7 +699,7 @@ function getSessionReportHintText(hint, report, options) {
       return t('The PC took %1$s ms of the %2$s ms between two frames to encode a frame, so it may have skipped frames: use a faster encoder preset on the PC, or a lower resolution or frame rate.',
         formatReportNumber((figures.hostProcessingLatencyX10 || 0) / 10, 1), formatReportNumber(figures.fps > 0 ? 1000 / figures.fps : 0, 1));
     case 'hostFrames':
-      return t('The PC often sent fewer frames than the stream asked for: in %1$s of %2$s half minutes fewer than %3$s per second, %4$s at the lowest. That is normal for a game or video limited to fewer frames. Otherwise the PC could not deliver more: lower the graphics settings of the game.',
+      return t('The PC often sent fewer frames than the stream asked for: in %1$s of %2$s half minutes fewer than %3$s per second, %4$s at the lowest. That is normal for a game or video limited to fewer frames, or for a display of the PC set to fewer Hz than the frame rate of the stream (e.g. 60 Hz at 120 FPS). Otherwise lower the graphics settings of the game or the frame rate of the stream.',
         formatReportNumber(figures.hostLowWindows || 0), formatReportNumber(figures.hostWindows || 0), formatHostLowRate(figures.fps || 0),
         formatReportNumber((figures.hostFrameRateLowX100 || 0) / 100, 1));
     case 'keyframes':

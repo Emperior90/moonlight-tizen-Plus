@@ -41,7 +41,7 @@ function translator(locale) {
 const HELP = '- A higher bitrate improves the picture less and less, but every frame takes longer to arrive: about 0.6 to 0.8 ms more latency ' +
   'per 10 Mbps, measured on one fast Wi-Fi connection. Lower it when frames are lost. It includes error correction and audio, so the ' +
   'statistics show about 9% less as received (with 5% error correction).';
-const RAISE = 'Raise the bitrate only if fast scenes look blocky, up to %1$s Mbps: every 10 Mbps more add about 0.6 to 0.8 ms of latency, ' +
+const RAISE = 'Raise the bitrate only if fast scenes look blocky, up to %1$s Mbps: each additional 10 Mbps adds about 0.6 to 0.8 ms of latency, ' +
   'measured on one fast Wi-Fi connection.';
 const AT_LIMIT = 'This is the highest bitrate recommended for the video decoder of this TV. More would also add latency: about 0.6 to 0.8 ms ' +
   'per 10 Mbps, measured on one fast Wi-Fi connection.';
@@ -91,8 +91,13 @@ test('the help text of the bitrate setting names the latency price and why the s
     assert.match(text, /Audio|audio|áudio/, locale + ': ' + text);
     assert.match(text, /Fehlerkorrektur|corrección de errores|correction d’erreurs|correção de erros/, locale + ': ' + text);
   });
-  // In German 'weniger als empfangen' would read as 'less than received', so the sentence puts 'als empfangen' first
-  assert.match(readLocale('de-DE')[HELP], /als empfangen zeigt die Statistik daher etwa 9 % weniger \(bei 5 % Fehlerkorrektur\)\.$/);
+  // In German 'weniger als empfangen' would read as 'less than received', so the sentence puts 'als empfangen' first, and
+  // the latency is measured on ('bei') a Wi-Fi connection: 'gemessen an' would read as 'compared with'
+  assert.match(readLocale('de-DE')[HELP], /zeigt die Statistik als empfangen etwa 9 % weniger an \(bei 5 % Fehlerkorrektur\)\.$/);
+  [HELP, RAISE, AT_LIMIT].forEach((key) => {
+    assert.match(readLocale('de-DE')[key], /gemessen bei einer schnellen WLAN-Verbindung/);
+    assert.doesNotMatch(readLocale('de-DE')[key], /gemessen an\b/);
+  });
   assert.doesNotMatch(readLocale('de-DE')[HELP], /weniger als/);
 });
 

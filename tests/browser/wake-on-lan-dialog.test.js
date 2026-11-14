@@ -131,8 +131,8 @@ test('after a failed request, OK is selected, so that OK on the remote closes th
     const autoWolBefore = await app.page.evaluate(() => document.querySelector('#autoWolCheckboxSwitch').checked);
     await app.page.evaluate(() => window.openWolDialog());
     await app.page.waitForFunction(() => $('#cancelAutoWol').text().trim() === 'OK', null, { timeout: 3000 });
-    // Past the 100 ms after which enter() of the view focuses its selection again
-    await app.page.waitForTimeout(250);
+    // Past the 300 ms in which the dialog takes OK for the second press of the one that opened it (navigation.js)
+    await app.page.waitForTimeout(350);
     assert.equal(await app.page.evaluate(() => document.activeElement.id), 'cancelAutoWol');
     assert.equal(await app.page.evaluate(() => elementId(Views.AutoWolDialog.view.current())), 'cancelAutoWol');
     await remoteKey(app.page, ...OK);
@@ -292,8 +292,9 @@ test('the dialog opens on Cancel, where OK closes it and leaves the automatic wa
   try {
     await takeFocus(page);
     await page.evaluate(() => window.openWolDialog());
-    // Past the 100 ms after which enter() of the view focuses its selection again
-    await page.waitForTimeout(250);
+    // Past the 100 ms after which enter() of the view focuses its selection again, and the 300 ms in which the dialog
+    // takes OK for the second press of the one that opened it (navigation.js)
+    await page.waitForTimeout(350);
     assert.deepEqual(await wolSelection(page), { current: 'cancelAutoWol', marked: ['cancelAutoWol'], focused: 'cancelAutoWol', ring: 'none' });
     // OK right away closes the dialog, and the automatic wake-up of the PC stays off
     await remoteKey(page, ...OK);

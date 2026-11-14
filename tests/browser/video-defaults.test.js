@@ -105,7 +105,7 @@ const HINT_120HZ = 'If this TV has a 120 Hz panel, you can turn on \'Unlock all 
 // The bitrate advice of the dialog over Wi-Fi: up to a higher bitrate and only against a blocky picture, or that it is
 // already the highest recommended, each with what more bitrate costs. It no longer says to raise the bitrate as long as
 // the statistics show no dropped frames.
-const WIFI_RAISE_ADVICE = 'Raise the bitrate only if fast scenes look blocky, up to %s Mbps: every 10 Mbps more add about 0.6 to 0.8 ms of latency, measured on one fast Wi-Fi connection.';
+const WIFI_RAISE_ADVICE = 'Raise the bitrate only if fast scenes look blocky, up to %s Mbps: each additional 10 Mbps adds about 0.6 to 0.8 ms of latency, measured on one fast Wi-Fi connection.';
 const WIFI_AT_LIMIT_ADVICE = 'This is the highest bitrate recommended for the video decoder of this TV. More would also add latency: about 0.6 to 0.8 ms per 10 Mbps, measured on one fast Wi-Fi connection.';
 
 // Customized settings of an existing install, every one different from what Restore Defaults applies

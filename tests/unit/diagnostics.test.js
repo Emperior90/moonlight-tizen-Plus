@@ -612,12 +612,15 @@ test('the hint about the frames of the PC comes for a host that delivered clearl
   assert.deepEqual(plain(hints(byName('host-frames-120'), {})), ['hostFrames']);
 
   // The text names the figures and stays neutral: a game or video limited to fewer frames reads the same. It doesn't
-  // blame the bitrate, the network or the encoder.
+  // blame the bitrate, the network or the encoder, and it names the display of the PC, the other common cause: a stream
+  // at 120 FPS from a PC whose display runs at 60 Hz gets 60 new frames per second, which lower graphics settings don't
+  // change (the text before told only to lower them).
   const hint = text('hostFrames', session);
   assert.equal(hint, 'The PC often sent fewer frames than the stream asked for: in 12 of 39 half minutes fewer than 57 per second, ' +
-    '50.9 at the lowest. That is normal for a game or video limited to fewer frames. Otherwise the PC could not deliver more: ' +
-    'lower the graphics settings of the game.');
-  assert.doesNotMatch(hint, /bitrate|network|encoder/i);
+    '50.9 at the lowest. That is normal for a game or video limited to fewer frames, or for a display of the PC set to fewer Hz ' +
+    'than the frame rate of the stream (e.g. 60 Hz at 120 FPS). Otherwise lower the graphics settings of the game or the frame ' +
+    'rate of the stream.');
+  assert.doesNotMatch(hint, /bitrate|network|encoder|could not deliver/i);
   // The limit of a low window follows the stream rate: 95 % of it, as the module counts them
   assert.match(text('hostFrames', byName('host-frames-120')), /in 8 of 19 half minutes fewer than 114 per second, 98\.5 at the lowest\./);
   assert.match(text('hostFrames', low(39, 12, { fps: 90 })), /fewer than 85\.5 per second/);
@@ -654,7 +657,8 @@ test('the report shows the frame receive time as a share of the frame time, and 
     'Host frame rate (lowest 30 s): 50.90 FPS, below 57 FPS in 12 of 39 half minutes',
     'WASM heap at the end: 62 of 128 MB (+1 MB in this session)',
     'Hint: The PC often sent fewer frames than the stream asked for: in 12 of 39 half minutes fewer than 57 per second, 50.9 at the lowest. ' +
-      'That is normal for a game or video limited to fewer frames. Otherwise the PC could not deliver more: lower the graphics settings of the game.',
+      'That is normal for a game or video limited to fewer frames, or for a display of the PC set to fewer Hz than the frame rate of the ' +
+      'stream (e.g. 60 Hz at 120 FPS). Otherwise lower the graphics settings of the game or the frame rate of the stream.',
   ]);
   // With too few low windows for the hint, the figures still show
   const few = plain(describe(byName('host-frames-few'), {}));

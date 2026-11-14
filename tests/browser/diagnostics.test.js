@@ -219,13 +219,14 @@ test('a stream starts a session of the log, keeps its report, and its heartbeat 
       'Im Netz verlorene Frames: 4 von 66.400 (0,01 %)',
       'Vom TV verworfene Frames: 0, Video-Neustarts: 0, Keyframes zur Wiederherstellung: 0',
       'FEC-Reparaturen: 25 Blöcke, 0 fehlgeschlagen',
-      'Durchschnittliche Empfangszeit pro Frame: 11,10 ms (67 % der Zeit zwischen zwei Frames), höchste Sekunde: 13,85 ms (83 %)',
+      'Durchschnittliche Empfangszeit pro Frame: 11,10 ms (67 % der Zeit zwischen zwei Frames), höchster Sekundenwert: 13,85 ms (83 %)',
       'Bildrate des PCs (beste 30 s): 59,84 FPS, mittlere Verarbeitungslatenz des PCs: 8,4 ms',
       'Bildrate des PCs (schwächste 30 s): 50,90 FPS, unter 57 FPS in 12 von 39 halben Minuten',
       'WASM-Heap am Ende: 62 von 128 MB (+1 MB in dieser Sitzung)',
       'Tipp: Der PC hat oft weniger Frames gesendet, als der Stream verlangt: in 12 von 39 halben Minuten weniger als 57 pro Sekunde, ' +
-        'in der schwächsten 50,9. Das ist normal bei einem Spiel oder Video, das auf weniger Frames begrenzt ist. ' +
-        'Sonst konnte der PC nicht mehr liefern: Senke die Grafikeinstellungen des Spiels.',
+        'in der schwächsten 50,9. Das ist normal bei einem Spiel oder Video, das auf weniger Frames begrenzt ist, oder wenn der ' +
+        'Bildschirm des PCs auf weniger Hz eingestellt ist als die Bildrate des Streams (z. B. 60 Hz bei 120 FPS). ' +
+        'Sonst senke die Grafikeinstellungen des Spiels oder die Bildrate des Streams.',
     ]);
     assert.ok(app.logs.some((line) => line.indexOf('Hints of the session report: hostFrames') >= 0), 'the hint is logged');
     // A stream that ended normally leaves no notice for the next start

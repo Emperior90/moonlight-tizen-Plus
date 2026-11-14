@@ -287,11 +287,13 @@ static void TestALineOfTheLibraryOnTheMainThreadIsInTheLogOnce() {
   });
   receiver.join();
   CHECK_EQ(em_log_calls() - before, 1);
-  // From the main thread, which loaded the module (here the one that runs the tests): into the ring only. The front end
+  // From the main thread of the page (played here by the thread that runs the tests): into the ring only. The front end
   // keeps what the console of the page gets as lines of the app, where this one would be a second time and unlimited.
+  em_main_browser_thread() = true;
   before = em_log_calls();
   logMessage("%s", "Input queue reached maximum size limit\n");
   CHECK_EQ(em_log_calls() - before, 0);
+  em_main_browser_thread() = false;
   const std::vector<std::string> texts = TakeLogTexts();
   CHECK_EQ(texts.size(), 2u);
   if (texts.size() == 2) {

@@ -33,7 +33,7 @@ const READY_SETTLE_MS = 150;
 
 // How long a test waits before it answers a drop-down of the settings with OK that it opened with a key: the drop-down
 // ignores OK for 300 ms after it opened (ACCEPT_GUARD_MS in wasm/platform/navigation.js, since 2.3.1), which is the
-// second press of a double OK for it
+// second press of a double OK for it, unless a key moved the selection meanwhile
 const DROPDOWN_OK_WAIT_MS = 350;
 
 // The video settings that the optimal settings button and Restore Defaults store. A fresh install stores only the

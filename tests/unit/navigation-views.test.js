@@ -4,8 +4,9 @@
 // that shows, and one press opens one thing:
 // - a list that got shorter selects its last item, and UP and DOWN step over the options of a drop-down that can't be
 //   chosen;
-// - a view that is already on top isn't pushed a second time, a drop-down ignores OK for 300 ms after it opened, the view
-//   of a drop-down that something else closed goes with the next key, and a dialog closes an open drop-down first;
+// - a view that is already on top isn't pushed a second time, a drop-down ignores OK for 300 ms after it opened unless a
+//   key moved the selection meanwhile, the view of a drop-down that something else closed goes with the next key, and a
+//   dialog closes an open drop-down first;
 // - UP and DOWN on the buttons of the Add PC dialog, UP in the dialogs with one button, CH+ on the menu icon of a PC, and
 //   the views whose list can be empty.
 // navigation.js runs here on a small stand-in for the page; tests/browser/ drives the real page.
@@ -234,15 +235,15 @@ test('a view that asked for it ignores OK for 300 ms after it opened, and nothin
   nav.Navigation.accept();
   assert.deepEqual(log, []);
   // The other keys act at once
-  nav.Navigation.down();
   nav.Navigation.back();
-  assert.deepEqual(log, ['Menu.down', 'Menu.back']);
+  nav.Navigation.press();
+  assert.deepEqual(log, ['Menu.back', 'Menu.press']);
   nav.advance(179);
   nav.Navigation.accept();
-  assert.deepEqual(log, ['Menu.down', 'Menu.back']);
+  assert.deepEqual(log, ['Menu.back', 'Menu.press']);
   nav.advance(1);
   nav.Navigation.accept();
-  assert.deepEqual(log, ['Menu.down', 'Menu.back', 'Menu.accept']);
+  assert.deepEqual(log, ['Menu.back', 'Menu.press', 'Menu.accept']);
   // A view that didn't ask takes OK at once, also one that asked the last time it opened
   nav.Navigation.pop();
   log.length = 0;
@@ -251,6 +252,62 @@ test('a view that asked for it ignores OK for 300 ms after it opened, and nothin
   nav.Navigation.push(dropdown);
   nav.Navigation.accept();
   assert.deepEqual(log, ['Settings.accept', 'Settings.leave', 'Menu.enter', 'Menu.accept']);
+});
+
+test('a key that moves the selection ends the guard of OK, so that OK chooses at once after it', () => {
+  const nav = loadNavigation();
+  const log = [];
+  const settings = recordingView(nav, 'Settings', log, []);
+  const dropdown = recordingView(nav, 'Menu', log, [], { isActive: () => true });
+  nav.Navigation.start();
+  nav.Navigation.push(settings);
+  // The first key gives the navigation its focus
+  nav.Navigation.accept();
+  // OK opens the drop-down, DOWN 120 ms later moves to another option, and OK 250 ms after the first chooses it: the
+  // menu stayed open with the option highlighted and needed a third OK before
+  for (const move of ['up', 'down', 'left', 'right']) {
+    nav.Navigation.guardAccept(dropdown);
+    nav.Navigation.push(dropdown);
+    log.length = 0;
+    nav.advance(120);
+    nav.Navigation[move]();
+    nav.advance(130);
+    nav.Navigation.accept();
+    assert.deepEqual(log, ['Menu.' + move, 'Menu.accept'], move);
+    nav.Navigation.pop();
+  }
+  // RETURN and the other keys that don't move the selection leave the guard as it is
+  nav.Navigation.guardAccept(dropdown);
+  nav.Navigation.push(dropdown);
+  log.length = 0;
+  nav.advance(120);
+  nav.Navigation.press();
+  nav.Navigation.switch();
+  nav.Navigation.accept();
+  assert.deepEqual(log, ['Menu.press', 'Menu.switch']);
+  nav.Navigation.pop();
+
+  // The drop-down still counts as just opened for its options, which a busy TV may show late: two moves before they
+  // show stay in it, and the next guard starts without the move of the last one
+  let isMenuShown = false;
+  const slow = recordingView(nav, 'Slow', log, [], { isActive: () => isMenuShown });
+  nav.Navigation.guardAccept(slow);
+  nav.Navigation.push(slow);
+  log.length = 0;
+  nav.advance(120);
+  nav.Navigation.down();
+  nav.advance(100);
+  nav.Navigation.down();
+  assert.deepEqual(log, ['Slow.down', 'Slow.down']);
+  isMenuShown = true;
+  nav.Navigation.pop();
+  nav.Navigation.guardAccept(slow);
+  nav.Navigation.push(slow);
+  log.length = 0;
+  nav.advance(120);
+  nav.Navigation.accept();
+  assert.deepEqual(log, []);
+  assert.deepEqual(nav.errors(), []);
 });
 
 test('the view of a drop-down that something else closed goes with the next key, which acts on the row', () => {
