@@ -8,8 +8,10 @@
 // - the help text explains in one phrase why the statistics show less as received than the bitrate that is set: it
 //   includes error correction and audio (about 9 % less with 5 % error correction);
 // - the two lines of the full statistics that show the price of a bitrate, as FormatVideoStats() of wasm/wasmplayer.cpp
-//   writes them: the bitrate line, whose received figure is the video alone, and the frame receive time with its share
-//   of the time between two frames. replaceKnownStatsLabels() of wasm/platform/messages.js translates both as a whole;
+//   writes them: the bitrate line, whose received figure is the video alone while the configured one also holds the
+//   error correction and the audio (named FEC there, as in the other lines of the statistics, to keep the line short:
+//   the longest line sets the width of the overlay), and the frame receive time with its share of the time between two
+//   frames. replaceKnownStatsLabels() of wasm/platform/messages.js translates both as a whole;
 // - the hints of the Last session report that name the bitrate only ever say to lower it;
 // - the presets, caps and warning thresholds of the bitrate are what they were (tv_profile.js is not part of this).
 // The figures of the lines are pinned by tests/native/stats_overlay_test.cpp, the report by diagnostics.test.js, and the
@@ -89,6 +91,9 @@ test('the help text of the bitrate setting names the latency price and why the s
     assert.match(text, /Audio|audio|áudio/, locale + ': ' + text);
     assert.match(text, /Fehlerkorrektur|corrección de errores|correction d’erreurs|correção de erros/, locale + ': ' + text);
   });
+  // In German 'weniger als empfangen' would read as 'less than received', so the sentence puts 'als empfangen' first
+  assert.match(readLocale('de-DE')[HELP], /als empfangen zeigt die Statistik daher etwa 9 % weniger \(bei 5 % Fehlerkorrektur\)\.$/);
+  assert.doesNotMatch(readLocale('de-DE')[HELP], /weniger als/);
 });
 
 test('the optimal settings dialog names the latency price of a higher bitrate over Wi-Fi', () => {
@@ -128,12 +133,12 @@ test('every text that names the latency per 10 Mbps words it as about and says w
 });
 
 // The two lines as FormatVideoStats() writes them, with the figures of the session that the finding measured
-const BITRATE_LINE = 'Bitrate: 146.27 Mbps video received, 160.0 Mbps configured (with error correction and audio)';
+const BITRATE_LINE = 'Bitrate: 146.27 Mbps video received, 160.0 Mbps configured (with FEC and audio)';
 const RECEIVE_LINE = 'Average frame receive time: 8.65 ms (52% of the frame time)';
 
 test('the sample lines of the bitrate and of the frame receive time are those of the native code', () => {
   const native = read('wasm/wasmplayer.cpp');
-  assert.ok(native.includes('"Bitrate: %.2f Mbps video received, %.1f Mbps configured (with error correction and audio)\\n"'));
+  assert.ok(native.includes('"Bitrate: %.2f Mbps video received, %.1f Mbps configured (with FEC and audio)\\n"'));
   assert.ok(native.includes('"Average frame receive time: %.2f ms (%.0f%% of the frame time)\\n"'));
   // The share is the receive time over the time between two frames of the stream: ms * FPS / 10 in percent
   assert.match(native, /const float receiveTimeMs = \(float\)stats\.totalReassemblyTime \/ stats\.decodedFrames;/);
@@ -142,6 +147,12 @@ test('the sample lines of the bitrate and of the frame receive time are those of
   // The received figure adds up the video frames alone
   assert.match(native, /total_bytes \+= decodeUnit->fullLength;/);
   assert.doesNotMatch(native, /Mbps received, %\.1f Mbps configured\\n/);
+  // The bitrate line stays about as long as the other long lines of the statistics, in every language
+  assert.ok(BITRATE_LINE.length <= 80, String(BITRATE_LINE.length));
+  LOCALES.forEach((locale) => {
+    const line = translator(locale)('Bitrate: %1$s Mbps video received, %2$s Mbps configured (with FEC and audio)', '146.27', '160.0');
+    assert.ok(line.length <= 90, locale + ': ' + line.length);
+  });
 });
 
 test('the full statistics translate the bitrate line and the share of the frame time as a whole', () => {
@@ -151,7 +162,7 @@ test('the full statistics translate the bitrate line and the share of the frame 
   LOCALES.forEach((locale) => {
     const t = translator(locale);
     const lines = translate(locale)(BITRATE_LINE + '\n' + RECEIVE_LINE).split('\n');
-    assert.equal(lines[0], t('Bitrate: %1$s Mbps video received, %2$s Mbps configured (with error correction and audio)', '146.27', '160.0'), locale);
+    assert.equal(lines[0], t('Bitrate: %1$s Mbps video received, %2$s Mbps configured (with FEC and audio)', '146.27', '160.0'), locale);
     assert.equal(lines[1], t('Average frame receive time:') + ' 8.65 ms ' + t('(%1$s% of the frame time)', '52'), locale);
     // Nothing of the two lines stays English, and every number is still there
     assert.doesNotMatch(lines.join('\n'), /received|configured|error correction|with |frame receive|of the frame time/, locale);
@@ -159,7 +170,7 @@ test('the full statistics translate the bitrate line and the share of the frame 
     assert.deepEqual(lines[1].match(/\d+(?:\.\d+)?/g), ['8.65', '52'], locale);
     assert.match(lines[1], /52[  ]?%/, locale);
   });
-  assert.equal(translate('de-DE')(BITRATE_LINE), 'Bitrate: 146.27 Mbps Video empfangen, 160.0 Mbps eingestellt (mit Fehlerkorrektur und Audio)');
+  assert.equal(translate('de-DE')(BITRATE_LINE), 'Bitrate: 146.27 Mbps Video empfangen, 160.0 Mbps eingestellt (mit FEC und Audio)');
   assert.equal(translate('de-DE')(RECEIVE_LINE), 'Durchschnittliche Empfangszeit pro Frame: 8.65 ms (52 % der Zeit zwischen zwei Frames)');
   // A share above 100 % (a frame that takes longer than the time between two frames) is translated as well
   assert.equal(translate('de-DE')('Average frame receive time: 21.00 ms (126% of the frame time)'),

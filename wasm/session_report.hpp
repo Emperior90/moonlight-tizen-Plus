@@ -5,9 +5,10 @@
 //   SessionReportMsg: {"durationMs":754000,"codec":"HEVC Main10","width":3840,"height":2160,"fps":60,...}
 // so the front end never parses the text of the performance statistics, which only exists while they are shown. The
 // figures are those of the session lines of the full statistics, the load of the audio thread (audio_load.hpp), the
-// frame rate of the host in its best and its lowest 30 s window, and the time a frame took to arrive. The idea of a report at the end of a stream comes from
-// the fork of samirmartins (moonlight-tizen, 1d8f2e3 and bcdcda5, diagnostics.js). The header has no other dependencies,
-// so the native tests can check it on its own (tests/native/session_report_test.cpp).
+// frame rate of the host in its best and its lowest 30 s window, and the time a frame took to arrive. The idea of a
+// report at the end of a stream comes from the fork of samirmartins (moonlight-tizen, 1d8f2e3 and bcdcda5,
+// diagnostics.js). The header has no other dependencies, so the native tests can check it on its own
+// (tests/native/session_report_test.cpp).
 
 #include <cstddef>
 #include <cstdint>

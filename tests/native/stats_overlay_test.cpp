@@ -309,7 +309,7 @@ static void FullLevelShowsOneBitrateLineAndNoReceiveBuffer() {
   const size_t bitrate = last.find("\nBitrate: 48.0");
   CHECK(bitrate != std::string::npos);
   // The received figure counts the video alone, and the line says what else the configured bitrate has to hold
-  CHECK(last.find(" Mbps video received, 75.0 Mbps configured (with error correction and audio)\n") == bitrate + 15);
+  CHECK(last.find(" Mbps video received, 75.0 Mbps configured (with FEC and audio)\n") == bitrate + 15);
   CHECK(last.find("Mbps received,") == std::string::npos);
   CHECK(bitrate > last.find("\nRendering frame rate: "));
   CHECK(last.find("Incoming bitrate from network") == std::string::npos);

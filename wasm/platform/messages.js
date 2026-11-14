@@ -142,10 +142,10 @@ function replaceKnownStatsLabels(text) {
     .replace(/Incoming frame rate from network:/g, t('Incoming frame rate from network:'))
     .replace(/Decoding frame rate:/g, t('Decoding frame rate:'))
     .replace(/Rendering frame rate:/g, t('Rendering frame rate:'))
-    // The received figure counts the video alone, while the configured bitrate also has to hold the error correction and
-    // the audio of the host (FormatVideoStats() in wasm/wasmplayer.cpp), so the line says both
-    .replace(/Bitrate: ([\d.]+) Mbps video received, ([\d.]+) Mbps configured \(with error correction and audio\)/g, function(match, received, configured) {
-      return t('Bitrate: %1$s Mbps video received, %2$s Mbps configured (with error correction and audio)', received, configured);
+    // The received figure counts the video alone, while the configured bitrate also has to hold the error correction
+    // (FEC) and the audio of the host (FormatVideoStats() in wasm/wasmplayer.cpp), so the line says both
+    .replace(/Bitrate: ([\d.]+) Mbps video received, ([\d.]+) Mbps configured \(with FEC and audio\)/g, function(match, received, configured) {
+      return t('Bitrate: %1$s Mbps video received, %2$s Mbps configured (with FEC and audio)', received, configured);
     })
     .replace(/Host frame rate \(30 s\):/g, t('Host frame rate (30 s):'))
     .replace(/Host processing latency min\/max\/average:/g, t('Host processing latency min/max/average:'))

@@ -592,7 +592,7 @@
   "Incoming frame rate from network:": "Taxa de quadros recebida da rede:",
   "Decoding frame rate:": "Taxa de quadros de decodificação:",
   "Rendering frame rate:": "Taxa de quadros de renderização:",
-  "Bitrate: %1$s Mbps video received, %2$s Mbps configured (with error correction and audio)": "Taxa de bits: %1$s Mbps de vídeo recebidos, %2$s Mbps configurados (com correção de erros e áudio)",
+  "Bitrate: %1$s Mbps video received, %2$s Mbps configured (with FEC and audio)": "Taxa de bits: %1$s Mbps de vídeo recebidos, %2$s Mbps configurados (com FEC e áudio)",
   "Host frame rate (30 s):": "Taxa de quadros do host (30 s):",
   "Host processing latency min/max/average:": "Latência de processamento do host mínima/máxima/média:",
   "Frames dropped by your network connection:": "Quadros descartados pela sua conexão de rede:",

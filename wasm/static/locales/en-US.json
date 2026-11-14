@@ -592,7 +592,7 @@
   "Incoming frame rate from network:": "Incoming frame rate from network:",
   "Decoding frame rate:": "Decoding frame rate:",
   "Rendering frame rate:": "Rendering frame rate:",
-  "Bitrate: %1$s Mbps video received, %2$s Mbps configured (with error correction and audio)": "Bitrate: %1$s Mbps video received, %2$s Mbps configured (with error correction and audio)",
+  "Bitrate: %1$s Mbps video received, %2$s Mbps configured (with FEC and audio)": "Bitrate: %1$s Mbps video received, %2$s Mbps configured (with FEC and audio)",
   "Host frame rate (30 s):": "Host frame rate (30 s):",
   "Host processing latency min/max/average:": "Host processing latency min/max/average:",
   "Frames dropped by your network connection:": "Frames dropped by your network connection:",

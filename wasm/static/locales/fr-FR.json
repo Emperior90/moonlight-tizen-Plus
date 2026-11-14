@@ -592,7 +592,7 @@
   "Incoming frame rate from network:": "Fréquence d’images reçue du réseau :",
   "Decoding frame rate:": "Fréquence d’images décodées :",
   "Rendering frame rate:": "Fréquence d’images affichées :",
-  "Bitrate: %1$s Mbps video received, %2$s Mbps configured (with error correction and audio)": "Débit : %1$s Mbps de vidéo reçus, %2$s Mbps configurés (avec correction d’erreurs et audio)",
+  "Bitrate: %1$s Mbps video received, %2$s Mbps configured (with FEC and audio)": "Débit : %1$s Mbps de vidéo reçus, %2$s Mbps configurés (avec FEC et audio)",
   "Host frame rate (30 s):": "Fréquence d’images du PC (30 s) :",
   "Host processing latency min/max/average:": "Latence de traitement du PC min./max./moyenne :",
   "Frames dropped by your network connection:": "Images perdues en raison de la connexion réseau :",

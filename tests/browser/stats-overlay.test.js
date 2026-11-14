@@ -12,7 +12,11 @@
 //   and the audio setting in effect (stereo, or 5.1 or 7.1 with the surround audio quality; always stereo with Web
 //   Audio, whatever the settings store), in the language of the app, so that a photo of the overlay tells which build
 //   and which audio path ran. It is one line, and the compact line doesn't have it;
-// - the help text of the setting says how often each level updates: Compact every second, Full every 2 seconds.
+// - the help text of the setting says how often each level updates: Compact every second, Full every 2 seconds;
+// - the two lines that show what a bitrate costs keep their one line in every language: the bitrate line, which says
+//   in few words that the received figure is the video alone while the configured bitrate also holds the error
+//   correction (FEC) and the audio, and the frame receive time with its share of the frame time. The longest line sets
+//   the width of the box, and a line that wraps adds to its height.
 // The figures themselves and their two stats windows are pinned by tests/native/stats_overlay_test.cpp, the slots of
 // the graph by tests/unit/stats-graph.test.js, the line by tests/unit/frequent-messages.test.js.
 
@@ -38,7 +42,7 @@ const FULL_TEXT = 'Video stream: 3840x2160 119.88 FPS (Codec: HEVC 10-bit HDR)\n
   'Incoming frame rate from network: 119.88 FPS\n' +
   'Decoding frame rate: 119.88 FPS\n' +
   'Rendering frame rate: 119.88 FPS\n' +
-  'Bitrate: 148.52 Mbps video received, 150.0 Mbps configured (with error correction and audio)\n' +
+  'Bitrate: 148.52 Mbps video received, 150.0 Mbps configured (with FEC and audio)\n' +
   'Host frame rate (30 s): 119.88 FPS\n' +
   'Host processing latency min/max/average: 4.1/12.9/6.3 ms\n' +
   'Frames dropped by your network connection: 0.42%\n' +
@@ -174,6 +178,48 @@ test('the full statistics are a small box without a text shadow that stays reada
           assert.ok(contrast([255, 255, 255], overWhite) >= 7, where + ' contrast ' + contrast([255, 255, 255], overWhite).toFixed(2));
         }
       });
+      assert.deepEqual(app.errors, [], language);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
+test('the bitrate line and the frame receive time keep their one line in the box, in every language', async () => {
+  for (const language of LANGUAGES) {
+    const app = await openApp(harness, { tv: TV, stored: { performanceStats: 2, languagePreference: language, audioConfig: '71Surround' } });
+    try {
+      await app.page.waitForFunction((lang) => document.documentElement.getAttribute('lang') === lang, language, { timeout: 5000 });
+      await startStream(app);
+      await sendFullStats(app.page, FULL_TEXT);
+      // The rows that each line of the text takes in the box
+      const lines = await app.page.evaluate(() => {
+        const text = document.querySelector('#performance-stats .stats-text');
+        const node = text.firstChild;
+        const lineHeight = parseFloat(getComputedStyle(text).lineHeight);
+        let offset = 0;
+        return node.textContent.split('\n').map((line) => {
+          const range = document.createRange();
+          range.setStart(node, offset);
+          range.setEnd(node, offset + line.length);
+          offset += line.length + 1;
+          return { line: line, rows: Math.round(range.getBoundingClientRect().height / lineHeight) };
+        });
+      });
+      const bitrate = lines.filter((entry) => /148\.52 Mbps/.test(entry.line));
+      const receive = lines.filter((entry) => /13\.21 ms/.test(entry.line));
+      assert.equal(bitrate.length, 1, language);
+      assert.equal(receive.length, 1, language);
+      // Both figures of the bitrate and what the configured one holds besides the video, translated as a whole
+      assert.match(bitrate[0].line, /148\.52 Mbps .*150\.0 Mbps .*\(.*FEC.*\)$/, language);
+      assert.match(receive[0].line, /13\.21 ms \(159[ \u00a0]?% .*\)$/, language);
+      if (language !== 'en-US') {
+        assert.doesNotMatch(bitrate[0].line + receive[0].line, /received|configured|with FEC|of the frame time/, language);
+      }
+      assert.equal(bitrate[0].rows, 1, language + ': ' + bitrate[0].line);
+      assert.equal(receive[0].rows, 1, language + ': ' + receive[0].line);
+      // (the measurement tells a wrapped line: the line of the rejections of the player is longer than the box is wide)
+      assert.ok(lines.filter((entry) => /12 \(10 /.test(entry.line))[0].rows >= 2, language);
       assert.deepEqual(app.errors, [], language);
     } finally {
       await app.context.close();

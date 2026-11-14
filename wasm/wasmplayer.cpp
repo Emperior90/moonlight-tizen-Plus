@@ -2171,14 +2171,15 @@ void MoonlightInstance::FormatVideoStats(VIDEO_STATS& stats, char* output, int l
     }
 
     // Print frame rates at various stages of the pipeline, and the bitrate that arrives next to the one set in the app.
-    // What arrives counts the video frames only, while the host fits its error correction and the audio into the set
-    // bitrate as well, so it stays below it: about 9 % at 150 Mbps with 5 % error correction, more with a higher share.
+    // What arrives counts the video frames only, while the host fits its error correction (FEC) and the audio into the
+    // set bitrate as well, so it stays below it: about 9 % with 5 % error correction, more with a higher share. The line
+    // says so in few words, since the longest line sets the width of the overlay.
     ret = snprintf(
       &output[offset], length - offset,
       "Incoming frame rate from network: %.2f FPS\n"
       "Decoding frame rate: %.2f FPS\n"
       "Rendering frame rate: %.2f FPS\n"
-      "Bitrate: %.2f Mbps video received, %.1f Mbps configured (with error correction and audio)\n",
+      "Bitrate: %.2f Mbps video received, %.1f Mbps configured (with FEC and audio)\n",
       stats.receivedFps, stats.decodedFps, stats.renderedFps, stats.receivedBitrate,
       g_Instance->m_StreamConfig.bitrate / 1000.0f
     );
