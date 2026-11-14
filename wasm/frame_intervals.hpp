@@ -10,8 +10,8 @@
 // samples in video_telemetry.hpp).
 //
 // Only the video decoder thread records the intervals and formats the lines, so nothing here takes a lock: recording an
-// interval stores one number into a fixed array, and the summary sorts at most two windows once per second, only while
-// the full statistics show. The header has no other dependencies, so the native tests can check it on its own
+// interval stores one number into a fixed array, and the summary sorts at most two windows once per message of the full
+// statistics (about every 2 seconds), only while they show. The header has no other dependencies, so the native tests can check it on its own
 // (tests/native/frame_intervals_test.cpp).
 
 #include <algorithm>

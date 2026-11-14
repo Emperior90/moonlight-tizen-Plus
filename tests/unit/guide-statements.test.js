@@ -460,11 +460,13 @@ test('the guide gives the share of the bitrate that Sunshine leaves to the encod
   assert.match(fec, /the TV decodes more video bits at the same bitrate setting/);
   // The bullet of the host settings points there instead of only saying to keep the default
   assert.doesNotMatch(GUIDE, /the share of error correction data\. Keep the default\./);
-  // The received bitrate of the statistics only adds up the video frames (wasmplayer.cpp), so it can't reach the
-  // configured bitrate, and the troubleshooting of a blocky picture gives the same ceiling as the FEC section
+  // The received bitrate of the statistics only adds up the video frames (wasmplayer.cpp), of the two stats windows
+  // that its figures cover, so it can't reach the configured bitrate, and the troubleshooting of a blocky picture gives
+  // the same ceiling as the FEC section
   const player = read('wasm/wasmplayer.cpp');
   assert.match(player, /total_bytes \+= decodeUnit->fullLength;/);
-  assert.match(player, /receivedBitrate = \(total_bytes \* 8\.0f\)/);
+  assert.match(player, /s_LastWndBytes = total_bytes;\s+total_bytes = 0;/);
+  assert.match(player, /receivedBitrate = \(\(\(uint64_t\)s_LastWndBytes \+ total_bytes\) \* 8\.0f\)/);
   const blocky = GUIDE.split('\n').find((line) => line.indexOf('- **Blocky picture although the bitrate is high:**') === 0);
   assert.ok(blocky, 'the troubleshooting item');
   assert.ok(blocky.indexOf('It counts only the video, so it tops out at the share that Sunshine leaves to the encoder') > 0, blocky);

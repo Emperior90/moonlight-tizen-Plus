@@ -8,7 +8,8 @@
 // translated text, e.g.
 //   4K60 HEVC HDR · 59.9 fps · 74 Mb/s · RTT 3 ms · Net drops 0.1% · Wait+pacing 6.3 ms
 // While the level is Full, the text of the full statistics follows the figures of one point of their graph in the same
-// message (FormatFullStatsMessage()), so the graph needs no message of its own either.
+// message (FormatFullStatsMessage()), so the graph needs no message of its own either. That message comes at every
+// second stats window only (IsFullStatsWindowDue()), about every 2 seconds.
 // The compact line was asked for in upstream issue #67, and Artemis, StreamLight and moonlight-tv (f4b1a4a) show one;
 // sending figures beside the text follows the fork of fidoboy (moonlight-tizen-ac3, 262477c, 'GraphMsg: ').
 // The header has no other dependencies, so the native tests can check it on its own (tests/native/compact_stats_test.cpp).
@@ -42,6 +43,30 @@ inline int CyclePerformanceStatsLevel(std::atomic<int>& level) {
   while (!level.compare_exchange_weak(current, NextPerformanceStatsLevel(current))) {
   }
   return NextPerformanceStatsLevel(current);
+}
+
+// The full statistics are sent at every second stats window, about every 2 seconds: every update of the overlay makes
+// the TV draw a new frame of the UI over the video, which costs the same whatever the amount of text, so half as many
+// updates are the one sure way to halve that cost. Each message covers the two windows since the message before it
+// (see VidDecSubmitDecodeUnit() in wasm/wasmplayer.cpp), and the front end draws one slot of the graph per message
+// (STATS_GRAPH_SLOT_MS in wasm/platform/messages.js is the time of these windows). The compact line keeps coming at
+// every window.
+constexpr int kFullStatsWindows = 2;
+
+// Whether the full statistics are due at the end of a stats window at the given level. `windowsToSkip` is kept by the
+// caller between the windows, 0 at first. The first window at the Full level sends, so that the overlay shows within
+// about a second of the switch to it, then every kFullStatsWindows-th one.
+inline bool IsFullStatsWindowDue(int level, int& windowsToSkip) {
+  if (level != kPerformanceStatsFull) {
+    windowsToSkip = 0;
+    return false;
+  }
+  if (windowsToSkip > 0) {
+    windowsToSkip--;
+    return false;
+  }
+  windowsToSkip = kFullStatsWindows - 1;
+  return true;
 }
 
 // Message to the front end with the level after a toggle, e.g. "StatLevelMsg: 1"
@@ -113,9 +138,10 @@ inline int FormatCompactStatsMessage(const CompactVideoStats& stats, char* outpu
 }
 
 // The figures of one point of the graph of the full statistics: the round-trip time in ms, 0 while unknown, and the
-// frames lost on the network in the stats window that just ended. The front end draws the last 60 of them under the
-// text (drawStatsGraph() in wasm/platform/messages.js), which the graph of the fork of fidoboy (moonlight-tizen-ac3,
-// 262477c, 5bc0c57) suggested; the points come with the text of the full statistics instead of a message of their own.
+// frames lost on the network in the stats windows that the message covers (the last two, see kFullStatsWindows). The
+// front end draws the last 60 of them above the text (drawStatsGraph() in wasm/platform/messages.js), which the graph
+// of the fork of fidoboy (moonlight-tizen-ac3, 262477c, 5bc0c57) suggested; the points come with the text of the full
+// statistics instead of a message of their own.
 struct StatsGraphPoint {
   uint32_t rttMs;
   uint32_t networkDroppedFrames;

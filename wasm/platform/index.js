@@ -66,6 +66,7 @@ var autoAdjustBitrate = false; // Flag indicating whether resolution and frame r
 var keptBitrateNotice = false; // Flag indicating whether the notice about a kept hand-picked bitrate has shown, initial value is false
 var tvScreenSaverEnabled = null; // Last screensaver state requested from the TV, initial value is null (never requested)
 var streamNetworkInfo = ''; // Network connection summary shown in the performance statistics while streaming, initial value is empty
+var streamBuildInfo = ''; // The line of the full statistics with the app version, the audio backend and the audio setting of the latest stream launch (getStreamBuildInfo()), initial value is empty
 var streamConnectionType = 'unknown'; // Network connection type of the current streaming session, initial value is unknown
 var lastWifiSignalRefreshMs = 0; // Time of the last Wi-Fi signal strength refresh of the network connection summary, initial value is 0
 var repeatAction = null; // Flag indicating whether the repeat action is set, initial value is null
@@ -130,6 +131,25 @@ function getSurroundAudioInfo(audioConfig) {
 // The audio configuration of the settings stays as it is, so that the media player of the TV plays surround again.
 function getStreamAudioConfig(audioConfig, audioBackend) {
   return audioBackend === 'WebAudio' ? 'Stereo' : audioConfig;
+}
+
+// The line of the full statistics that names the app and the sound of a stream, so that a photo of the overlay tells
+// which build and which audio path ran, e.g. 'Moonlight Plus 2.3.1 · TV media player (EMSS) · 5.1 Efficient': the name
+// and version of the app, the audio backend as the settings name it, and the audio configuration that the stream asks
+// the host for (getStreamAudioConfig(): stereo with Web Audio, whatever the setting) with the surround audio quality,
+// which only 5.1 and 7.1 have. What the host then sends is on the 'Audio stream' line of the statistics. With the audio
+// output disabled, the line ends with that. The module plays an audio backend that it doesn't know with the media
+// player of the TV, and an audio configuration that it doesn't know in stereo (wasm/main.cpp).
+function getStreamBuildInfo(appName, audioBackend, audioConfig, surroundQuality) {
+  const parts = [appName];
+  if (audioBackend === 'Disabled') {
+    parts.push(t('No audio output'));
+  } else {
+    parts.push(audioBackend === 'WebAudio' ? t('Browser (Web Audio)') : t('TV media player (EMSS)'));
+    const channels = audioConfig === '51Surround' ? '5.1' : (audioConfig === '71Surround' ? '7.1' : '');
+    parts.push(channels ? channels + ' ' + (surroundQuality === 'Efficient' ? t('Efficient') : t('High')) : t('Stereo'));
+  }
+  return parts.join(' \u00b7 ');
 }
 
 // The resolutions whose game settings GeForce Experience knows for 'Optimize game settings', as moonlight-android
@@ -566,9 +586,9 @@ function delayedNavigation(callback, delay) {
 
 // Updates the host status indicator based on the host's online and paired status
 function updateHostStatusIndicator(host) {
-  // Find the desired host cell using the server UUID
-  var hostCell = document.querySelector('#host-' + host.serverUid);
-  var indicator = document.querySelector('#host-status-' + host.serverUid);
+  // Find the desired host cell using the server UUID (by its ID, never as a selector that the UUID is a part of)
+  var hostCell = document.getElementById('host-' + host.serverUid);
+  var indicator = document.getElementById('host-status-' + host.serverUid);
 
   // Update the host cell inactive styling class
   if (hostCell) {
@@ -1429,13 +1449,14 @@ function addHostDialog() {
         updateIpAddressInputValidationState();
         resetIpAddressFields();
       };
-      if (hosts[_nvhttpHost.serverUid] != null) {
+      var knownHost = getHostByUid(_nvhttpHost.serverUid);
+      if (knownHost != null) {
         // Update the addresses
-        hosts[_nvhttpHost.serverUid].address = _nvhttpHost.address;
-        hosts[_nvhttpHost.serverUid].userEnteredAddress = _nvhttpHost.userEnteredAddress;
-        hosts[_nvhttpHost.serverUid].httpPort = _nvhttpHost.httpPort;
+        knownHost.address = _nvhttpHost.address;
+        knownHost.userEnteredAddress = _nvhttpHost.userEnteredAddress;
+        knownHost.httpPort = _nvhttpHost.httpPort;
         // Use the host in the array directly to ensure the PPK propagates after pairing
-        pairingDialog(hosts[_nvhttpHost.serverUid], function() {
+        pairingDialog(knownHost, function() {
           saveHosts();
           startPollingHosts();
           clearEnteredAddress();
@@ -2063,7 +2084,7 @@ function deleteHostDialog(host) {
   $('#continueDeleteHost').on('click', function() {
     console.log('%c[index.js, deleteHostDialog]', 'color: green;', 'Removing host, closing app dialog, and returning.');
     // Remove the host container from the grid
-    $('#host-container-' + host.serverUid).remove();
+    $(document.getElementById('host-container-' + host.serverUid)).remove();
     // Stop background polling for removed host
     endBackgroundPollingOfHost(host);
     // Remove the host from the hosts object
@@ -2134,7 +2155,7 @@ function deleteAllHostsDialog() {
         if (hosts.hasOwnProperty(serverUid)) {
           var host = hosts[serverUid];
           // Remove the host container from the grid
-          $('#host-container-' + host.serverUid).remove();
+          $(document.getElementById('host-container-' + host.serverUid)).remove();
           // Remove the host from the hosts object
           delete hosts[host.serverUid];
           // Forget the apps that were hidden for the host
@@ -4155,6 +4176,9 @@ function startGame(host, appID, restartKind, restartChange) {
       streamLaunchAppTitle = appToStart.title;
       streamBitrateMbps = parseFloat($('#bitrateSlider').val());
       streamSurroundQuality = surroundQuality;
+      // The line of the full statistics about this start: the app as System information names it, and its sound
+      streamBuildInfo = getStreamBuildInfo(appInfo.name + (checkForceGMVariant() ? '-ForceGM' : '') + ' ' + getBuildVersion(appInfo.version),
+        audioBackend, audioConfig, surroundQuality);
       // The order 'Recently played' of the app list puts the app first once the host accepted its start, but never the
       // Terminate tile of Apollo or Vibepollo, which ends an app instead of streaming one (menus.js)
       var rememberStartedApp = function() {
@@ -4223,8 +4247,9 @@ function startGame(host, appID, restartKind, restartChange) {
               }
               wasmSessionStarted = true;
               rememberStartedApp();
-              // A video format that the TV rejected and the ports named for the termination of an earlier stream don't
-              // belong to this one (messages.js)
+              // A video format that the TV rejected, the codec that the host provided instead of the selected one and
+              // the ports named for the termination of an earlier stream don't belong to this one (messages.js)
+              streamCodecFallback = '';
               terminationBlockedPorts = '';
               rejectedVideoTrack = null;
               sendMessage('startRequest', [
@@ -4234,7 +4259,9 @@ function startGame(host, appID, restartKind, restartChange) {
                 audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
                 gameMode, disableWarnings, getPerformanceStatsLevel(), refFrameInvalidation, hdrMetadata, controllerType,
                 surroundQuality
-              ]);
+              ]).catch(function(failedStartRequest) {
+                endLaunchAfterFailedStartRequest(launchId, failedStartRequest);
+              });
               if (isRestart) {
                 startWebAudio();
               }
@@ -4302,8 +4329,9 @@ function startGame(host, appID, restartKind, restartChange) {
             }
             wasmSessionStarted = true;
             rememberStartedApp();
-            // A video format that the TV rejected and the ports named for the termination of an earlier stream don't
-            // belong to this one (messages.js)
+            // A video format that the TV rejected, the codec that the host provided instead of the selected one and
+            // the ports named for the termination of an earlier stream don't belong to this one (messages.js)
+            streamCodecFallback = '';
             terminationBlockedPorts = '';
             rejectedVideoTrack = null;
             sendMessage('startRequest', [
@@ -4313,7 +4341,9 @@ function startGame(host, appID, restartKind, restartChange) {
               audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
               gameMode, disableWarnings, getPerformanceStatsLevel(), refFrameInvalidation, hdrMetadata, controllerType,
               surroundQuality
-            ]);
+            ]).catch(function(failedStartRequest) {
+              endLaunchAfterFailedStartRequest(launchId, failedStartRequest);
+            });
             if (isRestart) {
               startWebAudio();
             }
@@ -4619,6 +4649,22 @@ function cancelStreamLaunch() {
   isInGame = false;
   wasmSessionStarted = false;
   leaveStreamView(streamLaunchHost || api);
+}
+
+// End a launch whose start request the WASM module didn't take, and return to the app list with a message: the call
+// threw (Embind throws for an argument of the wrong type or a wrong number of arguments, e.g. after a change of only one
+// side of the call) or its promise was rejected. No stream started, so none ever ends: without this the launch screen
+// stayed for good, and only RED left it. The error goes to the console, and so to the diagnostic log, which the
+// message points to. The host accepted the launch or resume request before, so it may hold this start, which
+// cancelStreamLaunch() remembers. Not when the launch is no longer the current one, e.g. after RED.
+function endLaunchAfterFailedStartRequest(launchId, error) {
+  console.error('%c[index.js, startGame]', 'color: green;', 'Error: The start request to the WASM module failed, so no stream started. Returned error was:', error);
+  if (launchId !== streamLaunchId || isInGame !== true) {
+    console.log('%c[index.js, startGame]', 'color: green;', 'The launch of the failed start request is over already.');
+    return;
+  }
+  cancelStreamLaunch();
+  snackbarLogLong('Unable to start the stream. The reason is in the diagnostic log (Settings, About).');
 }
 
 // Read the codec modes of the host again once it accepted the launch or resume request. Sunshine probes its encoders
@@ -6008,13 +6054,15 @@ function optimalSettingsDialog() {
     message += t('The TV is connected via Ethernet. Samsung TVs usually have a 100 Mbps Ethernet port, so to avoid packet loss from the traffic bursts of the much faster host PC, set its network adapter to 100 Mbps Full Duplex or enable flow control on your switch. Use 5 GHz Wi-Fi for higher bitrates.');
   } else if (connectionType === 'wifi') {
     message += t('The TV is connected via Wi-Fi. Use a 5 GHz network with a strong signal and connect the host PC by cable.') + ' ';
-    // Suggest how far the bitrate can go for this resolution, up to where the bitrate warning starts (bitrateRaiseLimit()
-    // in tv_profile.js), which lies above the applied bitrate on the tested model
+    // Say how far the bitrate can go for this resolution, up to where the bitrate warning starts (bitrateRaiseLimit()
+    // in tv_profile.js), which lies above the applied bitrate on the tested model, and what it costs: the advice is no
+    // longer to raise it as long as no frames drop, since every frame of a higher bitrate takes longer to arrive (about
+    // 0.6 to 0.8 ms per 10 Mbps in the one measurement there is, a 4K stream at 60 FPS over 5 GHz Wi-Fi)
     const raiseLimit = bitrateRaiseLimit(optimalSettings.resolution, optimalSettings.frameRate, tvCapabilities);
     if (raiseLimit > optimalSettings.bitrate) {
-      message += t('If the performance statistics show no dropped frames, you can raise the bitrate up to %1$s Mbps.', raiseLimit);
+      message += t('Raise the bitrate only if fast scenes look blocky, up to %1$s Mbps: every 10 Mbps more add about 0.6 to 0.8 ms of latency, measured on one fast Wi-Fi connection.', raiseLimit);
     } else {
-      message += t('This is the highest bitrate recommended for the video decoder of this TV, so raise it only if the performance statistics show no dropped frames.');
+      message += t('This is the highest bitrate recommended for the video decoder of this TV. More would also add latency: about 0.6 to 0.8 ms per 10 Mbps, measured on one fast Wi-Fi connection.');
     }
   } else {
     message += t('The network connection type of the TV could not be detected, so a moderate bitrate will be applied.');
@@ -6362,7 +6410,9 @@ function keepSessionReport(json) {
     return;
   }
   lastSessionReport = report;
-  lastSessionReportOptions = { refFrameInvalidation: $('#refFrameInvalidationSwitch').parent().hasClass('is-checked') };
+  // The settings that the hints depend on: a hint names a remedy only where the session didn't already use it
+  lastSessionReportOptions = { refFrameInvalidation: $('#refFrameInvalidationSwitch').parent().hasClass('is-checked'),
+    surroundQuality: streamSurroundQuality };
   console.log('%c[index.js, keepSessionReport]', 'color: green;', 'Hints of the session report: ' +
     getSessionReportHints(report, lastSessionReportOptions).join(', '));
   // The lines that the module logged at the end of the stream belong to its session
@@ -7061,7 +7111,7 @@ function loadHTTPCertsCb() {
 
       // load previously connected hosts, which have been killed into an object, and revive them back into a class
       getData('hosts', function(previousValue) {
-        hosts = previousValue.hosts != null ? previousValue.hosts : {};
+        hosts = keepValidStoredHosts(previousValue.hosts);
         for (var hostUID in hosts) { // Programmatically add each new host
           var revivedHost = new NvHTTP(hosts[hostUID].address, myUniqueid, hosts[hostUID].userEnteredAddress, hosts[hostUID].macAddress);
           Object.assign(revivedHost, hosts[hostUID]);
@@ -7095,6 +7145,37 @@ function loadHTTPCertsCb() {
       });
     });
   });
+}
+
+// The stored hosts that the app takes over at its start: those stored under a unique ID that the app takes
+// (isValidServerUid() in utils.js), with that kind of ID in the host as well. Up to 2.3.0 the app stored a host under
+// whatever ID its device sent, e.g. one that matches other parts of the page as a selector. Such a host is left out
+// with a line in the log, and the next save of the hosts drops it from the storage; its device is no longer listed,
+// since its server info is ignored from now on (_parseServerInfo()). The result has only own properties with valid
+// names, so the loops over the hosts and the lookups by ID find hosts and nothing else.
+function keepValidStoredHosts(storedHosts) {
+  var kept = {};
+  if (storedHosts == null || typeof storedHosts !== 'object') {
+    return kept;
+  }
+  Object.keys(storedHosts).forEach(function(hostUID) {
+    var storedHost = storedHosts[hostUID];
+    if (!isValidServerUid(hostUID) || storedHost == null || typeof storedHost !== 'object' || !isValidServerUid(storedHost.serverUid)) {
+      console.warn('%c[index.js, keepValidStoredHosts]', 'color: green;', 'Warning: Leaving out a stored host whose unique ID isn\'t one that the app takes (1 to 64 letters, digits, dashes and underscores, and no name of a property of every object): ' +
+        (storedHost && storedHost.hostname ? JSON.stringify(String(storedHost.hostname).slice(0, 40)) : 'no name') + '.');
+      return;
+    }
+    kept[hostUID] = storedHost;
+  });
+  return kept;
+}
+
+// The host with the given unique ID, or undefined. hosts is a plain object, where a name such as 'constructor' or
+// '__proto__' finds a property that every object has instead of a host, so only an ID that the app takes
+// (isValidServerUid() in utils.js) is looked up, and only among the hosts themselves: the ID of a deep link comes from
+// outside the app.
+function getHostByUid(serverUid) {
+  return isValidServerUid(serverUid) && Object.prototype.hasOwnProperty.call(hosts, serverUid) ? hosts[serverUid] : undefined;
 }
 
 // Whether the scan of the start may run and the polling of the hosts may resume after it: only while the hosts are
@@ -7156,7 +7237,7 @@ function waitForHostAndNavigate(serverUid) {
   var attempts = 0;
   var interval = setInterval(function() {
     attempts++;
-    var host = hosts[serverUid];
+    var host = getHostByUid(serverUid);
     
     if (host && (host.online || isSubnetScanFinished)) {
       clearInterval(interval);
@@ -7184,7 +7265,7 @@ function waitForHostAndNavigateToApp(serverUid, appId) {
   var attempts = 0;
   var interval = setInterval(function() {
     attempts++;
-    var host = hosts[serverUid];
+    var host = getHostByUid(serverUid);
 
     if (host && (host.online || isSubnetScanFinished)) {
       clearInterval(interval);

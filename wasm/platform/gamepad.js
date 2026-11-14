@@ -518,6 +518,10 @@ const Rumble = (function() {
   const active = {};
   // Ids of the gamepads that were told that they can't rumble, once per app session
   const unsupportedNotices = new Set();
+  // The gamepads that a rumble of the host found missing or unable to rumble, by index: the log gets the warning once
+  // per rumble, not with each change of its strength, which a game sends up to 60 times per second. stop() forgets the
+  // gamepad, so the next rumble warns again.
+  const warned = {};
 
   function getGamepad(index) {
     const gamepads = (navigator.getGamepads && navigator.getGamepads()) || [];
@@ -558,6 +562,14 @@ const Rumble = (function() {
     }
   }
 
+  // Run a warning about the rumble of a gamepad, unless this rumble already had one (see `warned`)
+  function warnOnce(index, warn) {
+    if (!warned[index]) {
+      warned[index] = true;
+      warn();
+    }
+  }
+
   function playEffect(index, gamepad, rumble) {
     callActuator(() => gamepad.vibrationActuator.playEffect('dual-rumble', {
       startDelay: 0,
@@ -569,7 +581,7 @@ const Rumble = (function() {
       if (active[index] === rumble) {
         clearReplay(index);
       }
-      reportUnsupported(index, gamepad, error);
+      warnOnce(index, () => reportUnsupported(index, gamepad, error));
     });
   }
 
@@ -589,6 +601,7 @@ const Rumble = (function() {
   // running one. A gamepad that is gone only loses its replay.
   function stop(index) {
     clearReplay(index);
+    delete warned[index];
     const gamepad = getGamepad(index);
     if (!canPlayEffects(gamepad)) {
       return;
@@ -618,12 +631,12 @@ const Rumble = (function() {
     }
     const gamepad = getGamepad(index);
     if (!gamepad) {
-      console.warn('%c[gamepad.js, Rumble]', 'color: gray;', 'Warning: No gamepad ' + index + ' to play the rumble on.');
+      warnOnce(index, () => console.warn('%c[gamepad.js, Rumble]', 'color: gray;', 'Warning: No gamepad ' + index + ' to play the rumble on.'));
       return;
     }
     if (!canPlayEffects(gamepad)) {
       clearReplay(index);
-      reportUnsupported(index, gamepad, 'it has no vibration actuator');
+      warnOnce(index, () => reportUnsupported(index, gamepad, 'it has no vibration actuator'));
       return;
     }
     // Play it now and again every REPLAY_INTERVAL_MS from now on, until the host sends 0
@@ -634,9 +647,10 @@ const Rumble = (function() {
     playEffect(index, gamepad, rumble);
   }
 
-  // Stop every rumble that is still on, when the stream ends
+  // Stop every rumble that is still on, when the stream ends, and forget the warnings of its rumbles
   function stopAll() {
     Object.keys(active).forEach((index) => stop(Number(index)));
+    Object.keys(warned).forEach((index) => delete warned[index]);
   }
 
   // Play a short rumble on a gamepad that just connected, so the user feels that rumble works, or tell that it can't

@@ -169,11 +169,15 @@ test('the bitrate advice over Wi-Fi stays within the bitrate where the warning o
       const dialog = await openDialog(app.page);
       await app.page.evaluate(() => $('#continueWarning').trigger('click'));
       const applied = parseFloat((await readVideoSettings(app.page)).bitrate);
-      const raise = /you can raise the bitrate up to ([\d.]+) Mbps\./.exec(dialog.text);
+      const raise = /Raise the bitrate only if fast scenes look blocky, up to ([\d.]+) Mbps:/.exec(dialog.text);
       const atLimit = dialog.text.indexOf('This is the highest bitrate recommended for the video decoder of this TV') >= 0;
       assert.equal(raise ? parseFloat(raise[1]) : null, advisedLimit, tvName + ': ' + dialog.text);
       assert.equal(atLimit, advisedLimit === null, tvName + ': ' + dialog.text);
       assert.equal(atLimit, applied === cap, tvName + ': the applied bitrate reaches the cap');
+      // Either way the dialog names the price of more bitrate, as a measurement and not as a promise, and no longer
+      // says to raise it as long as the statistics show no dropped frames
+      assert.match(dialog.text, /about 0\.6 to 0\.8 ms (of latency|per 10 Mbps), measured on one fast Wi-Fi connection\./, tvName);
+      assert.doesNotMatch(dialog.text, /no dropped frames/, tvName);
       // The optimal settings stay at the recommended bitrate, also on the S90C
       assert.equal(applied, { s90c: 100, uhd: 80, '8k': 80, fhd: 25 }[tvName], tvName + ': the applied bitrate');
       // No warning up to the advised bitrate and the cap, and the warning right above the cap

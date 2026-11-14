@@ -1,11 +1,11 @@
 'use strict';
 
 // Checks the graph of the full performance statistics and the setting 'Statistics position' in the real page:
-// - the full statistics show a slim graph above their text, drawn on a canvas once per 'StatMsg: ' message from the point
-//   on its first line (the round-trip time as a bar in the colour of its step for a local network, a red mark for a
-//   second with frames lost on the network, a grey stub while the RTT is unknown), without that line in the text and
-//   without any message or timer of its own; the compact line has no graph, and the graph starts again with a new level
-//   or a new stream;
+// - the full statistics show a slim graph above their text, drawn on a canvas once per 'StatMsg: ' message (about every
+//   2 seconds) from the point on its first line (the round-trip time as a bar in the colour of its step for a local
+//   network, a red mark for a message with frames lost on the network, a grey stub while the RTT is unknown), without
+//   that line in the text and without any message or timer of its own; the compact line has no graph, and the graph
+//   starts again with a new level or a new stream;
 // - the setting offers the four corners, top left by default, reached with the remote, stored and kept after a restart,
 //   named in the language of the app and reset by Restore Defaults; the compact line and the full statistics show in the
 //   chosen corner inside the safe area, and at the top right the connection warnings move to the top left.
@@ -66,14 +66,14 @@ async function startStream(app) {
   });
 }
 
-// Send the full statistics with the points of the graph [rtt, lost] (rtt null for unknown) one second apart, as the
+// Send the full statistics with the points of the graph [rtt, lost] (rtt null for unknown) two seconds apart, as the
 // decoder thread does, on a clock of the test that starts at startMs
 function sendFullStats(page, points, startMs) {
   return page.evaluate(({ list, text, start }) => {
     const realNow = Date.now;
     try {
       list.forEach((point, index) => {
-        Date.now = () => start + index * 1000;
+        Date.now = () => start + index * 2000;
         handleMessage('StatMsg: {"rtt":' + point[0] + ',"lost":' + point[1] + '}\n' + text);
       });
     } finally {
@@ -122,8 +122,11 @@ test('the full statistics show the graph of the RTT and the network drops above 
       [59, 71], [59, 68], [55, 27], [56, 27], [59, 27]]);
     assert.equal(state.shown, true);
     assert.deepEqual(state.children, ['canvas.stats-graph', 'div.stats-text']);
-    // The text without the point of the graph
-    assert.equal(state.text, TEXT + 'Network connection: Wi-Fi (signal strength: 78 percent)');
+    // The text without the point of the graph, after the line about the app and the sound of the stream
+    // (tests/browser/stats-overlay.test.js)
+    const buildLine = await app.page.evaluate(() => streamBuildInfo);
+    assert.match(buildLine, /^Moonlight Plus \d+\.\d+\.\d+ · TV media player \(EMSS\) · Stereo$/);
+    assert.equal(state.text, buildLine + '\n' + TEXT + 'Network connection: Wi-Fi (signal strength: 78 percent)');
     assert.deepEqual(state.size.slice(2), [480, 72]);
     assert.deepEqual(state.colours.map(colour), [
       MINT, null, // 3 ms: 4 pixels
@@ -131,7 +134,7 @@ test('the full statistics show the graph of the RTT and the network drops above 
       ORANGE, null, // 12 ms: 17 pixels
       RED, null, // 20 ms: 29 pixels
       GREY, null, // unknown: a stub of 2 pixels
-      null, RED, RED, // the drop marks of the seconds with frames lost
+      null, RED, RED, // the drop marks of the messages with frames lost
     ]);
     assert.equal(await app.page.evaluate(() => window.__draws), 5);
     // Nothing draws between the messages

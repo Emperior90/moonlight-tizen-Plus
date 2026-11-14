@@ -7,7 +7,8 @@
 // diagnostics.js), in plain language instead of abbreviations. The log of the current and the previous session with the
 // native lines of a ring that never blocks (wasm/diagnostic_log.hpp), the redaction and the heartbeat come from the fork of
 // mmadej20 (moonlight-tizen-modern: diagnostic_logs.js, and stream_watchdog.js of c8e446d), kept in memory only.
-// This script loads before the other scripts of the app, so that the log has their lines from the start.
+// This script loads before the other scripts of the app, so that the log has their lines from the start, and the
+// uncaught errors and unhandled promise rejections of all of them.
 
 // ===== Redaction =====
 
@@ -192,18 +193,26 @@ const DiagnosticLog = (function() {
   const MAX_OBJECT_LENGTH = 200;
   // A line that repeats the one before within this time is counted instead of kept, like the native ring does
   const REPEAT_WINDOW_MS = 1000;
-  // Messages of the module that come about once per second during a stream and only repeat the overlay: they would push
-  // the useful lines out of the log
+  // Messages of the module that come again and again during a stream and only repeat the overlay or the rumble of a
+  // game: they would push the useful lines out of the log. messages.js writes them to the console only while its
+  // logFrequentMessages is set for a debugging session (FREQUENT_MESSAGE there), and the log leaves them out then too.
   const NOISE = /^\[messages\.js, handleMessage\] Message data: +(?:StatMsg|StatCompactMsg|controllerRumble): /;
+  // The uncaught errors and unhandled promise rejections of the page that a session keeps as lines (captureUncaught()):
+  // each different text once, and at most this many. The others are only counted, so that an error that repeats, e.g.
+  // in a handler that runs for every frame, can't push the other lines out of the log.
+  const MAX_UNCAUGHT_LINES = 20;
 
   function newSession(reason) {
-    return { startedAt: Date.now(), reason: reason, lines: [], dropped: 0, last: null };
+    return { startedAt: Date.now(), reason: reason, lines: [], dropped: 0, last: null,
+      uncaught: { texts: Object.create(null), kept: 0, notKept: 0 } };
   }
 
-  // The previous session (or null) and the current one, and whether the console is captured already
+  // The previous session (or null) and the current one, and whether the console and the uncaught errors of the page are
+  // captured already
   let previous = null;
   let current = newSession('start');
   let capturing = false;
+  let capturingUncaught = false;
 
   function push(session, line) {
     session.lines.push(line);
@@ -218,19 +227,29 @@ const DiagnosticLog = (function() {
     return text.replace(/[\r\n\t]+/g, ' ').trim();
   }
 
-  // Keep a line of the app ('js') at the given time, redacted and cut, unless it repeats the one before. Only the start
-  // of a long text is redacted, as much as the line keeps (redactDiagnosticStart()).
-  function add(time, source, level, text) {
+  // A text as a line keeps it: redacted, on one line and cut. Only the start of a long text is redacted, as much as the
+  // line keeps (redactDiagnosticStart()).
+  function cleanLine(text) {
     const full = text === undefined || text === null ? '' : String(text);
-    let clean = redactDiagnosticStart(function(size) {
+    const clean = redactDiagnosticStart(function(size) {
       return full.slice(0, size);
     }, MAX_LINE_LENGTH, oneLine);
-    if (clean.length > MAX_LINE_LENGTH) {
-      clean = clean.slice(0, MAX_LINE_LENGTH - 1) + '…';
-    }
-    if (source === 'js' && NOISE.test(clean)) {
+    return clean.length > MAX_LINE_LENGTH ? clean.slice(0, MAX_LINE_LENGTH - 1) + '…' : clean;
+  }
+
+  // Keep a line of the app ('js') at the given time, redacted and cut, unless it repeats the one before. A line of
+  // NOISE is dropped as it comes, before the work of redacting it: its start, which the pattern reads, has nothing that
+  // the redaction changes.
+  function add(time, source, level, text) {
+    if (source === 'js' && NOISE.test(text)) {
       return;
     }
+    keep(time, source, level, cleanLine(text));
+  }
+
+  // Keep a line whose text is redacted and cut already (cleanLine(), which must not run over a text twice: a second
+  // pass adds a second '<hidden>' after an RTSP address)
+  function keep(time, source, level, clean) {
     const last = current.last;
     if (last && last.source === source && last.text === clean && time - last.time < REPEAT_WINDOW_MS) {
       last.repeats++;
@@ -242,6 +261,25 @@ const DiagnosticLog = (function() {
     const line = { time: time, source: source, level: level || '', text: clean, repeats: 0 };
     push(current, line);
     current.last = line;
+  }
+
+  // Keep an uncaught error or an unhandled promise rejection of the page as a line at level E, redacted like every
+  // line. A text that the session already holds, and every text after MAX_UNCAUGHT_LINES different ones, is only
+  // counted (getSessions() tells how many), without the work of redacting it once the limit is reached.
+  function addUncaught(text) {
+    const uncaught = current.uncaught;
+    if (uncaught.kept >= MAX_UNCAUGHT_LINES) {
+      uncaught.notKept++;
+      return;
+    }
+    const clean = cleanLine(text);
+    if (uncaught.texts[clean]) {
+      uncaught.notKept++;
+      return;
+    }
+    uncaught.texts[clean] = true;
+    uncaught.kept++;
+    keep(Date.now(), 'js', 'E', clean);
   }
 
   // Merge the lines of the module ('<time>\t<text>' per line, see wasm/diagnostic_log.hpp) into the current session by
@@ -366,6 +404,62 @@ const DiagnosticLog = (function() {
     });
   }
 
+  // The name of a script from its address, without the folders of the app on the TV and without a query, e.g.
+  // 'index.js' for 'file:///opt/usr/apps/<package>/res/wgt/platform/index.js'
+  function scriptName(address) {
+    const text = String(address === undefined || address === null ? '' : address).replace(/[?#].*$/, '');
+    return text.slice(text.lastIndexOf('/') + 1);
+  }
+
+  // The line of an uncaught error (an 'error' event of the window): its message, which Chromium starts with
+  // 'Uncaught', and the script, line and column where it was thrown, e.g.
+  // 'Uncaught TypeError: host.refreshServerInfo is not a function (index.js:502:10)'
+  function describeUncaughtError(event) {
+    const message = event && event.message ? String(event.message) : 'Script error.';
+    const script = scriptName(event && event.filename);
+    return (/^Uncaught\b/.test(message) ? '' : 'Uncaught error: ') + message +
+      (script ? ' (' + script + ':' + (event.lineno || 0) + ':' + (event.colno || 0) + ')' : '');
+  }
+
+  // The line of an unhandled promise rejection: its reason, for an error the name and the message with the place of
+  // the first frame of its stack, e.g. 'Unhandled promise rejection: BindingError: Cannot pass "x" as a int
+  // (moonlight-wasm.js:1:2345)', for anything else as a console call would show it
+  function describeUnhandledRejection(event) {
+    const reason = event ? event.reason : undefined;
+    if (reason !== null && typeof reason === 'object' && typeof reason.message === 'string') {
+      const place = /^\s*at .*?([^\s()/]+):(\d+):(\d+)\)?\s*$/m.exec(typeof reason.stack === 'string' ? reason.stack : '');
+      return 'Unhandled promise rejection: ' + (reason.name ? reason.name + ': ' : '') + reason.message +
+        (place ? ' (' + scriptName(place[1]) + ':' + place[2] + ':' + place[3] + ')' : '');
+    }
+    return 'Unhandled promise rejection: ' + formatConsoleArguments([reason]);
+  }
+
+  // Keep the uncaught errors and the unhandled promise rejections of the page as well (the 'error' and
+  // 'unhandledrejection' events of the window, which Chromium 69 has): the browser reports both without a call of
+  // console.error, so a script error on a TV left no trace in the log that the user can show. A listener on the window
+  // gets the errors of scripts only, not a file that failed to load, whose event doesn't bubble. Nothing is changed for
+  // the page: the events aren't cancelled, so the console still gets them.
+  function captureUncaught(target) {
+    if (capturingUncaught || !target || typeof target.addEventListener !== 'function') {
+      return;
+    }
+    capturingUncaught = true;
+    target.addEventListener('error', function(event) {
+      try {
+        addUncaught(describeUncaughtError(event));
+      } catch (error) {
+        // The log must never disturb the page
+      }
+    });
+    target.addEventListener('unhandledrejection', function(event) {
+      try {
+        addUncaught(describeUnhandledRejection(event));
+      } catch (error) {
+        // As above
+      }
+    });
+  }
+
   function pad(value, length) {
     return ('000' + value).slice(-length);
   }
@@ -394,6 +488,10 @@ const DiagnosticLog = (function() {
         lines.push(formatLine({ time: session.last.time, source: session.last.source, level: '',
           text: '(the line before came ' + session.last.repeats + ' more times)' }));
       }
+      if (session.uncaught.notKept > 0) {
+        lines.push('… ' + session.uncaught.notKept + ' more uncaught errors or unhandled promise rejections are not kept (the same ones again, or more than ' +
+          MAX_UNCAUGHT_LINES + ' different ones in this session)');
+      }
       if (session.dropped > 0) {
         lines.unshift('… ' + session.dropped + ' earlier lines are no longer kept');
       }
@@ -410,6 +508,7 @@ const DiagnosticLog = (function() {
     takeNative: takeNative,
     startSession: startSession,
     captureConsole: captureConsole,
+    captureUncaught: captureUncaught,
     formatConsoleArguments: formatConsoleArguments,
     formatLine: formatLine,
     getSessions: getSessions,
@@ -419,7 +518,10 @@ const DiagnosticLog = (function() {
 // ===== The report of the last session =====
 
 // Read the totals of a stream from the message of the module (the JSON object of FormatSessionReportMessage() in
-// wasm/session_report.hpp), or null for one that isn't one
+// wasm/session_report.hpp), or null for one that isn't one. A figure that the message lacks is 0, and a message without
+// hostRfi (2.3.0 sent none) tells nothing about the host, which counts as a host that didn't offer it. The same goes for
+// the lowest host frame rate with its windows and for the frame receive time, which 2.3.0 didn't send either: at 0
+// their lines and the hint about the frames of the PC are left out.
 function parseSessionReport(json) {
   let data = null;
   try {
@@ -450,10 +552,16 @@ function parseSessionReport(json) {
     heapGrowthMb: number('heapGrowthMb'),
     hostFrameRateX100: number('hostFrameRateX100'),
     hostProcessingLatencyX10: number('hostProcessingLatencyX10'),
+    hostFrameRateLowX100: number('hostFrameRateLowX100'),
+    hostWindows: number('hostWindows'),
+    hostLowWindows: number('hostLowWindows'),
+    receiveTimeX100: number('receiveTimeX100'),
+    receiveTimePeakX100: number('receiveTimePeakX100'),
     audioChannels: number('audioChannels'),
     audioLoadMsPerS: number('audioLoadMsPerS'),
     audioLoadPeakMsPerS: number('audioLoadPeakMsPerS'),
     audioOverloadedWindows: number('audioOverloadedWindows'),
+    hostRfi: data.hostRfi === 1 || data.hostRfi === true,
   };
 }
 
@@ -488,6 +596,31 @@ function isHostEncoderSaturated(report) {
     report.hostProcessingLatencyX10 / 10 > HOST_HINT_FRAME_TIME_SHARE * 1000 / report.fps;
 }
 
+// The 'hostFrames' hint is for a PC that delivered clearly fewer frames than the stream asked for although its encoder
+// had time and the network lost little: a game that renders fewer frames, which showed as 'No problems found' before.
+// The module counts the 30 s windows of the host frame rate without the first one of a stream and without those of a
+// paused host, and how many of them stayed below a share of the stream rate (HostRateWindows and kHostRateLowPercent in
+// wasm/session_report.hpp; the percentage here only names that limit in the texts and must be the same). The hint
+// needs a session of at least the length of the 'host' hint, at least 2 such windows and at least a fifth of all
+// windows, so that a cutscene or a loading screen in a long session gives none. Its text stays neutral, since a game or
+// video limited to fewer frames per second reads the same.
+const HOST_LOW_RATE_PERCENT = 95;
+const HOST_FRAMES_HINT_MIN_WINDOWS = 2;
+const HOST_FRAMES_HINT_WINDOW_SHARE = 0.2;
+
+// Whether the host delivered clearly fewer frames than the stream asked for in a good part of the session (see above)
+function isHostShortOfFrames(report) {
+  return report.fps > 0 && report.durationMs >= HOST_HINT_MIN_DURATION_MS &&
+    report.hostLowWindows >= HOST_FRAMES_HINT_MIN_WINDOWS &&
+    report.hostLowWindows >= HOST_FRAMES_HINT_WINDOW_SHARE * report.hostWindows;
+}
+
+// The frame rate below which a 30 s window of the host counts as low, as a text: 57 of 60 FPS, 85.5 of 90
+function formatHostLowRate(fps) {
+  const rate = fps * HOST_LOW_RATE_PERCENT / 100;
+  return formatReportNumber(rate, rate === Math.round(rate) ? 0 : 1);
+}
+
 // Whether the sound of the stream kept its thread too busy: decoding and handing over a surround stream took more than
 // the limit per second of audio in at least one window of 10 seconds, which the module counts (IsAudioOverloaded() in
 // wasm/audio_load.hpp), and which is also when it tells the user during the stream ('AudioOverloadMsg: ' in
@@ -497,7 +630,9 @@ function isAudioThreadOverloaded(report) {
 }
 
 // The hints of a report in plain language, at most 3, most important first, as keys of SESSION_REPORT_HINTS. The options
-// say whether reference frame invalidation was on, which a hint about recovery keyframes suggests otherwise.
+// say whether reference frame invalidation was on, which a hint about recovery keyframes suggests otherwise, but only
+// for a host that offered it for the stream (hostRfi of the report: GeForce Experience, and Sunshine with its NVENC
+// encoder). Every other host answers an invalidation with a keyframe, so the setting can't spare any there.
 function getSessionReportHints(report, options) {
   const opts = options || {};
   if (report.frames === 0) {
@@ -518,11 +653,14 @@ function getSessionReportHints(report, options) {
     hints.push('audio');
   }
   // Many frames lost on the network make the encoder look busier than it is (keyframes after a loss), so only a stream
-  // without the network hint counts; the few frames that a good network loses in a long stream change nothing
+  // without the network hint counts; the few frames that a good network loses in a long stream change nothing. A busy
+  // encoder already explains frames that the PC didn't deliver, so the hint about them only comes without it.
   if (!network && isHostEncoderSaturated(report)) {
     hints.push('host');
+  } else if (!network && isHostShortOfFrames(report)) {
+    hints.push('hostFrames');
   }
-  if (report.recoveryKeyframes >= 3 && !opts.refFrameInvalidation && /^(HEVC|AV1)/.test(report.codec)) {
+  if (report.recoveryKeyframes >= 3 && report.hostRfi && !opts.refFrameInvalidation && /^(HEVC|AV1)/.test(report.codec)) {
     hints.push('keyframes');
   }
   if (!network && (report.fecFailures > 0 || report.fecRecoveredBlocks / minutes >= 60)) {
@@ -537,9 +675,12 @@ function getSessionReportHints(report, options) {
   return hints.length > 0 ? hints.slice(0, 3) : ['ok'];
 }
 
-// The text of a hint of getSessionReportHints(), translated, with the figures of the report that it names
-function getSessionReportHintText(hint, report) {
+// The text of a hint of getSessionReportHints(), translated, with the figures of the report that it names. The options
+// say in which surround audio quality the session streamed: the hint about the sound names Efficient only for a session
+// that didn't already stream in it.
+function getSessionReportHintText(hint, report, options) {
   const figures = report || {};
+  const opts = options || {};
   switch (hint) {
     case 'noVideo':
       return t('No video arrived from the PC in this session.');
@@ -548,11 +689,19 @@ function getSessionReportHintText(hint, report) {
     case 'tv':
       return t('The TV could not keep up with the video: lower the bitrate, the resolution or the frame rate.');
     case 'audio':
+      if (opts.surroundQuality === 'Efficient') {
+        return t('Decoding and playing the sound took the TV up to %1$s ms per second: if the sound stuttered, set Audio configuration to Stereo.',
+          formatReportNumber(figures.audioLoadPeakMsPerS || 0));
+      }
       return t('Decoding and playing the sound took the TV up to %1$s ms per second: if the sound stuttered, set Surround audio quality to Efficient, or Audio configuration to Stereo.',
         formatReportNumber(figures.audioLoadPeakMsPerS || 0));
     case 'host':
       return t('The PC took %1$s ms of the %2$s ms between two frames to encode a frame, so it may have skipped frames: use a faster encoder preset on the PC, or a lower resolution or frame rate.',
         formatReportNumber((figures.hostProcessingLatencyX10 || 0) / 10, 1), formatReportNumber(figures.fps > 0 ? 1000 / figures.fps : 0, 1));
+    case 'hostFrames':
+      return t('The PC often sent fewer frames than the stream asked for: in %1$s of %2$s half minutes fewer than %3$s per second, %4$s at the lowest. That is normal for a game or video limited to fewer frames. Otherwise the PC could not deliver more: lower the graphics settings of the game.',
+        formatReportNumber(figures.hostLowWindows || 0), formatReportNumber(figures.hostWindows || 0), formatHostLowRate(figures.fps || 0),
+        formatReportNumber((figures.hostFrameRateLowX100 || 0) / 100, 1));
     case 'keyframes':
       return t('The PC often sent whole frames again after a loss: turn on Reference frame invalidation in the Advanced Settings.');
     case 'fec':
@@ -583,10 +732,16 @@ function formatReportNumber(value, decimals) {
 //   Frames lost on the network: 3 of 45,240 (0.01%)
 //   Frames dropped by the TV: 0, video resets: 0, recovery keyframes: 0
 //   FEC repairs: 12 blocks, 0 failed
+//   Average frame receive time: 4.12 ms (25% of the frame time), highest second: 6.55 ms (39%)
 //   Host frame rate (best 30 s): 60.00 FPS, average host processing latency: 5.2 ms
+//   Host frame rate (lowest 30 s): 59.96 FPS, below 57 FPS in 0 of 24 half minutes
 //   WASM heap at the end: 61 of 128 MB (+1 MB in this session)
 //   Hint: No problems found in this session.
-// The host line is left out when the host sent neither figure (e.g. a session without video).
+// The host line is left out when the host sent neither figure (e.g. a session without video). The frame receive time
+// shows what the bitrate costs: the time from the first to the last packet of a frame, as the full statistics show it,
+// also as a share of the time between two frames of the stream; its line is left out without a frame, and its highest
+// second without a stats window that counts. The line of the lowest host frame rate is left out without a 30 s window
+// that counts for it (a session of less than a minute, a paused host, or a report of 2.3.0).
 function describeSessionReport(report, options) {
   if (!report) {
     return [t('Last session: %1$s', t('None yet'))];
@@ -604,15 +759,31 @@ function describeSessionReport(report, options) {
       formatReportNumber(report.videoResets), formatReportNumber(report.recoveryKeyframes)),
     t('FEC repairs: %1$s blocks, %2$s failed', formatReportNumber(report.fecRecoveredBlocks), formatReportNumber(report.fecFailures)),
   ];
+  if (report.receiveTimeX100 > 0 && report.fps > 0) {
+    // The share of the time between two frames of the stream (1000 ms / frame rate) that a time in hundredths of a
+    // millisecond fills, in percent
+    const share = (timeX100) => formatReportNumber(timeX100 / 100 * report.fps / 10);
+    lines.push(report.receiveTimePeakX100 > 0 ?
+      t('Average frame receive time: %1$s ms (%2$s% of the frame time), highest second: %3$s ms (%4$s%)',
+        formatReportNumber(report.receiveTimeX100 / 100, 2), share(report.receiveTimeX100),
+        formatReportNumber(report.receiveTimePeakX100 / 100, 2), share(report.receiveTimePeakX100)) :
+      t('Average frame receive time: %1$s ms (%2$s% of the frame time)',
+        formatReportNumber(report.receiveTimeX100 / 100, 2), share(report.receiveTimeX100)));
+  }
   // A figure the host didn't give (e.g. no 30 s window in a shorter stream) is Unknown, without its unit
   if (report.hostFrameRateX100 > 0 || report.hostProcessingLatencyX10 > 0) {
     lines.push(t('Host frame rate (best 30 s): %1$s, average host processing latency: %2$s',
       report.hostFrameRateX100 > 0 ? formatReportNumber(report.hostFrameRateX100 / 100, 2) + ' FPS' : t('Unknown'),
       report.hostProcessingLatencyX10 > 0 ? formatReportNumber(report.hostProcessingLatencyX10 / 10, 1) + ' ms' : t('Unknown')));
   }
+  if (report.hostWindows > 0) {
+    lines.push(t('Host frame rate (lowest 30 s): %1$s FPS, below %2$s FPS in %3$s of %4$s half minutes',
+      formatReportNumber(report.hostFrameRateLowX100 / 100, 2), formatHostLowRate(report.fps),
+      formatReportNumber(report.hostLowWindows), formatReportNumber(report.hostWindows)));
+  }
   lines.push(t('WASM heap at the end: %1$s of %2$s MB (+%3$s MB in this session)', report.heapTopMb, report.heapTotalMb, report.heapGrowthMb));
   getSessionReportHints(report, options).forEach(function(hint) {
-    lines.push(t('Hint: %1$s', getSessionReportHintText(hint, report)));
+    lines.push(t('Hint: %1$s', getSessionReportHintText(hint, report, options)));
   });
   return lines;
 }
@@ -761,5 +932,6 @@ function closeDiagnosticLog() {
   Navigation.switch();
 }
 
-// Keep the console lines of the app from now on
+// Keep the console lines of the app from now on, and the uncaught errors and unhandled promise rejections of the page
 DiagnosticLog.captureConsole(typeof console !== 'undefined' ? console : null);
+DiagnosticLog.captureUncaught(typeof window !== 'undefined' ? window : null);

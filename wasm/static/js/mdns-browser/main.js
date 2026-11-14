@@ -36,26 +36,28 @@ function findNvService(ipString) {
       return;
     }
     // Check if the host is already known by its server UID
-    if (hosts[returnedDiscoveredHost.serverUid] != null) {
+    // (only among the hosts themselves, getHostByUid() in index.js: hosts is a plain object)
+    var knownHost = getHostByUid(returnedDiscoveredHost.serverUid);
+    if (knownHost != null) {
       // Host already known — update its stored IP if it has changed
-      var existingAddress = hosts[returnedDiscoveredHost.serverUid].address;
+      var existingAddress = knownHost.address;
       // Also check if the base URL is out of sync or stale compared to the discovered host
-      var existingBaseUrl = hosts[returnedDiscoveredHost.serverUid]._baseUrlHttps;
+      var existingBaseUrl = knownHost._baseUrlHttps;
       if (existingAddress !== returnedDiscoveredHost.address || existingBaseUrl !== returnedDiscoveredHost._baseUrlHttps) {
         var isIpv4 = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(existingAddress);
         // Do not overwrite IPv6 or DNS addresses if they are currently online
-        if (!isIpv4 && hosts[returnedDiscoveredHost.serverUid].online && existingBaseUrl === returnedDiscoveredHost._baseUrlHttps) {
+        if (!isIpv4 && knownHost.online && existingBaseUrl === returnedDiscoveredHost._baseUrlHttps) {
           console.log('%c[main.js, findNvService]', 'color: gray;', 'Keeping existing non-IPv4 address since it is online:', existingAddress);
         } else {
           // Update the stored address to the newly discovered IPv4 address
           console.log('%c[main.js, findNvService]', 'color: gray;', 'Updating address for server UID:', returnedDiscoveredHost.serverUid, 'from', existingAddress, 'to', returnedDiscoveredHost.address);
-          hosts[returnedDiscoveredHost.serverUid].address = returnedDiscoveredHost.address;
-          hosts[returnedDiscoveredHost.serverUid].localAddress = returnedDiscoveredHost.localAddress;
-          hosts[returnedDiscoveredHost.serverUid]._baseUrlHttp = returnedDiscoveredHost._baseUrlHttp;
-          hosts[returnedDiscoveredHost.serverUid]._baseUrlHttps = returnedDiscoveredHost._baseUrlHttps;
+          knownHost.address = returnedDiscoveredHost.address;
+          knownHost.localAddress = returnedDiscoveredHost.localAddress;
+          knownHost._baseUrlHttp = returnedDiscoveredHost._baseUrlHttp;
+          knownHost._baseUrlHttps = returnedDiscoveredHost._baseUrlHttps;
           updateMacAddress(returnedDiscoveredHost);
-          if (typeof hosts[returnedDiscoveredHost.serverUid].updateExternalAddressIP4 === 'function') {
-            hosts[returnedDiscoveredHost.serverUid].updateExternalAddressIP4();
+          if (typeof knownHost.updateExternalAddressIP4 === 'function') {
+            knownHost.updateExternalAddressIP4();
           }
           saveHosts();
         }

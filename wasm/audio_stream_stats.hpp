@@ -4,10 +4,10 @@
 // the data rate of the Opus packets, the packets that neither arrived nor were repaired by the audio FEC, which
 // moonlight-common-c hands to the decoder as an empty packet for packet loss concealment, and the time that the audio
 // thread spends on decoding the packets and on handing them to the player. auddec.cpp counts them on the audio thread,
-// and FormatVideoStats() in wasmplayer.cpp prints them on the video decoder thread about once per second, so the
-// counters are atomics that are read without a lock (a line may mix values of two packets, which is fine for a
-// display). The header has no other dependencies, so the native tests can check it on its own
-// (tests/native/audio_stream_stats_test.cpp).
+// and FormatVideoStats() in wasmplayer.cpp prints them on the video decoder thread with each message of the full
+// statistics (about every 2 seconds, kFullStatsWindows in compact_stats.hpp), so the counters are atomics that are read
+// without a lock (a line may mix values of two packets, which is fine for a display). The header has no other
+// dependencies, so the native tests can check it on its own (tests/native/audio_stream_stats_test.cpp).
 
 #include <atomic>
 #include <cstddef>

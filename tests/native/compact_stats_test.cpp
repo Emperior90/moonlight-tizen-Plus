@@ -3,7 +3,8 @@
 // TogglePerformanceStats() of wasm/wasmplayer.cpp) steps Off, Compact, Full, Off, also when two threads press at once,
 // the level of the front end is clamped, and the figures become the message of tests/fixtures/compact-stats.tsv, which
 // tests/unit/compact-stats.test.js reads on the side of the front end. The message of the full statistics starts with the
-// point of their graph (tests/fixtures/stats-graph-points.tsv, read by tests/unit/stats-graph.test.js), then the text.
+// point of their graph (tests/fixtures/stats-graph-points.tsv, read by tests/unit/stats-graph.test.js), then the text,
+// and it is due at every second stats window only, the first time at the first window at the Full level.
 
 #include "compact_stats.hpp"
 #include "test_support.h"
@@ -223,6 +224,35 @@ static void TheFullStatisticsStartWithThePointOfTheirGraph() {
   CHECK_EQ(FormatFullStatsMessage(point, nullptr), std::string("StatMsg: {\"rtt\":7,\"lost\":1}\n"));
 }
 
+static void TheFullStatisticsAreDueAtEverySecondWindow() {
+  // The messages of the full statistics cover two stats windows each (tests/unit/stats-graph.test.js reads the number
+  // for the slots of the graph)
+  CHECK_EQ(kFullStatsWindows, 2);
+  // A stream at the Full level: the first window sends, then every second one
+  int windowsToSkip = 0;
+  std::vector<bool> due;
+  for (int window = 0; window < 7; window++) {
+    due.push_back(IsFullStatsWindowDue(kPerformanceStatsFull, windowsToSkip));
+  }
+  const std::vector<bool> everySecond = {true, false, true, false, true, false, true};
+  CHECK(due == everySecond);
+  // Never at the other levels, whose windows don't count: the first window back at the Full level sends again, also
+  // right after a message and right before the next one would have been due
+  for (int level : {kPerformanceStatsOff, kPerformanceStatsCompact}) {
+    for (int windowsBefore : {1, 2}) {
+      windowsToSkip = 0;
+      for (int window = 0; window < windowsBefore; window++) {
+        IsFullStatsWindowDue(kPerformanceStatsFull, windowsToSkip);
+      }
+      CHECK(!IsFullStatsWindowDue(level, windowsToSkip));
+      CHECK(!IsFullStatsWindowDue(level, windowsToSkip));
+      CHECK(IsFullStatsWindowDue(kPerformanceStatsFull, windowsToSkip));
+      CHECK(!IsFullStatsWindowDue(kPerformanceStatsFull, windowsToSkip));
+      CHECK(IsFullStatsWindowDue(kPerformanceStatsFull, windowsToSkip));
+    }
+  }
+}
+
 int main() {
   test_support::RunTest("the levels step Off, Compact, Full, Off", LevelsStepOffCompactFullOff);
   test_support::RunTest("the level of the front end is clamped", TheLevelOfTheFrontEndIsClamped);
@@ -230,5 +260,6 @@ int main() {
   test_support::RunTest("the message of the figures of the fixture", FixtureMessages);
   test_support::RunTest("unknown figures and an output that is too short", UnknownFiguresAndShortOutput);
   test_support::RunTest("the full statistics start with the point of their graph", TheFullStatisticsStartWithThePointOfTheirGraph);
+  test_support::RunTest("the full statistics are due at every second stats window", TheFullStatisticsAreDueAtEverySecondWindow);
   return test_support::Summary();
 }

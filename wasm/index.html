@@ -269,8 +269,8 @@
             </div>
             <div class="setting-option">
               <label data-i18n="Video bitrate">Video bitrate</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Increase for better image quality or decrease to improve performance on slower connections.">
-                - Increase for better image quality or decrease to improve performance on slower connections.
+              <span class="mdl-list__item-text-body" data-i18n="- A higher bitrate improves the picture less and less, but every frame takes longer to arrive: about 0.6 to 0.8 ms more latency per 10 Mbps, measured on one fast Wi-Fi connection. Lower it when frames are lost. It includes error correction and audio, so the statistics show about 9% less as received (with 5% error correction).">
+                - A higher bitrate improves the picture less and less, but every frame takes longer to arrive: about 0.6 to 0.8 ms more latency per 10 Mbps, measured on one fast Wi-Fi connection. Lower it when frames are lost. It includes error correction and audio, so the statistics show about 9% less as received (with 5% error correction).
               </span>
               <div id="videoBitrateMenu">
                 <button type="button" id="selectBitrate" class="mdl-button mdl-js-button">10 Mbps</button>
@@ -586,8 +586,8 @@
             </div>
             <div class="setting-option">
               <label data-i18n="Performance statistics">Performance statistics</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Compact shows one line with the main figures over the stream, Full every figure. While streaming, the YELLOW key and the Stream Menu switch between Off, Compact and Full.">
-                - Compact shows one line with the main figures over the stream, Full every figure. While streaming, the YELLOW key and the Stream Menu switch between Off, Compact and Full.
+              <span class="mdl-list__item-text-body" data-i18n="- Compact shows one line with the main figures over the stream, updated every second. Full shows every figure, updated every 2 seconds. While streaming, the YELLOW key and the Stream Menu switch between Off, Compact and Full.">
+                - Compact shows one line with the main figures over the stream, updated every second. Full shows every figure, updated every 2 seconds. While streaming, the YELLOW key and the Stream Menu switch between Off, Compact and Full.
               </span>
               <div id="performanceStatsMenu">
                 <button type="button" id="selectPerformanceStats" class="mdl-button mdl-js-button" data-value="0" data-i18n="Off">Off</button>
@@ -617,8 +617,8 @@
             <div class="settings-group" data-i18n="Experimental">Experimental</div>
             <div class="setting-option">
               <label data-i18n="Reference frame invalidation">Reference frame invalidation</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Recovers from packet loss without a full keyframe, which avoids traffic spikes and blurry frames. Disable it if artifacts remain after a frame drop.">
-                - Recovers from packet loss without a full keyframe, which avoids traffic spikes and blurry frames. Disable it if artifacts remain after a frame drop.
+              <span class="mdl-list__item-text-body" data-i18n="- Recovers from packet loss without a full keyframe, which avoids traffic spikes and blurry frames. Only works when the PC encodes with an NVIDIA graphics card; with others it changes nothing. Disable it if artifacts remain after a frame drop.">
+                - Recovers from packet loss without a full keyframe, which avoids traffic spikes and blurry frames. Only works when the PC encodes with an NVIDIA graphics card; with others it changes nothing. Disable it if artifacts remain after a frame drop.
               </span>
               <div id="refFrameInvalidationMenu">
                 <label id="refFrameInvalidationBtn" class="mdl-switch mdl-js-switch" for="refFrameInvalidationSwitch">

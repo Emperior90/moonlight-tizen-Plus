@@ -4,8 +4,10 @@
 // 'StatMsg: ' message carries on its first line (the messages of tests/fixtures/stats-graph-points.tsv, whose writing
 // side tests/native/compact_stats_test.cpp checks) and the text after it, a text without a point shown as it is; the
 // colour steps of the round-trip time for a local network (below 5, 5 to 9, 10 to 19, 20 ms or more) in colours of the
-// theme; one slot per second for the last 60 seconds with gaps for the seconds without figures; and the scale of the
-// bars. The browser tests (tests/browser/stats-graph-position.test.js) draw it in the page.
+// theme; one slot per message of the full statistics, which come about every 2 seconds (every second stats window of
+// the module, kFullStatsWindows in wasm/compact_stats.hpp), for the last 60 of them with gaps for the slots without
+// figures; the time that the graph covers, which its label names; and the scale of the bars. The browser tests
+// (tests/browser/stats-graph-position.test.js) draw it in the page.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -69,27 +71,31 @@ test('the colour steps of the RTT for a local network, in colours of the theme',
   assert.equal(messages.get('STATS_GRAPH_DROP_COLOR'), token('red'));
 });
 
-test('one slot per second for the last 60 seconds, with gaps for the seconds without figures', () => {
+test('one slot per message of the full statistics, about every 2 seconds, with gaps for the slots without figures', () => {
   const messages = loadMessages();
   const add = messages.get('addStatsGraphPoint');
   const points = () => plain(messages.get('statsGraphPoints'));
-  // About once per second, as the decoder thread sends them
+  // About every 2 seconds, as the decoder thread sends them: at every second stats window of a little more than a second
   for (let i = 0; i < 5; i++) {
-    add({ rtt: i + 1, lost: 0 }, 10000 + i * 1016);
+    add({ rtt: i + 1, lost: 0 }, 10000 + i * 2033);
   }
   assert.deepEqual(points().map((point) => point.rtt), [1, 2, 3, 4, 5]);
-  // No figures for 4 seconds (e.g. while the video track was closed): 3 empty slots before the next point
-  add({ rtt: 9, lost: 2 }, 10000 + 4 * 1016 + 4000);
-  assert.deepEqual(points().slice(-5), [{ rtt: 5, lost: 0 }, null, null, null, { rtt: 9, lost: 2 }]);
+  // A message that the main thread handles up to a second early or late leaves no gap and takes no second slot
+  add({ rtt: 6, lost: 0 }, 10000 + 5 * 2033 + 900);
+  add({ rtt: 7, lost: 0 }, 10000 + 6 * 2033);
+  assert.deepEqual(points().map((point) => point.rtt), [1, 2, 3, 4, 5, 6, 7]);
+  // No figures for 8 seconds (e.g. while the video track was closed): 3 empty slots before the next point
+  add({ rtt: 9, lost: 2 }, 10000 + 6 * 2033 + 8000);
+  assert.deepEqual(points().slice(-5), [{ rtt: 7, lost: 0 }, null, null, null, { rtt: 9, lost: 2 }]);
   // Only the last 60 slots stay
   for (let i = 0; i < 70; i++) {
-    add({ rtt: 100 + i, lost: 0 }, 20000 + i * 1000);
+    add({ rtt: 100 + i, lost: 0 }, 40000 + i * 2000);
   }
   assert.equal(points().length, 60);
   assert.equal(points()[0].rtt, 110);
   assert.equal(points()[59].rtt, 169);
-  // A minute and more without figures leaves only the new point after empty slots
-  add({ rtt: 3, lost: 0 }, 20000 + 69 * 1000 + 300000);
+  // Two minutes and more without figures leave only the new point after empty slots
+  add({ rtt: 3, lost: 0 }, 40000 + 69 * 2000 + 600000);
   assert.equal(points().length, 60);
   assert.deepEqual(points().slice(-2), [null, { rtt: 3, lost: 0 }]);
   assert.equal(points().filter((point) => point !== null).length, 1);
@@ -98,6 +104,28 @@ test('one slot per second for the last 60 seconds, with gaps for the seconds wit
   // The first point after a reset has no gap before it, however long ago the last one came
   add({ rtt: 4, lost: 0 }, 999999999);
   assert.deepEqual(points(), [{ rtt: 4, lost: 0 }]);
+});
+
+test('a slot of the graph is the time between two messages of the module, and the label of the graph names its 2 minutes', () => {
+  const messages = loadMessages();
+  // The module sends the full statistics at every kFullStatsWindows-th stats window, and a window ends with the first
+  // frame after 1000 ms
+  const windows = Number(/^constexpr int kFullStatsWindows = (\d+);$/m.exec(read('wasm/compact_stats.hpp'))[1]);
+  const windowMs = Number(/if \(m_ActiveWndVideoStats\.measurementStartTimestamp \+ (\d+) < nowMs\) \{/.exec(read('wasm/wasmplayer.cpp'))[1]);
+  assert.equal(windows, 2);
+  assert.equal(windowMs, 1000);
+  assert.equal(messages.get('STATS_GRAPH_SLOT_MS'), windows * windowMs);
+  assert.equal(messages.get('STATS_GRAPH_SLOTS'), 60);
+  assert.equal(messages.get('getStatsGraphSpanLabel')(), '2 min');
+  // The canvas says so next to the scale of the bars
+  const texts = [];
+  const context = {
+    setTransform() {}, clearRect() {}, fillRect() {},
+    measureText: (text) => ({ width: text.length * 8 }),
+    fillText: (text) => texts.push(text),
+  };
+  messages.get('drawStatsGraph')({ getContext: () => context, width: 0, height: 0 }, [{ rtt: 30, lost: 0 }]);
+  assert.deepEqual(texts, ['RTT', '0–50 ms \u00b7 2 min', 'Net drops']);
 });
 
 test('the bars reach up to 25 ms, or the next multiple of 25 ms above the highest RTT', () => {

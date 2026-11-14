@@ -428,6 +428,19 @@ String.prototype.toHex = function() {
   return hex;
 }
 
+// Whether a unique ID of a host is one that the app takes: 1 to 64 letters, digits, dashes and underscores, and not the
+// name of a property that every object has (constructor, toString, __proto__ and so on). GeForce Experience, Sunshine
+// and Apollo send hexadecimal digits, Sunshine and Apollo as a UUID with dashes.
+// The ID comes from the server info of any device that answers on the local network, unpaired and over plain HTTP,
+// and the app uses it as a key of plain objects (the hosts, their polls, the Smart Hub tiles) and in the element IDs of
+// the PC list. '__proto__' made the scan of the network write the addresses of the device into Object.prototype,
+// after which every loop over the hosts found them and the PC list was broken until the app restarted, 'constructor'
+// was taken for a known host, and an ID such as 'x,#main-content' matched other parts of the page as a selector.
+var SERVER_UID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+function isValidServerUid(serverUid) {
+  return typeof serverUid === 'string' && SERVER_UID_PATTERN.test(serverUid) && !(serverUid in Object.prototype);
+}
+
 function NvHTTP(address, clientUid, userEnteredAddress = '', macAddress) {
   // Constructor start
   this.hostname = address;
@@ -722,8 +735,19 @@ NvHTTP.prototype = {
       return false;
     }
 
-    if (this.serverUid != $root.find('uniqueid').text().trim() && this.serverUid != '') {
+    var serverUid = $root.find('uniqueid').text().trim();
+    if (this.serverUid != serverUid && this.serverUid != '') {
       // If we received a UUID that isn't the one we expected, fail
+      return false;
+    }
+
+    // A server info without a unique ID, or with one that the app doesn't take (isValidServerUid()), counts as no
+    // server info: nothing of it is kept, so the device is neither listed nor stored. Only the length of the ID and
+    // its start go to the log, as JSON, since the device chose the text.
+    if (!isValidServerUid(serverUid)) {
+      console.warn('%c[utils.js, _parseServerInfo]', 'color: gray;', 'Warning: Ignoring the server info of ' + this.address + ': ' +
+        (serverUid === '' ? 'it has no unique ID.' : 'its unique ID of ' + serverUid.length + ' characters, starting with ' +
+        JSON.stringify(serverUid.slice(0, 24)) + ', isn\'t one that the app takes (1 to 64 letters, digits, dashes and underscores, and no name of a property of every object).'));
       return false;
     }
 
@@ -738,7 +762,7 @@ NvHTTP.prototype = {
     }
 
     // UUID is mandatory to determine which machine is responding
-    this.serverUid = $root.find('uniqueid').text().trim();
+    this.serverUid = serverUid;
 
     // Retrieve the local IP address and MAC address of the host
     this.localAddress = $root.find('LocalIP').text().trim();

@@ -74,6 +74,9 @@ bool LiGetHdrMetadata(PSS_HDR_METADATA metadata) {
 uint32_t LiGetClientVideoResets(void) {
   return 0;
 }
+bool LiHostSupportsReferenceFrameInvalidation(void) {
+  return false;
+}
 uint32_t LiGetClientDroppedVideoFrames(void) {
   return 0;
 }

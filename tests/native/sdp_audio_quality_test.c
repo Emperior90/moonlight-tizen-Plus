@@ -48,7 +48,7 @@ bool PltSafeStrcpy(char* dest, size_t dest_size, const char* src) {
   strcpy(dest, src);
   return true;
 }
-bool isReferenceFrameInvalidationSupportedByDecoder(void) {
+bool isReferenceFrameInvalidationEnabled(void) {
   return false;
 }
 void addrToUrlSafeString(struct sockaddr_storage* addr, char* string, size_t stringLength) {

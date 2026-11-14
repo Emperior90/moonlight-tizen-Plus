@@ -64,7 +64,7 @@ test('the key names stay as printed on the remote and the gamepad', () => {
     'App-Optionen: CH+ oder Play/Pause auf der Fernbedienung, Select am Controller');
   // The colour keys in sentences
   assert.match(german['Stop the current stream first (RED button).'], /rote Taste/);
-  assert.match(german['- Compact shows one line with the main figures over the stream, Full every figure. While streaming, the YELLOW key and the Stream Menu switch between Off, Compact and Full.'], /gelbe Taste/);
+  assert.match(german['- Compact shows one line with the main figures over the stream, updated every second. Full shows every figure, updated every 2 seconds. While streaming, the YELLOW key and the Stream Menu switch between Off, Compact and Full.'], /gelbe Taste/);
 });
 
 test('texts that name a setting, a value or a menu entry use its German name', () => {
@@ -76,9 +76,9 @@ test('texts that name a setting, a value or a menu entry use its German name', (
     ['The PC often sent whole frames again after a loss: turn on Reference frame invalidation in the Advanced Settings.', 'Reference frame invalidation'],
     ['%1$s is hidden. Choose "Show hidden apps" in the menu of an app to see it again.', 'Show hidden apps (%1$s)'],
     ['- Choose Auto to match your TV locale, or manually select your desired language from the list.', 'Auto'],
-    ['- Compact shows one line with the main figures over the stream, Full every figure. While streaming, the YELLOW key and the Stream Menu switch between Off, Compact and Full.', 'Compact'],
-    ['- Compact shows one line with the main figures over the stream, Full every figure. While streaming, the YELLOW key and the Stream Menu switch between Off, Compact and Full.', 'Full'],
-    ['- Compact shows one line with the main figures over the stream, Full every figure. While streaming, the YELLOW key and the Stream Menu switch between Off, Compact and Full.', 'Stream Menu'],
+    ['- Compact shows one line with the main figures over the stream, updated every second. Full shows every figure, updated every 2 seconds. While streaming, the YELLOW key and the Stream Menu switch between Off, Compact and Full.', 'Compact'],
+    ['- Compact shows one line with the main figures over the stream, updated every second. Full shows every figure, updated every 2 seconds. While streaming, the YELLOW key and the Stream Menu switch between Off, Compact and Full.', 'Full'],
+    ['- Compact shows one line with the main figures over the stream, updated every second. Full shows every figure, updated every 2 seconds. While streaming, the YELLOW key and the Stream Menu switch between Off, Compact and Full.', 'Stream Menu'],
     ['— Step the performance statistics overlay through Off, Compact and Full.', 'Off'],
     ['For more information about this incompatibility and the ForceGM variant, see <b>ForceGM variant and game mode</b> in the guide of Moonlight Plus, which the Support button at the top of the screen links to.', 'Support'],
   ];

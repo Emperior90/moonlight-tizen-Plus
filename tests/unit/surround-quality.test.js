@@ -63,9 +63,10 @@ test('startStream() takes the surround audio quality last, and both start reques
   assert.ok(start.indexOf('m_AudioConfig = m_StreamConfig.audioConfiguration;') < start.indexOf('Efficient (normal quality, 10 ms packets)'));
   assert.match(main, /emscripten::function\("startStream", &startStream\);/);
 
-  // The two start requests of startGame() (resume and launch) send one argument per parameter, the setting last
+  // The two start requests of startGame() (resume and launch) send one argument per parameter, the setting last (each
+  // ends with the handler of a call that the module didn't take, tests/browser/start-request-failure.test.js)
   const index = read('wasm/platform/index.js');
-  const requests = [...index.matchAll(/sendMessage\('startRequest', \[([\s\S]*?)\]\);/g)].map((match) =>
+  const requests = [...index.matchAll(/sendMessage\('startRequest', \[([\s\S]*?)\]\)\.catch\(/g)].map((match) =>
     match[1].split(',').map((argument) => argument.trim()).filter((argument) => argument !== ''));
   assert.equal(requests.length, 2);
   requests.forEach((request) => {

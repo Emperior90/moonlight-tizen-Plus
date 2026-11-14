@@ -36,8 +36,9 @@ const SETTINGS_SCHEMA_KEY = 'settingsSchema';
 
 // The default of 'Surround audio quality' since settings schema 5, for an install that stored none: Efficient, the
 // normal quality of the host in 10 ms packets, which is 256 instead of 1536 kbps for 5.1 and 450 instead of 2048 kbps
-// for 7.1 with Sunshine and about half the decoding time (wasm/audio_capabilities.hpp). 2.3.0, which introduced the
-// setting, had High, the quality of the versions before it. Stereo never changes by the setting.
+// for 7.1 with Sunshine, and took about half the decoding time in a benchmark on a PC (wasm/audio_capabilities.hpp).
+// 2.3.0, which introduced the setting, had High, the quality of the versions before it. Stereo never changes by the
+// setting.
 const DEFAULT_SURROUND_QUALITY = 'Efficient';
 // Key of the notice about that default, stored as true for an existing install that is still to be told
 const SURROUND_QUALITY_NOTICE_KEY = 'surroundQualityNotice';
@@ -616,8 +617,9 @@ function recommendedBitrate(res, frameRate, connectionType, caps) {
   }
 }
 
-// Return the bitrate in Mbps that the optimal streaming settings dialog suggests as the upper end for raising the
-// bitrate over Wi-Fi, when the performance statistics show no dropped frames: twice the standard preset of the
+// Return the bitrate in Mbps that the optimal streaming settings dialog names as the upper end for raising the
+// bitrate over Wi-Fi, which it advises only against a picture that looks blocky in fast scenes, since more bitrate
+// costs latency: twice the standard preset of the
 // resolution and frame rate, but at most the highest bitrate of the slider and the bitrate where the warning appears
 // (getBitrateWarningMbps()), e.g. 150 Mbps for 4K at 60 FPS on the tested model. It is only advice for a good Wi-Fi
 // link: the optimal settings apply the recommended bitrate (recommendedBitrate()). When the recommended bitrate already

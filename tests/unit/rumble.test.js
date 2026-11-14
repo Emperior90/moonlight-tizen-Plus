@@ -4,7 +4,9 @@
 // message 'controllerRumble: <controller>,<weak>,<strong>', played by Rumble in wasm/platform/gamepad.js), on a
 // simulated vibration actuator and a simulated clock. Chromium ends a vibration effect after 5 seconds at most and the
 // host doesn't send an unchanged rumble again, so a rumble that stays on is played again every 4 seconds until the host
-// sends 0, the stream ends or the gamepad disconnects.
+// sends 0, the stream ends or the gamepad disconnects. A game changes the strength of a rumble up to 60 times per
+// second, so the console gets a line when a rumble starts and when it stops, and a warning about a gamepad that can't
+// play it once per rumble, not with every message (logFrequentMessages of messages.js brings every line back).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -125,6 +127,8 @@ function loadWithGamepad(options) {
     handleMessage: platform.get('handleMessage'),
     Rumble: platform.get('Rumble'),
     warnings: () => platform.consoleMessages.filter((message) => message.level === 'warn').map((message) => message.text),
+    // The console lines without their '%c' prefix and its style
+    lines: () => platform.consoleMessages.map((message) => message.text.replace(/^%c\[[^\]]+\] color: \w+; /, '')),
   };
 }
 
@@ -286,12 +290,20 @@ test('a controller whose actuator refuses the effect gets one notice and leaves 
     rumble.timers.advance(12000);
     assert.equal(attempts, 1);
     assert.equal(rumble.timers.pending(), 0);
-    // Later rumbles try again, but the notice appears only once
+    // Later changes of the rumble try again, but the notice appears only once, and the warning once per rumble: not
+    // again until the host stopped it
     rumble.handleMessage('controllerRumble: 0,1,1');
     await flushPromises();
     assert.equal(attempts, 2);
     assert.deepEqual(rumble.notices, [NOTICE]);
-    assert.equal(rumble.warnings().filter((text) => text.indexOf('Gamepad 0 can\'t rumble: Error: NotSupportedError') >= 0).length, 2);
+    const refusals = () => rumble.warnings().filter((text) => text.indexOf('Gamepad 0 can\'t rumble: Error: NotSupportedError') >= 0).length;
+    assert.equal(refusals(), 1);
+    rumble.handleMessage('controllerRumble: 0,0,0');
+    rumble.handleMessage('controllerRumble: 0,0.5,0.5');
+    await flushPromises();
+    assert.equal(attempts, 3);
+    assert.equal(refusals(), 2);
+    assert.deepEqual(rumble.notices, [NOTICE]);
 
     // An actuator that throws instead of rejecting is caught as well, and stopping its rumble too
     const throwing = loadWithGamepad({
@@ -314,16 +326,108 @@ test('a controller whose actuator refuses the effect gets one notice and leaves 
 
 test('a gamepad without a vibration actuator gets one notice and a warning in the log', () => {
   const rumble = loadWithGamepad({ hasActuator: false });
+  const count = (text) => rumble.warnings().filter((warning) => warning.indexOf(text) >= 0).length;
+  // One warning for a rumble, however often the game changes its strength
   rumble.handleMessage('controllerRumble: 0,0.5,0.25');
-  rumble.handleMessage('controllerRumble: 0,0.75,0.25');
+  for (let i = 0; i < 60; i++) {
+    rumble.handleMessage('controllerRumble: 0,' + (0.3 + i / 100) + ',0.25');
+  }
+  assert.equal(count('Gamepad 0 can\'t rumble: it has no vibration actuator'), 1);
   rumble.handleMessage('controllerRumble: 0,0,0');
   assert.deepEqual(rumble.notices, [NOTICE]);
-  assert.equal(rumble.warnings().filter((text) => text.indexOf('Gamepad 0 can\'t rumble: it has no vibration actuator') >= 0).length, 2);
   assert.equal(rumble.timers.pending(), 0);
-  // A rumble for an empty slot only logs
+  // The next rumble warns again
+  rumble.handleMessage('controllerRumble: 0,0.75,0.25');
+  assert.equal(count('Gamepad 0 can\'t rumble: it has no vibration actuator'), 2);
+  assert.deepEqual(rumble.notices, [NOTICE]);
+  // A rumble for an empty slot only logs, once per rumble as well
   rumble.handleMessage('controllerRumble: 2,0.5,0.5');
+  rumble.handleMessage('controllerRumble: 2,0.6,0.5');
   assert.equal(rumble.notices.length, 1);
-  assert.ok(rumble.warnings().some((text) => text.indexOf('No gamepad 2 to play the rumble on.') >= 0));
+  assert.equal(count('No gamepad 2 to play the rumble on.'), 1);
+  rumble.handleMessage('controllerRumble: 2,0,0');
+  rumble.handleMessage('controllerRumble: 2,0.5,0.5');
+  assert.equal(count('No gamepad 2 to play the rumble on.'), 2);
+  // The end of the stream ends the rumbles: the first rumble of the next stream warns again
+  rumble.handleMessage('streamTerminated: 0');
+  rumble.platform.context.isInGame = true;
+  rumble.platform.context.wasmSessionStarted = true;
+  rumble.handleMessage('controllerRumble: 2,0.5,0.5');
+  rumble.handleMessage('controllerRumble: 0,0.5,0.5');
+  assert.equal(count('No gamepad 2 to play the rumble on.'), 3);
+  assert.equal(count('Gamepad 0 can\'t rumble: it has no vibration actuator'), 3);
+});
+
+test('a rumble writes a console line when it starts and when it stops, not with each change of its strength', () => {
+  const rumble = loadWithGamepad();
+  // A game that changes the strength of the rumble 60 times within a second, then stops it
+  rumble.handleMessage('controllerRumble: 0,0.5,0.25');
+  for (let i = 1; i <= 60; i++) {
+    rumble.handleMessage('controllerRumble: 0,' + (0.5 - i / 200) + ',0.25');
+  }
+  rumble.handleMessage('controllerRumble: 0,0,0');
+  // The host repeats the 0
+  rumble.handleMessage('controllerRumble: 0,0,0');
+  assert.deepEqual(rumble.lines(), [
+    'Playing rumble on gamepad 0 with weak magnitude 0.5 and strong magnitude 0.25 (the changes of its strength are not logged until it stops)...',
+    'The host stopped the rumble on gamepad 0.',
+  ]);
+  // Every change still reached the actuator
+  assert.equal(playTimes(rumble.effects).length, 61);
+  // The next rumble is logged again, and each gamepad on its own
+  rumble.handleMessage('controllerRumble: 0,1,1');
+  rumble.handleMessage('controllerRumble: 1,0,0.5');
+  rumble.handleMessage('controllerRumble: 0,0.9,1');
+  assert.deepEqual(rumble.lines().slice(2).filter((line) => line.indexOf('Playing rumble') === 0), [
+    'Playing rumble on gamepad 0 with weak magnitude 1 and strong magnitude 1 (the changes of its strength are not logged until it stops)...',
+    'Playing rumble on gamepad 1 with weak magnitude 0 and strong magnitude 0.5 (the changes of its strength are not logged until it stops)...',
+  ]);
+  // A rumble that the end of the stream cut off doesn't count as on in the next stream
+  rumble.handleMessage('streamTerminated: 0');
+  rumble.platform.context.isInGame = true;
+  rumble.platform.context.wasmSessionStarted = true;
+  const before = rumble.lines().length;
+  rumble.handleMessage('controllerRumble: 0,0.5,0.5');
+  assert.deepEqual(rumble.lines().slice(before), [
+    'Playing rumble on gamepad 0 with weak magnitude 0.5 and strong magnitude 0.5 (the changes of its strength are not logged until it stops)...',
+  ]);
+});
+
+test('the rumbles that arrive after the end of a stream are logged once, and the debug switch logs every message again', () => {
+  const rumble = loadWithGamepad();
+  rumble.handleMessage('streamTerminated: 0');
+  const before = rumble.lines().length;
+  for (let i = 0; i < 20; i++) {
+    rumble.handleMessage('controllerRumble: 0,0.6,0.6');
+  }
+  assert.deepEqual(rumble.lines().slice(before), ['Ignoring the rumble for gamepad 0 that arrived after the end of the stream.']);
+  // Once more after the end of the next stream
+  rumble.platform.context.isInGame = true;
+  rumble.platform.context.wasmSessionStarted = true;
+  rumble.handleMessage('streamTerminated: 0');
+  rumble.handleMessage('controllerRumble: 0,0.6,0.6');
+  rumble.handleMessage('controllerRumble: 0,0.6,0.6');
+  assert.equal(rumble.lines().filter((line) => line.indexOf('Ignoring the rumble') === 0).length, 2);
+
+  // logFrequentMessages, set in the console of a debugger: the line of every message and of every change
+  const debugging = loadWithGamepad();
+  debugging.platform.run('logFrequentMessages = true;');
+  debugging.handleMessage('controllerRumble: 0,0.5,0.25');
+  debugging.handleMessage('controllerRumble: 0,0.75,0.25');
+  debugging.handleMessage('controllerRumble: 0,0,0');
+  assert.deepEqual(debugging.lines(), [
+    'Message data:  controllerRumble: 0,0.5,0.25',
+    'Playing rumble on gamepad 0 with weak magnitude 0.5 and strong magnitude 0.25...',
+    'Message data:  controllerRumble: 0,0.75,0.25',
+    'Playing rumble on gamepad 0 with weak magnitude 0.75 and strong magnitude 0.25...',
+    'Message data:  controllerRumble: 0,0,0',
+    'The host stopped the rumble on gamepad 0.',
+  ]);
+  debugging.handleMessage('streamTerminated: 0');
+  const late = debugging.lines().length;
+  debugging.handleMessage('controllerRumble: 0,0.6,0.6');
+  debugging.handleMessage('controllerRumble: 0,0.6,0.6');
+  assert.equal(debugging.lines().slice(late).filter((line) => line.indexOf('Ignoring the rumble') === 0).length, 2);
 });
 
 test('a gamepad that connects with the rumble setting on plays a short test rumble, or gets the notice once', async () => {

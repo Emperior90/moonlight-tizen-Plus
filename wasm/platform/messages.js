@@ -142,8 +142,10 @@ function replaceKnownStatsLabels(text) {
     .replace(/Incoming frame rate from network:/g, t('Incoming frame rate from network:'))
     .replace(/Decoding frame rate:/g, t('Decoding frame rate:'))
     .replace(/Rendering frame rate:/g, t('Rendering frame rate:'))
-    .replace(/Bitrate: ([\d.]+) Mbps received, ([\d.]+) Mbps configured/g, function(match, received, configured) {
-      return t('Bitrate: %1$s Mbps received, %2$s Mbps configured', received, configured);
+    // The received figure counts the video alone, while the configured bitrate also has to hold the error correction and
+    // the audio of the host (FormatVideoStats() in wasm/wasmplayer.cpp), so the line says both
+    .replace(/Bitrate: ([\d.]+) Mbps video received, ([\d.]+) Mbps configured \(with error correction and audio\)/g, function(match, received, configured) {
+      return t('Bitrate: %1$s Mbps video received, %2$s Mbps configured (with error correction and audio)', received, configured);
     })
     .replace(/Host frame rate \(30 s\):/g, t('Host frame rate (30 s):'))
     .replace(/Host processing latency min\/max\/average:/g, t('Host processing latency min/max/average:'))
@@ -152,6 +154,11 @@ function replaceKnownStatsLabels(text) {
     .replace(/\bvariance:/g, t('variance:'))
     .replace(/\bN\/A\b/g, t('N/A'))
     .replace(/Average frame receive time:/g, t('Average frame receive time:'))
+    // The share of the time between two frames of the stream that the frame receive time fills, which is what the
+    // bitrate costs
+    .replace(/\((\d+)% of the frame time\)/g, function(match, share) {
+      return t('(%1$s% of the frame time)', share);
+    })
     .replace(/Average frame wait time:/g, t('Average frame wait time:'))
     .replace(/Average frame pacing delay:/g, t('Average frame pacing delay:'))
     .replace(/Average rendering time:/g, t('Average rendering time:'))
@@ -257,13 +264,16 @@ function formatCompactStatsLine(data) {
   return parts.join(' \u00b7 ');
 }
 
-// The graph of the full statistics: one bar per second for the round-trip time and a red mark above it for a second with
-// frames lost on the network, over the last 60 seconds, drawn on a small canvas above the text each time the text comes
-// (about once per second). The points come with the text ('StatMsg: ', FormatFullStatsMessage() in
-// wasm/compact_stats.hpp) instead of a message of their own each second, as in the graph of the fork of fidoboy
-// (moonlight-tizen-ac3, GPL-3.0, 262477c and 5bc0c57), whose colour steps of the RTT for a local network (below 5 ms, 5 to
-// 9 ms, 10 to 19 ms, 20 ms or more) come from its 441d5c0.
-const STATS_GRAPH_SECONDS = 60;
+// The graph of the full statistics: one bar per message of the full statistics for the round-trip time and a red mark
+// above it when frames were lost on the network in the 2 seconds of that message, over the last 60 messages (2 minutes),
+// drawn on a small canvas above the text each time the text comes. The points come with the text ('StatMsg: ',
+// FormatFullStatsMessage() in wasm/compact_stats.hpp) instead of a message of their own, as in the graph of the fork of
+// fidoboy (moonlight-tizen-ac3, GPL-3.0, 262477c and 5bc0c57), whose colour steps of the RTT for a local network (below
+// 5 ms, 5 to 9 ms, 10 to 19 ms, 20 ms or more) come from its 441d5c0.
+const STATS_GRAPH_SLOTS = 60;
+// The time of one slot: the module sends the full statistics at every second stats window of about a second
+// (kFullStatsWindows in wasm/compact_stats.hpp), so that the TV draws the overlay half as often as with each window
+const STATS_GRAPH_SLOT_MS = 2000;
 const STATS_GRAPH_RTT_STEPS_MS = [5, 10, 20];
 // Mint, amber, orange and red of the theme for the steps, grey for an RTT that isn't known
 const STATS_GRAPH_RTT_COLORS = ['#2EE6A0', '#FFC547', '#FF8A4C', '#FF5C7A'];
@@ -274,10 +284,10 @@ const STATS_GRAPH_WIDTH = 480;
 const STATS_GRAPH_HEIGHT = 72;
 const STATS_GRAPH_DROP_TOP = 24;
 const STATS_GRAPH_BARS_TOP = 36;
-// The points of the graph, oldest first: { rtt, lost } (rtt null while unknown), or null for a second without figures,
+// The points of the graph, oldest first: { rtt, lost } (rtt null while unknown), or null for a slot without figures,
 // e.g. while the video track was closed. The start of a stream and a change of the level empty it.
 var statsGraphPoints = [];
-// When the last point came, in ms, to find the seconds without figures before the next one
+// When the last point came, in ms, to find the slots without figures before the next one
 var statsGraphLastPointMs = 0;
 
 // Split the text of a 'StatMsg: ' message into the point of the graph on its first line and the text of the full
@@ -312,19 +322,19 @@ function getStatsGraphRttStep(rtt) {
   return step;
 }
 
-// Add a point to the graph at the time nowMs. A second or more without figures before it (the decoder thread sends
-// them only while frames arrive) shows as gaps, and only the last 60 seconds stay.
+// Add a point to the graph at the time nowMs. The time of a slot or more without figures before it (the decoder thread
+// sends them only while frames arrive) shows as gaps, and only the last 60 slots stay.
 function addStatsGraphPoint(point, nowMs) {
   if (statsGraphPoints.length > 0 && statsGraphLastPointMs > 0) {
-    const missed = Math.min(STATS_GRAPH_SECONDS, Math.round((nowMs - statsGraphLastPointMs) / 1000) - 1);
+    const missed = Math.min(STATS_GRAPH_SLOTS, Math.round((nowMs - statsGraphLastPointMs) / STATS_GRAPH_SLOT_MS) - 1);
     for (let i = 0; i < missed; i++) {
       statsGraphPoints.push(null);
     }
   }
   statsGraphPoints.push(point);
   statsGraphLastPointMs = nowMs;
-  if (statsGraphPoints.length > STATS_GRAPH_SECONDS) {
-    statsGraphPoints.splice(0, statsGraphPoints.length - STATS_GRAPH_SECONDS);
+  if (statsGraphPoints.length > STATS_GRAPH_SLOTS) {
+    statsGraphPoints.splice(0, statsGraphPoints.length - STATS_GRAPH_SLOTS);
   }
 }
 
@@ -345,8 +355,13 @@ function getStatsGraphScaleMs(points) {
   return Math.max(25, Math.ceil(highest / 25) * 25);
 }
 
-// Draw the points on the canvas of the graph: the label 'RTT' with the scale of the bars on the left and the legend of
-// the drop marks on the right, then one slot per second with the newest on the right
+// The time that the graph covers as its label says it, e.g. '2 min', so that nobody takes a bar for a second
+function getStatsGraphSpanLabel() {
+  return Math.round(STATS_GRAPH_SLOTS * STATS_GRAPH_SLOT_MS / 60000) + ' min';
+}
+
+// Draw the points on the canvas of the graph: the label 'RTT' with the scale of the bars and the time that the graph
+// covers on the left and the legend of the drop marks on the right, then one slot per point with the newest on the right
 function drawStatsGraph(canvas, points) {
   const context = canvas.getContext ? canvas.getContext('2d') : null;
   if (!context) {
@@ -368,7 +383,7 @@ function drawStatsGraph(canvas, points) {
   context.textAlign = 'left';
   context.fillText('RTT', 0, 0);
   context.fillStyle = STATS_GRAPH_UNKNOWN_COLOR;
-  context.fillText('0–' + scaleMs + ' ms', context.measureText('RTT').width + 10, 0);
+  context.fillText('0–' + scaleMs + ' ms \u00b7 ' + getStatsGraphSpanLabel(), context.measureText('RTT').width + 10, 0);
   context.textAlign = 'right';
   context.fillText(t('Net drops'), STATS_GRAPH_WIDTH, 0);
   context.fillStyle = STATS_GRAPH_DROP_COLOR;
@@ -377,8 +392,8 @@ function drawStatsGraph(canvas, points) {
   context.fillStyle = 'rgba(255, 255, 255, 0.16)';
   context.fillRect(0, STATS_GRAPH_BARS_TOP, STATS_GRAPH_WIDTH, 1);
   context.fillRect(0, STATS_GRAPH_HEIGHT - 1, STATS_GRAPH_WIDTH, 1);
-  const slotWidth = STATS_GRAPH_WIDTH / STATS_GRAPH_SECONDS;
-  const firstSlot = STATS_GRAPH_SECONDS - points.length;
+  const slotWidth = STATS_GRAPH_WIDTH / STATS_GRAPH_SLOTS;
+  const firstSlot = STATS_GRAPH_SLOTS - points.length;
   points.forEach((point, index) => {
     if (!point) {
       return;
@@ -795,6 +810,11 @@ function leaveStreamView(host, quitApp) {
 // of wasm/video_track_rejection.hpp), for the message of the stream termination with error -200 that follows it, or
 // null. The start of a stream clears it (startGame() in index.js).
 var rejectedVideoTrack = null;
+// The codec that the host provided for the current stream instead of the selected one, 'HEVC' or 'H264' (the
+// 'CodecFallbackMsg: ' message of ReportVideoFormatFallback() in wasm/wasmplayer.cpp, which comes before the video track
+// is added), or '' for a stream in the selected codec. The message of a rejected video track must not tell to choose a
+// codec that the host couldn't provide. The start of a stream clears it (startGame() in index.js).
+var streamCodecFallback = '';
 // The ports of the host PC that the cause of the next stream termination points to (the 'TerminationPortsMsg: ' of
 // ClConnectionTerminated() in wasm/connectionlistener.cpp), e.g. 'UDP 47998, UDP 48000' when no video arrived. The
 // start of a stream clears it (startGame() in index.js).
@@ -814,12 +834,19 @@ function parseVideoTrackRejection(text) {
 // instead of AV1, or instead of H.264, which Samsung TVs decode up to 1080p at 60 FPS (High Level 4.2) and above that
 // only where they decode level 5.1, which wasmplayer.cpp offers first, so with H.264 also a resolution up to 1080p, or a
 // lower frame rate for a stream that is already within 1080p, and otherwise a lower resolution or frame rate, and HDR
-// off for a 10-bit stream
-function showVideoTrackRejection(rejection) {
+// off for a 10-bit stream. An H.264 stream that the host sent because it couldn't encode the selected codec
+// (codecFallback 'H264': HEVC was selected, or AV1 with HEVC as its fallback) is not told to choose HEVC, which the
+// host didn't provide: only the resolution or the frame rate is left to change on the TV.
+function showVideoTrackRejection(rejection, codecFallback) {
   const codec = rejection.codec;
-  console.warn('%c[messages.js, showVideoTrackRejection]', 'color: gray;', 'Warning: The TV rejected the video track: ' + codec + ' at ' + rejection.width + 'x' + rejection.height + '@' + rejection.fps);
+  console.warn('%c[messages.js, showVideoTrackRejection]', 'color: gray;', 'Warning: The TV rejected the video track: ' + codec + ' at ' + rejection.width + 'x' + rejection.height + '@' + rejection.fps +
+    (codecFallback ? ' (the host provided ' + codecFallback + ' instead of the selected codec)' : ''));
   if (codec.indexOf('AV1') === 0) {
     snackbarLogLong('The TV rejected %1$s at %2$sx%3$s@%4$s FPS. Choose HEVC as the video codec.', codec, rejection.width, rejection.height, rejection.fps);
+  } else if (codec === 'H.264' && codecFallback === 'H264' && (rejection.width > 1920 || rejection.height > 1080)) {
+    snackbarLogLong('The PC can\'t encode the selected codec, so it sent %1$s, which the TV rejected at %2$sx%3$s@%4$s FPS. Choose a resolution up to 1080p.', codec, rejection.width, rejection.height, rejection.fps);
+  } else if (codec === 'H.264' && codecFallback === 'H264') {
+    snackbarLogLong('The PC can\'t encode the selected codec, so it sent %1$s, which the TV rejected at %2$sx%3$s@%4$s FPS. Lower the frame rate.', codec, rejection.width, rejection.height, rejection.fps);
   } else if (codec === 'H.264' && (rejection.width > 1920 || rejection.height > 1080)) {
     snackbarLogLong('The TV rejected %1$s at %2$sx%3$s@%4$s FPS. Choose HEVC as the video codec, or a resolution up to 1080p.', codec, rejection.width, rejection.height, rejection.fps);
   } else if (codec === 'H.264') {
@@ -844,8 +871,9 @@ function handleMessage(msg) {
   });
 }
 
-// Tell the user why a stream ended, unless it ended normally
-function showStreamTerminationMessage(errorCode, videoTrackRejection, blockedPorts) {
+// Tell the user why a stream ended, unless it ended normally. codecFallback is the codec that the host provided
+// instead of the selected one, if any (streamCodecFallback).
+function showStreamTerminationMessage(errorCode, videoTrackRejection, blockedPorts, codecFallback) {
   switch (errorCode) {
     case 0: // ML_ERROR_GRACEFUL_TERMINATION
       break;
@@ -867,7 +895,7 @@ function showStreamTerminationMessage(errorCode, videoTrackRejection, blockedPor
     case -200: // ERROR_VIDEO_SETUP_FAILED
       if (videoTrackRejection) {
         // Name the video format that the TV rejected and what to change
-        showVideoTrackRejection(videoTrackRejection);
+        showVideoTrackRejection(videoTrackRejection, codecFallback);
       } else {
         snackbarLogLong('The TV was unable to start the streaming with the selected video settings. Try reducing the resolution or frame rate and consider changing the codec.');
       }
@@ -906,17 +934,52 @@ function showHeldStartMessage() {
 // sound and handing it to the player took more than its limit per second of audio over 10 seconds (CheckAudioLoad() in
 // wasm/auddec.cpp, whose log line has the figures), whatever the level of the performance statistics. A reconnect of the
 // Stream Menu stays in the session, so the message doesn't come again after it. A stereo stream gets none, since it has
-// no lighter sound to change to, and a message that arrives after the end of the stream is ignored.
+// no lighter sound to change to, and a message that arrives after the end of the stream is ignored. A stream that
+// already runs in the quality Efficient (streamSurroundQuality in index.js) is told the one way that is left, stereo.
 function showAudioOverloadMessage(channels) {
   if (isInGame !== true || !wasmSessionStarted || audioOverloadWarning || !(channels > 2)) {
     return;
   }
   audioOverloadWarning = true;
-  snackbarLogLong('The sound is keeping the TV busy. If it stutters, set Surround audio quality to Efficient, or Audio configuration to Stereo.');
+  if (streamSurroundQuality === 'Efficient') {
+    snackbarLogLong('The sound is keeping the TV busy. If it stutters, set Audio configuration to Stereo.');
+  } else {
+    snackbarLogLong('The sound is keeping the TV busy. If it stutters, set Surround audio quality to Efficient, or Audio configuration to Stereo.');
+  }
+}
+
+// The messages that the module sends again and again during a stream: the statistics every one or two seconds, and the
+// rumble of a game with each change of its strength, up to 60 times per second. They get no console line of their own,
+// since writing it costs more than handling the message: the console hook of the diagnostic log makes a text of each
+// line (diagnostics.js), and a debugger that is attached receives it. The log never kept these lines.
+const FREQUENT_MESSAGE = /^(?:StatMsg|StatCompactMsg|controllerRumble): /;
+// For a debugging session: set to true in the console of the debugger, every message of the module gets its console
+// line again, and so does every change of a rumble
+var logFrequentMessages = false;
+// The gamepads whose rumble the host has on, by index, to log a rumble when it starts and when it stops instead of
+// with each change of its strength, and whether the rumble that arrived after the end of the stream was logged. The end
+// of a stream resets both.
+var rumbleLoggedOn = {};
+var lateRumbleLogged = false;
+
+// Log the rumble that the host sent for a gamepad: the first strength above 0 and the 0 that ends it. The changes in
+// between are left out (see FREQUENT_MESSAGE), unless logFrequentMessages asks for them.
+function logRumble(gamepadIdx, weakMagnitude, strongMagnitude) {
+  const isOn = weakMagnitude > 0 || strongMagnitude > 0;
+  const wasOn = rumbleLoggedOn[gamepadIdx] === true;
+  rumbleLoggedOn[gamepadIdx] = isOn;
+  if (isOn && (!wasOn || logFrequentMessages)) {
+    console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Playing rumble on gamepad ' + gamepadIdx + ' with weak magnitude ' + weakMagnitude + ' and strong magnitude ' + strongMagnitude +
+      (logFrequentMessages ? '...' : ' (the changes of its strength are not logged until it stops)...'));
+  } else if (!isOn && (wasOn || logFrequentMessages)) {
+    console.log('%c[messages.js, handleMessage]', 'color: gray;', 'The host stopped the rumble on gamepad ' + gamepadIdx + '.');
+  }
 }
 
 function dispatchMessage(msg) {
-  console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Message data: ', msg);
+  if (logFrequentMessages || !FREQUENT_MESSAGE.test(msg)) {
+    console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Message data: ', msg);
+  }
   // If it's a recognized event, notify the appropriate function
   if (msg.indexOf('streamTerminated: ') === 0) {
     // The stream is over: ignore further RED presses and late replies of its launch right away, not only once the
@@ -930,12 +993,18 @@ function dispatchMessage(msg) {
     // A video format that the TV rejected belongs to this stream only
     var videoTrackRejection = rejectedVideoTrack;
     rejectedVideoTrack = null;
+    // Like the codec that the host provided instead of the selected one
+    var codecFallback = streamCodecFallback;
+    streamCodecFallback = '';
     // The ports named for this termination belong to this stream only
     var blockedPorts = terminationBlockedPorts;
     terminationBlockedPorts = '';
     var quitApp = quitAppAfterStream;
     quitAppAfterStream = false;
     streamMouseEmulationActive = false;
+    // The log of the next rumble starts anew (logRumble())
+    rumbleLoggedOn = {};
+    lateRumbleLogged = false;
     // A start that the host accepted and whose stream never connected may still be held by the host, which would drop
     // the next start meanwhile (rememberEndedStreamStart() in index.js)
     if (typeof rememberEndedStreamStart === 'function') {
@@ -969,7 +1038,7 @@ function dispatchMessage(msg) {
     runGuarded('leaveStreamView', function() { leaveStreamView(streamLaunchHost || api, quitApp); });
     // Show a termination snackbar message if the termination was unexpected
     runGuarded('showStreamTerminationMessage', function() {
-      showStreamTerminationMessage(errorCode, videoTrackRejection, blockedPorts);
+      showStreamTerminationMessage(errorCode, videoTrackRejection, blockedPorts, codecFallback);
     });
   } else if (msg === 'ControlStreamConnected') {
     // The control stream of the starting stream connected (ClStageComplete() in wasm/connectionlistener.cpp), which
@@ -999,12 +1068,15 @@ function dispatchMessage(msg) {
     // Show progress message under loading spinner
     $('#loadingSpinnerMessage').text(translateBackendMessage(msg.replace('ProgressMsg: ', '')));
   } else if (msg.indexOf('CodecFallbackMsg: ') === 0) {
-    // Tell the user that the host could only provide a fallback for the selected codec or HDR mode
+    // Tell the user that the host could only provide a fallback for the selected codec or HDR mode, and keep the
+    // codec for the message of a video track that the TV then rejects (showVideoTrackRejection())
     switch (msg.replace('CodecFallbackMsg: ', '')) {
       case 'HEVC':
+        streamCodecFallback = 'HEVC';
         snackbarLogLong('The host PC can\'t encode the selected codec, so the stream uses HEVC instead.');
         break;
       case 'H264':
+        streamCodecFallback = 'H264';
         snackbarLogLong('The host PC can\'t encode the selected codec, so the stream uses H.264 instead, which Samsung TVs generally decode only up to 1080p.');
         break;
       case 'SDR':
@@ -1064,20 +1136,22 @@ function dispatchMessage(msg) {
       showPerformanceStats(formatCompactStatsLine(compactStats), true);
     }
   } else if (msg.indexOf('StatMsg: ') === 0) {
-    // The text of the full statistics, about once per second. Text still on its way from another level is ignored, and
-    // so is the last one of a stream that is over (isShowingStreamStats()).
+    // The text of the full statistics, about every 2 seconds (STATS_GRAPH_SLOT_MS). Text still on its way from another
+    // level is ignored, and so is the last one of a stream that is over (isShowingStreamStats()).
     if (!isShowingStreamStats() || getPerformanceStatsLevel() !== PERFORMANCE_STATS_FULL) {
       return;
     }
-    // Show the performance statistics overlay, followed by the network connection of the TV if it's known
+    // Show the performance statistics overlay: the line with the app version and the sound of the stream
+    // (streamBuildInfo in index.js), the text of the module, followed by the network connection of the TV if it's known
     // and the audio statistics of the Web Audio backend, under the graph with the point of this message
     var fullStats = parseFullStatsMessage(msg.replace('StatMsg: ', ''));
     if (fullStats.point) {
       addStatsGraphPoint(fullStats.point, Date.now());
     }
+    var buildInfoLine = typeof streamBuildInfo === 'string' ? streamBuildInfo : '';
     var audioStatsLines = typeof getAudioStatsLines === 'function' ? getAudioStatsLines() : '';
     var backgroundStatsLine = typeof getBackgroundStatsLine === 'function' ? getBackgroundStatsLine() : '';
-    showPerformanceStats(translateBackendMessage(fullStats.text) + (streamNetworkInfo ? '\n' + streamNetworkInfo : '') + (audioStatsLines ? '\n' + audioStatsLines : '') + (backgroundStatsLine ? '\n' + backgroundStatsLine : ''), false, statsGraphPoints);
+    showPerformanceStats((buildInfoLine ? buildInfoLine + '\n' : '') + translateBackendMessage(fullStats.text) + (streamNetworkInfo ? '\n' + streamNetworkInfo : '') + (audioStatsLines ? '\n' + audioStatsLines : '') + (backgroundStatsLine ? '\n' + backgroundStatsLine : ''), false, statsGraphPoints);
     // Keep the Wi-Fi signal strength of the network connection current while the overlay is shown
     refreshStreamNetworkInfo();
   } else if (msg.indexOf('controllerRumble: ') === 0) {
@@ -1089,11 +1163,15 @@ function dispatchMessage(msg) {
     // is torn down, and the host sends no 0 for a stream that is over. Such a late rumble would be replayed in the menus
     // without end, since the end of the stream already stopped every rumble, so only a running stream plays one.
     if (isInGame !== true || !wasmSessionStarted) {
-      console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Ignoring the rumble for gamepad ' + gamepadIdx + ' that arrived after the end of the stream.');
+      // Logged for the first one after the end of a stream, not for each (see FREQUENT_MESSAGE)
+      if (!lateRumbleLogged || logFrequentMessages) {
+        lateRumbleLogged = true;
+        console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Ignoring the rumble for gamepad ' + gamepadIdx + ' that arrived after the end of the stream.');
+      }
       return;
     }
     // Play the rumble on the gamepad until the host sends 0 for both motors (see Rumble in gamepad.js)
-    console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Playing rumble on gamepad ' + gamepadIdx + ' with weak magnitude ' + weakMagnitude + ' and strong magnitude ' + strongMagnitude + '...');
+    logRumble(gamepadIdx, weakMagnitude, strongMagnitude);
     Rumble.play(gamepadIdx, weakMagnitude, strongMagnitude);
   } else if (msg.indexOf('mouseEmulationOn') === 0) {
     // Show the new state of the mouse emulation in the Stream Menu while it's open, whose entry shows On and Off, or
