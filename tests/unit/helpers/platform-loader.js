@@ -69,6 +69,7 @@ function createPlatformContext(options) {
     clearTimeout,
     setInterval,
     clearInterval,
+    performance: { now: () => performance.now() },
     URLSearchParams,
     tizen: apis.tizen,
     webapis: apis.webapis,

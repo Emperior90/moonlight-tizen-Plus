@@ -14,6 +14,7 @@
 #include <opus_multistream.h>
 
 #include "lib.hpp"
+#include "stream_threads.hpp"
 
 #include "samsung/wasm/elementary_media_stream_source.h"
 #include "samsung/wasm/elementary_media_stream_source_listener.h"
@@ -142,6 +143,7 @@ class MoonlightInstance {
   static void ClConnectionStarted(void);
   static void ClConnectionTerminated(int errorCode);
   static void ClLogMessage(const char* format, ...);
+  static void ClLibraryLogMessage(const char* format, ...);
   static void ClControllerRumble(unsigned short controllerNumber, unsigned short lowFreqMotor, unsigned short highFreqMotor);
   static void ClConnectionStatusUpdate(int connectionStatus);
   static void ClSetHdrMode(bool enabled);
@@ -260,7 +262,9 @@ class MoonlightInstance {
   // Read by the media listeners on the main thread while the connection and stop threads change it
   std::atomic<bool> m_Running;
 
-  pthread_t m_ConnectionThread;
+  // The connection thread and the stop thread of the stream, and which of them is still to be joined
+  // (stream_threads.hpp)
+  StreamThreads m_StreamThreads;
   pthread_t m_InputThread;
 
   OpusMSDecoder* m_OpusDecoder;
@@ -290,10 +294,6 @@ class MoonlightInstance {
   std::atomic<bool> m_AudioStarted;
   std::atomic<bool> m_VideoStarted;
   std::atomic<bool> m_ConnectionCancelled;
-  // Whether the stream was already stopped, so that a repeated stop (a double RED press, the gamepad combo racing a
-  // termination by the host) doesn't start a second stop thread and post a second streamTerminated
-  std::atomic<bool> m_StopIssued;
-  pthread_t m_StopThread;
   std::atomic<samsung::wasm::SessionId> m_AudioSessionId;
   std::atomic<samsung::wasm::SessionId> m_VideoSessionId;
   // Declared before the media element, so that it exists for the whole life of the element that holds it as its

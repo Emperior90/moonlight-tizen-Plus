@@ -134,6 +134,46 @@ void MoonlightInstance::ClLogMessage(const char* format, ...) {
   emscripten_log(EM_LOG_CONSOLE, "%s", message);
 }
 
+// Whether a message of moonlight-common-c is one of the two that Connection.c logs for each stage of a start and of a
+// stop: "Starting video stream..." without a line break and, once the stage is done, "done", with the lines of the stage
+// in between (tests/unit/library-log-lines.test.js checks these texts against the library)
+static bool IsLibraryStageMessage(const char* message) {
+  const size_t length = std::strlen(message);
+  return std::strcmp(message, "done\n") == 0 || (length >= 3 && std::strcmp(message + length - 3, "...") == 0);
+}
+
+// The log lines of moonlight-common-c (Limelog() of its Platform.h, which the build sends here with LC_LOG, see
+// CMakeLists.txt): the loss of packets and frames, the recovery from it, the RTSP handshake, the sockets. They come from
+// the receive, decoder and control threads of the library, so this never waits, neither for the main thread nor for a
+// lock: the ring takes its lock with try_lock, and emscripten_log() writes to the console of the calling thread, as
+// Limelog() did before. Some of the lines come once per lost packet or frame, so the ring limits them by their kind
+// (DiagnosticLogRing::TryAppendLimited()); the console of a thread still gets every line.
+// The two messages of a stage are kept like the lines of the app instead: a start and a stop log twenty "done", more
+// than a kind may keep, and never more than the stages that were run, so they can't flood the log, and a stage whose
+// "done" was left out would look as if it never ended.
+// A line that the library logs on the main thread of the page (in the input calls of the front end, e.g. "Input queue
+// reached maximum size limit" for each event while the control stream is stuck) goes to the ring only: the front end
+// keeps what the console of the page gets (captureConsole() in wasm/platform/diagnostics.js), so the line would be in the
+// log a second time, as a line of the app and without the limit by kind. The runtime tells that thread apart itself, so
+// this doesn't depend on a thread id taken while the global constructors run.
+void MoonlightInstance::ClLibraryLogMessage(const char* format, ...) {
+  va_list va;
+  char message[1024];
+
+  va_start(va, format);
+  vsnprintf(message, sizeof(message), format, va);
+  va_end(va);
+
+  if (IsLibraryStageMessage(message)) {
+    GetDiagnosticLog().TryAppend(DiagnosticLogNowMs(), message);
+  } else {
+    GetDiagnosticLog().TryAppendLimited(DiagnosticLogNowMs(), message);
+  }
+  if (!emscripten_is_main_browser_thread()) {
+    emscripten_log(EM_LOG_CONSOLE, "%s", message);
+  }
+}
+
 void MoonlightInstance::ClConnectionStatusUpdate(int connectionStatus) {
   // This runs on the video receive thread, so the message is posted without waiting for the main thread,
   // otherwise the UDP socket would not be drained while the main thread is busy
@@ -157,7 +197,7 @@ CONNECTION_LISTENER_CALLBACKS MoonlightInstance::s_ClCallbacks = {
   .stageFailed = MoonlightInstance::ClStageFailed,
   .connectionStarted = MoonlightInstance::ClConnectionStarted,
   .connectionTerminated = MoonlightInstance::ClConnectionTerminated,
-  .logMessage = MoonlightInstance::ClLogMessage,
+  .logMessage = MoonlightInstance::ClLibraryLogMessage,
   .rumble = MoonlightInstance::ClControllerRumble,
   .connectionStatusUpdate = MoonlightInstance::ClConnectionStatusUpdate,
   .setHdrMode = MoonlightInstance::ClSetHdrMode,

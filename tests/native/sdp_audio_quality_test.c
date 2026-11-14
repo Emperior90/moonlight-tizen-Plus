@@ -20,7 +20,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-// What the other files of moonlight-common-c provide
+// What the other files of moonlight-common-c provide (the listener takes the log lines in the release build, LC_LOG;
+// this test sets none)
+CONNECTION_LISTENER_CALLBACKS ListenerCallbacks;
 struct sockaddr_storage RemoteAddr;
 int AppVersionQuad[4];
 STREAM_CONFIGURATION StreamConfig;
@@ -46,7 +48,7 @@ bool PltSafeStrcpy(char* dest, size_t dest_size, const char* src) {
   strcpy(dest, src);
   return true;
 }
-bool isReferenceFrameInvalidationSupportedByDecoder(void) {
+bool isReferenceFrameInvalidationEnabled(void) {
   return false;
 }
 void addrToUrlSafeString(struct sockaddr_storage* addr, char* string, size_t stringLength) {

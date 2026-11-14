@@ -124,6 +124,11 @@ bool isReferenceFrameInvalidationEnabled(void) {
     return ReferenceFrameInvalidationSupported && isReferenceFrameInvalidationSupportedByDecoder();
 }
 
+// Moonlight Plus: what the host offered, for the report of the session (see Limelight.h)
+bool LiHostSupportsReferenceFrameInvalidation(void) {
+    return ReferenceFrameInvalidationSupported;
+}
+
 void LiInitializeStreamConfiguration(PSTREAM_CONFIGURATION streamConfig) {
     memset(streamConfig, 0, sizeof(*streamConfig));
 }

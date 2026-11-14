@@ -80,7 +80,7 @@ test('an install that had switched it off asks for it as well, and its stored va
     stored: { uniqueid: '0123456789abcdef', cert: { cert: 'TEST-CERT', privateKey: 'TEST-KEY' }, settingsSchema: 2, continuousAudio: false },
   });
   try {
-    const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 4 && !('continuousAudio' in values));
+    const stored = await waitForStorage(app.page, (values) => values.settingsSchema === 5 && !('continuousAudio' in values));
     assert.equal(stored.continuousAudio, undefined);
     assert.ok(app.logs.some((line) => line.indexOf('Removing the stored value of a setting that no longer exists: continuousAudio = false') >= 0));
     assert.deepEqual(await launchRequest(app.page, 0), { path: '/launch', continuousAudio: '1', surroundAudioInfo: String(0x030002) });

@@ -121,6 +121,9 @@ describe('the dialog shows exactly what Apply applies', { concurrency: 3 }, () =
           const shown = await readVideoSettings(app.page);
           // 'Optimize game settings' of the Advanced Settings, which the line names as well (since 2.3.0)
           const optimizeGames = await app.page.evaluate(() => document.getElementById('optimizeGamesSwitch').checked);
+          // 'Surround audio quality' of the Audio Settings, which the line names as well (since 2.3.1)
+          const surroundQuality = await app.page.evaluate(() => $('#selectSurroundQuality').data('value'));
+          assert.equal(surroundQuality, 'Efficient');
           assert.deepEqual(dialog.tiles, [
             [shown.resolution === '3840:2160' ? '4K' : shown.resolution.split(':')[1] + 'p', shown.resolution.replace(':', ' x ')],
             [shown.frameRate, 'FPS'],
@@ -133,6 +136,7 @@ describe('the dialog shows exactly what Apply applies', { concurrency: 3 }, () =
             shown.fullRange ? 'full color range' : 'limited color range',
             'unlock all frame rates ' + (shown.unlockAllFps ? 'on' : 'off'),
             'optimize game settings ' + (optimizeGames ? 'on' : 'off'),
+            'surround audio quality ' + surroundQuality,
           ].join(', '));
           assert.equal(listed.gameMode, shown.gameMode, 'the line of the ultra low latency mode names a mode that is on');
           // A 4K or 8K TV whose higher frame rates stay locked is told how to unlock them for a 120 Hz panel, since the app can't detect the refresh rate of the panel
@@ -165,11 +169,15 @@ test('the bitrate advice over Wi-Fi stays within the bitrate where the warning o
       const dialog = await openDialog(app.page);
       await app.page.evaluate(() => $('#continueWarning').trigger('click'));
       const applied = parseFloat((await readVideoSettings(app.page)).bitrate);
-      const raise = /you can raise the bitrate up to ([\d.]+) Mbps\./.exec(dialog.text);
+      const raise = /Raise the bitrate only if fast scenes look blocky, up to ([\d.]+) Mbps:/.exec(dialog.text);
       const atLimit = dialog.text.indexOf('This is the highest bitrate recommended for the video decoder of this TV') >= 0;
       assert.equal(raise ? parseFloat(raise[1]) : null, advisedLimit, tvName + ': ' + dialog.text);
       assert.equal(atLimit, advisedLimit === null, tvName + ': ' + dialog.text);
       assert.equal(atLimit, applied === cap, tvName + ': the applied bitrate reaches the cap');
+      // Either way the dialog names the price of more bitrate, as a measurement and not as a promise, and no longer
+      // says to raise it as long as the statistics show no dropped frames
+      assert.match(dialog.text, /about 0\.6 to 0\.8 ms (of latency|per 10 Mbps), measured on one fast Wi-Fi connection\./, tvName);
+      assert.doesNotMatch(dialog.text, /no dropped frames/, tvName);
       // The optimal settings stay at the recommended bitrate, also on the S90C
       assert.equal(applied, { s90c: 100, uhd: 80, '8k': 80, fhd: 25 }[tvName], tvName + ': the applied bitrate');
       // No warning up to the advised bitrate and the cap, and the warning right above the cap
@@ -202,7 +210,9 @@ test('the button is the first of the basic settings, with its generic label and 
     assert.deepEqual(button, {
       label: 'Optimal settings for this TV',
       help: '- Applies the best image quality this TV supports (its highest resolution up to 4K, HEVC, and HDR if the TV supports it) with a bitrate that matches its network connection.',
-      ariaLabel: 'Apply the optimal settings for this TV',
+      // The name for the Voice Guide of the TV is the label of the row, which every language has (an English text of
+      // its own, 'Apply the optimal settings for this TV', before 2.3.1)
+      ariaLabel: 'Optimal settings for this TV',
       text: 'Apply the optimal streaming settings for this TV',
       // 'Unlock all frame rates' right below the frame rate that it extends (frame pacing is in the Video Settings)
       navigationItems: ['optimalSettingsBtn', 'selectResolution', 'selectFramerate', 'unlockAllFpsBtn', 'selectBitrate'],
@@ -353,7 +363,8 @@ describe('the remote reaches the button', { concurrency: 2 }, () => {
 
 test('in pt-BR the dialog has no English line: tested S90C on Tizen 9.0, an HDR TV on Tizen 6.5, an unknown connection', async () => {
   // English texts that stayed untranslated next to translated lines before
-  const ENGLISH = ['Video frame pacing on', 'optimize game settings', 'Ultra low latency mode', 'tested model', 'could not be detected', 'Detected:', 'The following'];
+  const ENGLISH = ['Video frame pacing on', 'optimize game settings', 'surround audio quality', 'Efficient', 'Ultra low latency mode', 'tested model',
+    'could not be detected', 'Detected:', 'The following'];
   for (const tv of [{ tv: 's90c', conn: 'wifi' }, { tv: 'uhd', conn: 'unknown' }, { tv: 'fhd', conn: 'ethernet', wasmPlayer: 'ull' }]) {
     const app = await openApp(harness, { tv });
     try {
@@ -369,7 +380,7 @@ test('in pt-BR the dialog has no English line: tested S90C on Tizen 9.0, an HDR 
       assert.deepEqual(dialog.buttons, ['Cancelar', 'Aplicar'], label);
       if (tv.tv === 's90c') {
         assert.equal(lineAfter(dialog, 'Detectado: '), 'painel 4K, HDR, Tizen 9.0, Wi-Fi, modelo testado', label);
-        assert.ok(dialog.lines.indexOf('Ajuste de ritmo de quadros ativado, faixa de cores limitada, desbloquear todas as taxas de quadros ativado, otimizar configurações do jogo ativado') >= 0, label);
+        assert.ok(dialog.lines.indexOf('Ajuste de ritmo de quadros ativado, faixa de cores limitada, desbloquear todas as taxas de quadros ativado, otimizar configurações do jogo ativado, qualidade do som surround Eficiente') >= 0, label);
         assert.ok(dialog.text.indexOf('O modo de latência ultrabaixa fica desativado no Tizen 9.0, então instale a variante ForceGM para a menor latência.') >= 0, label);
       } else if (tv.tv === 'uhd') {
         assert.ok(dialog.lines.indexOf('Modo de latência ultrabaixa ligado') >= 0, label);

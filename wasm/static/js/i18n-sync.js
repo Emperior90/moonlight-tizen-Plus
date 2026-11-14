@@ -66,6 +66,7 @@ function extractFromContent(content, keys) {
   const warningDialogPattern = /\bwarningDialog\(\s*(['"`])((?:\\.|(?!\1).)*)\1\s*,\s*(['"`])((?:\\.|(?!\3).)*)\3\s*(?:,|\))/g;
   const htmlPattern = /data-i18n\s*=\s*(['"])(.*?)\1/g;
   const placeholderPattern = /data-i18n-placeholder\s*=\s*(['"])(.*?)\1/g;
+  const ariaLabelPattern = /data-i18n-aria-label\s*=\s*(['"])(.*?)\1/g;
 
   let match = null;
   while ((match = tPattern.exec(content)) !== null) {
@@ -119,6 +120,13 @@ function extractFromContent(content, keys) {
   }
 
   while ((match = placeholderPattern.exec(content)) !== null) {
+    const key = decodeHtmlAttribute(decodeString(match[2]));
+    if (key) {
+      keys.add(key);
+    }
+  }
+
+  while ((match = ariaLabelPattern.exec(content)) !== null) {
     const key = decodeHtmlAttribute(decodeString(match[2]));
     if (key) {
       keys.add(key);

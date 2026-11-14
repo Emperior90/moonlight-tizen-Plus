@@ -6,6 +6,8 @@
 // the running app goes before the box art that waits, and a stream that starts drops every box art download, also the
 // one that runs, so that its launch request is next. The host is a real NvHTTP object whose HTTP requests the stub of
 // the module records and the test answers. tests/unit/box-art-queue.test.js checks the queue on its own.
+// Since 2.3.1 a box art download has a time limit (BOX_ART_TIMEOUT_MS in utils.js, 30 seconds): one that the host never
+// answers ends with the placeholder of a failed box art, and the downloads behind it run.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -22,10 +24,14 @@ after(async () => {
 });
 
 // Open the app grid of a host with six apps (App 1 to App 6) whose box art is not cached (the simulated TV has no file
-// system), with the HTTP requests of the module recorded in window.__http as 'boxart <id>' or their path
-async function openColdAppList(currentGame) {
+// system), with the HTTP requests of the module recorded in window.__http as 'boxart <id>' or their path. With
+// `boxArtTimeoutMs`, a box art download waits that long for its answer instead of 30 seconds.
+async function openColdAppList(currentGame, boxArtTimeoutMs) {
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
-  await app.page.evaluate(async (runningApp) => {
+  await app.page.evaluate(async ({ runningApp, timeoutMs }) => {
+    if (timeoutMs) {
+      BOX_ART_TIMEOUT_MS = timeoutMs;
+    }
     window.__http = [];
     Module.openUrl = (id, url) => {
       const boxArt = /\/appasset\?.*appid=(\d+)/.exec(url);
@@ -48,7 +54,7 @@ async function openColdAppList(currentGame) {
     window.__host = host;
     api = host;
     await showApps(host);
-  }, currentGame || 0);
+  }, { runningApp: currentGame || 0, timeoutMs: boxArtTimeoutMs || 0 });
   return app;
 }
 
@@ -136,6 +142,33 @@ test('the box art that waits for an app grid that was built again is dropped bef
       await answer('boxart ' + id);
     }
     assert.deepEqual((await httpState(page)).sent, ['boxart 1', 'boxart 2', 'boxart 1', 'boxart 2', 'boxart 3', 'boxart 4', 'boxart 5', 'boxart 6']);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a box art download that the host never answers ends after its time limit with the placeholder, and the others load', async () => {
+  const app = await openColdAppList(0, 400);
+  const { page } = app;
+  try {
+    assert.equal(await page.evaluate(() => BOX_ART_TIMEOUT_MS), 400);
+    await page.waitForFunction(() => window.__http.length === 1);
+    assert.deepEqual((await httpState(page)).sent, ['boxart 1']);
+    const cancelsBefore = await cancelRequests(page);
+    // The host accepted the request for the box art of App 1 and sends nothing. Before, App 2 to App 6 waited for it
+    // as long as the browser did; now the module is told to give up after the limit, and App 2 is next.
+    await page.waitForFunction(() => window.__http.some((entry) => entry.what === 'boxart 2'), null, { timeout: 5000 });
+    assert.equal(await cancelRequests(page), cancelsBefore + 1);
+    for (let id = 2; id <= 6; id++) {
+      await page.waitForFunction((what) => window.__http.some((entry) => entry.what === what), 'boxart ' + id, { timeout: 3000 });
+      await page.evaluate((what) => window.__answer(what, new Uint8Array([137, 80, 78, 71])), 'boxart ' + id);
+    }
+    assert.deepEqual((await httpState(page)).sent, ['boxart 1', 'boxart 2', 'boxart 3', 'boxart 4', 'boxart 5', 'boxart 6']);
+    // The tile of App 1 shows the placeholder of a failed box art, the others their box art
+    await page.waitForFunction(() => /placeholder_error\.svg$/.test($('#game-container-1 img').attr('src') || ''), null, { timeout: 3000 });
+    await page.waitForFunction(() => [2, 3, 4, 5, 6].every((id) => /^(blob:|data:image\/png)/.test($('#game-container-' + id + ' img').attr('src') || '')));
+    assert.equal(app.logs.filter((line) => line.indexOf('Failed to retrieve box art for app ID: 1. Returned value was: -1') >= 0).length, 1);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

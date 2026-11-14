@@ -449,6 +449,8 @@ describe('deriveOptimalSettings() over FHD / UHD / 8K x HDR x Tizen 5.5 to 9.0 x
               fullRange: false,
               // On since settings schema 4, as in moonlight-qt and moonlight-android
               optimizeGames: true,
+              // Efficient since settings schema 5, which keeps the load of 5.1 and 7.1 sound on the TV low
+              surroundQuality: 'Efficient',
             }, conn);
           }
         });
@@ -459,7 +461,7 @@ describe('deriveOptimalSettings() over FHD / UHD / 8K x HDR x Tizen 5.5 to 9.0 x
   test('without any capabilities, the defaults of a Full HD TV', () => {
     assert.deepEqual(profile.deriveOptimalSettings(null, undefined), {
       resolution: '1920:1080', frameRate: 60, videoCodec: 'HEVC', hdrMode: false, bitrate: 20, unlockAllFps: false, gameMode: true,
-      framePacing: true, fullRange: false, optimizeGames: true,
+      framePacing: true, fullRange: false, optimizeGames: true, surroundQuality: 'Efficient',
     });
   });
 });
@@ -481,6 +483,7 @@ describe('the golden S90C values', () => {
         framePacing: true,
         fullRange: false,
         optimizeGames: true,
+        surroundQuality: 'Efficient',
       });
     });
   }
@@ -687,9 +690,54 @@ describe('legacySettingsSnapshot(): the one-time snapshot of an existing install
     assert.ok(Object.isFrozen(profile.LEGACY_SNAPSHOT_KEYS));
   });
 
-  test('the settings schema is version 4', () => {
-    assert.equal(profile.SETTINGS_SCHEMA_VERSION, 4);
+  test('the settings schema is version 5', () => {
+    assert.equal(profile.SETTINGS_SCHEMA_VERSION, 5);
     assert.equal(profile.SETTINGS_SCHEMA_KEY, 'settingsSchema');
+  });
+});
+
+describe('the default of the surround audio quality since settings schema 5', () => {
+  test('Efficient for an install that stored none, while a stored quality stays', () => {
+    assert.equal(profile.DEFAULT_SURROUND_QUALITY, 'Efficient');
+    assert.equal(profile.loadedSurroundQuality(null), 'Efficient');
+    assert.equal(profile.loadedSurroundQuality(undefined), 'Efficient');
+    assert.equal(profile.loadedSurroundQuality('High'), 'High');
+    assert.equal(profile.loadedSurroundQuality('Efficient'), 'Efficient');
+    // A value that the settings don't know counts as none
+    for (const value of ['Ultra', '', 'high', 0, true, {}]) {
+      assert.equal(profile.loadedSurroundQuality(value), 'Efficient', JSON.stringify(value));
+    }
+    // New installs, Restore Defaults and the optimal settings get it
+    for (const tv of ['s90c', 'uhd', 'fhd', '8k']) {
+      for (const conn of CONNECTIONS) {
+        assert.equal(profile.deriveOptimalSettings(detect({ tv, conn }), conn).surroundQuality, 'Efficient', tv + ' ' + conn);
+      }
+    }
+  });
+
+  test('the notice is for an existing install that never chose a quality and streams 5.1 or 7.1 with the TV media player', () => {
+    assert.equal(profile.SURROUND_QUALITY_NOTICE_KEY, 'surroundQualityNotice');
+    const notice = profile.needsSurroundQualityNotice;
+    // 2.3.0 stored the quality only once it was chosen, and the audio backend only once it was changed
+    for (const audioConfig of ['51Surround', '71Surround']) {
+      assert.equal(notice({ audioConfig }), true, audioConfig);
+      assert.equal(notice({ audioConfig, surroundQuality: null, audioBackend: null }), true, audioConfig);
+      assert.equal(notice({ audioConfig, audioBackend: 'EMSS' }), true, audioConfig);
+      // A quality that was chosen stays and needs no notice: High, which Restore Defaults of 2.3.0 stored as well, and
+      // Efficient, which the stream already had
+      assert.equal(notice({ audioConfig, surroundQuality: 'High' }), false, audioConfig);
+      assert.equal(notice({ audioConfig, surroundQuality: 'Efficient' }), false, audioConfig);
+      // The Web Audio backend plays stereo, and a disabled audio output nothing
+      assert.equal(notice({ audioConfig, audioBackend: 'WebAudio' }), false, audioConfig);
+      assert.equal(notice({ audioConfig, audioBackend: 'Disabled' }), false, audioConfig);
+      // A stored quality that the settings don't know loads as the default, like none
+      assert.equal(notice({ audioConfig, surroundQuality: 'Ultra' }), true, audioConfig);
+    }
+    // Stereo keeps its quality, whatever is stored for the surround quality
+    assert.equal(notice({ audioConfig: 'Stereo' }), false);
+    assert.equal(notice({ audioConfig: null }), false);
+    assert.equal(notice({}), false);
+    assert.equal(notice(null), false);
   });
 });
 

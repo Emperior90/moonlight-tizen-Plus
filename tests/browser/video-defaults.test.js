@@ -19,8 +19,8 @@ const {
 } = require('./harness');
 const tvMock = require('./mocks/tv-mock');
 
-const SETTINGS_LINE_UNLOCKED = 'Video frame pacing on, limited color range, unlock all frame rates on, optimize game settings on';
-const SETTINGS_LINE_LOCKED = 'Video frame pacing on, limited color range, unlock all frame rates off, optimize game settings on';
+const SETTINGS_LINE_UNLOCKED = 'Video frame pacing on, limited color range, unlock all frame rates on, optimize game settings on, surround audio quality Efficient';
+const SETTINGS_LINE_LOCKED = 'Video frame pacing on, limited color range, unlock all frame rates off, optimize game settings on, surround audio quality Efficient';
 
 // Per simulated TV (tests/browser/mocks/tv-mock.js): the resolution, HDR, frame rates, game mode and bitrate per
 // connection it gets, and the dialog lines
@@ -102,9 +102,11 @@ const CONNECTIONS = {
 // The hint of the dialog for the owners of a 4K or 8K TV with a 120 Hz panel, when the higher frame rates stay locked
 const HINT_120HZ = 'If this TV has a 120 Hz panel, you can turn on \'Unlock all frame rates\' below the frame rate to stream at up to 120 FPS.';
 
-// The bitrate advice of the dialog over Wi-Fi: up to a higher bitrate, or that it is already the highest recommended
-const WIFI_RAISE_ADVICE = 'If the performance statistics show no dropped frames, you can raise the bitrate up to %s Mbps.';
-const WIFI_AT_LIMIT_ADVICE = 'This is the highest bitrate recommended for the video decoder of this TV, so raise it only if the performance statistics show no dropped frames.';
+// The bitrate advice of the dialog over Wi-Fi: up to a higher bitrate and only against a blocky picture, or that it is
+// already the highest recommended, each with what more bitrate costs. It no longer says to raise the bitrate as long as
+// the statistics show no dropped frames.
+const WIFI_RAISE_ADVICE = 'Raise the bitrate only if fast scenes look blocky, up to %s Mbps: each additional 10 Mbps adds about 0.6 to 0.8 ms of latency, measured on one fast Wi-Fi connection.';
+const WIFI_AT_LIMIT_ADVICE = 'This is the highest bitrate recommended for the video decoder of this TV. More would also add latency: about 0.6 to 0.8 ms per 10 Mbps, measured on one fast Wi-Fi connection.';
 
 // Customized settings of an existing install, every one different from what Restore Defaults applies
 const CUSTOMIZED_SETTINGS = {
@@ -139,7 +141,7 @@ const CUSTOMIZED_SETTINGS = {
   controllerType: 'PlayStation',
   audioBackend: 'WebAudio',
   audioConfig: '51Surround',
-  surroundQuality: 'Efficient',
+  surroundQuality: 'High',
   audioSync: true,
   audioJitter: '50',
   audioClockSync: true,
@@ -166,8 +168,8 @@ const DEFAULT_OTHER_SETTINGS = {
   controllerType: 'Auto',
   audioBackend: 'EMSS',
   audioConfig: 'Stereo',
-  // High, the quality of earlier versions, which shows only with 5.1 and 7.1
-  surroundQuality: 'High',
+  // Efficient, the default since 2.3.1 (2.3.0 restored High), which shows only with 5.1 and 7.1
+  surroundQuality: 'Efficient',
   audioSync: false,
   audioJitter: '100',
   audioClockSync: false,
@@ -251,7 +253,7 @@ for (const tvName of Object.keys(TVS)) {
           // change of a default is covered by the settings schema
           await app.page.waitForTimeout(300);
           assert.deepEqual(Object.keys(await readStorage(app.page)).sort(), ['autoAdjustBitrate', 'cert', 'settingsSchema', 'uniqueid']);
-          assert.equal(stored.settingsSchema, 4);
+          assert.equal(stored.settingsSchema, 5);
           // Plan D9: the bitrate of a fresh install follows the resolution and frame rate until the user picks one
           assert.equal(stored.autoAdjustBitrate, true);
           // The other settings show their defaults without being stored, e.g. the rumble on (settings schema 3)
@@ -296,6 +298,7 @@ for (const tvName of Object.keys(TVS)) {
           if (connName === 'wifi') {
             const advice = tv.wifiRaiseLimit === null ? WIFI_AT_LIMIT_ADVICE : WIFI_RAISE_ADVICE.replace('%s', tv.wifiRaiseLimit);
             assert.ok(text.indexOf(advice) >= 0, text);
+            assert.doesNotMatch(text, /no dropped frames/, 'no advice to raise the bitrate until frames drop');
           }
           assert.equal(text.indexOf('so install the ForceGM variant for the lowest latency') >= 0, tv.forceGmHint, text);
           // No note that the TV is not an S90C, and the text names no model at all

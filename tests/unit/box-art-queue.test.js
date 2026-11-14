@@ -7,6 +7,9 @@
 // and cancelBoxArtDownloads() drops them all when a stream starts, also the one that runs. The module is a stub that
 // records the requests and lets the test answer them. The idea comes from the fork of mmadej20 (moonlight-tizen-modern,
 // f4eff8e). The browser test tests/browser/box-art-queue.test.js runs it with the app grid and the start of a stream.
+// Since 2.3.1 the box art download and the request that quits an app (/cancel) have a time limit of 30 seconds, which
+// the queue enforces like the limits of the server info and the app list: a host that accepted the connection and then
+// sent nothing held the one HTTP thread, and every request of every host behind it, for as long as the browser waited.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -261,4 +264,106 @@ test('when a stream starts, every box art download is dropped and the launch req
   await tick();
   assert.equal(again.state, 'resolved');
   assert.deepEqual(queue.sent().slice(3), ['boxart 9']);
+});
+
+// Record the parameters of every request that utils.js sends through sendMessage()
+function recordSentParameters(queue) {
+  queue.platform.run(`var __sentParameters = [];
+    var __sendMessage = sendMessage;
+    sendMessage = function(method, params) {
+      __sentParameters.push([method].concat(params));
+      return __sendMessage(method, params);
+    };`);
+  return () => plain(queue.platform.get('__sentParameters'));
+}
+
+test('the box art download and the quit of an app ask with a time limit of 30 seconds, the start of a stream with none', async () => {
+  const queue = loadQueue({ utils: true });
+  assert.deepEqual([queue.platform.get('BOX_ART_TIMEOUT_MS'), queue.platform.get('QUIT_APP_TIMEOUT_MS')], [30000, 30000]);
+  const sent = recordSentParameters(queue);
+  const host = makeHost(queue);
+  settled(host.getBoxArt(7, false));
+  settled(host.quitApp());
+  settled(host.launchApp(3, '3840x2160x60', 0, 'KEY', 1, 1, 0, 0x030002, 1, 1));
+  settled(host.resumeApp('3840x2160x60', 0, 'KEY', 1, 1, 0, 0x030002, 1, 1));
+  await tick();
+  const byPath = {};
+  sent().forEach((params) => {
+    byPath[/^https:\/\/10\.0\.0\.2:47984\/(\w+)\?/.exec(params[1])[1]] = params.slice(2);
+  });
+  // [the pinned key, binary, the time limit in milliseconds]
+  assert.deepEqual(byPath.appasset, ['PPK', true, 30000]);
+  assert.deepEqual(byPath.cancel, ['PPK', false, 30000]);
+  assert.deepEqual(byPath.launch, ['PPK', false]);
+  assert.deepEqual(byPath.resume, ['PPK', false]);
+});
+
+test('a box art download that gets no answer is canceled after its time limit, and the requests behind it run', async () => {
+  const queue = loadQueue({ utils: true });
+  // The limit of the test: 40 ms instead of 30 seconds
+  queue.platform.run('BOX_ART_TIMEOUT_MS = 40;');
+  const host = makeHost(queue);
+  const results = [1, 2, 3].map((id) => settled(host.getBoxArt(id, false)));
+  await tick();
+  assert.deepEqual(queue.sent(), ['boxart 1']);
+  const applist = settled(queue.send('openUrl', [url('/applist'), 'PPK', false, 10000]));
+  // The host never answers the first download
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await tick();
+  assert.deepEqual([results[0].state, results[0].error], ['rejected', -1]);
+  // The module cancels it, then the request that waited and the next download run
+  assert.deepEqual(queue.sent().slice(0, 3), ['boxart 1', 'cancelRequest', '/applist']);
+  queue.answer('/applist', '<root/>');
+  await tick();
+  assert.equal(applist.value, '<root/>');
+  queue.answer('boxart 2', new Uint8Array([2]));
+  await tick();
+  queue.answer('boxart 3', new Uint8Array([3]));
+  await tick();
+  assert.deepEqual(results.map((result) => result.state), ['rejected', 'resolved', 'resolved']);
+  // The download that ran out is an error in the log, which the app grid answers with the placeholder for a failed
+  // box art (showApps() in index.js)
+  assert.equal(queue.platform.consoleMessages.filter((entry) => entry.level === 'error' && /Failed to retrieve original box art from network/.test(entry.text)).length, 1);
+  assert.equal(queue.platform.consoleMessages.filter((entry) => entry.level === 'warn' && /HTTPS request timed out, canceling C\+\+ HTTP request/.test(entry.text)).length, 1);
+  // A late answer of the canceled download changes nothing
+  queue.answer('boxart 1', new Uint8Array([1]));
+  await tick();
+  assert.equal(results[0].state, 'rejected');
+  assert.equal(queue.platform.get('_httpCurrent'), null);
+});
+
+test('a quit that gets no answer fails after its time limit without a refresh, and the next request runs', async () => {
+  const queue = loadQueue({ utils: true });
+  queue.platform.run('QUIT_APP_TIMEOUT_MS = 40;');
+  const host = makeHost(queue);
+  host.currentGame = 7;
+  let refreshes = 0;
+  host.refreshServerInfo = () => {
+    refreshes++;
+    return Promise.resolve(true);
+  };
+  const quit = settled(host.quitApp());
+  const next = settled(queue.send('openUrl', [url('/serverinfo'), 'PPK', false, 5000]));
+  await tick();
+  assert.deepEqual(queue.sent(), ['/cancel']);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await tick();
+  // GS_FAILED, which the app answers with 'Unable to quit ...' (stopGame() in index.js)
+  assert.deepEqual([quit.state, quit.error, refreshes], ['rejected', -1, 0]);
+  assert.deepEqual(queue.sent(), ['/cancel', 'cancelRequest', '/serverinfo']);
+  queue.answer('/serverinfo', '<root/>');
+  await tick();
+  assert.equal(next.value, '<root/>');
+
+  // The late answer to the request that ran out changes nothing
+  queue.answer('/cancel', '<root status_code="200"><cancel>1</cancel></root>');
+  await tick();
+  assert.deepEqual([quit.state, refreshes], ['rejected', 0]);
+  // A host that answers in time quits as before
+  const quick = settled(host.quitApp());
+  await tick();
+  host.currentGame = 0;
+  queue.answer('/cancel', '<root status_code="200"><cancel>1</cancel></root>');
+  await tick();
+  assert.deepEqual([quick.state, quick.value, refreshes], ['resolved', true, 1]);
 });

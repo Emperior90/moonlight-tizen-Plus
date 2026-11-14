@@ -4,10 +4,10 @@
 // the data rate of the Opus packets, the packets that neither arrived nor were repaired by the audio FEC, which
 // moonlight-common-c hands to the decoder as an empty packet for packet loss concealment, and the time that the audio
 // thread spends on decoding the packets and on handing them to the player. auddec.cpp counts them on the audio thread,
-// and FormatVideoStats() in wasmplayer.cpp prints them on the video decoder thread about once per second, so the
-// counters are atomics that are read without a lock (a line may mix values of two packets, which is fine for a
-// display). The header has no other dependencies, so the native tests can check it on its own
-// (tests/native/audio_stream_stats_test.cpp).
+// and FormatVideoStats() in wasmplayer.cpp prints them on the video decoder thread with each message of the full
+// statistics (about every 2 seconds, kFullStatsWindows in compact_stats.hpp), so the counters are atomics that are read
+// without a lock (a line may mix values of two packets, which is fine for a display). The header has no other
+// dependencies, so the native tests can check it on its own (tests/native/audio_stream_stats_test.cpp).
 
 #include <atomic>
 #include <cstddef>
@@ -41,9 +41,22 @@ struct AudioStreamStats {
   std::atomic<uint32_t> decodeMaxUs{0};
   std::atomic<uint64_t> outputUs{0};
   std::atomic<uint32_t> outputMaxUs{0};
+  // The load of the audio thread over the stream that ended (audio_load.hpp): the channels that were decoded, decoding
+  // plus hand-over in milliseconds per second of audio over the whole stream and in its busiest window, and the
+  // windows that counted as overloaded. AudDecCleanup() in auddec.cpp stores them once the audio thread has ended, and
+  // VidDecCleanup() in wasmplayer.cpp takes them for the report of the session, which sets them back to 0, so that a
+  // stream that ends before its audio starts doesn't report the figures of the stream before it.
+  std::atomic<uint32_t> loadChannels{0};
+  std::atomic<uint32_t> loadMsPerSecond{0};
+  std::atomic<uint32_t> loadPeakMsPerSecond{0};
+  std::atomic<uint32_t> overloadedWindows{0};
 
   // Start the statistics of a new audio stream
   void Reset(int channels, int samples, int rate, uint64_t nowMs) {
+    loadChannels = 0;
+    loadMsPerSecond = 0;
+    loadPeakMsPerSecond = 0;
+    overloadedWindows = 0;
     receivedBytes = 0;
     receivedPackets = 0;
     lostPackets = 0;

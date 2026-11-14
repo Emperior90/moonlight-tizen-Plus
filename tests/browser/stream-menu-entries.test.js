@@ -484,14 +484,17 @@ test('the surround quality entry shows only for a stream with more than 2 audio 
   try {
     await remoteKey(stereo.page, ...PLAY_PAUSE);
     assert.equal((await surroundEntry(stereo.page)).shown, false);
-    assert.equal(await startRequestQuality(stereo.page), 'High');
+    // The start request carries the quality of the settings all the same, Efficient by default since 2.3.1
+    assert.equal(await startRequestQuality(stereo.page), 'Efficient');
     assert.deepEqual(stereo.errors, []);
   } finally {
     await stereo.context.close();
   }
-  // 5.1 and 7.1, a 5.1 setting that the host answers with stereo, and 5.1 with the audio output disabled
+  // 5.1 and 7.1, a 5.1 setting that the host answers with stereo, 5.1 with the audio output disabled, and 5.1 with the
+  // Web Audio backend, which streams stereo (web-audio-stereo.test.js)
   for (const [stored, channels, shown] of [[{ audioConfig: '51Surround' }, null, true], [{ audioConfig: '71Surround' }, null, true],
-    [{ audioConfig: '51Surround' }, 2, false], [{ audioConfig: '51Surround', audioBackend: 'Disabled' }, null, false]]) {
+    [{ audioConfig: '51Surround' }, 2, false], [{ audioConfig: '51Surround', audioBackend: 'Disabled' }, null, false],
+    [{ audioConfig: '51Surround', audioBackend: 'WebAudio' }, null, false]]) {
     const app = await openStreaming({ stored });
     try {
       if (channels !== null) {
@@ -503,7 +506,8 @@ test('the surround quality entry shows only for a stream with more than 2 audio 
       const entry = await surroundEntry(app.page);
       assert.equal(entry.shown, shown, JSON.stringify(stored) + ' ' + channels);
       if (shown) {
-        assert.deepEqual(entry, { shown: true, value: 'High', pending: false, note: '', lowerLimit: false, higherLimit: true });
+        // The quality of the stream, Efficient by default, which is the lower end
+        assert.deepEqual(entry, { shown: true, value: 'Efficient', pending: false, note: '', lowerLimit: true, higherLimit: false });
         // Right after the bitrate entry
         const entries = await app.page.evaluate(() => getOverlayMenuItems('streamMenu').map((item) => item.id));
         assert.equal(entries[entries.indexOf('streamMenuBitrate') + 1], 'streamMenuSurround');
@@ -516,7 +520,7 @@ test('the surround quality entry shows only for a stream with more than 2 audio 
 });
 
 test('LEFT sets the surround quality to Efficient and RIGHT to High, and OK keeps it as the setting and reconnects with it', async () => {
-  const app = await openStreaming({ stored: { audioConfig: '51Surround' } });
+  const app = await openStreaming({ stored: { audioConfig: '51Surround', surroundQuality: 'High' } });
   try {
     await openMenuAt(app.page, 'streamMenuSurround');
     // OK on the quality of the stream does nothing but explain
@@ -589,7 +593,7 @@ const holdRemoteKey = (page, keyCode, key, repeats) => page.evaluate(({ code, na
 }, { code: keyCode, name: key, count: repeats });
 
 test('a held key of the remote or a held D-pad keeps the surround quality at its end instead of switching it back and forth', async () => {
-  const app = await openStreaming({ stored: { audioConfig: '51Surround' }, gamepad: true });
+  const app = await openStreaming({ stored: { audioConfig: '51Surround', surroundQuality: 'High' }, gamepad: true });
   try {
     await openMenuAt(app.page, 'streamMenuSurround');
     // The auto-repeat of a held key of the remote, which reaches the menu during a stream
@@ -621,7 +625,7 @@ test('a held key of the remote or a held D-pad keeps the surround quality at its
 
 test('a new bitrate and a new surround quality reconnect once with both, whichever entry OK is pressed on', async () => {
   for (const okOn of ['streamMenuBitrate', 'streamMenuSurround']) {
-    const app = await openStreaming({ stored: { audioConfig: '71Surround' }, gamepad: true });
+    const app = await openStreaming({ stored: { audioConfig: '71Surround', surroundQuality: 'High' }, gamepad: true });
     try {
       await openMenuAt(app.page, 'streamMenuBitrate');
       await remoteKey(app.page, ...RIGHT);
@@ -655,7 +659,7 @@ test('a new bitrate and a new surround quality reconnect once with both, whichev
 });
 
 test('a reconnect for a new surround quality that can\'t resume the app ends with its own message', async () => {
-  const app = await openStreaming({ stored: { audioConfig: '51Surround' } });
+  const app = await openStreaming({ stored: { audioConfig: '51Surround', surroundQuality: 'High' } });
   try {
     await openMenuAt(app.page, 'streamMenuSurround');
     await remoteKey(app.page, ...LEFT);

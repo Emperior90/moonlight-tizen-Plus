@@ -295,7 +295,7 @@ test('a TV whose product APIs fail still starts, with the defaults of a Full HD 
     await restoreDefaults(app.page);
     const stored = await waitForStorage(app.page, (values) => values.resolution === '1920:1080' && values.bitrate === '25');
     assert.deepEqual([stored.hdrMode, stored.unlockAllFps], [false, false]);
-    assert.equal((await readStorage(app.page)).settingsSchema, 4);
+    assert.equal((await readStorage(app.page)).settingsSchema, 5);
   } finally {
     await app.context.close();
   }

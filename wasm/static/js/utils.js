@@ -8,6 +8,15 @@ var SMART_HUB_PREVIEW_FILE_PREFIX = 'preview-s90c-';
 // reports as error 599 as well
 var QUIT_APP_STILL_RUNNING_ERROR = 599;
 
+// How long the app waits for the answer of a host to /cancel (quitting the running app) and to the download of one box
+// art, in milliseconds: 30 seconds, as Moonlight for PC waits for a quit. The request queue enforces the limit
+// (sendMessage('openUrl', ...) in messages.js cancels the request in the module and rejects it with -1). Without one, a
+// host that accepts the connection and then sends nothing held the one HTTP thread of the module, and with it every
+// request of every host, for as long as the browser waited. The requests that start a stream (/launch and /resume) have
+// no limit here: the start has its own waits and retries.
+var QUIT_APP_TIMEOUT_MS = 30000;
+var BOX_ART_TIMEOUT_MS = 30000;
+
 // Box art shares the one HTTP thread of the module with every other request, where it waits behind them (sendMessage()
 // in messages.js). Opening a host with a cold cache asks for the box art of every app, so at most two downloads are on
 // their way at once, in the order of the app list; a download that is no longer wanted (its app list was left or built
@@ -428,6 +437,296 @@ String.prototype.toHex = function() {
   return hex;
 }
 
+// Whether a unique ID of a host is one that the app takes: 1 to 64 letters, digits, dashes and underscores, and not the
+// name of a property that every object has (constructor, toString, __proto__ and so on). GeForce Experience, Sunshine
+// and Apollo send hexadecimal digits, Sunshine and Apollo as a UUID with dashes.
+// The ID comes from the server info of any device that answers on the local network, unpaired and over plain HTTP,
+// and the app uses it as a key of plain objects (the hosts, their polls, the Smart Hub tiles) and in the element IDs of
+// the PC list. '__proto__' made the scan of the network write the addresses of the device into Object.prototype,
+// after which every loop over the hosts found them and the PC list was broken until the app restarted, 'constructor'
+// was taken for a known host, and an ID such as 'x,#main-content' matched other parts of the page as a selector.
+var SERVER_UID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+function isValidServerUid(serverUid) {
+  return typeof serverUid === 'string' && SERVER_UID_PATTERN.test(serverUid) && !(serverUid in Object.prototype);
+}
+
+// The rules for the other fields of a server info, which like the unique ID come from whatever device answered, for a
+// host that isn't paired over plain HTTP, and which the app stores with the host. Up to 2.3.0 they were kept as they
+// came: an address such as 'evil.example/x?' became part of the URL of the next poll, a missing HTTPS port stood as NaN
+// in every HTTPS URL of the host, and the texts and the display modes had no limit. A value that breaks its rule is
+// left out or cut, as the rule says; the host itself is never dropped for it.
+
+// The ports that a host uses when its server info names none (GeForce Experience, and Sunshine by default)
+var DEFAULT_HTTP_PORT = 47989;
+var DEFAULT_HTTPS_PORT = 47984;
+
+// The four numbers of an IPv4 address such as '192.168.1.20', or null. Other spellings that a URL reads as an IPv4
+// address ('127.1', '2130706433', '0x7f.0.0.1') are no address here.
+function parseIpv4Address(text) {
+  var match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(typeof text === 'string' ? text : '');
+  if (!match) {
+    return null;
+  }
+  var parts = [Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4])];
+  return parts.every(function(part) { return part <= 255; }) ? parts : null;
+}
+
+// The eight groups of an IPv6 address such as 'fe80::1c2d:3eff:fe4f:5a6b' as numbers, or null: groups of up to four
+// hexadecimal digits, at most one '::', and optionally an IPv4 address as the last two groups ('::ffff:192.168.1.20').
+// Without brackets, which formatAddressForUrl() adds, and without a zone ('%eth0'), which only means something on the
+// machine that names it.
+function parseIpv6Address(text) {
+  if (typeof text !== 'string' || text.length > 45 || text.indexOf(':') < 0 || !/^[0-9A-Fa-f:.]+$/.test(text)) {
+    return null;
+  }
+  var halves = text.split('::');
+  if (halves.length > 2) {
+    return null;
+  }
+  var readGroups = function(part, mayEndWithIpv4) {
+    var groups = [];
+    var pieces = part === '' ? [] : part.split(':');
+    for (var i = 0; i < pieces.length; i++) {
+      if (mayEndWithIpv4 && i === pieces.length - 1 && pieces[i].indexOf('.') >= 0) {
+        var ipv4 = parseIpv4Address(pieces[i]);
+        if (!ipv4) {
+          return null;
+        }
+        groups.push(ipv4[0] * 256 + ipv4[1], ipv4[2] * 256 + ipv4[3]);
+      } else if (/^[0-9A-Fa-f]{1,4}$/.test(pieces[i])) {
+        groups.push(parseInt(pieces[i], 16));
+      } else {
+        return null;
+      }
+    }
+    return groups;
+  };
+  var head = readGroups(halves[0], halves.length === 1);
+  var tail = halves.length === 2 ? readGroups(halves[1], true) : [];
+  if (!head || !tail) {
+    return null;
+  }
+  if (halves.length === 1) {
+    return head.length === 8 ? head : null;
+  }
+  var missing = 8 - head.length - tail.length;
+  if (missing < 1) {
+    return null;
+  }
+  for (var j = 0; j < missing; j++) {
+    head.push(0);
+  }
+  return head.concat(tail);
+}
+
+// Whether a text is a DNS name such as 'gaming-pc.lan': labels of letters, digits, hyphens and underscores with dots
+// between them, at most 253 characters. A name whose last label is a number ('127.1', '2130706433', '0x7f000001') is
+// none: a URL reads it as an IPv4 address, e.g. as the TV itself.
+function isDnsName(text) {
+  if (typeof text !== 'string' || text.length > 253 || !/^[A-Za-z0-9_-]{1,63}(\.[A-Za-z0-9_-]{1,63})*$/.test(text)) {
+    return false;
+  }
+  return !/^(\d+|0[xX][0-9A-Fa-f]*)$/.test(text.slice(text.lastIndexOf('.') + 1));
+}
+
+// Whether a text is an address that the app asks for a server info: an IPv4 address, an IPv6 address or a DNS name,
+// and so nothing that changes the URL it becomes a part of (a slash, a question mark, an '@', a port, a space). Every
+// address that the Add PC dialog takes (isValidHostAddress() in index.js) is one, except a name that ends in a number
+// or is longer than a DNS name can be.
+function isServerAddress(text) {
+  return parseIpv4Address(text) !== null || parseIpv6Address(text) !== null || isDnsName(text);
+}
+
+// Whether an address is the TV itself, which a host must not send the app to: 127.x.x.x, 0.0.0.0, the IPv6 loopback
+// and unspecified addresses in every spelling ('::1', '0:0:0:0:0:0:0:1', '::'), both as an IPv4 address inside an IPv6
+// one ('::ffff:127.0.0.1', '::ffff:7f00:1', '::127.0.0.1'), and the name localhost
+function isOwnMachineAddress(text) {
+  var isOwnIpv4 = function(parts) {
+    return parts[0] === 127 || parts.every(function(part) { return part === 0; });
+  };
+  var ipv4 = parseIpv4Address(text);
+  if (ipv4) {
+    return isOwnIpv4(ipv4);
+  }
+  var groups = parseIpv6Address(text);
+  if (groups) {
+    var leadingZeros = 0;
+    while (leadingZeros < 8 && groups[leadingZeros] === 0) {
+      leadingZeros++;
+    }
+    if (leadingZeros === 8 || (leadingZeros === 7 && groups[7] === 1)) {
+      return true;
+    }
+    // An IPv4 address in the last two groups: IPv4-mapped (::ffff:a.b.c.d) or the older IPv4-compatible form (::a.b.c.d)
+    if (leadingZeros >= 6 || (leadingZeros === 5 && groups[5] === 0xffff)) {
+      return isOwnIpv4([groups[6] >> 8, groups[6] & 255, groups[7] >> 8, groups[7] & 255]);
+    }
+    return false;
+  }
+  return typeof text === 'string' && /^(.*\.)?localhost$/i.test(text);
+}
+
+// The name that a host may answer to with mDNS, e.g. 'GAMING-PC.local' for the host GAMING-PC, or '' for a host whose
+// name is no DNS name (a name with a space or another character, or an address)
+function getLocalNameCandidate(hostname) {
+  if (!isDnsName(hostname)) {
+    return '';
+  }
+  return /\.local$/i.test(hostname) ? hostname : hostname + '.local';
+}
+
+// The addresses that a poll of a host tries, in their order and each one once: the address that worked the last time,
+// the mDNS name, the local and the external address from the server info, and the address that the user entered. Left
+// out are the ones that are no address (isServerAddress()) and the TV itself (isOwnMachineAddress()).
+function getServerAddressCandidates(host) {
+  var candidates = [];
+  [host.address, getLocalNameCandidate(host.hostname), host.localAddress, host.externalIP, host.userEnteredAddress].forEach(function(address) {
+    if (address && candidates.indexOf(address) < 0 && isServerAddress(address) && !isOwnMachineAddress(address)) {
+      candidates.push(address);
+    }
+  });
+  return candidates;
+}
+
+// Whether a value is a port number: a whole number from 1 to 65535
+function isPortNumber(value) {
+  return typeof value === 'number' && value % 1 === 0 && value >= 1 && value <= 65535;
+}
+
+// The port that a text of a server info names ('47984'), or 0 when it is missing or no whole number from 1 to 65535
+function parsePort(text) {
+  var trimmed = String(text === undefined || text === null ? '' : text).trim();
+  if (!/^\d{1,5}$/.test(trimmed)) {
+    return 0;
+  }
+  var port = Number(trimmed);
+  return isPortNumber(port) ? port : 0;
+}
+
+// Whether a text is a MAC address as the hosts send it and Wake-on-LAN reads it (ParseMacAddress() in
+// wasm/wake_on_lan.hpp): six pairs of hexadecimal digits with colons between them
+function isMacAddress(text) {
+  return typeof text === 'string' && /^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$/.test(text);
+}
+
+// The longest name, version, GPU name and state that the app keeps of a server info. The names of real hosts are far
+// shorter: a Windows computer name has up to 15 characters, a DNS label up to 63; the states are e.g.
+// 'SUNSHINE_SERVER_BUSY' and the versions '7.1.431.-1'.
+var SERVER_NAME_MAX_LENGTH = 64;
+var SERVER_TEXT_MAX_LENGTH = 64;
+var SERVER_VERSION_MAX_LENGTH = 32;
+
+// A text of a server info as the app keeps it: without control characters (line breaks, tabs, and the characters that
+// turn the reading direction of the text around them), which become spaces, without spaces around it, and cut to
+// maxLength characters. Any other character stays: the name of a host is chosen by its user.
+function cleanServerText(text, maxLength) {
+  var cleaned = String(text === undefined || text === null ? '' : text)
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]+/g, ' ').trim();
+  if (cleaned.length > maxLength) {
+    cleaned = cleaned.slice(0, maxLength);
+    // Not half of a character that takes two units
+    if (/[\ud800-\udbff]$/.test(cleaned)) {
+      cleaned = cleaned.slice(0, -1);
+    }
+    cleaned = cleaned.trim();
+  }
+  return cleaned;
+}
+
+// The limits of the display modes that the app keeps of one server info: how many <DisplayMode> entries it reads, how
+// many resolutions and refresh rates per resolution it keeps, and the largest width, height and refresh rate. A host
+// lists a few dozen modes, e.g. Sunshine every resolution of its configuration at every frame rate.
+var DISPLAY_MODE_MAX_ENTRIES = 1024;
+var DISPLAY_MODE_MAX_RESOLUTIONS = 128;
+var DISPLAY_MODE_MAX_RATES = 32;
+var DISPLAY_MODE_MAX_SIZE = 32767;
+var DISPLAY_MODE_MAX_RATE = 1000;
+
+// The whole part of a positive number in a text of a server info ('1080', '59.94'), or 0 for anything else and for a
+// number above max
+function parsePositiveNumber(text, max) {
+  var match = /^(\d{1,6})(\.\d{1,6})?$/.exec(String(text === undefined || text === null ? '' : text).trim());
+  var value = match ? Number(match[1]) : 0;
+  return value >= 1 && value <= max ? value : 0;
+}
+
+// The display modes of one server info, as { 'height:width': [refresh rates] }, from its entries
+// [{ width, height, refreshRate }] as texts. An entry with a value that is no positive number within the limits above
+// is left out, as are the entries, resolutions and refresh rates beyond the limits.
+function parseDisplayModes(entries) {
+  var modes = {};
+  var resolutions = 0;
+  (entries || []).slice(0, DISPLAY_MODE_MAX_ENTRIES).forEach(function(entry) {
+    var width = parsePositiveNumber(entry.width, DISPLAY_MODE_MAX_SIZE);
+    var height = parsePositiveNumber(entry.height, DISPLAY_MODE_MAX_SIZE);
+    var refreshRate = parsePositiveNumber(entry.refreshRate, DISPLAY_MODE_MAX_RATE);
+    if (!width || !height || !refreshRate) {
+      return;
+    }
+    var key = height + ':' + width;
+    if (!Object.prototype.hasOwnProperty.call(modes, key)) {
+      if (resolutions >= DISPLAY_MODE_MAX_RESOLUTIONS) {
+        return;
+      }
+      modes[key] = [];
+      resolutions++;
+    }
+    if (modes[key].length < DISPLAY_MODE_MAX_RATES && modes[key].indexOf(refreshRate) < 0) {
+      modes[key].push(refreshRate);
+    }
+  });
+  return modes;
+}
+
+// The URL that _openUrlWithTimeout() asks first, to see whether anything answers at the address of a request: for an
+// HTTPS request to the HTTPS port of the host, the server info of the same host over plain HTTP, which answers 200
+// without a certificate; any other URL as it is. The port is the one right after the host of an https:// URL, so that
+// neither a part of an IPv6 address nor the HTTP port is taken for it.
+function getPreflightUrl(url, httpsPort, httpPort) {
+  var match = /^https:\/\/(\[[0-9A-Fa-f:.]+\]|[^\/?#:@\[\]]+):(\d{1,5})(?=[\/?#]|$)/.exec(String(url));
+  if (!match || !isPortNumber(httpsPort) || !isPortNumber(httpPort) || Number(match[2]) !== httpsPort) {
+    return url;
+  }
+  return 'http://' + match[1] + ':' + httpPort + '/serverinfo';
+}
+
+// One app of an app list, { id, title } and its UUID where the host names one, from its <App> element. Null for an
+// entry without an <ID> that is a whole number or without an <AppTitle>, which getAppListWithCacheFlush() leaves out:
+// the ID names the box art files of the app and is what a start asks the host for.
+function parseAppListEntry(appElement) {
+  var idElement = appElement.getElementsByTagName('ID')[0];
+  var titleElement = appElement.getElementsByTagName('AppTitle')[0];
+  var id = idElement ? parseInt(String(idElement.textContent).trim(), 10) : NaN;
+  if (!titleElement || !Number.isSafeInteger(id)) {
+    return null;
+  }
+  var app = { id: id, title: String(titleElement.textContent).trim() };
+  // Apollo and Vibepollo also name each app by a UUID, which marks their control tiles (isHostTerminateTile() in
+  // index.js)
+  var uuidElement = appElement.getElementsByTagName('UUID')[0];
+  if (uuidElement && String(uuidElement.textContent).trim()) {
+    app.uuid = String(uuidElement.textContent).trim();
+  }
+  return app;
+}
+
+// The name of the directory in the private storage of the app that holds the box art of a host. It is made of the
+// name of the host, which the host chooses: letters and digits of every script, spaces, '_', '-' and '.' stay, every
+// other character (a slash, a backslash, a colon, a control character) becomes '_', and at most 64 characters are
+// kept. A name that leaves nothing but dots and spaces ('', '.', '..') gives a name made of the unique ID of the host
+// instead, so the directory is always one directory right below wgt-private and never that directory or one above it,
+// whatever the file system of the TV makes of '..'. The name of an ordinary host stays as it is, and with it the box
+// art that an earlier version cached.
+function getBoxArtDirName(hostname, serverUid) {
+  var name = String(hostname === undefined || hostname === null ? '' : hostname).replace(/[^\p{L}\p{M}\p{N} _.-]/gu, '_').slice(0, 64);
+  // Not half of a character that takes two units
+  name = name.replace(/[\ud800-\udbff]$/, '');
+  if (/^[. ]*$/.test(name)) {
+    return 'host-' + (isValidServerUid(serverUid) ? serverUid : 'unknown');
+  }
+  return name;
+}
+
 function NvHTTP(address, clientUid, userEnteredAddress = '', macAddress) {
   // Constructor start
   this.hostname = address;
@@ -500,14 +799,9 @@ NvHTTP.prototype = {
     }, 3000); // 3s max wait to see if the IP is a black hole
 
     // Use HTTP /serverinfo for the preflight to guarantee a 200 OK response and eliminate ALL console spam (like 404s).
-    // We only rewrite the URL if it targets the Sunshine HTTPS port, preserving this function for generic use.
-    var preflightUrl = url;
-    var portIndex = url.indexOf(':' + this.httpsPort);
-    if (portIndex !== -1) {
-      // Extract the protocol and IP (e.g. 'https://192.168.1.5') and swap to HTTP
-      var baseUrl = url.substring(0, portIndex).replace('https://', 'http://');
-      preflightUrl = baseUrl + ':' + this.httpPort + '/serverinfo';
-    }
+    // We only rewrite the URL if it targets the Sunshine HTTPS port, preserving this function for generic use
+    // (getPreflightUrl()).
+    var preflightUrl = getPreflightUrl(url, this.httpsPort, this.httpPort);
 
     return fetch(preflightUrl, abortCtrl ? { signal: abortCtrl.signal } : {})
       .then(function(res) {
@@ -541,6 +835,12 @@ NvHTTP.prototype = {
 
   // Refreshes the server info using a given address. This is useful for testing whether we can successfully ping a host at a given address
   refreshServerInfoAtAddress: function(givenAddress) {
+    // The address becomes a part of the URL, so only an IPv4 address, an IPv6 address or a DNS name is asked
+    // (isServerAddress()): an address that 2.3.0 stored from a server info could send the request to another host and
+    // path, e.g. 'evil.example/x?'
+    if (!isServerAddress(givenAddress)) {
+      return Promise.reject('Not asking ' + JSON.stringify(String(givenAddress).slice(0, 40)) + ' for a server info, which is no address');
+    }
     var urlAddr = formatAddressForUrl(givenAddress);
     // Unpaired hosts have no established certificate trust, so HTTP is allowed.
     if (this.ppkstr == null) { // No pinned cert
@@ -596,8 +896,11 @@ NvHTTP.prototype = {
       this._baseUrlHttps = 'https://' + urlAddr + ':' + this.httpsPort;
       this._baseUrlHttp = 'http://' + urlAddr + ':' + this.httpPort;
 
-      // Poll for updated mac address only on first successful server info poll
-      if (this.paired && this._pollCount === 0) {
+      // Poll for updated mac address only on first successful server info poll, and only for a host with a pinned
+      // key, whose server info came over HTTPS from the PC itself. The scan of the network polls each device that
+      // answers as a new host, over plain HTTP: one that answered with the unique ID of a stored PC and PairStatus 1
+      // had its MAC address written into that PC, which Wake-on-LAN then used.
+      if (this.paired && this.ppkstr && this._pollCount === 0) {
         updateMacAddress(this);
       }
 
@@ -643,28 +946,11 @@ NvHTTP.prototype = {
 
   // Initially pings the server to try and figure out if it's routable by any means
   selectServerAddress: function(onSuccess, onFailure) {
-    // Build a deduplicated, validated list of candidate addresses to try in order.
-    var seen = {};
-    var candidates = [];
-
-    var addCandidate = function(addr) {
-      if (addr && !seen[addr]) { // skip empty strings AND duplicates
-        // Skip localhost addresses (127.0.0.1, ::1, etc.) as they're not routable from the client
-        if (addr === '127.0.0.1' || addr === '::1' || addr.startsWith('127.') || addr === 'localhost') {
-          return;
-        }
-        seen[addr] = true;
-        candidates.push(addr);
-      }
-    };
-
-    addCandidate(this.address);
-    // Only append '.local' if the hostname doesn't already end with it
-    var localSuffix = this.hostname.endsWith('.local') ? this.hostname : this.hostname + '.local';
-    addCandidate(localSuffix);
-    addCandidate(this.localAddress);
-    addCandidate(this.externalIP);
-    addCandidate(this.userEnteredAddress);
+    // Build a deduplicated, validated list of candidate addresses to try in order: the address, the name with
+    // '.local', the local and the external address of the server info and the address that the user entered. An
+    // address of the TV itself (127.0.0.1, ::1, etc.) isn't routable from the client, and a text that is no address
+    // isn't asked (getServerAddressCandidates()).
+    var candidates = getServerAddressCandidates(this);
 
     var tryNext = function(index) {
       if (index >= candidates.length) {
@@ -722,15 +1008,29 @@ NvHTTP.prototype = {
       return false;
     }
 
-    if (this.serverUid != $root.find('uniqueid').text().trim() && this.serverUid != '') {
+    var serverUid = $root.find('uniqueid').text().trim();
+    if (this.serverUid != serverUid && this.serverUid != '') {
       // If we received a UUID that isn't the one we expected, fail
+      return false;
+    }
+
+    // A server info without a unique ID, or with one that the app doesn't take (isValidServerUid()), counts as no
+    // server info: nothing of it is kept, so the device is neither listed nor stored. Only the length of the ID and
+    // its start go to the log, as JSON, since the device chose the text.
+    if (!isValidServerUid(serverUid)) {
+      console.warn('%c[utils.js, _parseServerInfo]', 'color: gray;', 'Warning: Ignoring the server info of ' + this.address + ': ' +
+        (serverUid === '' ? 'it has no unique ID.' : 'its unique ID of ' + serverUid.length + ' characters, starting with ' +
+        JSON.stringify(serverUid.slice(0, 24)) + ', isn\'t one that the app takes (1 to 64 letters, digits, dashes and underscores, and no name of a property of every object).'));
       return false;
     }
 
     console.log('%c[utils.js, _parseServerInfo]', 'color: gray;', 'Parsing server info: ', $root);
 
-    // Retrieve the hostname and handle name validation
-    var serverName = $root.find('hostname').text().trim();
+    // Each field below is kept by its rule (cleanServerText(), isServerAddress(), isMacAddress(), parsePort() and
+    // parseDisplayModes() above); a field that breaks its rule is left out or cut, and the host is listed all the same
+
+    // Retrieve the hostname and handle name validation: without control characters, at most 64 characters
+    var serverName = cleanServerText($root.find('hostname').text(), SERVER_NAME_MAX_LENGTH);
     if (serverName != '') {
       this.hostname = serverName;
     } else {
@@ -738,25 +1038,40 @@ NvHTTP.prototype = {
     }
 
     // UUID is mandatory to determine which machine is responding
-    this.serverUid = $root.find('uniqueid').text().trim();
+    this.serverUid = serverUid;
 
-    // Retrieve the local IP address and MAC address of the host
-    this.localAddress = $root.find('LocalIP').text().trim();
+    // Retrieve the local IP address of the host, which the next poll tries: only an address, since it becomes a part
+    // of a URL
+    var localAddress = $root.find('LocalIP').text().trim();
+    this.localAddress = isServerAddress(localAddress) ? localAddress : '';
 
-    // Retrieve the MAC address of the host (required for Wake-on-LAN)
+    // Retrieve the MAC address of the host (required for Wake-on-LAN): six pairs of hexadecimal digits
     var macAddr = $root.find('mac').text().trim();
-    if (macAddr) {
+    if (isMacAddress(macAddr)) {
       this.macAddress = macAddr;
     }
 
     // This is an extension which is not present in GFE. It is present for Sunshine to be able
     // to support dynamic HTTP WAN ports without requiring the user to manually enter the port.
-    this.externalPort = parseInt($root.find('ExternalPort').text().trim(), 10);
-    this.httpsPort = parseInt($root.find('HttpsPort').text().trim(), 10);
+    // The app only shows it (the details of a host). Without one it is the HTTP port, as for a stored host.
+    var externalPort = parsePort($root.find('ExternalPort').text());
+    if (externalPort) {
+      this.externalPort = externalPort;
+    } else if (!isPortNumber(this.externalPort)) {
+      this.externalPort = isPortNumber(this.httpPort) ? this.httpPort : DEFAULT_HTTP_PORT;
+    }
+    // The HTTPS port stands in every HTTPS URL of the host, so a server info without one, or with something else than
+    // a port, keeps the port that the host had, or the default port where it had none: never NaN
+    var httpsPort = parsePort($root.find('HttpsPort').text());
+    if (httpsPort) {
+      this.httpsPort = httpsPort;
+    } else if (!isPortNumber(this.httpsPort)) {
+      this.httpsPort = DEFAULT_HTTPS_PORT;
+    }
 
     // This is not present in newer GFE versions
     var externIP = $root.find('ExternalIP').text().trim();
-    if (externIP) {
+    if (isServerAddress(externIP)) {
       // Don't overwrite the external IP we found via STUN
       this.externalIP = externIP;
       // The diagnostic log hides it wherever it appears from now on, e.g. in the URLs of the requests that try it
@@ -767,7 +1082,7 @@ NvHTTP.prototype = {
 
     // These are present in all supported GFE versions
     this.paired = $root.find('PairStatus').text().trim() == 1;
-    this.appVersion = $root.find('appversion').text().trim();
+    this.appVersion = cleanServerText($root.find('appversion').text(), SERVER_VERSION_MAX_LENGTH);
     this.serverMajorVersion = parseServerMajorVersion(this.appVersion);
 
     // This wasn't present on old GFE versions
@@ -775,26 +1090,21 @@ NvHTTP.prototype = {
 
     try {
       // These aren't critical for functionality, and don't necessarily exist in older GFE versions
-      this.gfeVersion = $root.find('GfeVersion').text().trim();
-      this.gputype = $root.find('gputype').text().trim();
-      this.numofapps = $root.find('numofapps').text().trim();
-      // Now for the hard part: parsing the supported streaming
-      $root.find('DisplayMode').each(function(index, value) { // For each resolution: FPS object
-        var yres = parseInt($(value).find('Height').text());
-        var xres = parseInt($(value).find('Width').text());
-        var fps = parseInt($(value).find('RefreshRate').text());
-        if (!this.supportedDisplayModes[yres + ':' + xres]) {
-          this.supportedDisplayModes[yres + ':' + xres] = [];
-        }
-        if (!this.supportedDisplayModes[yres + ':' + xres].includes(fps)) {
-          this.supportedDisplayModes[yres + ':' + xres].push(fps);
-        }
-      }.bind(this));
+      this.gfeVersion = cleanServerText($root.find('GfeVersion').text(), SERVER_VERSION_MAX_LENGTH);
+      this.gputype = cleanServerText($root.find('gputype').text(), SERVER_TEXT_MAX_LENGTH);
+      this.numofapps = cleanServerText($root.find('numofapps').text(), SERVER_VERSION_MAX_LENGTH);
+      // Now for the hard part: parsing the supported streaming. The display modes of this answer replace the ones of
+      // the answer before: up to 2.3.0 every poll added to them, and nothing was ever removed.
+      var displayModes = [];
+      $root.find('DisplayMode').slice(0, DISPLAY_MODE_MAX_ENTRIES).each(function(index, value) { // For each resolution: FPS object
+        displayModes.push({ width: $(value).find('Width').text(), height: $(value).find('Height').text(), refreshRate: $(value).find('RefreshRate').text() });
+      });
+      this.supportedDisplayModes = parseDisplayModes(displayModes);
     } catch (err) {
       // We don't need this data, so no error handling necessary
     }
 
-    var serverStatus = $root.find('state').text().trim();
+    var serverStatus = cleanServerText($root.find('state').text(), SERVER_TEXT_MAX_LENGTH);
     if (serverStatus) {
       this.serverState = serverStatus;
       // Detect GFE by its historical "MJOLNIR" codename, which was never used by any third-party server
@@ -864,18 +1174,20 @@ NvHTTP.prototype = {
       var appElements = rootElement.getElementsByTagName('App');
       var appList = [];
 
+      var skipped = 0;
+
       for (var i = 0, len = appElements.length; i < len; i++) {
-        var app = {
-          id: parseInt(appElements[i].getElementsByTagName('ID')[0].textContent.trim(), 10),
-          title: appElements[i].getElementsByTagName('AppTitle')[0].textContent.trim(),
-        };
-        // Apollo and Vibepollo also name each app by a UUID, which marks their control tiles (isHostTerminateTile() in
-        // index.js)
-        var uuidElement = appElements[i].getElementsByTagName('UUID')[0];
-        if (uuidElement && uuidElement.textContent.trim()) {
-          app.uuid = uuidElement.textContent.trim();
+        // An entry without an ID that is a number, or without a title, is left out instead of failing the whole list
+        // (a missing element threw here) or naming the box art files of an app 'boxart-NaN.png'
+        var app = parseAppListEntry(appElements[i]);
+        if (!app) {
+          skipped++;
+          continue;
         }
         appList.push(app);
+      }
+      if (skipped > 0) {
+        console.warn('%c[utils.js, getAppListWithCacheFlush]', 'color: gray;', 'Warning: Left out ' + skipped + ' of the ' + appElements.length + ' entries of the app list of ' + this.hostname + ', which have no numeric ID or no title.');
       }
 
       this._memCachedApplist = appList;
@@ -905,8 +1217,9 @@ NvHTTP.prototype = {
   // BOX_ART_DOWNLOAD_DROPPED if isStale() says by then that the box art is no longer wanted.
   getBoxArt: function(appId, isSmartHubSupported, isStale) {
     return new Promise(function(resolve, reject) {
-      // Store the original PNG box art in the private directory
-      var boxArtDir = 'wgt-private/' + this.hostname;
+      // Store the original PNG box art in the private directory, in a directory named after the host
+      // (getBoxArtDirName(): the name comes from the host, so it never goes into the path as it is)
+      var boxArtDir = 'wgt-private/' + getBoxArtDirName(this.hostname, this.serverUid);
       var boxArtFileName = 'boxart-' + appId + '.png';
       var previewFileName = SMART_HUB_PREVIEW_FILE_PREFIX + appId + '.jpg';
 
@@ -934,7 +1247,8 @@ NvHTTP.prototype = {
         // Fetch the new box art from the network
         boxArtDownloads.run(function() {
           return sendMessage('openUrl', [
-            self._baseUrlHttps + '/appasset?' + self._buildUidStr() + '&appid=' + appId + '&AssetType=2&AssetIdx=0', self.ppkstr, true
+            self._baseUrlHttps + '/appasset?' + self._buildUidStr() + '&appid=' + appId + '&AssetType=2&AssetIdx=0', self.ppkstr, true,
+            BOX_ART_TIMEOUT_MS
           ]);
         }, isStale).then(function(boxArtBuffer) {
           // The binary response as a Blob, which the images of the app show through its object URL
@@ -1060,7 +1374,9 @@ NvHTTP.prototype = {
   // Removes the private box art directory and preview files from the public documents directory.
   clearBoxArt: function() {
     return new Promise(function(resolve, reject) {
-      var boxArtDir = 'wgt-private/' + this.hostname; // Private storage directory for original box art
+      // Private storage directory for original box art, which is deleted with everything in it, so never the name
+      // of the host as it is (getBoxArtDirName()): '..' named the private storage of the app itself or what is above it
+      var boxArtDir = 'wgt-private/' + getBoxArtDirName(this.hostname, this.serverUid);
       var previewBoxArtDir = 'documents'; // Public storage directory so the background service can read it
 
       // Delete the original box art directory from private storage
@@ -1320,7 +1636,7 @@ NvHTTP.prototype = {
   // the host still reports a running app. It also fails when /cancel or the refresh fails.
   quitApp: function() {
     return sendMessage('openUrl', [
-      this._baseUrlHttps + '/cancel?' + this._buildUidStr(), this.ppkstr, false
+      this._baseUrlHttps + '/cancel?' + this._buildUidStr(), this.ppkstr, false, QUIT_APP_TIMEOUT_MS
     ]).then(function() {
       return this.refreshServerInfo();
     }.bind(this)).then(function() {

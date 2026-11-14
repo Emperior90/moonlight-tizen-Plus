@@ -183,7 +183,8 @@ test('YELLOW steps Off, Compact, Full, Off, and the overlay shows only the figur
     state = await statsState(app.page);
     assert.equal(state.shown, true);
     assert.equal(state.compact, false);
-    assert.ok(state.text.indexOf('Video stream: 3840x2160 60.00 FPS') === 0, state.text);
+    // After the line about the app and the sound of the stream (tests/browser/stats-overlay.test.js)
+    assert.ok(state.text.indexOf('\nVideo stream: 3840x2160 60.00 FPS') === state.text.indexOf('\n'), state.text);
     assert.ok(state.text.indexOf('Host frame intervals: deviation 0.47 ms, p95 17.0 ms, 0.0% off cadence') >= 0, state.text);
     await waitForStorage(app.page, (values) => values.performanceStats === 2);
     // Emptied as the start of a stream and the retry after no video do it, its outlined surface doesn't stay behind

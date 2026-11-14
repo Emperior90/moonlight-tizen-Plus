@@ -2,7 +2,10 @@
 // libcurl does: an answer larger than the limit of HTTP_DATA (HTTP_MAX_RESPONSE_SIZE, 4 MiB, or 16 MiB for box art)
 // fails with GS_RESPONSE_TOO_LARGE without the buffer growing past the limit, the next request on the same buffer
 // works again, and the log line of a request leaves out its query, which holds the remote input key of a launch
-// (rikey) and the secrets of the pairing. The curl functions below replace libcurl, so no network is needed.
+// (rikey) and the secrets of the pairing. An IPv6 address in brackets is replaced by a name that curl resolves to it,
+// and only where it is the host of the URL: brackets in the path or the query are no address (up to 2.3.0 the first
+// '[' and ']' anywhere in the URL were taken for one). The curl functions below replace libcurl, so no network is
+// needed.
 //
 // Build with: -lssl -lcrypto
 
@@ -34,6 +37,8 @@ static struct {
   curl_write_callback write;
   void* writeData;
   char url[1024];
+  // The first entry of CURLOPT_RESOLVE, or empty
+  char resolve[256];
 } transfer;
 
 static int curlHandle;
@@ -52,6 +57,9 @@ CURLcode curl_easy_setopt(CURL* curl, CURLoption option, ...) {
     transfer.writeData = va_arg(args, void*);
   } else if (option == CURLOPT_URL) {
     snprintf(transfer.url, sizeof(transfer.url), "%s", va_arg(args, const char*));
+  } else if (option == CURLOPT_RESOLVE) {
+    struct curl_slist* list = va_arg(args, struct curl_slist*);
+    snprintf(transfer.resolve, sizeof(transfer.resolve), "%s", list != NULL ? list->data : "");
   }
   va_end(args);
   return CURLE_OK;
@@ -211,6 +219,56 @@ static void test_log_leaves_out_the_query(void) {
   CHECK(strstr(output, "CURL: http://10.0.0.2:47989/serverinfo (PPK") != NULL);
 }
 
+// Run a request and check the URL and the address that curl got for it (an empty address: none)
+static void check_request_target(const char* url, const char* expectedUrl, const char* expectedResolve) {
+  PHTTP_DATA data = http_create_data();
+  CHECK_EQ_INT(request(data, url, "<root/>", 7), GS_OK);
+  if (strcmp(transfer.url, expectedUrl) != 0 || strcmp(transfer.resolve, expectedResolve) != 0) {
+    printf("    %s\n      -> url %s, resolve '%s'\n      expected url %s, resolve '%s'\n", url, transfer.url, transfer.resolve, expectedUrl,
+           expectedResolve);
+  }
+  CHECK(strcmp(transfer.url, expectedUrl) == 0);
+  CHECK(strcmp(transfer.resolve, expectedResolve) == 0);
+  http_free_data(data);
+}
+
+static void test_ipv6_host_is_rewritten(void) {
+  // The host in brackets becomes a name, and curl is told the address behind it
+  check_request_target("https://[fe80::1c2d:3eff:fe4f:5a6b]:47984/serverinfo?uniqueid=0123456789ABCDEF",
+                       "https://moonlight-ipv6-host:47984/serverinfo?uniqueid=0123456789ABCDEF",
+                       "moonlight-ipv6-host:47984:fe80::1c2d:3eff:fe4f:5a6b");
+  check_request_target("http://[2001:db8::1]:47989/serverinfo", "http://moonlight-ipv6-host:47989/serverinfo",
+                       "moonlight-ipv6-host:47989:2001:db8::1");
+  // Without a port: the one of the scheme
+  check_request_target("https://[::1]/applist", "https://moonlight-ipv6-host/applist", "moonlight-ipv6-host:443:::1");
+  check_request_target("http://[::1]", "http://moonlight-ipv6-host", "moonlight-ipv6-host:80:::1");
+  // Brackets after the host of an IPv6 URL stay where they are
+  check_request_target("https://[fe80::1]:47984/applist?name=[x]&y=]", "https://moonlight-ipv6-host:47984/applist?name=[x]&y=]",
+                       "moonlight-ipv6-host:47984:fe80::1");
+}
+
+static void test_brackets_outside_the_host_are_no_address(void) {
+  // An IPv4 address or a name as the host: whatever the path or the query holds, the URL reaches curl as it is
+  const char* urls[] = {
+    "http://10.0.0.2:47989/serverinfo?name=[x]",
+    "https://10.0.0.2:47984/launch?uniqueid=0123456789ABCDEF&appid=1&mode=[1920x1080x60]",
+    "https://10.0.0.2:47984/applist?next=http://[::1]:8889/preview-1.jpg",
+    "http://10.0.0.2:47989/[::1]/serverinfo",
+    "https://gaming-pc.local:47984/serverinfo?a=[&b=]",
+    "http://10.0.0.2:47989/serverinfo#[::1]",
+    "http://10.0.0.2:47989/serverinfo?a=]&b=[",
+    // A bracket that isn't closed within the host is no address either
+    "http://[fe80::1/serverinfo?x=]",
+    "http://[fe80::1?x=]",
+    // Only http:// and https:// URLs have a host here
+    "ftp://[::1]/x",
+    "[::1]:47989/serverinfo",
+  };
+  for (size_t i = 0; i < sizeof(urls) / sizeof(urls[0]); i++) {
+    check_request_target(urls[i], urls[i], "");
+  }
+}
+
 int main(void) {
   RUN_TEST("an answer up to the limit of 4 MiB is read whole", test_answer_within_the_limit);
   RUN_TEST("an answer over the limit fails with GS_RESPONSE_TOO_LARGE and the buffer stays within it",
@@ -218,5 +276,7 @@ int main(void) {
   RUN_TEST("box art may have up to 16 MiB", test_box_art_limit);
   RUN_TEST("the log line of a request leaves out its query with the remote input key and the pairing secrets",
            test_log_leaves_out_the_query);
+  RUN_TEST("an IPv6 address in brackets as the host is replaced by a name that curl resolves to it", test_ipv6_host_is_rewritten);
+  RUN_TEST("brackets in the path or the query of a URL are no IPv6 address", test_brackets_outside_the_host_are_no_address);
   return test_summary();
 }

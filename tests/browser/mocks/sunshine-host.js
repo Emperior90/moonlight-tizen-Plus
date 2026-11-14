@@ -7,13 +7,14 @@
 // browser/harness.js is this PC as the hosts list of an existing install stores it.
 // window.__sunshine holds the state that a test reads or changes: the running app (currentGame), the app list, the
 // requests (http, as '/path' or '/path appid'), the started streams (starts) and the stopped ones (stops). An init script
-// can set window.__sunshineConfig = { currentGame: <app ID> } for a PC that already runs an app when the TV starts.
+// can set window.__sunshineConfig = { currentGame: <app ID> } for a PC that already runs an app when the TV starts, and
+// { apps: [{ id, title }, ...] } for another app list than the five apps below.
 (function() {
   'use strict';
   var config = window.__sunshineConfig || {};
   var state = window.__sunshine = {
     currentGame: config.currentGame || 0,
-    apps: [{ id: 101, title: 'Cyberpunk 2077' }, { id: 102, title: 'Desktop' }, { id: 103, title: 'Steam Big Picture' },
+    apps: config.apps || [{ id: 101, title: 'Cyberpunk 2077' }, { id: 102, title: 'Desktop' }, { id: 103, title: 'Steam Big Picture' },
       { id: 104, title: 'Forza Horizon 5' }, { id: 105, title: 'Elden Ring' }],
     http: [],
     starts: [],

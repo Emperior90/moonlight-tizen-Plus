@@ -10,7 +10,9 @@
 //   fork-research/repro/wol_callback_race.js), and also when the background polling is the first to reach the PC,
 // - the dialog sends the request again while it waits, and stops once it is closed,
 // - a callback of a poll that throws neither keeps the other callbacks from the result nor keeps later polls from
-//   starting.
+//   starting,
+// - the dialog opens on Cancel, so that OK closes it: it used to open on the switch 'Always wake this PC automatically',
+//   which showed no highlight, and OK turned that on. UP selects the switch, which shows a ring then, and OK toggles it.
 // The host is an NvHTTP object whose network requests are simulated: the PC answers once window.__pcAwake is true.
 
 const { after, before, test } = require('node:test');
@@ -129,8 +131,8 @@ test('after a failed request, OK is selected, so that OK on the remote closes th
     const autoWolBefore = await app.page.evaluate(() => document.querySelector('#autoWolCheckboxSwitch').checked);
     await app.page.evaluate(() => window.openWolDialog());
     await app.page.waitForFunction(() => $('#cancelAutoWol').text().trim() === 'OK', null, { timeout: 3000 });
-    // Past the 100 ms after which enter() of the view focuses its selection again
-    await app.page.waitForTimeout(250);
+    // Past the 300 ms in which the dialog takes OK for the second press of the one that opened it (navigation.js)
+    await app.page.waitForTimeout(350);
     assert.equal(await app.page.evaluate(() => document.activeElement.id), 'cancelAutoWol');
     assert.equal(await app.page.evaluate(() => elementId(Views.AutoWolDialog.view.current())), 'cancelAutoWol');
     await remoteKey(app.page, ...OK);
@@ -270,6 +272,60 @@ test('a poll callback that throws neither keeps the others from the result nor b
     });
     assert.deepEqual(result, { called: ['first true', 'next poll'], polls: 2, pending: 0 });
     assert.ok(app.logs.some((line) => line.indexOf('Error: A callback of the poll of GAMING-PC failed:') >= 0));
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+// The selection of the dialog: the item of its view, the highlighted controls, the focused one and the ring of the switch
+const wolSelection = (page) => page.evaluate(() => ({
+  current: elementId(Views.AutoWolDialog.view.current()),
+  marked: Array.prototype.map.call(document.querySelectorAll('#autoWolDialog .hovered'), (element) => element.id),
+  focused: document.activeElement ? document.activeElement.id : '',
+  ring: getComputedStyle(document.getElementById('autoWolCheckboxBtn')).boxShadow,
+}));
+
+test('the dialog opens on Cancel, where OK closes it and leaves the automatic wake-up off, and the selected switch shows a ring', async () => {
+  const app = await openWithOfflineHost();
+  const { page } = app;
+  try {
+    await takeFocus(page);
+    await page.evaluate(() => window.openWolDialog());
+    // Past the 100 ms after which enter() of the view focuses its selection again, and the 300 ms in which the dialog
+    // takes OK for the second press of the one that opened it (navigation.js)
+    await page.waitForTimeout(350);
+    assert.deepEqual(await wolSelection(page), { current: 'cancelAutoWol', marked: ['cancelAutoWol'], focused: 'cancelAutoWol', ring: 'none' });
+    // OK right away closes the dialog, and the automatic wake-up of the PC stays off
+    await remoteKey(page, ...OK);
+    let state = await dialogState(page);
+    assert.deepEqual([state.open, state.overlay, state.isDialogOpen], [false, 'none', false]);
+    assert.deepEqual(await page.evaluate(() => [window.__host.autoWolEnabled === true, document.getElementById('autoWolCheckboxSwitch').checked]), [false, false]);
+    assert.equal((await events(page)).filter((event) => event === 'cancel').length, 1);
+
+    // The dialog again: UP selects the switch, whose row shows a white ring, and OK turns it on
+    await page.evaluate(() => window.openWolDialog());
+    await page.waitForTimeout(250);
+    await page.keyboard.press('ArrowUp');
+    await page.waitForTimeout(100);
+    const selected = await wolSelection(page);
+    assert.deepEqual([selected.current, selected.marked], ['autoWolCheckboxBtn', ['autoWolCheckboxBtn']]);
+    assert.match(selected.ring, /^rgb\(255, 255, 255\) 0px 0px 0px 3px inset$/);
+    // UP once more stays on the switch
+    await page.keyboard.press('ArrowUp');
+    assert.equal((await wolSelection(page)).current, 'autoWolCheckboxBtn');
+    await remoteKey(page, ...OK);
+    await page.waitForFunction(() => window.__host.autoWolEnabled === true, null, { timeout: 3000 });
+    assert.equal(await page.evaluate(() => document.getElementById('autoWolCheckboxSwitch').checked), true);
+    assert.equal((await dialogState(page)).open, true);
+    // DOWN back to Cancel, the ring goes, and OK closes the dialog with the switch as it was set
+    await page.keyboard.press('ArrowDown');
+    await page.waitForTimeout(100);
+    assert.deepEqual(await wolSelection(page), { current: 'cancelAutoWol', marked: ['cancelAutoWol'], focused: 'cancelAutoWol', ring: 'none' });
+    await remoteKey(page, ...OK);
+    state = await dialogState(page);
+    assert.deepEqual([state.open, state.isDialogOpen], [false, false]);
+    assert.equal(await page.evaluate(() => window.__host.autoWolEnabled), true);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

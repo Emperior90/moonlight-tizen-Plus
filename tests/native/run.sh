@@ -3,7 +3,9 @@
 # sanitizers, with the Emscripten 1.39 and Samsung headers replaced by the stubs in tests/native/stubs, and runs them.
 # Each test includes the source file it tests (e.g. wasm/gamepad.cpp) directly. The C tests (tests/native/*_test.c)
 # include C files of moonlight-common-c and libgamestream the same way and are built with gcc and the stubs in
-# tests/native/stubs_c. A test that needs more options, a library or another source file names them in a comment line
+# tests/native/stubs_c; a test that includes a file of moonlight-common-c gets the definitions that CMakeLists.txt gives
+# that library (LC_CHROME, LC_LOG), so that it builds the library as the release does, e.g. with the log lines going to
+# the listener of the app. A test that needs more options, a library or another source file names them in a comment line
 # '// Build with: -lcrypto' (a C++ test e.g. '// Build with: -std=gnu++17' for a file with an EM_ASM block without
 # arguments, whose stub needs the GNU form of __VA_ARGS__ as the syntax check below does); the tests are built from the
 # root of the repository, so a source file there is named from it, e.g. moonlight-common-c/src/RtspParser.c. A test that
@@ -37,6 +39,18 @@ export ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=1:abort_on_error=1}"
 export UBSAN_OPTIONS="${UBSAN_OPTIONS:-print_stacktrace=1}"
 
 failed=0
+
+# The definitions that CMakeLists.txt gives the moonlight-common-c target, for the C tests that include its files and
+# for the syntax check of its files below. A test built with a definition that the release lacks can pass on code that
+# the release doesn't have: rtsp_decrypt_error_test.c was built with -DLC_LOG while the release sent no log line of the
+# library to the app.
+# shellcheck disable=SC2207
+common_c_defines=($(sed -n '/^target_compile_definitions(moonlight-common-c PUBLIC/,/)/p' "$repo/CMakeLists.txt" |
+  sed -e 's/target_compile_definitions(moonlight-common-c PUBLIC//' -e 's/)//' | tr -s ' \n' '\n' | sed -e '/^$/d' -e 's/^/-D/'))
+if [ "${#common_c_defines[@]}" -eq 0 ]; then
+  echo "# The definitions of the moonlight-common-c target were not found in CMakeLists.txt"
+  failed=1
+fi
 for source in "$here"/*_test.cpp; do
   name="$(basename "$source" .cpp)"
   # shellcheck disable=SC2207
@@ -67,9 +81,13 @@ for source in "$here"/*_test.c; do
   fi
   # shellcheck disable=SC2207
   extra=($(sed -n 's|^// Build with: ||p' "$source"))
-  echo "# Building $name"
+  defines=()
+  if grep -q 'moonlight-common-c/' "$source"; then
+    defines=(${common_c_defines[@]+"${common_c_defines[@]}"})
+  fi
+  echo "# Building $name${defines[*]+ (${defines[*]})}"
   # (the form of the expansion keeps an empty list working with 'set -u' in the bash 3.2 of macOS)
-  (cd "$repo" && "$cc" "${cflags[@]}" -o "$out/$name" "$source" ${extra[@]+"${extra[@]}"} -lpthread)
+  (cd "$repo" && "$cc" "${cflags[@]}" ${defines[@]+"${defines[@]}"} -o "$out/$name" "$source" ${extra[@]+"${extra[@]}"} -lpthread)
   echo "# Running $name"
   if ! "$out/$name"; then
     echo "# $name failed"
@@ -79,7 +97,8 @@ done
 
 # Build the Opus library from the files and definitions that CMakeLists.txt gives it (only the decoder: the app never
 # encodes) into a static library, as the release build does, then link and run tests/native/opus_decoder/decode.c,
-# which decodes with the functions of the app. A file that the decoder needs and the list leaves out fails the link.
+# which decodes with the functions of the app, and the C++ tests of that folder. A file that the decoder needs and the
+# list leaves out fails the link.
 opus_out="$out/opus"
 rm -rf "$opus_out"
 mkdir -p "$opus_out"
@@ -103,6 +122,26 @@ if ! "$cc" -std=gnu99 -O1 -I"$repo/opus/include" -o "$opus_out/decode" "$here/op
   echo "# The Opus decoder of CMakeLists.txt doesn't link or decode"
   failed=1
 fi
+
+# The C++ tests that need this library instead of a stand-in (tests/native/opus_decoder/*_test.cpp), built like the
+# tests above: opus_decoder/app_decoder_test.cpp runs the audio decoder of the app (wasm/auddec.cpp) with it, so that
+# the leak check of the address sanitizer sees a decoder that the app doesn't destroy (the library itself is built
+# without the sanitizers, which still follow its allocations).
+for source in "$here"/opus_decoder/*_test.cpp; do
+  [ -e "$source" ] || continue
+  name="$(basename "$source" .cpp)"
+  echo "# Building opus_decoder/$name"
+  if ! (cd "$repo" && "$cxx" "${flags[@]}" -std=gnu++17 -o "$opus_out/$name" "$source" "$opus_out/libopus.a" -lm -lpthread); then
+    echo "# opus_decoder/$name doesn't build"
+    failed=1
+    continue
+  fi
+  echo "# Running opus_decoder/$name"
+  if ! "$opus_out/$name"; then
+    echo "# opus_decoder/$name failed"
+    failed=1
+  fi
+done
 
 # The local patch of opus/celt/arch.h (tests/unit/vendored-opus-patch.test.js): the WebAssembly build, whose pointers
 # are 32 bits wide as on a 32-bit CPU, takes the 64-bit multiplications of Opus, while a 32-bit target without
@@ -141,8 +180,9 @@ for source in "$repo"/wasm/*.cpp; do
 done
 for source in "$repo"/wasm/*.c "$repo"/moonlight-common-c/src/*.c; do
   echo "# Checking the syntax of ${source#"$repo"/}"
-  if ! "$cc" -std=gnu99 -fsyntax-only -I"$here/stubs_c" -I"$repo/moonlight-common-c/src" \
-      -I"$repo/moonlight-common-c/enet/include" -I"$repo/moonlight-common-c/reedsolomon" "$source"; then
+  if ! "$cc" -std=gnu99 -fsyntax-only ${common_c_defines[@]+"${common_c_defines[@]}"} -I"$here/stubs_c" \
+      -I"$repo/moonlight-common-c/src" -I"$repo/moonlight-common-c/enet/include" \
+      -I"$repo/moonlight-common-c/reedsolomon" "$source"; then
     echo "# ${source#"$repo"/} doesn't compile"
     failed=1
   fi

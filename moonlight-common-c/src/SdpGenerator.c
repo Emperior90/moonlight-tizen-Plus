@@ -459,11 +459,14 @@ static PSDP_OPTION getAttributesList(char*urlSafeAddr) {
                 err |= addAttributeString(&optionHead, "x-nv-video[0].dynamicRangeMode", "0");
             }
 
-            // If the decoder supports reference frame invalidation, that indicates it also supports
-            // the maximum number of reference frames allowed by the codec. Even if we can't use RFI
-            // due to lack of host support, we can still allow the host to pick a number of reference
-            // frames greater than 1 to improve encoding efficiency.
-            if (isReferenceFrameInvalidationSupportedByDecoder()) {
+            // Moonlight Plus: let the host pick its number of reference frames only when reference frame
+            // invalidation is really used, i.e. the decoder supports it and the host offered it in its answer
+            // to DESCRIBE (isReferenceFrameInvalidationEnabled()). Upstream also sends 0 when only the decoder
+            // supports it, "to improve encoding efficiency". The encoders of Sunshine that can't invalidate
+            // reference frames (AMD, Intel, software) then drop their limit of one reference frame, which
+            // changes the stream without any gain in recovery, and nobody measured how the decoders of the
+            // TVs take it.
+            if (isReferenceFrameInvalidationEnabled()) {
                 err |= addAttributeString(&optionHead, "x-nv-video[0].maxNumReferenceFrames", "0");
             }
             else {

@@ -6,16 +6,26 @@ const Controller = (function() {
   // Stick values in the menus. The resting sticks of worn or third-party controllers often report a few hundredths, and
   // Chromium applies no dead zone, so a value within AXIS_REST_ZONE counts as 0, and a change smaller than
   // AXIS_CHANGE_STEP is not reported unless it crosses AXIS_MOVE_THRESHOLD, past which the menus move (ACTION_THRESHOLD
-  // in index.js). Without this, a jittering stick sent up to 200 events per second to the main thread.
+  // in index.js), or AXIS_RELEASE_THRESHOLD, below which a direction of the menus ends (ACTION_RELEASE_THRESHOLD in
+  // index.js). Without this, a jittering stick sent up to 200 events per second to the main thread.
   const AXIS_REST_ZONE = 0.15;
   const AXIS_CHANGE_STEP = 0.05;
   const AXIS_MOVE_THRESHOLD = 0.5;
+  const AXIS_RELEASE_THRESHOLD = 0.3;
   // Number of characters of a gamepad id that the stream sees: the Emscripten event struct keeps 63 bytes of it, which
   // GetControllerType() in wasm/controller_type.hpp detects the controller type from
   const STREAM_ID_LENGTH = 63;
   // How often the menus read the gamepads, in ms: about once per frame of the screen, which no real button press is
   // shorter than. The held D-pad and stick repeat by time (index.js), so it doesn't change how fast they repeat.
   const MENU_POLL_INTERVAL_MS = 16;
+  // A read of the gamepads that comes this long after the one before it is late: the page was busy meanwhile, e.g. with
+  // drawing the step of a press, and what the read finds changed can have happened that long ago
+  const LATE_POLL_MS = 3 * MENU_POLL_INTERVAL_MS;
+  // The time of the read before the one that runs (null for the first one since the polling started), and by how many
+  // ms the read that runs came later than it was due, 0 for one that is not late. The menus get it with the changes of
+  // the read (lateBy), so that they don't take a D-pad press after a busy moment for a bounce of the press before it.
+  let lastPollAt = null;
+  let pollLateBy = 0;
 
   class Button {
     constructor(button) {
@@ -29,9 +39,12 @@ const Controller = (function() {
     return Math.abs(value) < AXIS_REST_ZONE ? 0 : value;
   }
 
-  // Side of the move threshold that a stick value is on: -1, 0 or 1
+  // Zone of the menus that a stick value is in: past the move threshold (-2 or 2), between the release and the move
+  // threshold (-1 or 1), where a direction holds but none starts, or at rest (0)
   function moveZone(value) {
-    return value < -AXIS_MOVE_THRESHOLD ? -1 : (value > AXIS_MOVE_THRESHOLD ? 1 : 0);
+    const magnitude = Math.abs(value);
+    const zone = magnitude > AXIS_MOVE_THRESHOLD ? 2 : (magnitude > AXIS_RELEASE_THRESHOLD ? 1 : 0);
+    return value < 0 ? -zone : zone;
   }
 
   class Gamepad {
@@ -120,7 +133,7 @@ const Controller = (function() {
   function reportChanges(index, changes) {
     if (changes.length > 0) {
       window.dispatchEvent(new CustomEvent('gamepadinputchanged', {
-          detail: { gamepad: index, changes },
+          detail: { gamepad: index, changes, lateBy: pollLateBy },
         })
       );
     }
@@ -415,6 +428,10 @@ const Controller = (function() {
   }
 
   function pollGamepads() {
+    const now = performance.now();
+    const sinceLastPoll = lastPollAt === null ? 0 : now - lastPollAt;
+    pollLateBy = sinceLastPoll >= LATE_POLL_MS ? sinceLastPoll - MENU_POLL_INTERVAL_MS : 0;
+    lastPollAt = now;
     const connectedGamepads = readGamepads();
     // Gather the evidence of every slot, also of a controller that the menus know from its connection event, so that
     // System information, the button mapping and the mask of a stream start count it
@@ -431,6 +448,8 @@ const Controller = (function() {
     // again through getConnectedGamepads(), whose read can be newer, or by a gamepad whose index differs from its slot
     // in the read) is told now rather than a poll later
     reportValidatedGamepads();
+    // What is reported outside a read (the end of the input of a gamepad that disconnects) is not late
+    pollLateBy = 0;
   }
 
   // Take a fresh snapshot of every known or connected gamepad without reporting any changes, so input that happened
@@ -459,6 +478,7 @@ const Controller = (function() {
     }
     if (!pollingInterval) {
       resetGamepads();
+      lastPollAt = null;
       pollingInterval = setInterval(pollGamepads, MENU_POLL_INTERVAL_MS);
       // The menus take over again: no rumble of a stream may go on here (the end of the stream already stopped them)
       Rumble.stopAll();
@@ -498,6 +518,10 @@ const Rumble = (function() {
   const active = {};
   // Ids of the gamepads that were told that they can't rumble, once per app session
   const unsupportedNotices = new Set();
+  // The gamepads that a rumble of the host found missing or unable to rumble, by index: the log gets the warning once
+  // per rumble, not with each change of its strength, which a game sends up to 60 times per second. stop() forgets the
+  // gamepad, so the next rumble warns again.
+  const warned = {};
 
   function getGamepad(index) {
     const gamepads = (navigator.getGamepads && navigator.getGamepads()) || [];
@@ -538,6 +562,14 @@ const Rumble = (function() {
     }
   }
 
+  // Run a warning about the rumble of a gamepad, unless this rumble already had one (see `warned`)
+  function warnOnce(index, warn) {
+    if (!warned[index]) {
+      warned[index] = true;
+      warn();
+    }
+  }
+
   function playEffect(index, gamepad, rumble) {
     callActuator(() => gamepad.vibrationActuator.playEffect('dual-rumble', {
       startDelay: 0,
@@ -549,7 +581,7 @@ const Rumble = (function() {
       if (active[index] === rumble) {
         clearReplay(index);
       }
-      reportUnsupported(index, gamepad, error);
+      warnOnce(index, () => reportUnsupported(index, gamepad, error));
     });
   }
 
@@ -569,6 +601,7 @@ const Rumble = (function() {
   // running one. A gamepad that is gone only loses its replay.
   function stop(index) {
     clearReplay(index);
+    delete warned[index];
     const gamepad = getGamepad(index);
     if (!canPlayEffects(gamepad)) {
       return;
@@ -598,12 +631,12 @@ const Rumble = (function() {
     }
     const gamepad = getGamepad(index);
     if (!gamepad) {
-      console.warn('%c[gamepad.js, Rumble]', 'color: gray;', 'Warning: No gamepad ' + index + ' to play the rumble on.');
+      warnOnce(index, () => console.warn('%c[gamepad.js, Rumble]', 'color: gray;', 'Warning: No gamepad ' + index + ' to play the rumble on.'));
       return;
     }
     if (!canPlayEffects(gamepad)) {
       clearReplay(index);
-      reportUnsupported(index, gamepad, 'it has no vibration actuator');
+      warnOnce(index, () => reportUnsupported(index, gamepad, 'it has no vibration actuator'));
       return;
     }
     // Play it now and again every REPLAY_INTERVAL_MS from now on, until the host sends 0
@@ -614,9 +647,10 @@ const Rumble = (function() {
     playEffect(index, gamepad, rumble);
   }
 
-  // Stop every rumble that is still on, when the stream ends
+  // Stop every rumble that is still on, when the stream ends, and forget the warnings of its rumbles
   function stopAll() {
     Object.keys(active).forEach((index) => stop(Number(index)));
+    Object.keys(warned).forEach((index) => delete warned[index]);
   }
 
   // Play a short rumble on a gamepad that just connected, so the user feels that rumble works, or tell that it can't

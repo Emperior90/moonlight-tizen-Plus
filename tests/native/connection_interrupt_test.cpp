@@ -4,7 +4,11 @@
 // up the whole stream. LiStartConnection clears that flag when it begins (Connection.c), so a stop that came before
 // would be lost; ClStageStarting(), which runs for every stage after that, sets it again. It also checks that every line
 // that the module logs with ClLogMessage() goes into the ring of the diagnostic log (wasm/diagnostic_log.hpp), from which
-// the front end takes it, and that a failed RTSP handshake whose answer had the key of another start
+// the front end takes it, that the lines of moonlight-common-c go there through the listener that the module gives the
+// library (ClLibraryLogMessage(), which Limelog() calls with the line as the argument of "%s", see limelog_test.c),
+// unchanged and limited by their kind, except for the two messages of each stage of a start and of a stop
+// ("Starting video stream..." and "done"), which always stay, and without the console on the main thread, whose console
+// the front end keeps for the log as well, and that a failed RTSP handshake whose answer had the key of another start
 // (ML_ERROR_RTSP_DECRYPT_FAILED, a local patch of moonlight-common-c) shows no dialog with the ports of the handshake,
 // since the front end explains it, and that the end of the stage that connects the control stream, which releases the
 // start on the host, tells the front end ("ControlStreamConnected"), unless the stream is already being stopped.
@@ -18,6 +22,7 @@
 #include <cstring>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 // The interrupt flag of moonlight-common-c (ConnectionInterrupted in Connection.c)
@@ -127,6 +132,181 @@ static void TestLoggedLinesGoIntoTheDiagnosticLog() {
   CHECK_EQ(rest, std::string());
 }
 
+// The callbacks that the module hands to LiStartConnection(), which are private: an explicit template instantiation is
+// the one place where C++ lets code name a private member (as in stats_overlay_test.cpp)
+template <typename Tag, typename Tag::Type Member>
+struct PrivateMember {
+  friend typename Tag::Type Pointer(Tag) {
+    return Member;
+  }
+};
+struct ListenerCallbacksMember {
+  using Type = CONNECTION_LISTENER_CALLBACKS*;
+  friend Type Pointer(ListenerCallbacksMember);
+};
+template struct PrivateMember<ListenerCallbacksMember, &MoonlightInstance::s_ClCallbacks>;
+
+// The texts of the lines in the ring, which empties it
+static std::vector<std::string> TakeLogTexts() {
+  std::vector<std::string> texts;
+  std::istringstream records(GetDiagnosticLog().Take());
+  std::string record;
+  while (std::getline(records, record)) {
+    texts.push_back(record.substr(record.find('\t') + 1));
+  }
+  return texts;
+}
+
+static void TestLinesOfTheLibraryGoIntoTheDiagnosticLog() {
+  TakeLogTexts();
+  // What moonlight-common-c calls for each of its log lines (Limelog() of Platform.h with LC_LOG)
+  const ConnListenerLogMessage logMessage = Pointer(ListenerCallbacksMember())->logMessage;
+  CHECK(logMessage == &MoonlightInstance::ClLibraryLogMessage);
+  logMessage("%s", "Video decode unit queue overflow\n");
+  logMessage("%s", "Control message took over 10 ms to send (net latency: 3 ms | packet loss: 0.500000%)\n");
+  // A text that looks like a format is kept as it is
+  logMessage("%s", "getaddrinfo(100%d-of-%s) failed: -2\n");
+  // A line that the library logs in two parts
+  logMessage("%s", "Starting video stream...");
+  logMessage("%s", "done\n");
+  const std::vector<std::string> texts = TakeLogTexts();
+  CHECK_EQ(texts.size(), 5u);
+  if (texts.size() == 5) {
+    CHECK_EQ(texts[0], std::string("Video decode unit queue overflow"));
+    CHECK_EQ(texts[1], std::string("Control message took over 10 ms to send (net latency: 3 ms | packet loss: 0.500000%)"));
+    CHECK_EQ(texts[2], std::string("getaddrinfo(100%d-of-%s) failed: -2"));
+    CHECK_EQ(texts[3], std::string("Starting video stream..."));
+    CHECK_EQ(texts[4], std::string("done"));
+  }
+}
+
+static void TestALineOfTheLibraryPerFrameDoesNotFillTheDiagnosticLog() {
+  TakeLogTexts();
+  const ConnListenerLogMessage logMessage = Pointer(ListenerCallbacksMember())->logMessage;
+  // A network that loses a packet in every frame, for a minute of a 120 FPS stream, with a line of the app in between
+  for (int frame = 0; frame < 7200; frame++) {
+    char line[96];
+    snprintf(line, sizeof(line), "Recovered 1 video data shards from frame %d\n", 100 + frame);
+    logMessage("%s", line);
+    if (frame == 3600) {
+      MoonlightInstance::ClLogMessage("Append audio packet failed: the audio player of the TV rejected %d packets of this stream\n", 1);
+    }
+  }
+  const std::vector<std::string> texts = TakeLogTexts();
+  // The first ten of their kind (DiagnosticLogRing::kKindBurst) and the line of the app: nothing was pushed out of the
+  // ring of 256 lines, and the lines left out are counted for the next line of the kind
+  CHECK_EQ(texts.size(), static_cast<size_t>(DiagnosticLogRing::kKindBurst) + 1);
+  if (texts.size() == DiagnosticLogRing::kKindBurst + 1) {
+    CHECK_EQ(texts[0], std::string("Recovered 1 video data shards from frame 100"));
+    CHECK_EQ(texts[9], std::string("Recovered 1 video data shards from frame 109"));
+    CHECK_EQ(texts[10], std::string("Append audio packet failed: the audio player of the TV rejected 1 packets of this stream"));
+  }
+  // The lines of the app themselves are never limited
+  for (int i = 0; i < 50; i++) {
+    MoonlightInstance::ClLogMessage("Line %d of the app\n", i);
+  }
+  // CHECK_EQ() evaluates its arguments twice, so the lines are taken first
+  const size_t appLines = TakeLogTexts().size();
+  CHECK_EQ(appLines, 50u);
+}
+
+static void TestTheStagesOfEveryStartAndStopKeepTheirTwoMessages() {
+  TakeLogTexts();
+  const ConnListenerLogMessage logMessage = Pointer(ListenerCallbacksMember())->logMessage;
+  // The start and the stop of a stream as Connection.c logs them: "<stage>..." without a line break and, once the stage
+  // is done, "done", with the lines of the stage in between
+  const char* stages[] = { "Initializing platform...", "Resolving host name...", "Initializing audio stream...",
+                           "Starting RTSP handshake...", "Initializing control stream...", "Initializing video stream...",
+                           "Initializing input stream...", "Starting control stream...", "Starting video stream...",
+                           "Starting audio stream...", "Starting input stream...", "Stopping input stream...",
+                           "Stopping audio stream...", "Stopping video stream...", "Stopping control stream...",
+                           "Cleaning up input stream...", "Cleaning up video stream...", "Cleaning up control stream...",
+                           "Cleaning up audio stream...", "Cleaning up platform..." };
+  // Fifteen starts in a row, as of a user who tries settings: twenty "done" each, more than a kind may keep
+  size_t linesOfTheStages = 0;
+  for (int start = 0; start < 15; start++) {
+    for (const char* stage : stages) {
+      logMessage("%s", stage);
+      if (std::strcmp(stage, "Starting RTSP handshake...") == 0) {
+        logMessage("%s", "Audio port: 48000\n");
+        logMessage("%s", "Video port: 47998\n");
+        logMessage("%s", "Control port: 47999\n");
+      }
+      if (std::strcmp(stage, "Starting video stream...") == 0) {
+        logMessage("%s", "Selected receive buffer size: 786432\n");
+        logMessage("%s", "Actual receive buffer size: 425984\n");
+      }
+      logMessage("%s", "done\n");
+    }
+    const std::vector<std::string> texts = TakeLogTexts();
+    size_t firstParts = 0;
+    size_t secondParts = 0;
+    for (size_t i = 0; i < texts.size(); i++) {
+      if (texts[i].size() > 3 && texts[i].compare(texts[i].size() - 3, 3, "...") == 0) {
+        firstParts++;
+      } else if (texts[i] == "done") {
+        secondParts++;
+        // Each "done" stands after its stage or after a line of it
+        CHECK(i > 0 && texts[i - 1] != "done");
+      } else {
+        linesOfTheStages++;
+      }
+    }
+    CHECK_EQ(firstParts, 20u);
+    CHECK_EQ(secondParts, 20u);
+    if (start == 0) {
+      CHECK_EQ(texts.size(), 45u);
+      if (texts.size() == 45) {
+        CHECK_EQ(texts[6], std::string("Starting RTSP handshake..."));
+        CHECK_EQ(texts[7], std::string("Audio port: 48000"));
+        CHECK_EQ(texts[10], std::string("done"));
+      }
+    }
+  }
+  // The lines of the stages themselves are limited like every other line of the library: ten of each of the five kinds
+  CHECK_EQ(linesOfTheStages, 5u * DiagnosticLogRing::kKindBurst);
+  // A line that only ends like a stage is not one, and a "done" within another text neither
+  for (int i = 0; i < 50; i++) {
+    char line[96];
+    snprintf(line, sizeof(line), "Waiting for frame %d...\n", i);
+    logMessage("%s", line);
+    snprintf(line, sizeof(line), "Frame %d is done\n", i);
+    logMessage("%s", line);
+  }
+  const size_t otherLines = TakeLogTexts().size();
+  CHECK_EQ(otherLines, 2u * DiagnosticLogRing::kKindBurst);
+}
+
+static void TestALineOfTheLibraryOnTheMainThreadIsInTheLogOnce() {
+  TakeLogTexts();
+  const ConnListenerLogMessage logMessage = Pointer(ListenerCallbacksMember())->logMessage;
+  // From a thread of the library: into the ring and to the console of that thread, which nothing else reads
+  int before = em_log_calls();
+  std::thread receiver([&]() {
+    logMessage("%s", "Network dropped 1 frame (frame 4521)\n");
+  });
+  receiver.join();
+  CHECK_EQ(em_log_calls() - before, 1);
+  // From the main thread of the page (played here by the thread that runs the tests): into the ring only. The front end
+  // keeps what the console of the page gets as lines of the app, where this one would be a second time and unlimited.
+  em_main_browser_thread() = true;
+  before = em_log_calls();
+  logMessage("%s", "Input queue reached maximum size limit\n");
+  CHECK_EQ(em_log_calls() - before, 0);
+  em_main_browser_thread() = false;
+  const std::vector<std::string> texts = TakeLogTexts();
+  CHECK_EQ(texts.size(), 2u);
+  if (texts.size() == 2) {
+    CHECK_EQ(texts[0], std::string("Network dropped 1 frame (frame 4521)"));
+    CHECK_EQ(texts[1], std::string("Input queue reached maximum size limit"));
+  }
+  // The lines of the app go to the console of every thread as before
+  before = em_log_calls();
+  MoonlightInstance::ClLogMessage("A line of the app\n");
+  CHECK_EQ(em_log_calls() - before, 1);
+  TakeLogTexts();
+}
+
 static void TestHandshakeWithTheKeyOfAnotherStartShowsNoPortDialog() {
   // Without an instance the ports are those of the stage (none in this stand-in), unmoved
   g_Instance = nullptr;
@@ -167,6 +347,14 @@ int main() {
                         TestStopBeforeTheSetupBeganIsNotLost);
   test_support::RunTest("without a stop the setup is not interrupted", TestNoInterruptWithoutAStop);
   test_support::RunTest("the lines that the module logs go into the diagnostic log", TestLoggedLinesGoIntoTheDiagnosticLog);
+  test_support::RunTest("the lines of moonlight-common-c go into the diagnostic log through the listener, unchanged",
+                        TestLinesOfTheLibraryGoIntoTheDiagnosticLog);
+  test_support::RunTest("a line of moonlight-common-c that comes once per frame doesn't fill the diagnostic log",
+                        TestALineOfTheLibraryPerFrameDoesNotFillTheDiagnosticLog);
+  test_support::RunTest("the stages of every start and stop keep their two messages, which a kind would leave out",
+                        TestTheStagesOfEveryStartAndStopKeepTheirTwoMessages);
+  test_support::RunTest("a line of moonlight-common-c on the main thread goes to the ring only, on another thread also to its console",
+                        TestALineOfTheLibraryOnTheMainThreadIsInTheLogOnce);
   test_support::RunTest("a handshake answered with the key of another start shows no dialog with the ports",
                         TestHandshakeWithTheKeyOfAnotherStartShowsNoPortDialog);
   test_support::RunTest("the connected control stream is posted to the front end, not for a stream being stopped",

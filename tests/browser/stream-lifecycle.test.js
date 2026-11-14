@@ -2,7 +2,8 @@
 
 // Pins the start and end of a stream in the UI (from the earlier rounds of fixes): RED during the start cancels it and
 // a late launch reply starts nothing, RED stops a running stream once, deep links and host selection are ignored while
-// streaming, and an abort or crashed thread of the WebAssembly module leaves the stream view and offers a restart.
+// streaming, and an abort or crashed thread of the WebAssembly module leaves the stream view and offers a restart, with
+// a warning that takes the place of an open one and that a later warning doesn't replace (since 2.3.1).
 // The host is simulated in the page; the stub of the WebAssembly module records the start request.
 
 const { after, before, test } = require('node:test');
@@ -183,12 +184,12 @@ test('S90C: the start request of a fresh install carries the golden video settin
       assert.deepEqual(request, {
         host: '10.0.0.2', httpPort: 47989, width: '3840', height: '2160', frameRate: '60', bitrateKbps,
         appVersion: '7.1.431.-1', gfeVersion: '', rtspUrl: 'rtsp://10.0.0.2:48010', codecModes: 0x1F03,
-        // The rumble is on for a fresh install since settings schema 3, and 'Optimize game settings' since settings
-        // schema 4
+        // The rumble is on for a fresh install since settings schema 3, 'Optimize game settings' since settings
+        // schema 4, and the surround audio quality is Efficient since settings schema 5
         framePacing: 1, optimizeGames: 1, rumbleFeedback: 1, mouseEmulation: 0, controllerMappings: '',
         audioBackend: 'EMSS', audioConfig: 'Stereo', audioSync: 0, audioJitter: 100, playHostAudio: 0, decryptHostAudio: 0,
         videoCodec: 'HEVC', hdrMode: 1, fullRange: 0, gameMode: 0, disableWarnings: 0, performanceStats: 0, refFrameInvalidation: 0,
-        hdrMetadata: 0, controllerType: 'Auto', surroundQuality: 'High',
+        hdrMetadata: 0, controllerType: 'Auto', surroundQuality: 'Efficient',
       }, conn);
       assert.deepEqual(app.errors, []);
     } finally {
@@ -308,6 +309,35 @@ test('a module failure leaves the stream view without calling the module, and re
     assert.equal(failure.title, 'Streaming engine error');
     assert.equal(failure.calls.restart, 1);
     assert.equal(app.logs.filter((line) => line.indexOf('The streaming engine failed') >= 0).length, 1, 'handled once');
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('the warning of a module failure takes the place of an open warning and stays when another one comes, and its Close restarts', async () => {
+  const app = await openWithFakeHost();
+  try {
+    const result = await app.page.evaluate(async () => {
+      let restarts = 0;
+      restartApplication = () => {
+        restarts++;
+      };
+      // A warning shows already when the streaming engine fails: the dialog takes the text of the failure, once
+      warningDialog('Unsupported Feature', 'A warning that was open');
+      onNativeModuleFailure('abort(OOM)');
+      const afterFailure = $('#warningDialogTitle').text();
+      // A warning that comes later, e.g. for the connection that the failure ended, is only logged: it used to replace
+      // the text and take the restart off the Close button
+      warningDialog('Connection Error', 'A later warning');
+      const afterLater = $('#warningDialogTitle').text();
+      const openDialogs = document.querySelectorAll('dialog[open]').length;
+      $('#closeWarning').click();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      return { afterFailure, afterLater, openDialogs, restarts, isStillOpen: document.getElementById('warningDialog').open };
+    });
+    assert.deepEqual(result, { afterFailure: 'Streaming engine error', afterLater: 'Streaming engine error', openDialogs: 1, restarts: 1, isStillOpen: false });
+    assert.ok(app.logs.some((line) => line.indexOf('Not showing "Connection Error" over the warning of the streaming engine failure.') >= 0));
+    assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
   }

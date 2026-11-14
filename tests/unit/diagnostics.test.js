@@ -5,9 +5,13 @@
 // and every MAC address but the all-zero one, also in a host object that the line cuts) and what it keeps (the local
 // addresses and the names of the PCs), the log of the current and the previous session (a new session for each stream,
 // the lines of the console with the style of '%c' left out and the console still getting them, the lines that only
-// repeat the overlay left out, a repeated line counted, the oldest lines dropped when a session is full, the native
-// lines of the module merged by their time and hidden the same way), the report of the last session read from the
-// messages of tests/fixtures/session-reports.tsv with their hints and its lines for System information, a report that
+// repeat the overlay or a rumble left out before they are redacted, a repeated line counted, the oldest lines dropped
+// when a session is full, the native lines of the module merged by their time and hidden the same way, the uncaught
+// errors and unhandled promise rejections of the page, each different one once and 20 at most per session), the report
+// of the last session read from the messages of tests/fixtures/session-reports.tsv with their hints and its lines for
+// System information (also the frame receive time as a share of the frame time, the lowest host frame rate with its
+// windows, and the hint about a PC that delivered fewer frames than the stream asked for; a report without these
+// figures, as 2.3.0 sent it, is read as before), a report that
 // can't be read logged with the reason and its whole text, and the heartbeat of a stream that reports once at the next
 // start that the app ended during it (not for a stream in the background), that the native lines come from the ring
 // that every log line of the module enters, that the module sets the listener that logs the errors of the media
@@ -293,6 +297,40 @@ test('the overlay messages stay out, a repeated line is counted, and a full sess
   assert.equal(lines[600], 'Line 699');
 });
 
+test('a line that only repeats the overlay or a rumble is dropped before the work of redacting it', () => {
+  const app = loadDiagnostics();
+  // Count the passes of the redaction over a text
+  app.platform.run(`
+    var redactionPasses = 0;
+    var redactDiagnosticTextOfTheScript = redactDiagnosticText;
+    redactDiagnosticText = function(text) {
+      redactionPasses++;
+      return redactDiagnosticTextOfTheScript(text);
+    };
+  `);
+  // The lines that messages.js writes for these messages while its logFrequentMessages is set for a debugging session
+  app.platform.run(`
+    console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Message data: ', 'StatMsg: {"rtt":3,"lost":0}\\nVideo stream: 3840x2160 60.00 FPS');
+    console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Message data: ', 'StatCompactMsg: {"w":3840}');
+    console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Message data: ', 'controllerRumble: 0,0.5,0.25');
+  `);
+  app.log.add('[messages.js, handleMessage] Message data:  controllerRumble: 0,0.5,0.25');
+  assert.equal(app.platform.get('redactionPasses'), 0);
+  assert.deepEqual(texts(app.log.getSessions()[0]), []);
+  // Any other line is redacted and kept, also one of the same script and one that only names such a message
+  app.platform.run(`
+    console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Message data: ', 'StatLevelMsg: 2');
+    console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Playing rumble on gamepad 0 with weak magnitude 0.5 and strong magnitude 0.25 (the changes of its strength are not logged until it stops)...');
+    console.log('%c[index.js]', 'color: green;', 'The module sent StatMsg: nothing, rikey=00112233');
+  `);
+  assert.ok(app.platform.get('redactionPasses') >= 3);
+  assert.deepEqual(texts(app.log.getSessions()[0]), [
+    '[messages.js, handleMessage] Message data:  StatLevelMsg: 2',
+    '[messages.js, handleMessage] Playing rumble on gamepad 0 with weak magnitude 0.5 and strong magnitude 0.25 (the changes of its strength are not logged until it stops)...',
+    '[index.js] The module sent StatMsg: nothing, rikey=<hidden>',
+  ]);
+});
+
 test('each stream starts a session: the log keeps the current and the previous one, with the native lines by time', () => {
   const app = loadDiagnostics();
   app.log.add('Before the first stream');
@@ -325,12 +363,158 @@ test('each stream starts a session: the log keeps the current and the previous o
   assert.match(texts(plain(broken.log.getSessions())[0])[0], /^W Taking the lines of the native log failed: Error: not ready$/);
 });
 
+// Send an 'error' or 'unhandledrejection' event to the listeners that diagnostics.js put on the window
+function dispatchToWindow(app, type, properties) {
+  const event = Object.assign({ type, defaultPrevented: false, preventDefault() {
+    this.defaultPrevented = true;
+  } }, properties);
+  app.platform.context.dispatchEvent(event);
+  return event;
+}
+
+test('an uncaught error of the page is a line of the log, with its script, line and column', () => {
+  const app = loadDiagnostics();
+  // One listener for each event, on the window, although the capture is asked for again
+  app.log.captureUncaught(app.platform.context);
+  assert.equal(app.platform.windowListeners.error.length, 1);
+  assert.equal(app.platform.windowListeners.unhandledrejection.length, 1);
+
+  const event = dispatchToWindow(app, 'error', { message: 'Uncaught TypeError: host.refreshServerInfo is not a function',
+    filename: 'file:///opt/usr/apps/AbCdEf1234/res/wgt/platform/index.js?v=2', lineno: 502, colno: 10 });
+  // The log only reads the event: the console of the browser still reports the error
+  assert.equal(event.defaultPrevented, false);
+  app.clock.now += 5000;
+  // A message without the word of Chromium gets it, and an error without a script (a script of another origin) no place
+  dispatchToWindow(app, 'error', { message: 'ReferenceError: nothing is not defined', filename: 'http://127.0.0.1:8080/static/js/utils.js', lineno: 7, colno: 3 });
+  dispatchToWindow(app, 'error', { message: 'Script error.', filename: '', lineno: 0, colno: 0 });
+  dispatchToWindow(app, 'error', {});
+  const lines = texts(app.log.getSessions()[0]);
+  assert.deepEqual(lines, [
+    'E Uncaught TypeError: host.refreshServerInfo is not a function (index.js:502:10)',
+    'E Uncaught error: ReferenceError: nothing is not defined (utils.js:7:3)',
+    'E Uncaught error: Script error.',
+    // The event without a message is the same text again, which is only counted
+    '… 1 more uncaught errors or unhandled promise rejections are not kept (the same ones again, or more than 20 different ones in this session)',
+  ]);
+  // The folders of the app on the TV, which hold its package ID, are not in the log
+  assert.equal(lines.join('\n').indexOf('AbCdEf1234'), -1);
+  // The line has the time of the error
+  assert.match(plain(app.log.getSessions()[0].lines)[1], /^\d\d:\d\d:\d\d\.\d{3} app {3} E Uncaught error: ReferenceError/);
+});
+
+test('an unhandled promise rejection is a line of the log, with the reason and the place of an error', () => {
+  const app = loadDiagnostics();
+  // What Embind throws for a start request with an argument of the wrong type, as Chromium formats its stack
+  const binding = { name: 'BindingError', message: 'Cannot pass "undefined" as a int',
+    stack: 'BindingError: Cannot pass "undefined" as a int\n    at Object.toWireType (file:///opt/usr/apps/AbCdEf1234/res/wgt/moonlight-wasm.js:1:23456)\n' +
+      '    at Object.startStream (file:///opt/usr/apps/AbCdEf1234/res/wgt/moonlight-wasm.js:1:34567)\n    at startRequest (file:///x/platform/messages.js:12:42)' };
+  const event = dispatchToWindow(app, 'unhandledrejection', { reason: binding });
+  assert.equal(event.defaultPrevented, false);
+  // An error whose stack has no brackets, one without a stack, and reasons that are no errors: a number (the error
+  // codes of the module), a text, an object, nothing
+  dispatchToWindow(app, 'unhandledrejection', { reason: { name: 'TypeError', message: 'Failed to fetch',
+    stack: 'TypeError: Failed to fetch\n    at http://127.0.0.1:8080/static/js/utils.js:517:14' } });
+  dispatchToWindow(app, 'unhandledrejection', { reason: { name: 'Error', message: 'no stack' } });
+  dispatchToWindow(app, 'unhandledrejection', { reason: { message: 'no name', stack: 'at <anonymous>:1:1' } });
+  dispatchToWindow(app, 'unhandledrejection', { reason: -1 });
+  dispatchToWindow(app, 'unhandledrejection', { reason: 'Failed to parse server info from HTTP' });
+  dispatchToWindow(app, 'unhandledrejection', { reason: { status: 503, hostname: 'GAMING-PC' } });
+  dispatchToWindow(app, 'unhandledrejection', { reason: undefined });
+  dispatchToWindow(app, 'unhandledrejection', { reason: null });
+  dispatchToWindow(app, 'unhandledrejection', {});
+  const lines = texts(app.log.getSessions()[0]);
+  assert.deepEqual(lines, [
+    'E Unhandled promise rejection: BindingError: Cannot pass "undefined" as a int (moonlight-wasm.js:1:23456)',
+    'E Unhandled promise rejection: TypeError: Failed to fetch (utils.js:517:14)',
+    'E Unhandled promise rejection: Error: no stack',
+    'E Unhandled promise rejection: no name (<anonymous>:1:1)',
+    'E Unhandled promise rejection: -1',
+    'E Unhandled promise rejection: Failed to parse server info from HTTP',
+    'E Unhandled promise rejection: {"status":503,"hostname":"GAMING-PC"}',
+    'E Unhandled promise rejection: undefined',
+    'E Unhandled promise rejection: null',
+    '… 1 more uncaught errors or unhandled promise rejections are not kept (the same ones again, or more than 20 different ones in this session)',
+  ]);
+  assert.equal(lines.join('\n').indexOf('AbCdEf1234'), -1);
+});
+
+test('the uncaught errors are hidden like every line of the log', () => {
+  const app = loadDiagnostics();
+  app.platform.get('hideDiagnosticValue')('uniqueid', '0123456789ABCDEF');
+  app.platform.get('hideDiagnosticAddress')('203.0.113.7');
+  dispatchToWindow(app, 'error', { message: 'Uncaught Error: request https://203.0.113.7:47984/launch?uniqueid=0123456789ABCDEF&rikey=00112233445566778899aabbccddeeff failed',
+    filename: 'http://x/platform/index.js', lineno: 1, colno: 2 });
+  dispatchToWindow(app, 'unhandledrejection', { reason: 'Wake-on-LAN to 3C:7C:3F:12:AB:CD failed, PIN 4711, client 0123456789ABCDEF' });
+  dispatchToWindow(app, 'unhandledrejection', { reason: { name: 'Error', message: 'rtsp://10.0.0.2:48010 refused\nrikeyid=12345678' } });
+  dispatchToWindow(app, 'unhandledrejection', { reason: { clientUid: '0123456789ABCDEF', externalIP: '203.0.113.7', hostname: 'GAMING-PC' } });
+  const lines = texts(app.log.getSessions()[0]);
+  assert.deepEqual(lines, [
+    'E Uncaught Error: request https://<hidden>:47984/launch?uniqueid=<hidden>&rikey=<hidden> failed (index.js:1:2)',
+    'E Unhandled promise rejection: Wake-on-LAN to <hidden> failed, PIN <hidden>, client <hidden>',
+    'E Unhandled promise rejection: Error: rtsp://<hidden> refused rikeyid=<hidden>',
+    'E Unhandled promise rejection: {"clientUid":"<hidden>","externalIP":"<hidden>","hostname":"GAMING-PC"}',
+  ]);
+  // A long text is cut like every line
+  dispatchToWindow(app, 'error', { message: 'Uncaught Error: ' + 'x'.repeat(5000) });
+  const long = texts(app.log.getSessions()[0])[4];
+  assert.equal(long.length, 2 + 400);
+  assert.match(long, /^E Uncaught Error: x+…$/);
+});
+
+test('an error that repeats can\'t flood the log: each different one once, and 20 at most per session', () => {
+  const app = loadDiagnostics();
+  const lengths = spyRedaction(app);
+  // The same error for every frame of ten minutes at 60 FPS, between other lines
+  app.platform.run(`console.log('before');`);
+  for (let i = 0; i < 36000; i++) {
+    dispatchToWindow(app, 'error', { message: 'Uncaught TypeError: frame is undefined', filename: 'http://x/platform/gamepad.js', lineno: 9, colno: 1 });
+    app.clock.now += 16;
+  }
+  app.platform.run(`console.log('after');`);
+  assert.deepEqual(texts(app.log.getSessions()[0]), [
+    'before',
+    'E Uncaught TypeError: frame is undefined (gamepad.js:9:1)',
+    'after',
+    '… 35999 more uncaught errors or unhandled promise rejections are not kept (the same ones again, or more than 20 different ones in this session)',
+  ]);
+  // Two errors that take turns are no repeat of the line before, and still come once each
+  for (let i = 0; i < 100; i++) {
+    dispatchToWindow(app, 'unhandledrejection', { reason: i % 2 ? 'first' : 'second' });
+  }
+  assert.equal(texts(app.log.getSessions()[0]).filter((line) => /^E Unhandled promise rejection: (first|second)$/.test(line)).length, 2);
+
+  // Errors that differ each time (e.g. with a counter in their text): 20 of the session are kept, the 3 above included
+  const redactions = lengths.length;
+  for (let i = 0; i < 5000; i++) {
+    dispatchToWindow(app, 'error', { message: 'Uncaught Error: packet ' + i + ' lost' });
+  }
+  const session = texts(app.log.getSessions()[0]);
+  const kept = session.filter((line) => /^E (Uncaught|Unhandled)/.test(line));
+  assert.equal(kept.length, 20);
+  assert.equal(kept[kept.length - 1], 'E Uncaught Error: packet 16 lost');
+  assert.equal(session[session.length - 1],
+    '… ' + (35999 + 98 + 5000 - 17) + ' more uncaught errors or unhandled promise rejections are not kept (the same ones again, or more than 20 different ones in this session)');
+  // The other lines of the session are all still there, and lines of the app are still kept after the limit
+  assert.deepEqual(session.slice(0, 3), ['before', 'E Uncaught TypeError: frame is undefined (gamepad.js:9:1)', 'after']);
+  app.platform.run(`console.error('a line of the app');`);
+  assert.ok(texts(app.log.getSessions()[0]).indexOf('E a line of the app') > 0);
+  // Past the limit an error is only counted, without the work of hiding its text: 17 texts were redacted, not 5000
+  assert.ok(lengths.length - redactions < 100, String(lengths.length - redactions));
+
+  // A new session (a stream starts) keeps its own: the one before stays as it was, and the error is kept again
+  app.log.startSession('stream');
+  dispatchToWindow(app, 'error', { message: 'Uncaught TypeError: frame is undefined', filename: 'http://x/platform/gamepad.js', lineno: 9, colno: 1 });
+  const sessions = app.log.getSessions();
+  assert.equal(texts(sessions[0]).filter((line) => /^E (Uncaught|Unhandled)/.test(line)).length, 20);
+  assert.deepEqual(texts(sessions[1]), ['E Uncaught TypeError: frame is undefined (gamepad.js:9:1)']);
+});
+
 // The lines of tests/fixtures/session-reports.tsv as { name, message, hints }
 function readReports() {
   return fs.readFileSync(path.join(REPO_ROOT, 'tests/fixtures/session-reports.tsv'), 'utf8')
     .split('\n').filter((line) => line && line[0] !== '#').map((line) => {
       const fields = line.split('\t');
-      return { name: fields[0], fields, message: fields[19], hints: fields[20].split(',') };
+      return { name: fields[0], fields, message: fields[29], hints: fields[30].split(',') };
     });
 }
 
@@ -339,8 +523,9 @@ test('the report of each message of the fixture, with its hints', () => {
   const parse = app.platform.get('parseSessionReport');
   const hints = app.platform.get('getSessionReportHints');
   const reports = readReports();
-  assert.equal(reports.length, 15);
+  assert.equal(reports.length, 31);
   reports.forEach((entry) => {
+    assert.equal(entry.fields.length, 31, entry.name);
     assert.ok(entry.message.indexOf('SessionReportMsg: ') === 0, entry.name);
     const report = plain(parse(entry.message.slice('SessionReportMsg: '.length)));
     assert.equal(report.durationMs, Number(entry.fields[1]), entry.name);
@@ -349,8 +534,19 @@ test('the report of each message of the fixture, with its hints', () => {
     assert.equal(report.heapGrowthMb, Number(entry.fields[16]), entry.name);
     assert.equal(report.hostFrameRateX100, Number(entry.fields[17]), entry.name);
     assert.equal(report.hostProcessingLatencyX10, Number(entry.fields[18]), entry.name);
+    assert.deepEqual([report.audioChannels, report.audioLoadMsPerS, report.audioLoadPeakMsPerS, report.audioOverloadedWindows],
+      entry.fields.slice(19, 23).map(Number), entry.name);
+    assert.equal(report.hostRfi, entry.fields[23] === '1', entry.name);
+    assert.deepEqual([report.hostFrameRateLowX100, report.hostWindows, report.hostLowWindows, report.receiveTimeX100,
+      report.receiveTimePeakX100], entry.fields.slice(24, 29).map(Number), entry.name);
     assert.deepEqual(plain(hints(report, { refFrameInvalidation: false })), entry.hints, entry.name);
   });
+  // The fixture has a PC that delivered too few frames, with and without the other hints that go before it
+  ['host-frames', 'host-frames-few', 'host-frames-network', 'host-frames-encoder', 'host-frames-short', 'host-frames-120'].forEach((name) => {
+    assert.equal(reports.filter((entry) => entry.name === name).length, 1, name);
+  });
+  // Both answers of a host are read
+  assert.deepEqual(Array.from(new Set(reports.map((entry) => entry.fields[23]))).sort(), ['0', '1']);
   // With reference frame invalidation already on, the recovery keyframes give no hint of their own
   const network = reports.filter((entry) => entry.name === 'network')[0];
   assert.deepEqual(plain(hints(parse(network.message.slice(18)), { refFrameInvalidation: true })), ['network']);
@@ -358,6 +554,231 @@ test('the report of each message of the fixture, with its hints', () => {
   assert.equal(parse('{broken'), null);
   assert.equal(parse('42'), null);
   assert.equal(plain(parse('{"frames":"many","durationMs":-5}')).frames, 0);
+  // The report of a module without the figures of the audio thread gives no hint about them
+  const older = plain(parse('{"durationMs":600000,"codec":"HEVC","fps":60,"frames":36000}'));
+  assert.deepEqual([older.audioChannels, older.audioLoadMsPerS, older.audioLoadPeakMsPerS, older.audioOverloadedWindows], [0, 0, 0, 0]);
+  assert.deepEqual(plain(hints(older, {})), ['ok']);
+});
+
+// The message of 2.3.0, which had neither the lowest host frame rate with its windows nor the frame receive time
+const MESSAGE_230 = '{"durationMs":600000,"codec":"HEVC Main10","width":3840,"height":2160,"fps":60,"bitrateKbps":100000,' +
+  '"frames":36000,"networkDroppedFrames":3,"tvDroppedFrames":0,"videoResets":0,"recoveryKeyframes":0,' +
+  '"fecRecoveredBlocks":12,"fecFailures":0,"heapTopMb":62,"heapTotalMb":128,"heapGrowthMb":1,' +
+  '"hostFrameRateX100":5984,"hostProcessingLatencyX10":84,"audioChannels":2,"audioLoadMsPerS":140,' +
+  '"audioLoadPeakMsPerS":152,"audioOverloadedWindows":0,"hostRfi":1}';
+
+test('the hint about the frames of the PC comes for a host that delivered clearly fewer frames in a good part of a clean session', () => {
+  const app = loadDiagnostics();
+  const parse = app.platform.get('parseSessionReport');
+  const hints = app.platform.get('getSessionReportHints');
+  const text = app.platform.get('getSessionReportHintText');
+  const byName = (name) => plain(parse(readReports().filter((entry) => entry.name === name)[0].message.slice(18)));
+  // The session of the finding: the best 30 s window reads 59.84 FPS and encoding took 8.4 ms, so neither the hint
+  // about the refresh rate nor the one about the encoder comes, while the PC delivered about 51 instead of 60 frames
+  // per second in 12 of its 39 half minutes. That read 'No problems found' before.
+  const session = byName('host-frames');
+  assert.deepEqual([session.hostFrameRateX100, session.hostProcessingLatencyX10, session.hostFrameRateLowX100, session.hostWindows,
+    session.hostLowWindows], [5984, 84, 5090, 39, 12]);
+  assert.deepEqual(plain(hints(session, {})), ['hostFrames']);
+  const without = Object.assign({}, session, { hostFrameRateLowX100: 0, hostWindows: 0, hostLowWindows: 0 });
+  assert.deepEqual(plain(hints(without, {})), ['ok']);
+  const low = (windows, lowWindows, extra) => Object.assign({}, session, { hostWindows: windows, hostLowWindows: lowWindows }, extra || {});
+  const cases = [
+    // At least a fifth of the windows that count, and at least 2 of them
+    [low(39, 8), ['hostFrames']], [low(39, 7), ['ok']], [low(40, 8), ['hostFrames']], [low(41, 8), ['ok']],
+    [low(10, 2), ['hostFrames']], [low(3, 2), ['hostFrames']], [low(3, 1), ['ok']], [low(1, 1), ['ok']],
+    [low(239, 48), ['hostFrames']], [low(239, 47), ['ok']], [low(39, 39), ['hostFrames']], [low(39, 0), ['ok']],
+    // A session of at least 2 minutes, like the hint about the encoder
+    [low(3, 3, { durationMs: 119000 }), ['ok']], [low(3, 3, { durationMs: 120000 }), ['hostFrames']],
+    // Not with many frames lost on the network, which gets the hint about the network alone; a few lost frames that
+    // give no network hint don't stop it
+    [low(39, 12, { networkDroppedFrames: 900 }), ['network']], [low(39, 12, { networkDroppedFrames: 9 }), ['hostFrames']],
+    [low(39, 12, { networkDroppedFrames: 300 }), ['hostFrames']],
+    // A busy encoder already explains the missing frames: its hint comes instead, never both
+    [low(39, 12, { hostProcessingLatencyX10: 126 }), ['host']], [low(39, 12, { hostProcessingLatencyX10: 125 }), ['hostFrames']],
+    // It comes after the hints about the network, the TV and the sound, and before the others
+    [low(39, 12, { tvDroppedFrames: 2000 }), ['tv', 'hostFrames']],
+    [low(39, 12, { tvDroppedFrames: 2000, audioOverloadedWindows: 3 }), ['tv', 'audio', 'hostFrames']],
+    [low(39, 12, { recoveryKeyframes: 5, fecFailures: 2 }), ['hostFrames', 'keyframes', 'fec']],
+    // A report without a frame rate of the stream gives none
+    [low(39, 12, { fps: 0 }), ['ok']],
+  ];
+  cases.forEach(([report, expected]) => assert.deepEqual(plain(hints(report, {})), expected, JSON.stringify(report)));
+  // The fixture rows of the same session: too few low windows, the network, the encoder, a short session, 120 FPS
+  assert.deepEqual(plain(hints(byName('host-frames-few'), {})), ['ok']);
+  assert.deepEqual(plain(hints(byName('host-frames-network'), {})), ['network']);
+  assert.deepEqual(plain(hints(byName('host-frames-encoder'), {})), ['host']);
+  assert.deepEqual(plain(hints(byName('host-frames-short'), {})), ['ok']);
+  assert.deepEqual(plain(hints(byName('host-frames-120'), {})), ['hostFrames']);
+
+  // The text names the figures and stays neutral: a game or video limited to fewer frames reads the same. It doesn't
+  // blame the bitrate, the network or the encoder, and it names the display of the PC, the other common cause: a stream
+  // at 120 FPS from a PC whose display runs at 60 Hz gets 60 new frames per second, which lower graphics settings don't
+  // change (the text before told only to lower them).
+  const hint = text('hostFrames', session);
+  assert.equal(hint, 'The PC often sent fewer frames than the stream asked for: in 12 of 39 half minutes fewer than 57 per second, ' +
+    '50.9 at the lowest. That is normal for a game or video limited to fewer frames, or for a display of the PC set to fewer Hz ' +
+    'than the frame rate of the stream (e.g. 60 Hz at 120 FPS). Otherwise lower the graphics settings of the game or the frame ' +
+    'rate of the stream.');
+  assert.doesNotMatch(hint, /bitrate|network|encoder|could not deliver/i);
+  // The limit of a low window follows the stream rate: 95 % of it, as the module counts them
+  assert.match(text('hostFrames', byName('host-frames-120')), /in 8 of 19 half minutes fewer than 114 per second, 98\.5 at the lowest\./);
+  assert.match(text('hostFrames', low(39, 12, { fps: 90 })), /fewer than 85\.5 per second/);
+  const native = fs.readFileSync(path.join(REPO_ROOT, 'wasm/session_report.hpp'), 'utf8');
+  assert.equal(Number(/constexpr uint32_t kHostRateLowPercent = (\d+);/.exec(native)[1]), app.platform.get('HOST_LOW_RATE_PERCENT'));
+  assert.equal(app.platform.get('HOST_LOW_RATE_PERCENT'), 95);
+
+  // A report of 2.3.0 has none of these figures: it is read as before and gets no hint about the frames of the PC
+  const report230 = plain(parse(MESSAGE_230));
+  assert.deepEqual([report230.hostFrameRateLowX100, report230.hostWindows, report230.hostLowWindows, report230.receiveTimeX100,
+    report230.receiveTimePeakX100], [0, 0, 0, 0, 0]);
+  assert.deepEqual([report230.hostFrameRateX100, report230.hostProcessingLatencyX10, report230.frames, report230.hostRfi], [5984, 84, 36000, true]);
+  assert.deepEqual(plain(hints(report230, {})), ['ok']);
+  // Figures that aren't numbers count as missing
+  const broken = plain(parse('{"durationMs":600000,"fps":60,"frames":36000,"hostWindows":"39","hostLowWindows":-12,"receiveTimeX100":null}'));
+  assert.deepEqual([broken.hostWindows, broken.hostLowWindows, broken.receiveTimeX100], [0, 0, 0]);
+});
+
+test('the report shows the frame receive time as a share of the frame time, and the lowest host frame rate with its windows', () => {
+  const app = loadDiagnostics();
+  const parse = app.platform.get('parseSessionReport');
+  const describe = app.platform.get('describeSessionReport');
+  const byName = (name) => parse(readReports().filter((entry) => entry.name === name)[0].message.slice(18));
+  // The session of the finding at 180 Mbps and 60 FPS: a frame took 11.10 ms to arrive on average, which is 67 % of
+  // the 16.7 ms between two frames, and 13.85 ms (83 %) in the highest second
+  const lines = plain(describe(byName('host-frames'), {}));
+  assert.deepEqual(lines, [
+    'Last session: 20 min 0 s, AV1 Main10, 3840x2160, 60 FPS, 180 Mbps',
+    'Frames lost on the network: 4 of 66,400 (0.01%)',
+    'Frames dropped by the TV: 0, video resets: 0, recovery keyframes: 0',
+    'FEC repairs: 25 blocks, 0 failed',
+    'Average frame receive time: 11.10 ms (67% of the frame time), highest second: 13.85 ms (83%)',
+    'Host frame rate (best 30 s): 59.84 FPS, average host processing latency: 8.4 ms',
+    'Host frame rate (lowest 30 s): 50.90 FPS, below 57 FPS in 12 of 39 half minutes',
+    'WASM heap at the end: 62 of 128 MB (+1 MB in this session)',
+    'Hint: The PC often sent fewer frames than the stream asked for: in 12 of 39 half minutes fewer than 57 per second, 50.9 at the lowest. ' +
+      'That is normal for a game or video limited to fewer frames, or for a display of the PC set to fewer Hz than the frame rate of the ' +
+      'stream (e.g. 60 Hz at 120 FPS). Otherwise lower the graphics settings of the game or the frame rate of the stream.',
+  ]);
+  // With too few low windows for the hint, the figures still show
+  const few = plain(describe(byName('host-frames-few'), {}));
+  assert.equal(few[6], 'Host frame rate (lowest 30 s): 50.90 FPS, below 57 FPS in 7 of 39 half minutes');
+  assert.equal(few[few.length - 1], 'Hint: No problems found in this session.');
+  // The share follows the frame rate of the stream: 6.02 ms are 72 % of the 8.3 ms between two frames at 120 FPS,
+  // and the limit of a low window is 114 FPS there
+  const fast = plain(describe(byName('host-frames-120'), {}));
+  assert.equal(fast[4], 'Average frame receive time: 6.02 ms (72% of the frame time), highest second: 7.31 ms (88%)');
+  assert.equal(fast[6], 'Host frame rate (lowest 30 s): 98.50 FPS, below 114 FPS in 8 of 19 half minutes');
+  const report = plain(byName('clean'));
+  const receiveLine = (extra) => plain(describe(Object.assign({}, report, extra), {})).filter((line) => line.indexOf('Average frame receive time') === 0);
+  assert.deepEqual(receiveLine({}), ['Average frame receive time: 4.12 ms (25% of the frame time), highest second: 6.55 ms (39%)']);
+  // The figures of the finding: 8.65 ms at 60 FPS are 52 % of the frame time, 9.35 ms 56 %, 9.90 ms 59 %
+  assert.deepEqual(receiveLine({ receiveTimeX100: 865, receiveTimePeakX100: 0 }), ['Average frame receive time: 8.65 ms (52% of the frame time)']);
+  assert.match(receiveLine({ receiveTimeX100: 935 })[0], /9\.35 ms \(56% of the frame time\)/);
+  assert.match(receiveLine({ receiveTimeX100: 990 })[0], /9\.90 ms \(59% of the frame time\)/);
+  // A frame can take longer than the time between two frames, e.g. on a link that the bitrate overloads
+  assert.match(receiveLine({ receiveTimeX100: 1530, receiveTimePeakX100: 2100, fps: 60 })[0], /15\.30 ms \(92% of the frame time\), highest second: 21\.00 ms \(126%\)/);
+  assert.match(receiveLine({ receiveTimeX100: 1000, receiveTimePeakX100: 1250, fps: 30 })[0], /10\.00 ms \(30% of the frame time\), highest second: 12\.50 ms \(38%\)/);
+  // Without a frame, or without the figure (a report of 2.3.0), the line is left out, and so is the line of the lowest
+  // host frame rate without a window that counts
+  assert.deepEqual(receiveLine({ receiveTimeX100: 0, receiveTimePeakX100: 0 }), []);
+  assert.deepEqual(receiveLine({ fps: 0 }), []);
+  const lowLine = (extra) => plain(describe(Object.assign({}, report, extra), {})).filter((line) => line.indexOf('Host frame rate (lowest 30 s)') === 0);
+  assert.deepEqual(lowLine({}), ['Host frame rate (lowest 30 s): 59.96 FPS, below 57 FPS in 0 of 24 half minutes']);
+  assert.deepEqual(lowLine({ hostWindows: 0, hostLowWindows: 0, hostFrameRateLowX100: 0 }), []);
+  assert.deepEqual(lowLine({ fps: 90 }), ['Host frame rate (lowest 30 s): 59.96 FPS, below 85.5 FPS in 0 of 24 half minutes']);
+  // A paused host (the row of a static scene): the best window shows, no window counts for the lowest
+  const paused = plain(describe(byName('host-static'), {}));
+  assert.ok(paused.indexOf('Host frame rate (best 30 s): 30.01 FPS, average host processing latency: 4.2 ms') > 0, paused.join('\n'));
+  assert.equal(paused.filter((line) => line.indexOf('Host frame rate (lowest 30 s)') === 0).length, 0);
+  // The report of 2.3.0 shows what it showed before
+  assert.deepEqual(plain(describe(parse(MESSAGE_230), {})), [
+    'Last session: 10 min 0 s, HEVC Main10, 3840x2160, 60 FPS, 100 Mbps',
+    'Frames lost on the network: 3 of 36,000 (0.01%)',
+    'Frames dropped by the TV: 0, video resets: 0, recovery keyframes: 0',
+    'FEC repairs: 12 blocks, 0 failed',
+    'Host frame rate (best 30 s): 59.84 FPS, average host processing latency: 8.4 ms',
+    'WASM heap at the end: 62 of 128 MB (+1 MB in this session)',
+    'Hint: No problems found in this session.',
+  ]);
+});
+
+test('the hint about recovery keyframes names Reference frame invalidation only for a host that offered it', () => {
+  const app = loadDiagnostics();
+  const parse = app.platform.get('parseSessionReport');
+  const hints = app.platform.get('getSessionReportHints');
+  const reports = readReports();
+  const byName = (name) => plain(parse(reports.filter((entry) => entry.name === name)[0].message.slice(18)));
+  // The same stream with 5 recovery keyframes from a host that offered it and from one that didn't
+  const offered = byName('keyframes');
+  const notOffered = byName('keyframes-host-without-rfi');
+  assert.equal(offered.recoveryKeyframes, 5);
+  assert.deepEqual(Object.assign({}, offered, { hostRfi: false }), notOffered);
+  assert.deepEqual(plain(hints(offered, { refFrameInvalidation: false })), ['keyframes']);
+  assert.deepEqual(plain(hints(notOffered, { refFrameInvalidation: false })), ['ok']);
+  // With the setting already on there is nothing to suggest, whatever the host offered
+  assert.deepEqual(plain(hints(offered, { refFrameInvalidation: true })), ['ok']);
+  assert.deepEqual(plain(hints(notOffered, { refFrameInvalidation: true })), ['ok']);
+  // Next to another hint as well
+  assert.deepEqual(plain(hints(byName('network'), {})), ['network', 'keyframes']);
+  assert.deepEqual(plain(hints(byName('network-host-without-rfi'), {})), ['network']);
+  // H.264 never gets it: the app asks for reference frame invalidation only with HEVC and AV1
+  assert.deepEqual(plain(hints(Object.assign({}, offered, { codec: 'H.264' }), {})), ['ok']);
+
+  // The message of 2.3.0, which had no hostRfi, is still read: nothing is known about its host, so no hint names the
+  // setting
+  const message230 = '{"durationMs":600000,"codec":"HEVC Main10","width":3840,"height":2160,"fps":60,"bitrateKbps":100000,' +
+    '"frames":36000,"networkDroppedFrames":540,"tvDroppedFrames":0,"videoResets":1,"recoveryKeyframes":4,' +
+    '"fecRecoveredBlocks":900,"fecFailures":6,"heapTopMb":62,"heapTotalMb":128,"heapGrowthMb":1,' +
+    '"hostFrameRateX100":6000,"hostProcessingLatencyX10":61}';
+  const report230 = plain(parse(message230));
+  assert.equal(report230.hostRfi, false);
+  assert.equal(report230.recoveryKeyframes, 4);
+  assert.equal(report230.networkDroppedFrames, 540);
+  assert.deepEqual(plain(hints(report230, { refFrameInvalidation: false })), ['network']);
+  // Only 1 and true count as an offer
+  [0, false, '1', 'yes', 2, null, {}].forEach((value) => {
+    assert.equal(plain(parse(JSON.stringify({ frames: 10, hostRfi: value }))).hostRfi, false, JSON.stringify(value));
+  });
+  assert.equal(plain(parse('{"frames":10,"hostRfi":1}')).hostRfi, true);
+  assert.equal(plain(parse('{"frames":10,"hostRfi":true}')).hostRfi, true);
+});
+
+test('the hint about the sound comes for a surround stream with a window above the limit of the module, with its busiest window', () => {
+  const app = loadDiagnostics();
+  const hints = app.platform.get('getSessionReportHints');
+  const text = app.platform.get('getSessionReportHintText');
+  const audio = (channels, windows, extra) => hostReport(60, 60, 4, Object.assign({ audioChannels: channels, audioLoadMsPerS: 250,
+    audioLoadPeakMsPerS: 340, audioOverloadedWindows: windows }, extra || {}));
+  const cases = [
+    // The module counts the windows above its limit (wasm/audio_load.hpp), so the front end keeps no limit of its own:
+    // one window is enough, none gives no hint whatever the figures say
+    [audio(6, 1), ['audio']], [audio(8, 1), ['audio']], [audio(8, 200), ['audio']],
+    [audio(6, 0), ['ok']], [audio(8, 0, { audioLoadMsPerS: 900, audioLoadPeakMsPerS: 900 }), ['ok']],
+    // Stereo and mono have no lighter sound to change to, and without an audio output nothing was decoded
+    [audio(2, 50), ['ok']], [audio(1, 50), ['ok']], [audio(0, 0), ['ok']],
+    // It comes after the hints about the network and the TV and before the others
+    [audio(8, 5, { networkDroppedFrames: 2000, tvDroppedFrames: 2000 }), ['network', 'tv', 'audio']],
+    [audio(8, 5, { hostProcessingLatencyX10: 140, hostFrameRateX100: 5994 }), ['audio', 'host', 'hostRefresh']],
+  ];
+  cases.forEach(([report, expected]) => assert.deepEqual(plain(hints(report)), expected, JSON.stringify(report)));
+  assert.equal(text('audio', audio(8, 5, { audioLoadPeakMsPerS: 447 })),
+    'Decoding and playing the sound took the TV up to 447 ms per second: if the sound stuttered, set Surround audio quality to Efficient, or Audio configuration to Stereo.');
+  // In System information, after the figures of the session
+  const describe = app.platform.get('describeSessionReport');
+  const lines = plain(describe(audio(6, 1), {}));
+  assert.equal(lines[lines.length - 1],
+    'Hint: Decoding and playing the sound took the TV up to 340 ms per second: if the sound stuttered, set Surround audio quality to Efficient, or Audio configuration to Stereo.');
+  // A session that already streamed in the quality Efficient is told the one way that is left, and one in High both
+  const efficient = 'Decoding and playing the sound took the TV up to 447 ms per second: if the sound stuttered, set Audio configuration to Stereo.';
+  assert.equal(text('audio', audio(8, 5, { audioLoadPeakMsPerS: 447 }), { surroundQuality: 'Efficient' }), efficient);
+  assert.ok(text('audio', audio(8, 5), { surroundQuality: 'High' }).indexOf('set Surround audio quality to Efficient, or Audio configuration to Stereo.') > 0);
+  const efficientLines = plain(describe(audio(8, 5, { audioLoadPeakMsPerS: 447 }), { surroundQuality: 'Efficient' }));
+  assert.equal(efficientLines[efficientLines.length - 1], 'Hint: ' + efficient);
+  assert.equal(efficientLines.join('\n').indexOf('Surround audio quality'), -1);
+  // The quality changes which remedy the hint names, never whether it comes
+  assert.deepEqual(plain(hints(audio(8, 5), { surroundQuality: 'Efficient' })), ['audio']);
+  assert.deepEqual(plain(hints(audio(8, 0), { surroundQuality: 'High' })), ['ok']);
 });
 
 // A clean report of a long stream at a frame rate, with the best host frame rate and the host processing latency given
@@ -434,7 +855,9 @@ test('the lines of the report in System information', () => {
     'Frames lost on the network: 540 of 36,000 (1.50%)',
     'Frames dropped by the TV: 0, video resets: 1, recovery keyframes: 4',
     'FEC repairs: 900 blocks, 6 failed',
+    'Average frame receive time: 5.48 ms (33% of the frame time), highest second: 19.20 ms (115%)',
     'Host frame rate (best 30 s): 60.00 FPS, average host processing latency: 6.1 ms',
+    'Host frame rate (lowest 30 s): 59.90 FPS, below 57 FPS in 0 of 19 half minutes',
     'WASM heap at the end: 62 of 128 MB (+1 MB in this session)',
     'Hint: Many frames were lost on the network: use a cable or lower the bitrate.',
     'Hint: The PC often sent whole frames again after a loss: turn on Reference frame invalidation in the Advanced Settings.',
@@ -450,15 +873,16 @@ test('the lines of the report in System information', () => {
   assert.equal(lines[lines.length - 1], 'Hint: No video arrived from the PC in this session.');
   // Without either figure of the host its line is left out, and a missing one is Unknown
   assert.equal(lines.filter((line) => line.indexOf('Host frame rate') === 0).length, 0);
-  assert.equal(plain(describe(Object.assign({}, report, { hostFrameRateX100: 0 }), {}))[4],
+  assert.equal(plain(describe(Object.assign({}, report, { hostFrameRateX100: 0 }), {}))[5],
     'Host frame rate (best 30 s): Unknown, average host processing latency: 6.1 ms');
-  assert.equal(plain(describe(Object.assign({}, report, { hostProcessingLatencyX10: 0 }), {}))[4],
+  assert.equal(plain(describe(Object.assign({}, report, { hostProcessingLatencyX10: 0 }), {}))[5],
     'Host frame rate (best 30 s): 60.00 FPS, average host processing latency: Unknown');
   // The hint of a host display at 59.94 Hz with its figures
   const refresh = readReports().filter((entry) => entry.name === 'host-refresh')[0];
   const refreshLines = plain(describe(app.platform.get('parseSessionReport')(refresh.message.slice(18)), {}));
-  assert.deepEqual(refreshLines.slice(4), [
+  assert.deepEqual(refreshLines.slice(5), [
     'Host frame rate (best 30 s): 59.94 FPS, average host processing latency: 4.7 ms',
+    'Host frame rate (lowest 30 s): 59.93 FPS, below 57 FPS in 0 of 59 half minutes',
     'WASM heap at the end: 61 of 128 MB (+1 MB in this session)',
     'Hint: The PC sent 59.94 instead of 60 frames per second, which shows as a short stutter about every 17 seconds: set the display of the PC to exactly 60 Hz.',
   ]);
@@ -600,6 +1024,10 @@ test('each stream starts the host figures of its report from zero', () => {
   assert.ok(setup.indexOf('ResetHostFrameRate();') < setup.indexOf('StartupVidDecSetup('), 'before the media pipeline is set up');
   const reset = source.slice(source.indexOf('static void ResetHostFrameRate() {'));
   assert.match(reset.slice(0, reset.indexOf('\n}\n')), /s_HostFrameRateBest = 0\.0f;/);
+  // The windows of its lowest frame rate with it, and the highest frame receive time with the other statistics
+  assert.match(reset.slice(0, reset.indexOf('\n}\n')), /s_HostRateWindows = HostRateWindows\(\);/);
+  assert.match(setup, /\n {2}s_ReceiveTimePeakX100 = 0;\n/);
+  assert.ok(setup.indexOf('s_ReceiveTimePeakX100 = 0;') < setup.indexOf('StartupVidDecSetup('), 'before the media pipeline is set up');
 });
 
 // Record the length of every text that the redaction rules run over

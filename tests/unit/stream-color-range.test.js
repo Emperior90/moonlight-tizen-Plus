@@ -52,7 +52,7 @@ test('the color range follows the last change of the offered video formats and c
   assert.ok(formatWrites.length >= 2, 'the video formats are set in StartStream(): ' + formatWrites.length);
   assert.ok(Math.max.apply(null, formatWrites) < rangeAt, 'the video formats change after the color range was chosen');
   // The connection thread hands m_StreamConfig to LiStartConnection()
-  const threadAt = startStream.indexOf('pthread_create(&m_ConnectionThread');
+  const threadAt = startStream.indexOf('m_StreamThreads.StartConnectionThread(MoonlightInstance::ConnectionThreadFunc');
   assert.ok(threadAt > rangeAt, 'the connection thread starts before the color range is set');
 });
 

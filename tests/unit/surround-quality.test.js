@@ -12,7 +12,10 @@
 //   for its low quality stereo, so the header must keep the flag away from stereo;
 // - getAudioChannelCount(), which the Stream Menu reads to show its surround quality entry, is registered and answers
 //   the channels of the audio statistics, and the mock of the module answers like it;
-// - getStreamAudioChannels() of menus.js reads 0 without the call and a number with it.
+// - getStreamAudioChannels() of menus.js reads 0 without the call and a number with it;
+// - the audio configuration of a stream is stereo with the Web Audio backend, whatever the settings say
+//   (getStreamAudioConfig() of index.js), and the launch, resume and start requests of startGame() all take that one
+//   value, while the setting itself is only read.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -60,9 +63,10 @@ test('startStream() takes the surround audio quality last, and both start reques
   assert.ok(start.indexOf('m_AudioConfig = m_StreamConfig.audioConfiguration;') < start.indexOf('Efficient (normal quality, 10 ms packets)'));
   assert.match(main, /emscripten::function\("startStream", &startStream\);/);
 
-  // The two start requests of startGame() (resume and launch) send one argument per parameter, the setting last
+  // The two start requests of startGame() (resume and launch) send one argument per parameter, the setting last (each
+  // ends with the handler of a call that the module didn't take, tests/browser/start-request-failure.test.js)
   const index = read('wasm/platform/index.js');
-  const requests = [...index.matchAll(/sendMessage\('startRequest', \[([\s\S]*?)\]\);/g)].map((match) =>
+  const requests = [...index.matchAll(/sendMessage\('startRequest', \[([\s\S]*?)\]\)\.catch\(/g)].map((match) =>
     match[1].split(',').map((argument) => argument.trim()).filter((argument) => argument !== ''));
   assert.equal(requests.length, 2);
   requests.forEach((request) => {
@@ -111,4 +115,28 @@ test('getAudioChannelCount() answers the channels of the audio statistics, and t
   assert.equal(withModule({ getAudioChannelCount: () => 6 }), 6);
   assert.equal(withModule({ getAudioChannelCount: () => 0 }), 0);
   assert.equal(withModule({ getAudioChannelCount: () => undefined }), 0);
+});
+
+test('a stream of the Web Audio backend asks for stereo, in the launch, resume and start requests alike', () => {
+  const platform = loadPlatformScripts(['wasm/platform/tv_profile.js', 'wasm/platform/index.js'], { tv: { tv: 's90c', conn: 'wifi' } });
+  const streamConfig = platform.get('getStreamAudioConfig');
+  const audioInfo = platform.get('getSurroundAudioInfo');
+  for (const config of ['Stereo', '51Surround', '71Surround']) {
+    assert.equal(streamConfig(config, 'WebAudio'), 'Stereo', config);
+    assert.equal(audioInfo(streamConfig(config, 'WebAudio')), 0x030002, config);
+    // The media player of the TV plays what the settings ask for, and a disabled audio output changes nothing either
+    assert.equal(streamConfig(config, 'EMSS'), config);
+    assert.equal(streamConfig(config, 'Disabled'), config);
+  }
+  assert.deepEqual([audioInfo(streamConfig('51Surround', 'EMSS')), audioInfo(streamConfig('71Surround', 'EMSS'))], [0x3F0006, 0x63F0008]);
+
+  // startGame() reads the setting once and gives every request the configuration of the stream
+  const index = read('wasm/platform/index.js');
+  const start = functionBody(index, 'function startGame(');
+  assert.match(start, /const audioConfigSetting = \$\('#selectAudio'\)\.data\('value'\)\.toString\(\);\s+var audioConfig = getStreamAudioConfig\(audioConfigSetting, audioBackend\);/);
+  assert.equal((start.match(/\$\('#selectAudio'\)/g) || []).length, 1);
+  assert.equal((start.match(/getSurroundAudioInfo\(audioConfig\), \/\/ Surround channel mask/g) || []).length, 2, 'launch and resume');
+  assert.equal((start.match(/audioBackend, audioConfig, audioSync, audioJitter,/g) || []).length, 2, 'both start requests');
+  // Nothing stores the configuration of the stream in place of the setting
+  assert.doesNotMatch(start, /storeData\('audioConfig'/);
 });

@@ -20,7 +20,7 @@ function loadUtils() {
       crypto: webcrypto,
       sendMessage(method, params) {
         return new Promise((resolve, reject) => {
-          requests.push({ method, url: params[0], resolve, reject });
+          requests.push({ method, url: params[0], timeoutMs: params[3], resolve, reject });
           events.push('request ' + String(params[0]).replace(/\?.*$/, ''));
         });
       },
@@ -69,6 +69,9 @@ test('quitApp() refreshes the server info only after /cancel completed and resol
   assert.deepEqual(utils.events, ['request https://10.0.0.2:47984/cancel'], 'no refresh before the host answered');
   assert.equal(utils.requests.length, 1);
   assert.match(utils.requests[0].url, /^https:\/\/10\.0\.0\.2:47984\/cancel\?uniqueid=0123456789abcdef&uuid=[0-9a-f-]{36}$/);
+  // With a time limit of 30 seconds, which the request queue enforces (tests/unit/box-art-queue.test.js): before
+  // 2.3.1 the request had none, and a host that never answered held every other request
+  assert.equal(utils.requests[0].timeoutMs, 30000);
   assert.equal(result, 'pending');
   utils.requests[0].resolve('<root status_code="200"><cancel>1</cancel></root>');
   await tick();

@@ -2,7 +2,9 @@
 
 // Pins the parts of the UI around a running stream (from the earlier rounds of fixes): the network line and the labels
 // of the performance statistics overlay, the screensaver of the TV, the Back key guard, the refresh of the codec modes
-// of the host before a stream, the audio clock sync setting and the help texts that were corrected.
+// of the host before a stream, the audio clock sync setting and the help texts that were corrected. Since 2.3.1 the
+// full statistics of a translated app also translate the count of the video pipeline resets and the kinds of the TV
+// player rejections.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -106,15 +108,18 @@ test('the overlay labels go through the translation', async () => {
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
   try {
     await showFullStats(app.page);
-    await app.page.evaluate(() => handleMessage('StatMsg: Bitrate: 92.10 Mbps received, 100.0 Mbps configured\nHost frame rate (30 s): 59.94 FPS\n'));
+    await app.page.evaluate(() => handleMessage('StatMsg: Bitrate: 92.10 Mbps video received, 100.0 Mbps configured (with FEC and audio)\nHost frame rate (30 s): 59.94 FPS\n'));
     const stats = await overlayText(app.page);
-    assert.ok(stats.indexOf('Bitrate: 92.10 Mbps received, 100.0 Mbps configured') >= 0 && stats.indexOf('Host frame rate (30 s): 59.94 FPS') >= 0, stats);
+    assert.ok(stats.indexOf('Bitrate: 92.10 Mbps video received, 100.0 Mbps configured (with FEC and audio)') >= 0 &&
+      stats.indexOf('Host frame rate (30 s): 59.94 FPS') >= 0, stats);
     const labels = await translatedLabels(app.page, [
-      'Bitrate: 92.10 Mbps received, 100.0 Mbps configured', 'Host frame rate (30 s): 2', 'Session frames dropped by the TV: 1', 'Session FEC recoveries: 1',
+      'Bitrate: 92.10 Mbps video received, 100.0 Mbps configured (with FEC and audio)', 'Host frame rate (30 s): 2',
+      'Average frame receive time: 8.65 ms (52% of the frame time)', 'Session frames dropped by the TV: 1', 'Session FEC recoveries: 1',
       'Worst FEC block: 1', 'TV player rejections: buffer full 1 (1 recovered)', 'WASM heap top: 40 of 128 MB (+2 MB this stream)',
       'Audio CPU: decode 11.80 ms/s (max 0.21 ms), output 0.42 ms/s (max 0.05 ms)',
     ].join('\n'));
-    ['Bitrate: %1$s Mbps received, %2$s Mbps configured', 'Host frame rate (30 s):', 'Session frames dropped by the TV:', 'Session FEC recoveries:',
+    ['Bitrate: %1$s Mbps video received, %2$s Mbps configured (with FEC and audio)', 'Host frame rate (30 s):',
+      'Average frame receive time:', '(%1$s% of the frame time)', 'Session frames dropped by the TV:', 'Session FEC recoveries:',
       'Worst FEC block:', 'TV player rejections:', 'WASM heap top:',
       'Audio CPU: decode %1$s ms/s (max %2$s ms), output %3$s ms/s (max %4$s ms)'].forEach((label) => {
       assert.ok(labels.indexOf('T[' + label + ']') >= 0, label + ' in ' + labels);
@@ -122,12 +127,31 @@ test('the overlay labels go through the translation', async () => {
     // One line for the bitrate, with both figures in the language of the app
     assert.equal(await app.page.evaluate(() => {
       const original = window.t;
-      window.t = (key, ...values) => key === 'Bitrate: %1$s Mbps received, %2$s Mbps configured'
-        ? 'Bitrate: ' + values[0] + ' Mbps empfangen, ' + values[1] + ' Mbps eingestellt' : key;
-      const result = replaceKnownStatsLabels('Bitrate: 61.40 Mbps received, 100.0 Mbps configured\nWorst FEC block: 2 of 4 parity packets used');
+      window.t = (key, ...values) => key === 'Bitrate: %1$s Mbps video received, %2$s Mbps configured (with FEC and audio)'
+        ? 'Bitrate: ' + values[0] + ' Mbps Video empfangen, ' + values[1] + ' Mbps eingestellt (mit FEC und Audio)' : key;
+      const result = replaceKnownStatsLabels('Bitrate: 61.40 Mbps video received, 100.0 Mbps configured (with FEC and audio)\nWorst FEC block: 2 of 4 parity packets used');
       window.t = original;
       return result;
-    }), 'Bitrate: 61.40 Mbps empfangen, 100.0 Mbps eingestellt\nWorst FEC block: 2 of 4 parity packets used');
+    }), 'Bitrate: 61.40 Mbps Video empfangen, 100.0 Mbps eingestellt (mit FEC und Audio)\nWorst FEC block: 2 of 4 parity packets used');
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('in German the full statistics name the video pipeline resets and the kinds of the TV player rejections in German', async () => {
+  // A TV set to German, which the app follows. These two parts of the lines stayed English in every language.
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi', locale: 'de_DE' } });
+  try {
+    await app.page.waitForFunction(() => document.documentElement.getAttribute('lang') === 'de-DE' && t('Settings') === 'Einstellungen', null, { timeout: 5000 });
+    await showFullStats(app.page);
+    // The two lines as FormatVideoStats() of wasm/wasmplayer.cpp writes them (tests/unit/menu-texts.test.js)
+    await app.page.evaluate(() => handleMessage('StatMsg: Session frames dropped by the TV: 4 (video pipeline resets: 1)\n' +
+      'TV player rejections: buffer full 4 (3 recovered), keyframe required 1, track not ready 0, other 2 (last code -3)\n'));
+    const stats = await overlayText(app.page);
+    assert.ok(stats.indexOf('Vom TV verworfene Frames (Sitzung): 4 (Video-Neustarts: 1)') >= 0, stats);
+    assert.ok(stats.indexOf('Ablehnungen des TV-Players: Puffer voll 4 (3 behoben), Keyframe nötig 1, Spur nicht bereit 0, sonstige 2 (letzter Code -3)') >= 0, stats);
+    assert.doesNotMatch(stats, /video pipeline resets|buffer full|recovered|keyframe required|track not ready|last code/);
+    assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
   }

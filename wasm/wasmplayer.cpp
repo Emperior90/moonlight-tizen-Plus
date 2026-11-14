@@ -299,6 +299,9 @@ static void ResetHdrMetadataState(bool enabled) {
 }
 
 static uint32_t total_bytes = 0;
+// The bytes of the stats window before the current one, so that the bitrate of the statistics covers the same two
+// windows as their frame rates
+static uint32_t s_LastWndBytes = 0;
 static int m_LastFrameNumber = 0;
 
 // IDR frames received after the first one that the host sent to recover the stream after a loss. Not counted are
@@ -374,8 +377,16 @@ static constexpr uint32_t kWasmMemoryMb = 128;
 // When the video decoder of the stream was set up, for the duration in the report of the session (session_report.hpp)
 static uint64_t s_SessionStartMs = 0;
 
-// Highest number of frames waiting in the decode unit queue during the current stats window
+// Highest number of frames waiting in the decode unit queue during the current stats window, and during the window
+// before it: the full statistics show the higher one, since they come at every second window (kFullStatsWindows)
 static int s_PendingFramesMax = 0;
+static int s_LastWndPendingFramesMax = 0;
+// The highest average frame receive time of a stats window of the stream that counts (IsReceiveTimeWindowCounted() in
+// session_report.hpp), in hundredths of a millisecond, for the report of the session
+static uint32_t s_ReceiveTimePeakX100 = 0;
+// The stats windows until the next message of the full statistics (IsFullStatsWindowDue() in compact_stats.hpp), kept
+// by the video decoder thread
+static int s_FullStatsWindowsToSkip = 0;
 
 // Measurement of the frame rate of the host from its capture timestamps (see UpdateHostFrameRate)
 static constexpr uint32_t kHostFrameRateWindowMs = 30000;
@@ -388,6 +399,9 @@ static int s_HostRateRepeats = 0;
 static float s_HostFrameRate = 0.0f;
 // The highest host frame rate of a completed window of the stream, for the report of the session (session_report.hpp)
 static float s_HostFrameRateBest = 0.0f;
+// The windows that count for the lowest host frame rate of the report, without the first one of the stream and the
+// ones of a paused host (AddHostRateWindow() in session_report.hpp)
+static HostRateWindows s_HostRateWindows;
 static std::atomic<bool> s_ExpectedIdrFrame{false};
 
 // The text of the full statistics, formatted on the video decoder thread only
@@ -525,8 +539,12 @@ void MoonlightInstance::VideoTrackListener::OnTrackClosed(samsung::wasm::Element
   }
 
   // The app never reopens a media source that failed, so the picture would stay frozen. End the stream with a
-  // message instead, the same way as a stop request does (this runs on the main thread, like StopStream). While the
-  // connection is still being started, the next frame on the decoder thread ends it through moonlight-common-c.
+  // message instead, the same way as a stop request does. This runs on the main thread, like a stop request of the
+  // remote (StopStream()), but not every stop does: the stop combination of a controller calls stopStream() from the
+  // input thread (PollGamepads() in gamepad.cpp), so OnConnectionStopped() also runs there. That works: only the
+  // first stop of a start goes on (IssueStop() in stream_threads.hpp), and the stop thread joins the input thread
+  // afterwards. While the connection is still being started, the next frame on the decoder thread ends it through
+  // moonlight-common-c.
   if (closeReason == kCloseReasonSourceError) {
     ClLogMessage("The video player of the TV failed during the stream\n");
     if (m_Instance->m_Running) {
@@ -837,23 +855,31 @@ static void UpdateHostFrameRate(int frameNumber, uint32_t pts, uint16_t hostProc
   }
   const uint32_t elapsed = pts - s_HostRateStartPts;
   if (elapsed >= kHostFrameRateWindowMs) {
-    s_HostFrameRate = (frameNumber - s_HostRateStartFrame - s_HostRateRepeats) * 1000.0f / elapsed;
+    const int frames = frameNumber - s_HostRateStartFrame;
+    s_HostFrameRate = (frames - s_HostRateRepeats) * 1000.0f / elapsed;
     s_HostFrameRateBest = std::max(s_HostFrameRateBest, s_HostFrameRate);
+    AddHostRateWindow(s_HostRateWindows, s_HostFrameRate, (uint32_t)frames, (uint32_t)s_HostRateRepeats, s_Framerate);
     s_HostRateStartPts = pts;
     s_HostRateStartFrame = frameNumber;
     s_HostRateRepeats = 0;
   }
 }
 
-// Start the host frame rate of a new stream without a window, a figure or a best window of a previous stream, so that
-// neither the overlay nor the report of the session shows what an earlier stream of this app run measured (e.g. its
-// 60.00 hiding a later host at 59.94 Hz, or a rate in the report of a stream too short for a window). VidDecSetup()
+// Start the host frame rate of a new stream without a window, a figure or a best or lowest window of a previous stream,
+// so that neither the overlay nor the report of the session shows what an earlier stream of this app run measured (e.g.
+// its 60.00 hiding a later host at 59.94 Hz, or a rate in the report of a stream too short for a window). VidDecSetup()
 // calls it; the native tests call it as well, since VidDecSetup() waits for the media pipeline of the TV.
 static void ResetHostFrameRate() {
   s_HostRateWindowOpen = false;
   s_HostRateRepeats = 0;
   s_HostFrameRate = 0.0f;
   s_HostFrameRateBest = 0.0f;
+  s_HostRateWindows = HostRateWindows();
+}
+
+// An average in hundredths, rounded, or 0 without a count: e.g. a total of milliseconds over the frames it covers
+static uint32_t AverageX100(uint32_t total, uint32_t count) {
+  return count > 0 ? (uint32_t)(((uint64_t)total * 100 + count / 2) / count) : 0;
 }
 
 // Name of a result of AppendPacket for the log, from EmssCommon.Result of the EMSS glue
@@ -1006,6 +1032,7 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
 
   // Reset the received byte count so the bitrate doesn't include data from a previous stream
   total_bytes = 0;
+  s_LastWndBytes = 0;
 
   // Reset the recovery keyframe count so the session totals don't include a previous stream
   s_ReceivedFirstIdrFrame = false;
@@ -1019,6 +1046,9 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
   s_SessionTvDroppedFrames = 0;
   s_FramesDiscardedWhileClosed = 0;
   s_PendingFramesMax = 0;
+  s_LastWndPendingFramesMax = 0;
+  s_FullStatsWindowsToSkip = 0;
+  s_ReceiveTimePeakX100 = 0;
 
   // Reset the counts of the frames the player rejected
   s_AppendBufferFull = 0;
@@ -1092,6 +1122,28 @@ void MoonlightInstance::VidDecCleanup(void) {
   report.hostProcessingLatencyX10 = totals.framesWithHostProcessingLatency > 0 ?
     (uint32_t)(((uint64_t)totals.totalHostProcessingLatency + totals.framesWithHostProcessingLatency / 2) /
       totals.framesWithHostProcessingLatency) : 0;
+  // Whether the host delivered the frames that the stream asked for shows in its lowest window and in how many of its
+  // windows stayed clearly below the stream rate
+  report.hostFrameRateLowX100 = (uint32_t)std::lround(s_HostRateWindows.lowest * 100.0f);
+  report.hostWindows = s_HostRateWindows.counted;
+  report.hostLowWindows = s_HostRateWindows.low;
+  // What the bitrate costs: the average time a frame took to arrive, over the stream (the figure of the line 'Average
+  // frame receive time' of the full statistics) and in its highest stats window, with the window that was still open
+  report.receiveTimeX100 = AverageX100(totals.totalReassemblyTime, totals.decodedFrames);
+  report.receiveTimePeakX100 = s_ReceiveTimePeakX100;
+  if (IsReceiveTimeWindowCounted(m_ActiveWndVideoStats.decodedFrames, s_Framerate)) {
+    report.receiveTimePeakX100 = std::max(report.receiveTimePeakX100,
+      AverageX100(m_ActiveWndVideoStats.totalReassemblyTime, m_ActiveWndVideoStats.decodedFrames));
+  }
+  // The load of the audio thread, which AudDecCleanup() stored when the audio stream ended before this (the audio
+  // stream stops before the video stream, stopAudioStream() and stopVideoStream() in Connection.c). Taking it empties
+  // it, so that a stream that ends before its audio starts doesn't report the figures of the stream before it.
+  report.audioChannels = g_AudioStreamStats.loadChannels.exchange(0);
+  report.audioLoadMsPerS = g_AudioStreamStats.loadMsPerSecond.exchange(0);
+  report.audioLoadPeakMsPerS = g_AudioStreamStats.loadPeakMsPerSecond.exchange(0);
+  report.audioOverloadedWindows = g_AudioStreamStats.overloadedWindows.exchange(0);
+  // What the host offered in the RTSP handshake of this stream, which is over long before the video decoder starts
+  report.hostRfi = LiHostSupportsReferenceFrameInvalidation();
   const std::string reportMessage = FormatSessionReportMessage(report);
   if (!reportMessage.empty()) {
     PostToJsAsync(reportMessage);
@@ -1263,6 +1315,8 @@ static bool UpdatePresentationTimestamp(uint32_t hostTimeMs, uint32_t missingFra
       // frame already contains the lost frames, and a lower offset (the reference of the range while the timestamps
       // follow the capture times) counted them a second time, as ticks the host skipped.
       s_GridPtsMs += lostMs;
+      // The grid of before two late frames, which the frame after them may go back to, moves on by the lost frames too
+      s_LateFramesGridMs += lostMs;
       s_PtsMs = std::max(s_PtsMs + 1.0, s_GridPtsMs);
     } else {
       // A capture time that repeats or steps back adds nothing and keeps the later one: a frame that the host encoded
@@ -1852,16 +1906,24 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
 
   // Flip performance stats window roughly every second
   if (m_ActiveWndVideoStats.measurementStartTimestamp + 1000 < nowMs) {
-    // Update performance stats overlay at its level: the figures of the compact line, or the text of the full statistics
+    // Accumulate active window stats into global stats for overall tracking, before the statistics are written, so that
+    // their session totals include the window that just ended, like their figures of the last two windows
+    AddVideoStats(m_ActiveWndVideoStats, m_GlobalVideoStats);
+    // Update performance stats overlay at its level: the figures of the compact line at every window, or the text of
+    // the full statistics at every second one (IsFullStatsWindowDue()). Both cover the last two windows, which for the
+    // full statistics are the ones since their last message.
     const int statsLevel = g_Instance->m_PerformanceStatsLevel.load();
-    if (statsLevel != kPerformanceStatsOff) {
+    const bool fullStatsDue = IsFullStatsWindowDue(statsLevel, s_FullStatsWindowsToSkip);
+    if (statsLevel == kPerformanceStatsCompact || fullStatsDue) {
       // Create a container to hold aggregated stats for display
       VIDEO_STATS lastTwoWndStats = {};
-      // Calculate the bitrate in megabits per second from the bytes received over the actual length of this window
-      lastTwoWndStats.receivedBitrate = (total_bytes * 8.0f) / ((nowMs - m_ActiveWndVideoStats.measurementStartTimestamp) * 1000.0f);
       // Add last window and current window to the aggregated stats
       AddVideoStats(m_LastWndVideoStats, lastTwoWndStats);
       AddVideoStats(m_ActiveWndVideoStats, lastTwoWndStats);
+      // Calculate the bitrate in megabits per second from the bytes received over the actual length of these two
+      // windows (of the one that is there, at the first window), like the frame rates
+      lastTwoWndStats.receivedBitrate = (((uint64_t)s_LastWndBytes + total_bytes) * 8.0f) /
+        ((nowMs - lastTwoWndStats.measurementStartTimestamp) * 1000.0f);
       // Send the stats to the JS frontend for overlay display, without waiting for the main thread, since that would
       // hold up the next frames on this decoder thread
       if (statsLevel == kPerformanceStatsCompact) {
@@ -1871,9 +1933,9 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
         }
       } else {
         // Convert the aggregated stats to a display string, after the point of the graph: the round-trip time and the
-        // frames lost on the network in the window that just ended
+        // frames lost on the network in the two windows of this message
         FormatVideoStats(lastTwoWndStats, s_StatString.data(), s_StatString.length());
-        const StatsGraphPoint graphPoint = { lastTwoWndStats.lastRtt, m_ActiveWndVideoStats.networkDroppedFrames };
+        const StatsGraphPoint graphPoint = { lastTwoWndStats.lastRtt, lastTwoWndStats.networkDroppedFrames };
         PostToJsAsync(FormatFullStatsMessage(graphPoint, s_StatString.data()));
         // Clear the stats string buffer for the next use
         std::fill(s_StatString.begin(), s_StatString.end(), 0);
@@ -1885,10 +1947,15 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     ResetFrameIntervals(s_PlayerIntervals[s_FrameIntervalWindow]);
     // Reset byte count for the next measurement interval, even while the overlay is hidden,
     // so that enabling the overlay mid-stream doesn't report every byte since the stream started
+    s_LastWndBytes = total_bytes;
     total_bytes = 0;
+    s_LastWndPendingFramesMax = s_PendingFramesMax;
     s_PendingFramesMax = 0;
-    // Accumulate active window stats into global stats for overall tracking
-    AddVideoStats(m_ActiveWndVideoStats, m_GlobalVideoStats);
+    // Keep the highest average frame receive time of a window for the report of the session
+    if (IsReceiveTimeWindowCounted(m_ActiveWndVideoStats.decodedFrames, s_Framerate)) {
+      s_ReceiveTimePeakX100 = std::max(s_ReceiveTimePeakX100, AverageX100(m_ActiveWndVideoStats.totalReassemblyTime,
+        m_ActiveWndVideoStats.decodedFrames));
+    }
     // Move current active stats to last window stats and reset active window stats for new interval
     memcpy(&m_LastWndVideoStats, &m_ActiveWndVideoStats, sizeof(m_ActiveWndVideoStats));
     memset(&m_ActiveWndVideoStats, 0, sizeof(m_ActiveWndVideoStats));
@@ -2109,13 +2176,16 @@ void MoonlightInstance::FormatVideoStats(VIDEO_STATS& stats, char* output, int l
       offset += ret;
     }
 
-    // Print frame rates at various stages of the pipeline, and the bitrate that arrives next to the one set in the app
+    // Print frame rates at various stages of the pipeline, and the bitrate that arrives next to the one set in the app.
+    // What arrives counts the video frames only, while the host fits its error correction (FEC) and the audio into the
+    // set bitrate as well, so it stays below it: about 9 % with 5 % error correction, more with a higher share. The line
+    // says so in few words, since the longest line sets the width of the overlay.
     ret = snprintf(
       &output[offset], length - offset,
       "Incoming frame rate from network: %.2f FPS\n"
       "Decoding frame rate: %.2f FPS\n"
       "Rendering frame rate: %.2f FPS\n"
-      "Bitrate: %.2f Mbps received, %.1f Mbps configured\n",
+      "Bitrate: %.2f Mbps video received, %.1f Mbps configured (with FEC and audio)\n",
       stats.receivedFps, stats.decodedFps, stats.renderedFps, stats.receivedBitrate,
       g_Instance->m_StreamConfig.bitrate / 1000.0f
     );
@@ -2176,23 +2246,26 @@ void MoonlightInstance::FormatVideoStats(VIDEO_STATS& stats, char* output, int l
     }
 
     // Print detailed drop rates and the time a frame spends in each stage on the TV: the transfer of its
-    // packets, the wait for the video thread, the frame pacing and the hand-over to the hardware decoder
+    // packets, the wait for the video thread, the frame pacing and the hand-over to the hardware decoder. The transfer
+    // also shows as a share of the time between two frames of the stream (1000 ms / frame rate), which is what the
+    // bitrate costs: bigger frames take longer to arrive.
+    const float receiveTimeMs = (float)stats.totalReassemblyTime / stats.decodedFrames;
     ret = snprintf(
       &output[offset], length - offset,
       "Frames dropped by your network connection: %.2f%%\n"
       "Average network latency: %s\n"
-      "Average frame receive time: %.2f ms\n"
+      "Average frame receive time: %.2f ms (%.0f%% of the frame time)\n"
       "Average frame wait time: %.2f ms\n"
       "Average frame pacing delay: %.2f ms\n"
       "Average rendering time: %.2f ms\n"
       "Pending frames: %d (max %d)\n",
       (float)stats.networkDroppedFrames / stats.totalFrames * 100,
       rttString,
-      (float)stats.totalReassemblyTime / stats.decodedFrames,
+      receiveTimeMs, receiveTimeMs * s_Framerate / 10.0f,
       (float)stats.totalDecodeTime / stats.decodedFrames,
       (float)stats.totalPacerTime / stats.renderedFrames,
       (float)stats.totalRenderTime / stats.renderedFrames,
-      LiGetPendingVideoFrames(), s_PendingFramesMax
+      LiGetPendingVideoFrames(), std::max(s_PendingFramesMax, s_LastWndPendingFramesMax)
     );
     // Abort if string formatting failed or buffer overflowed
     if (ret < 0 || ret >= length - offset) {

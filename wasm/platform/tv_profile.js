@@ -27,9 +27,21 @@
 // that 2.2.0 and earlier offered changed no default, so it needs no version of its own: a stored frame rate above the
 // frame rate menu is replaced at every start, whatever the version (frameRateReplacements()). Version 4 turned 'Optimize
 // game settings' on by default, so it stores the earlier default (off) once for an existing install that never switched
-// it (schema3Snapshot()).
-const SETTINGS_SCHEMA_VERSION = 4;
+// it (schema3Snapshot()). Version 5 made Efficient the default of 'Surround audio quality' (DEFAULT_SURROUND_QUALITY),
+// and is the one version that doesn't freeze the earlier default: an existing install that never chose a quality gets
+// the new one, since High is what overloaded the TV, and is told once when its stream changes by it
+// (needsSurroundQualityNotice()). A quality that was chosen stays.
+const SETTINGS_SCHEMA_VERSION = 5;
 const SETTINGS_SCHEMA_KEY = 'settingsSchema';
+
+// The default of 'Surround audio quality' since settings schema 5, for an install that stored none: Efficient, the
+// normal quality of the host in 10 ms packets, which is 256 instead of 1536 kbps for 5.1 and 450 instead of 2048 kbps
+// for 7.1 with Sunshine, and took about half the decoding time in a benchmark on a PC (wasm/audio_capabilities.hpp).
+// 2.3.0, which introduced the setting, had High, the quality of the versions before it. Stereo never changes by the
+// setting.
+const DEFAULT_SURROUND_QUALITY = 'Efficient';
+// Key of the notice about that default, stored as true for an existing install that is still to be told
+const SURROUND_QUALITY_NOTICE_KEY = 'surroundQualityNotice';
 
 const RECOMMENDED_ETHERNET_BITRATE = 75; // Highest recommended bitrate in Mbps over the 100 Mbps Ethernet port of Samsung TVs, leaving headroom for FEC, network overhead and larger frames
 const ETHERNET_MAX_BITRATE = 80; // Highest bitrate in Mbps that fits the 100 Mbps Ethernet port that Samsung TVs usually have, including FEC and network overhead, above which the bitrate warning names the port
@@ -605,8 +617,9 @@ function recommendedBitrate(res, frameRate, connectionType, caps) {
   }
 }
 
-// Return the bitrate in Mbps that the optimal streaming settings dialog suggests as the upper end for raising the
-// bitrate over Wi-Fi, when the performance statistics show no dropped frames: twice the standard preset of the
+// Return the bitrate in Mbps that the optimal streaming settings dialog names as the upper end for raising the
+// bitrate over Wi-Fi, which it advises only against a picture that looks blocky in fast scenes, since more bitrate
+// costs latency: twice the standard preset of the
 // resolution and frame rate, but at most the highest bitrate of the slider and the bitrate where the warning appears
 // (getBitrateWarningMbps()), e.g. 150 Mbps for 4K at 60 FPS on the tested model. It is only advice for a good Wi-Fi
 // link: the optimal settings apply the recommended bitrate (recommendedBitrate()). When the recommended bitrate already
@@ -705,6 +718,7 @@ function deriveOptimalSettings(caps, connectionType) {
     framePacing: true,
     fullRange: false,
     optimizeGames: true,
+    surroundQuality: DEFAULT_SURROUND_QUALITY,
   };
 }
 
@@ -969,6 +983,27 @@ function schema3Snapshot(stored) {
   return snapshot;
 }
 
+// The surround audio quality that the settings show for a stored value: High or Efficient as stored, and the default
+// (DEFAULT_SURROUND_QUALITY) for an install that stored none and for a value that the settings don't know
+function loadedSurroundQuality(storedQuality) {
+  return storedQuality === 'High' || storedQuality === 'Efficient' ? storedQuality : DEFAULT_SURROUND_QUALITY;
+}
+
+// Whether an existing install of settings schema 4 or older is told once that the default of 'Surround audio quality'
+// is Efficient now: it never chose a quality, so it follows the default, and its stream is one that changes by it, 5.1
+// or 7.1 played by the media player of the TV. The Web Audio backend plays stereo and a disabled audio output nothing,
+// whatever the audio configuration, and stereo keeps its quality. 2.3.0 stored the quality only once it was chosen: in
+// its menu, with the surround quality entry of the Stream Menu, or by Restore Defaults, which stored High. That last
+// one can't be told from a choice of High, so a stored High always stays and gets no notice. `stored` holds the stored
+// values of surroundQuality, audioConfig and audioBackend (null when unset).
+function needsSurroundQualityNotice(stored) {
+  const values = stored || {};
+  const choseQuality = values.surroundQuality === 'High' || values.surroundQuality === 'Efficient';
+  const surround = values.audioConfig === '51Surround' || values.audioConfig === '71Surround';
+  const tvMediaPlayer = values.audioBackend !== 'WebAudio' && values.audioBackend !== 'Disabled';
+  return !choseQuality && surround && tvMediaPlayer;
+}
+
 // Return what settings schema 3 stores for an existing install in place of the settings that it removed
 // (SCHEMA_3_REMOVED_KEYS): the optimized presets of 'Optimize bitrate presets' always followed the video settings, so an
 // install that had the switch on and never stored the state of the bitrate presets keeps following them, now with the
@@ -1039,6 +1074,8 @@ if (typeof module === 'object' && module && module.exports) {
   module.exports = {
     SETTINGS_SCHEMA_VERSION: SETTINGS_SCHEMA_VERSION,
     SETTINGS_SCHEMA_KEY: SETTINGS_SCHEMA_KEY,
+    DEFAULT_SURROUND_QUALITY: DEFAULT_SURROUND_QUALITY,
+    SURROUND_QUALITY_NOTICE_KEY: SURROUND_QUALITY_NOTICE_KEY,
     RECOMMENDED_ETHERNET_BITRATE: RECOMMENDED_ETHERNET_BITRATE,
     ETHERNET_MAX_BITRATE: ETHERNET_MAX_BITRATE,
     UNKNOWN_CONNECTION_MAX_BITRATE: UNKNOWN_CONNECTION_MAX_BITRATE,
@@ -1104,6 +1141,8 @@ if (typeof module === 'object' && module && module.exports) {
     schema2Snapshot: schema2Snapshot,
     schema3Snapshot: schema3Snapshot,
     schema3Replacements: schema3Replacements,
+    loadedSurroundQuality: loadedSurroundQuality,
+    needsSurroundQualityNotice: needsSurroundQualityNotice,
     frameRateReplacements: frameRateReplacements,
   };
 }

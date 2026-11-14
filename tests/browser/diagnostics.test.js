@@ -168,10 +168,11 @@ test('a stream starts a session of the log, keeps its report, and its heartbeat 
       await window.wait(STREAM_RETRY_DELAY_MS + 300);
       handleMessage('Connection Established');
       const sessionsWhileStreaming = DiagnosticLog.getSessions().length;
-      // The stream ends, and the module sends its totals after the end
+      // The stream ends, and the module sends its totals after the end, from a host that offered reference frame
+      // invalidation (hostRfi), which the hint about its recovery keyframes then names
       Module.stopStream();
       window.__nativeLog = Date.now() + '\tWASM heap top after the stream: 62 of 128 MB (+1 MB this stream)\n';
-      handleMessage('SessionReportMsg: {"durationMs":600000,"codec":"HEVC Main10","width":3840,"height":2160,"fps":60,"bitrateKbps":100000,"frames":36000,"networkDroppedFrames":540,"tvDroppedFrames":0,"videoResets":1,"recoveryKeyframes":4,"fecRecoveredBlocks":900,"fecFailures":6,"heapTopMb":62,"heapTotalMb":128,"heapGrowthMb":1,"hostFrameRateX100":5994,"hostProcessingLatencyX10":61}');
+      handleMessage('SessionReportMsg: {"durationMs":600000,"codec":"HEVC Main10","width":3840,"height":2160,"fps":60,"bitrateKbps":100000,"frames":36000,"networkDroppedFrames":540,"tvDroppedFrames":0,"videoResets":1,"recoveryKeyframes":4,"fecRecoveredBlocks":900,"fecFailures":6,"heapTopMb":62,"heapTotalMb":128,"heapGrowthMb":1,"hostFrameRateX100":5994,"hostProcessingLatencyX10":61,"hostRfi":1}');
       const sessions = DiagnosticLog.getSessions();
       loadSystemInfo();
       return {
@@ -205,6 +206,29 @@ test('a stream starts a session of the log, keeps its report, and its heartbeat 
       'Tipp: Der PC musste nach Verlusten oft ganze Frames neu senden: Schalte Referenzbild-Invalidierung in den erweiterten Einstellungen ein.',
       'Tipp: Der PC hat 59,94 statt 60 Frames pro Sekunde gesendet, das zeigt sich etwa alle 17 Sekunden als kurzes Ruckeln: Stelle den Bildschirm des PCs auf genau 60 Hz ein.',
     ]);
+    // The report of a stream whose PC delivered about 51 instead of 60 frames per second in a third of its half minutes
+    // (the row 'host-frames' of the shared fixture): the time a frame took to arrive with its share of the time between
+    // two frames, the lowest 30 s window of the PC next to its best one, and the hint about it in place of 'no
+    // problems', all in German
+    const frames = await app.page.evaluate((message) => {
+      handleMessage(message);
+      loadSystemInfo();
+      return document.getElementById('systemInfoBtn').innerHTML.split(/<br\s*\/?>/);
+    }, HOST_FRAMES_REPORT);
+    assert.deepEqual(frames.slice(frames.indexOf('Letzte Sitzung: 20 min 0 s, AV1 Main10, 3840x2160, 60 FPS, 180 Mbps') + 1), [
+      'Im Netz verlorene Frames: 4 von 66.400 (0,01 %)',
+      'Vom TV verworfene Frames: 0, Video-Neustarts: 0, Keyframes zur Wiederherstellung: 0',
+      'FEC-Reparaturen: 25 Blöcke, 0 fehlgeschlagen',
+      'Durchschnittliche Empfangszeit pro Frame: 11,10 ms (67 % der Zeit zwischen zwei Frames), höchster Sekundenwert: 13,85 ms (83 %)',
+      'Bildrate des PCs (beste 30 s): 59,84 FPS, mittlere Verarbeitungslatenz des PCs: 8,4 ms',
+      'Bildrate des PCs (schwächste 30 s): 50,90 FPS, unter 57 FPS in 12 von 39 halben Minuten',
+      'WASM-Heap am Ende: 62 von 128 MB (+1 MB in dieser Sitzung)',
+      'Tipp: Der PC hat oft weniger Frames gesendet, als der Stream verlangt: in 12 von 39 halben Minuten weniger als 57 pro Sekunde, ' +
+        'in der schwächsten 50,9. Das ist normal bei einem Spiel oder Video, das auf weniger Frames begrenzt ist, oder wenn der ' +
+        'Bildschirm des PCs auf weniger Hz eingestellt ist als die Bildrate des Streams (z. B. 60 Hz bei 120 FPS). ' +
+        'Sonst senke die Grafikeinstellungen des Spiels oder die Bildrate des Streams.',
+    ]);
+    assert.ok(app.logs.some((line) => line.indexOf('Hints of the session report: hostFrames') >= 0), 'the hint is logged');
     // A stream that ended normally leaves no notice for the next start
     await reloadApp(app);
     await app.page.waitForTimeout(300);
@@ -271,9 +295,13 @@ test('a start that the host refuses or that fails ends its heartbeat, so the nex
   }
 });
 
-// The message of a stream with three hints, the most that a report has (the row 'everything' of the shared fixture)
-const THREE_HINTS_REPORT = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'session-reports.tsv'), 'utf8').split('\n')
-  .filter((line) => line.indexOf('everything\t') === 0)[0].split('\t').slice(-2)[0];
+// The message of a row of the shared fixture
+const fixtureReport = (name) => fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'session-reports.tsv'), 'utf8').split('\n')
+  .filter((line) => line.indexOf(name + '\t') === 0)[0].split('\t').slice(-2)[0];
+// The message of a stream with three hints, the most that a report has (the row 'everything')
+const THREE_HINTS_REPORT = fixtureReport('everything');
+// The message of a stream whose PC delivered fewer frames than the stream asked for (the row 'host-frames')
+const HOST_FRAMES_REPORT = fixtureReport('host-frames');
 // Four controllers with long names
 const FOUR_PADS = ['Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)',
   'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)',
@@ -313,10 +341,11 @@ test('System information with four controllers and a report with three hints fit
       });
       const first = await box();
       assert.equal(first.focus, 'systemInfoBtn', locale);
-      // Four controllers, an empty line, six lines of the report (with the figures of the host) and three hints
+      // Four controllers, an empty line, eight lines of the report (with the frame receive time and the two lines of
+      // the host) and three hints
       const info = await app.page.evaluate(() => document.getElementById('systemInfoBtn').innerHTML.split(/<br\s*\/?>/));
       assert.equal(info.filter((line) => /: 8BitDo Ultimate 2C|: Pro Controller|: DualSense|: Xbox Wireless/.test(line)).length, 4, locale);
-      assert.equal(info.length - info.indexOf('') - 1, 9, locale + ': ' + info.join('\n'));
+      assert.equal(info.length - info.indexOf('') - 1, 11, locale + ': ' + info.join('\n'));
       // The whole box is on the screen, below the top of the pane
       assert.ok(first.top >= first.paneTop && first.bottom <= first.screen, locale + ': ' + JSON.stringify(first));
       if (first.maxScroll <= 0) {

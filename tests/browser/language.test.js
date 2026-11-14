@@ -8,7 +8,8 @@
 // attribute) and shows translated in every language, System information names the connection in the language of the
 // app, and the tooltips of the header buttons (also Quit app on the PC and the button of a new update) take one line
 // inside the safe area of the screen under their button in every language, also with text 10 % wider than this machine
-// draws it (tests/browser/text-stress.js). The rules of wasm/platform/i18n.js itself are in
+// draws it (tests/browser/text-stress.js). The names of the buttons that the Voice Guide of the TV reads (aria-label)
+// follow the language of the app as well, since 2.3.1. The rules of wasm/platform/i18n.js itself are in
 // tests/unit/i18n-locales.test.js, the German texts in tests/unit/german-texts.test.js, the Spanish and French texts in
 // tests/unit/spanish-french-texts.test.js.
 
@@ -17,7 +18,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { REPO_ROOT } = require('../lib/dev-modules');
-const { openApp, startHarness, waitForStorage } = require('./harness');
+const { DROPDOWN_OK_WAIT_MS, openApp, startHarness, waitForStorage } = require('./harness');
 const { forEachTextWidth } = require('./text-stress');
 
 let harness;
@@ -95,9 +96,12 @@ test('the language menu lists Auto and each language by its own name, and a choi
     assert.deepEqual(names, [{ code: 'en-US', name: 'English' }, { code: 'de-DE', name: 'Deutsch' }, { code: 'es-ES', name: 'Español' },
       { code: 'fr-FR', name: 'Français' }, { code: 'pt-BR', name: 'Português (Brasil)' }]);
 
-    // DOWN to Deutsch (Auto, English, Deutsch) and OK: the page turns German, the choice is stored
+    // The menu opens on Auto, which is set. DOWN to Deutsch (Auto, English, Deutsch) and OK: the page turns German, the
+    // choice is stored
+    assert.equal(await page.evaluate(() => $('ul.languageMenu li.hovered').attr('data-value')), 'auto');
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowDown');
+    await page.waitForTimeout(DROPDOWN_OK_WAIT_MS);
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => document.documentElement.getAttribute('lang') === 'de-DE');
     await waitForStorage(page, (values) => values.languagePreference === 'de-DE');
@@ -124,7 +128,13 @@ test('a stored language wins over the TV, Auto follows the TV again, and a langu
     assert.deepEqual(await languageButton(page), ['de-DE', 'Deutsch', 'de-DE']);
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => isPopupMenuActive('languageMenu'));
-    // The highlight starts on the first entry, Auto
+    // The highlight starts on the language that is set, Deutsch (on the first entry, Auto, before 2.3.1): UP over English
+    // to Auto
+    assert.equal(await page.evaluate(() => $('ul.languageMenu li.hovered').attr('data-value')), 'de-DE');
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowUp');
+    assert.equal(await page.evaluate(() => $('ul.languageMenu li.hovered').attr('data-value')), 'auto');
+    await page.waitForTimeout(DROPDOWN_OK_WAIT_MS);
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => document.documentElement.getAttribute('lang') === 'pt-BR');
     await waitForStorage(page, (values) => values.languagePreference === 'auto');
@@ -206,6 +216,7 @@ test('Français with the remote and Español with a gamepad translate the page, 
     for (let i = 0; i < 4; i++) {
       await page.keyboard.press('ArrowDown');
     }
+    await page.waitForTimeout(DROPDOWN_OK_WAIT_MS);
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => document.documentElement.getAttribute('lang') === 'fr-FR');
     await waitForStorage(page, (values) => values.languagePreference === 'fr-FR');
@@ -316,6 +327,45 @@ test('System information names the network connection in the language of the app
     } finally {
       await app.context.close();
     }
+  }
+});
+
+test('the names of the buttons that the Voice Guide reads follow the language of the app, also the one of the update button', async () => {
+  const app = await openApp(harness, { tv: Object.assign({ locale: 'de_DE' }, TV) });
+  const { page } = app;
+  const locale = (code) => JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'wasm/static/locales', code + '.json'), 'utf8'));
+  // The name of every element that has one, with the key of its text and its parameter
+  const names = () => page.evaluate(() => Array.prototype.map.call(document.querySelectorAll('[aria-label]'), (element) => ({
+    id: element.id, name: element.getAttribute('aria-label'), key: element.getAttribute('data-i18n-aria-label'), param: element.getAttribute('data-param'),
+  })));
+  const nameOf = (list, id) => list.filter((entry) => entry.id === id).map((entry) => entry.name)[0];
+  try {
+    assert.equal(await lang(page), 'de-DE');
+    // The button of a new update, which the check for updates adds to the header later
+    await page.evaluate(() => updateAppButton('99.0.0'));
+    for (const [code, settings, update] of [['de-DE', 'Einstellungen', 'Neues Update v99.0.0'], ['fr-FR', 'Paramètres', 'Nouvelle mise à jour v99.0.0']]) {
+      await page.evaluate((language) => window.i18n.applyLanguagePreference(language), code);
+      await page.waitForFunction((language) => document.documentElement.getAttribute('lang') === language, code);
+      await page.waitForFunction((name) => document.getElementById('settingsBtn').getAttribute('aria-label') === name, settings, { timeout: 3000 });
+      const list = await names();
+      const texts = locale(code);
+      assert.ok(list.length >= 17, 'the page has ' + list.length + ' named elements');
+      list.forEach((entry) => {
+        assert.ok(entry.key, entry.id + ' has the key of its name');
+        assert.equal(entry.name, texts[entry.key].replace('%1$s', entry.param), code + ': ' + entry.id);
+        assert.notEqual(entry.name, entry.key, code + ': the name of ' + entry.id + ' is translated');
+      });
+      assert.deepEqual([nameOf(list, 'settingsBtn'), nameOf(list, 'updateAppBtn')], [settings, update]);
+    }
+    // Back to English, which has no locale file: the names are their keys
+    await page.evaluate(() => window.i18n.applyLanguagePreference('en-US'));
+    await page.waitForFunction(() => document.getElementById('settingsBtn').getAttribute('aria-label') === 'Settings', null, { timeout: 3000 });
+    const english = await names();
+    assert.deepEqual([nameOf(english, 'addHostContainer'), nameOf(english, 'checkUpdatesBtn'), nameOf(english, 'updateAppBtn')],
+      ['Add PC', 'Check for updates', 'New update v99.0.0']);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
   }
 });
 

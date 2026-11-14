@@ -21,7 +21,7 @@ They write `out/standard/Moonlight.wgt` and `out/forcegm/Moonlight-ForceGM.wgt`.
 
 The tools of the build:
 
-- **Ubuntu 22.04**, the Docker image `ubuntu:22.04`, with the packages `cmake`, `ccache`, `expect`, `git`, `ninja-build`, `python2`, `unzip` and `aria2` of its archive. None of them goes into the app.
+- **Ubuntu 22.04**, the Docker image `ubuntu:22.04`, pinned by its digest (see [What the build checks](#what-the-build-checks)), with the packages `cmake`, `ccache`, `expect`, `git`, `ninja-build`, `python2`, `unzip` and `aria2` of its archive. None of them goes into the app.
 - **Tizen Studio 6.1**, the web CLI that packages and signs the widget: https://download.tizen.org/sdk/Installer/tizen-studio_6.1/web-cli_Tizen_Studio_6.1_ubuntu-64.bin. None of it goes into the app.
 - **Samsung Emscripten SDK 1.39.4.7**, the WebAssembly toolchain of Samsung for Tizen TVs, saved as `emscripten-1.39.4.7-linux64.zip`: https://developer.samsung.com/smarttv/file/a5013a65-af11-4b59-844f-2d34f14d19a9. Its runtime, musl, libc++, libc++abi, compiler-rt and the TizenTV extensions are compiled into the app. The source of this fork of Emscripten is https://github.com/SamsungDForum/emscripten (branch `samsung_fork`, version 1.39.4).
 
@@ -37,3 +37,27 @@ The libraries that the ports of the Samsung Emscripten SDK download and compile 
 Copies of these three archives, checked against the checksums above, are kept in the release [build-inputs](https://github.com/Emperior90/moonlight-tizen-Plus/releases/tag/build-inputs) of this repository (with `SHA512SUMS.txt`), in case their servers drop them. The workflow *Licence and source assets* (`.github/workflows/licence-assets.yml`, task *build-inputs*) makes them.
 
 The OpenSSL/SSLeay licence of OpenSSL 1.1.1d is considered incompatible with the GPL by the FSF; see *Known licence issue* in the [README](../README.md#license).
+
+## What the build checks
+
+A download that was replaced or damaged should stop the build instead of going into a release. This is how far the build checks what it downloads:
+
+| Download | Check |
+| --- | --- |
+| Ubuntu 22.04 image | Pinned by its digest in both `FROM` lines of the `Dockerfile`: `sha256:74b12b11ffa550fba1929ad4d8d16533c34f6612728469671afba1b03b66881c`, the image index of `ubuntu:22.04` (all platforms) that Docker Hub served on 13 November 2026. Docker pulls the image by this digest, so a build can't get another image under the same tag. |
+| Ubuntu packages | `apt` checks them against the signed package lists of the Ubuntu archive. Their versions are not pinned: a build installs the versions of its day. |
+| Tizen Studio 6.1 installer | **Not checked yet.** Its SHA-256 is not recorded. The build prints the SHA-256 of the file it downloaded into its log. |
+| Samsung Emscripten SDK 1.39.4.7 | **Not checked yet.** Its SHA-256 is not recorded. The build prints the SHA-256 of the file it downloaded into its log. |
+| OpenSSL 1.1.1d, curl 7.68.0, zlib 1.2.8 | The ports of the SDK check them against the SHA-512 checksums above. |
+
+To add the check of one of the two SDK downloads, download the file from its address above and run `sha256sum` on it. Compare the value with the one that a release build printed for this file in its log. In the `Dockerfile`, the `RUN` instruction of the download ends with `sha256sum <file>`, which prints the value. Replace that command with the check:
+
+```sh
+echo "<SHA-256>  <file>" | sha256sum -c -
+```
+
+There are two spaces between the value and the file name. A file with another checksum then stops the build. State the value in the table above and remove the download from the list `UNCHECKED` of `tests/unit/dockerfile-downloads.test.js`: that test checks that every download of the `Dockerfile` is checked or stands on that list, and that this page states the checksums that the `Dockerfile` uses.
+
+To take a newer image of Ubuntu, replace the digest in both `FROM` lines of the `Dockerfile` and in the table with the one that `docker buildx imagetools inspect ubuntu:22.04` prints.
+
+The same downloads do not make two builds of a commit identical bit for bit: every build makes a new certificate to sign the package with, and installs the Ubuntu packages of its day.

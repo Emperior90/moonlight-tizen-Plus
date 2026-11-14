@@ -1,5 +1,7 @@
 #include "moonlight_wasm.hpp"
+#include "audio_load.hpp"
 #include "audio_stream_stats.hpp"
+#include "opus_layout.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -40,6 +42,10 @@ static constexpr int kDefaultAudioJitterMs = 100;
 static std::vector<opus_int16> s_DecodeBuffer;
 
 AudioStreamStats g_AudioStreamStats;
+
+// The load of the audio stream on this thread, from the totals of the statistics above (audio_load.hpp). Only touched
+// where the statistics are counted: on the audio thread, and before it starts and after it ended.
+static AudioLoadMonitor s_AudioLoad;
 
 static TimeStamp s_frameDuration;
 static TimeStamp s_pktPts;
@@ -117,8 +123,49 @@ static int DecodeTimed(OpusMSDecoder* decoder, const unsigned char* sampleData, 
   return decodeLen;
 }
 
-static void DecodeAndAppendPacket(samsung::wasm::ElementaryMediaTrack* track, samsung::wasm::SessionId session_id,
+// Judge the load of the audio thread after a packet (audio_load.hpp), from the totals that DecodeTimed() and the
+// hand-over just raised. Once per stream, when the first window ends in which decoding and hand-over took more than the
+// limit per second of audio, the figures go to the log and the front end is told, which shows the user a message once
+// per session ('AudioOverloadMsg: ' in wasm/platform/messages.js). The message doesn't wait for the main thread, and it
+// comes whatever the level of the performance stats, since the statistics are always counted.
+static void CheckAudioLoad() {
+  if (!s_AudioLoad.Update(g_AudioStreamStats.decodeUs.load(std::memory_order_relaxed),
+        g_AudioStreamStats.outputUs.load(std::memory_order_relaxed),
+        g_AudioStreamStats.decodedSamples.load(std::memory_order_relaxed))) {
+    return;
+  }
+  char line[320];
+  if (FormatAudioOverloadLog(s_AudioLoad, (int)s_channelCount, line, sizeof(line)) > 0) {
+    MoonlightInstance::ClLogMessage("%s", line);
+  }
+  PostToJsAsync("AudioOverloadMsg: " + std::to_string(s_channelCount) + "," +
+    std::to_string(s_AudioLoad.lastWindowMsPerSecond));
+}
+
+// Destroy the Opus decoder of a stream, if there is one, and free the decode buffer of the EMSS backend. Only called
+// where no packet can be decoded: before a stream starts (AudDecInit()) and once the receive thread of
+// moonlight-common-c, which decodes, has ended (AudDecCleanup(), called by stopAudioStream() in AudioStream.c).
+static void ReleaseDecoder(OpusMSDecoder*& decoder) {
+  if (decoder != nullptr) {
+    opus_multistream_decoder_destroy(decoder);
+    decoder = nullptr;
+  }
+
+  // Clear the decode buffer
+  s_DecodeBuffer.clear();
+
+  // Shrink the decode buffer to fit its contents
+  s_DecodeBuffer.shrink_to_fit();
+}
+
+// Returns whether the packet was appended to the audio track, i.e. whether the player of the TV got its audio
+static bool DecodeAndAppendPacket(samsung::wasm::ElementaryMediaTrack* track, samsung::wasm::SessionId session_id,
   OpusMSDecoder* decoder, const unsigned char* sampleData, int sampleLength) {
+  // Nothing to decode with: a stream has no decoder before AudDecInit() and after AudDecCleanup()
+  if (!decoder) {
+    return false;
+  }
+
   // Decode the incoming audio packet using Opus decoder. It writes at most the negotiated frame size per channel, which
   // the decode buffer holds (AudDecInit()).
   std::chrono::steady_clock::time_point decodeEnd;
@@ -129,7 +176,7 @@ static void DecodeAndAppendPacket(samsung::wasm::ElementaryMediaTrack* track, sa
   // carries only the samples that its own decode wrote, so there is nothing to clear in the buffer.
   if (decodeLen <= 0) {
     g_AudioStreamStats.decodeErrors.fetch_add(1, std::memory_order_relaxed);
-    return;
+    return false;
   }
 
   // Calculate desired buffer size in bytes for decoded audio data
@@ -162,10 +209,11 @@ static void DecodeAndAppendPacket(samsung::wasm::ElementaryMediaTrack* track, sa
         s_AppendFailures);
     }
   }
+  return appended;
 }
 
 static void DecodeAndScheduleFrame(OpusMSDecoder* decoder, const unsigned char* sampleData, int sampleLength) {
-  // Check if the Opus decoder failed to be created for this streaming session
+  // Nothing to decode with: a stream has no decoder before AudDecInit() and after AudDecCleanup()
   if (!decoder) {
     return;
   }
@@ -251,8 +299,22 @@ int MoonlightInstance::AudDecInit(int audioConfiguration, POPUS_MULTISTREAM_CONF
 
   ClLogMessage("MoonlightInstance::AudDecInit\n");
 
+  // Nothing decodes between two streams, so a decoder that is still there is destroyed before this start creates its
+  // own. AudDecCleanup() destroys the one of a stream that ended; moonlight-common-c only calls it for a start that got
+  // past this function.
+  ReleaseDecoder(g_Instance->m_OpusDecoder);
+
+  // Log the layout that the host announced for this stream, as moonlight-common-c read it from the DESCRIBE answer
+  char mappingText[32];
+  FormatOpusMapping(opusConfig->mapping, opusConfig->channelCount, mappingText, sizeof(mappingText));
+  ClLogMessage("Opus layout of the stream: channels %d, streams %d, coupled streams %d, mapping %s\n",
+    opusConfig->channelCount, opusConfig->streams, opusConfig->coupledStreams, mappingText);
+
   // Latch the audio backend selected for this streaming session
   s_AudioBackend = g_Instance->m_AudioBackend;
+
+  // Judge the load of this stream from its first packet; without an audio output nothing is decoded and nothing judged
+  s_AudioLoad.Reset(s_AudioBackend == AudioBackend::Disabled ? 0 : opusConfig->sampleRate);
 
   // Skip creating the Opus decoder when the audio output is disabled, as every audio packet is discarded
   if (s_AudioBackend == AudioBackend::Disabled) {
@@ -286,12 +348,33 @@ int MoonlightInstance::AudDecInit(int audioConfiguration, POPUS_MULTISTREAM_CONF
   // Calculate the frame duration based on the samples per frame (240) and sample rate (48000)
   s_frameDuration = FrameDuration(opusConfig->samplesPerFrame, opusConfig->sampleRate);
 
+  // The mapping to decode with is the one of the stream, except for the 7.1 that a host with a faulty channel rotation
+  // announces for its normal quality (Sunshine v2026.914, Apollo, Vibeshine), which would play three channels in the
+  // wrong place (opus_layout.hpp)
+  unsigned char mapping[AUDIO_CONFIGURATION_MAX_CHANNEL_COUNT];
+  if (GetOpusDecoderMapping(opusConfig, mapping)) {
+    FormatOpusMapping(mapping, opusConfig->channelCount, mappingText, sizeof(mappingText));
+    ClLogMessage("This is the 7.1 layout of a host that rotates the mapping of its normal quality wrongly, which would "
+      "mix up LFE, side left and side right: decoding with the mapping %s instead\n", mappingText);
+  }
+
   // Create the Opus decoder with the provided configuration parameters
+  rc = OPUS_OK;
   g_Instance->m_OpusDecoder = opus_multistream_decoder_create(
     opusConfig->sampleRate, opusConfig->channelCount,
     opusConfig->streams, opusConfig->coupledStreams,
-    opusConfig->mapping, &rc
+    mapping, &rc
   );
+
+  // Without a decoder the audio stream can't start: Opus refuses a layout that makes no sense (OPUS_BAD_ARG), or the
+  // memory for the decoder is missing (OPUS_ALLOC_FAIL). The start of the stream fails at this stage with the error.
+  if (g_Instance->m_OpusDecoder == nullptr) {
+    ClLogMessage("Creating the Opus decoder failed with error %d (%s), so the audio stream can't start\n", rc,
+      opus_strerror(rc));
+    // Free the decode buffer of this start: moonlight-common-c doesn't call AudDecCleanup() for a start that fails here
+    ReleaseDecoder(g_Instance->m_OpusDecoder);
+    return rc != OPUS_OK ? rc : -1;
+  }
 
   // Initialize the estimated audio end time
   s_estimatedAudioEnd = 0s;
@@ -309,6 +392,8 @@ int MoonlightInstance::AudDecInit(int audioConfiguration, POPUS_MULTISTREAM_CONF
     if (s_samplesPerFrame > kAudioSlotStride || s_channelCount > MAX_CHANNEL_COUNT) {
       ClLogMessage("Decoded audio frames of %d samples over %d channels are too large for the Web Audio backend!\n",
         (int)s_samplesPerFrame, (int)s_channelCount);
+      // Destroy the decoder of this start, for the same reason
+      ReleaseDecoder(g_Instance->m_OpusDecoder);
       return -1;
     }
 
@@ -357,11 +442,24 @@ void MoonlightInstance::AudDecCleanup(void) {
     });
   }
 
-  // Clear the decode buffer
-  s_DecodeBuffer.clear();
+  // Destroy the Opus decoder of the stream and free its decode buffer. The receive thread of moonlight-common-c, which
+  // decodes, has ended before this is called (stopAudioStream() in AudioStream.c).
+  ReleaseDecoder(g_Instance->m_OpusDecoder);
 
-  // Shrink the decode buffer to fit its contents
-  s_DecodeBuffer.shrink_to_fit();
+  // Log the work of the audio thread over the stream, and keep its load for the report of the session, which
+  // VidDecCleanup() sends after this (audio_load.hpp). A stream that decoded nothing has neither.
+  const AudioLoadSummary load = s_AudioLoad.Summary();
+  if (s_AudioLoad.samples != 0) {
+    char line[320];
+    if (FormatAudioLoadSummaryLog(load, line, sizeof(line)) > 0) {
+      ClLogMessage("%s", line);
+    }
+    g_AudioStreamStats.loadChannels = (uint32_t)s_channelCount;
+    g_AudioStreamStats.loadMsPerSecond = load.averageMsPerSecond;
+    g_AudioStreamStats.loadPeakMsPerSecond = load.peakMsPerSecond;
+    g_AudioStreamStats.overloadedWindows = load.overloadedWindows;
+  }
+  s_AudioLoad.Reset(0);
 }
 
 void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLength) {
@@ -379,6 +477,7 @@ void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLe
     DecodeAndScheduleFrame(g_Instance->m_OpusDecoder,
       reinterpret_cast<unsigned char*>(sampleData), sampleLength
     );
+    CheckAudioLoad();
     return;
   }
 
@@ -410,13 +509,18 @@ void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLe
   }
 
   // Decode and append the audio packet to the audio track
-  DecodeAndAppendPacket(&g_Instance->m_AudioTrack,
+  const bool appended = DecodeAndAppendPacket(&g_Instance->m_AudioTrack,
     g_Instance->m_AudioSessionId.load(), g_Instance->m_OpusDecoder,
     reinterpret_cast<unsigned char*>(sampleData), sampleLength
   );
+  CheckAudioLoad();
 
-  // Update the estimated audio end time to prevent future overflow
-  s_estimatedAudioEnd = std::max(s_estimatedAudioEnd, ntp) + s_frameDuration;
+  // Update the estimated audio end time to prevent future overflow. Only for a packet that the player took: one that
+  // the decoder failed on or that the player rejected puts no audio into its buffer, and counting a burst of them made
+  // 'Limit audio delay' drop the good packets after it as the overflow of a buffer that was empty.
+  if (appended) {
+    s_estimatedAudioEnd = std::max(s_estimatedAudioEnd, ntp) + s_frameDuration;
+  }
 }
 
 // NOTE: The capabilities are updated before every connection in ConnectionThreadFunc, as the

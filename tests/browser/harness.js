@@ -31,6 +31,11 @@ const READY_TIMEOUT_MS = 15000;
 // restoreUiAfterWasmLoad() focuses the current item 100 ms after it showed the hosts view
 const READY_SETTLE_MS = 150;
 
+// How long a test waits before it answers a drop-down of the settings with OK that it opened with a key: the drop-down
+// ignores OK for 300 ms after it opened (ACCEPT_GUARD_MS in wasm/platform/navigation.js, since 2.3.1), which is the
+// second press of a double OK for it, unless a key moved the selection meanwhile
+const DROPDOWN_OK_WAIT_MS = 350;
+
 // The video settings that the optimal settings button and Restore Defaults store. A fresh install stores only the
 // last one (whether the bitrate presets follow the video settings) and works the others out at every start.
 const VIDEO_KEYS = ['resolution', 'frameRate', 'bitrate', 'videoCodec', 'hdrMode', 'unlockAllFps', 'framePacing',
@@ -297,6 +302,7 @@ function readOtherSettings(page) {
 
 module.exports = {
   DB_NAME,
+  DROPDOWN_OK_WAIT_MS,
   STORE_NAME,
   SUNSHINE_HOSTS,
   VIDEO_KEYS,

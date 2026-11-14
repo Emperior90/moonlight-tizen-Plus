@@ -13,7 +13,7 @@
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
-const { openApp, readStorage, startHarness, waitForStorage } = require('./harness');
+const { DROPDOWN_OK_WAIT_MS, openApp, readStorage, startHarness, waitForStorage } = require('./harness');
 
 // delayedNavigation() runs the gamepad buttons of the menus 50 ms later (BUTTON_NAVIGATION_DELAY) and a stick move 150 ms
 // later (NAVIGATION_DELAY)
@@ -273,7 +273,7 @@ test('the setting offers A to Z, Z to A, Recently played and As on the PC, with 
     assert.ok(gap >= 16, 'gap ' + gap);
 
     // Settings, DOWN to General (the fifth section), OK, DOWN: the setting is the second row, below the language; OK opens
-    // its menu, DOWN to Z to A, OK
+    // its menu on the order that is set, A to Z (since 2.3.1), DOWN to Z to A, OK
     await page.evaluate(() => {
       showHostsMode();
       $('#settingsBtn').trigger('click');
@@ -289,7 +289,9 @@ test('the setting offers A to Z, Z to A, Recently played and As on the PC, with 
     await page.waitForFunction(() => Views.InterfaceSettings.view.current() === 'selectSortAppsList', null, { timeout: 3000 });
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => isPopupMenuActive('sortAppsListMenu'));
+    assert.equal(await page.evaluate(() => $('ul.sortAppsListMenu li.hovered').attr('data-value')), 'az');
     await page.keyboard.press('ArrowDown');
+    await page.waitForTimeout(DROPDOWN_OK_WAIT_MS);
     await page.keyboard.press('Enter');
     await waitForStorage(page, (values) => values.sortAppsList === 'za');
     await page.waitForFunction(() => document.activeElement && document.activeElement.id === 'selectSortAppsList', null, { timeout: 3000 });
@@ -298,7 +300,7 @@ test('the setting offers A to Z, Z to A, Recently played and As on the PC, with 
     await rebuildGrid(page);
     assert.deepEqual(await grid(page), ['★ Cyberpunk 2077 [Running]', 'Steam Big Picture', 'Forza Horizon 5', 'Desktop']);
 
-    // With a gamepad: A opens the menu, the D-pad goes down twice to As on the PC, A chooses it
+    // With a gamepad: A opens the menu on Z to A, the D-pad goes down twice to As on the PC, A chooses it
     await page.evaluate(() => {
       showHostsMode();
       $('#settingsBtn').trigger('click');
@@ -311,6 +313,7 @@ test('the setting offers A to Z, Z to A, Recently played and As on the PC, with 
     });
     await gamepadButton(page, 0);
     await page.waitForFunction(() => isPopupMenuActive('sortAppsListMenu'));
+    assert.equal(await page.evaluate(() => $('ul.sortAppsListMenu li.hovered').attr('data-value')), 'za');
     for (let i = 0; i < 2; i++) {
       await gamepadButton(page, 13);
     }

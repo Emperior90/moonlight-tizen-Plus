@@ -295,14 +295,41 @@ function scrollSystemInfo(current, direction) {
   return box.scrollTop !== before;
 }
 
+// Whether an item of a list is an option of a drop-down that can't be chosen, e.g. a resolution above the panel of the TV
+// ([Unsupported], filterUnsupportedResolutions() in index.js), which UP and DOWN step over
+function isDisabledMenuOption(item) {
+  return isHtmlElement(item) && item.classList.contains('mdl-menu__item') && item.hasAttribute('disabled');
+}
+
 class ListView {
   constructor(func) {
     this.index = 0;
     this.func = func;
   }
 
-  current() {
+  // The items of the list. A list that got shorter since the selection was on its last item (a row of the settings that
+  // another setting hides, a button of a header that went away) selects its last item, instead of nothing.
+  items() {
     const array = this.func();
+    if (array.length > 0 && this.index > array.length - 1) {
+      this.index = array.length - 1;
+    }
+    return array;
+  }
+
+  current() {
+    return this.items()[this.index];
+  }
+
+  // Select the item at an index: the mark moves with the selection, as in prev() and next()
+  select(index) {
+    const array = this.items();
+    if (index === this.index || index < 0 || index > array.length - 1) {
+      return array[this.index];
+    }
+    unmark(array[this.index]);
+    this.index = index;
+    mark(array[this.index]);
     return array[this.index];
   }
 
@@ -353,17 +380,29 @@ class ListView {
   }
 
   prevOption() {
-    const array = this.func();
-    unmark(array[this.index]);
-    this.index = (this.index - 1 + array.length) % array.length;
-    mark(array[this.index]);
-    return array[this.index];
+    return this.stepOption(-1);
   }
 
   nextOption() {
-    const array = this.func();
+    return this.stepOption(1);
+  }
+
+  // Move to the previous (-1) or next (1) item, around the ends of the list, over the options of a drop-down that
+  // can't be chosen
+  stepOption(direction) {
+    const array = this.items();
+    if (array.length === 0) {
+      return undefined;
+    }
+    let index = this.index;
+    for (let steps = 0; steps < array.length; steps++) {
+      index = (index + direction + array.length) % array.length;
+      if (!isDisabledMenuOption(array[index])) {
+        break;
+      }
+    }
     unmark(array[this.index]);
-    this.index = (this.index + 1) % array.length;
+    this.index = index;
     mark(array[this.index]);
     return array[this.index];
   }
@@ -628,15 +667,26 @@ const Views = {
       Navigation.change(Views.Hosts);
       focusElement(Views.Hosts.view.current());
     },
-    press: function() {},
+    press: function() {
+      // CH+ and Play/Pause on the remote and Select on a gamepad open the host menu from its icon too, like OK
+      this.accept();
+    },
     switch: function() {
       focusElement(this.view.current());
     },
+    // The list is empty once the card of the host is gone (e.g. the host was deleted from its menu), so there may be
+    // nothing to mark
     enter: function() {
-      mark(this.view.current());
+      const current = this.view.current();
+      if (current) {
+        mark(current);
+      }
     },
     leave: function() {
-      unmark(this.view.current());
+      const current = this.view.current();
+      if (current) {
+        unmark(current);
+      }
     },
   },
   AddHostDialog: {
@@ -654,10 +704,10 @@ const Views = {
       if (ipAddressFieldModeSwitch.checked && currentItem.startsWith('ipAddressField')) {
         // Increase the value of the current IP address numeric field
         changeIpNumericFieldValue.call(this, 1);
-      } else {
-        // Go to the first item in the list (ipAddressTextInput)
-        this.view.index = 0;
-        focusElement(this.view.current());
+      } else if (!ipAddressFieldModeSwitch.checked) {
+        // Go to the text field above the buttons, with the mark. With the number fields, UP and DOWN do nothing on a
+        // button: they change the number of a field, so LEFT and RIGHT are the way between the fields and the buttons.
+        focusElement(this.view.select(0));
       }
     },
     down: function() {
@@ -667,10 +717,9 @@ const Views = {
       if (ipAddressFieldModeSwitch.checked && currentItem.startsWith('ipAddressField')) {
         // Decrease the value of the current IP address numeric field
         changeIpNumericFieldValue.call(this, -1);
-      } else {
-        // Go to the second item in the list (continueAddHost)
-        this.view.index = 1;
-        focusElement(this.view.current());
+      } else if (currentItem === 'ipAddressTextInput') {
+        // Go from the text field to the Continue button below it, with the mark
+        focusElement(this.view.select(this.view.func().indexOf('continueAddHost')));
       }
     },
     left: function() {
@@ -731,9 +780,8 @@ const Views = {
     view: new ListView(() => [
       'cancelPairing'
     ]),
-    up: function() {
-      blurElement('cancelPairing');
-    },
+    // UP keeps the focus on the only button: without it nothing looked selected, while OK still pressed the button
+    up: function() {},
     down: function() {
       focusElement('cancelPairing');
     },
@@ -759,8 +807,10 @@ const Views = {
     },
   },
   AutoWolDialog: {
+    // The switch 'Always wake this PC automatically' (its label, which shows the mark like the switches of the settings)
+    // and the Cancel button, which the dialog opens on (autoWolDialog() in index.js)
     view: new ListView(() => [
-      'autoWolCheckboxSwitch',
+      'autoWolCheckboxBtn',
       'cancelAutoWol'
     ]),
     up: function() {
@@ -772,7 +822,7 @@ const Views = {
     },
     down: function() {
       const currentItem = elementId(this.view.current());
-      if (currentItem === 'autoWolCheckboxSwitch') {
+      if (currentItem === 'autoWolCheckboxBtn') {
         this.view.next();
         focusElement(this.view.current());
       }
@@ -868,9 +918,8 @@ const Views = {
     view: new ListView(() => [
       'closeHostDetails'
     ]),
-    up: function() {
-      blurElement('closeHostDetails');
-    },
+    // UP keeps the focus on the only button: without it nothing looked selected, while OK still pressed the button
+    up: function() {},
     down: function() {
       focusElement('closeHostDetails');
     },
@@ -899,9 +948,8 @@ const Views = {
     view: new ListView(() => [
       'closeAppSupport'
     ]),
-    up: function() {
-      blurElement('closeAppSupport');
-    },
+    // UP keeps the focus on the only button: without it nothing looked selected, while OK still pressed the button
+    up: function() {},
     down: function() {
       focusElement('closeAppSupport');
     },
@@ -1287,9 +1335,11 @@ const Views = {
   AudioSettings: {
     view: new ListView(() => [
       'selectAudioBackend',
-      isAudioOutputDisabled() ? null : 'selectAudio',
-      // The surround audio quality only with 5.1 and 7.1 (updateSurroundQualityOption() in index.js)
-      isAudioOutputDisabled() || !isSurroundAudioSelected() ? null : 'selectSurroundQuality',
+      // The audio configuration only with the media player of the TV, since the Web Audio backend plays stereo
+      // (isAudioConfigurationAvailable() in index.js)
+      isAudioConfigurationAvailable() ? 'selectAudio' : null,
+      // The surround audio quality only with 5.1 and 7.1 there (updateSurroundQualityOption() in index.js)
+      isAudioConfigurationAvailable() && isSurroundAudioSelected() ? 'selectSurroundQuality' : null,
       // At most one of these settings is shown at a time, as each one belongs to a single backend,
       // and neither is shown when the audio output is disabled
       isAudioOutputDisabled() ? null : isWebAudioBackendSelected() ? 'selectAudioJitter' : 'audioSyncBtn',
@@ -1805,9 +1855,8 @@ const Views = {
     view: new ListView(() => [
       'closeNavGuide'
     ]),
-    up: function() {
-      blurElement('closeNavGuide');
-    },
+    // UP keeps the focus on the only button: without it nothing looked selected, while OK still pressed the button
+    up: function() {},
     down: function() {
       focusElement('closeNavGuide');
     },
@@ -1836,9 +1885,8 @@ const Views = {
     view: new ListView(() => [
       'closeUpdateApp'
     ]),
-    up: function() {
-      blurElement('closeUpdateApp');
-    },
+    // UP keeps the focus on the only button: without it nothing looked selected, while OK still pressed the button
+    up: function() {},
     down: function() {
       focusElement('closeUpdateApp');
     },
@@ -1937,11 +1985,19 @@ const Views = {
     switch: function() {
       this.view.currentCardRow(6);
     },
+    // The view is entered before showApps() built the tiles of the host (hostChosen() in index.js), so there may be
+    // nothing to mark yet: the view is entered again once the grid shows
     enter: function() {
-      mark(this.view.current());
+      const current = this.view.current();
+      if (current) {
+        mark(current);
+      }
     },
     leave: function() {
-      unmark(this.view.current());
+      const current = this.view.current();
+      if (current) {
+        unmark(current);
+      }
     },
   },
   AppsNav: {
@@ -2338,6 +2394,12 @@ const Views = {
   },
 };
 
+// How long OK is ignored after a view opened that asked for it (guardAccept()): a drop-down of the settings, which the
+// second press of a double OK or A would otherwise answer at once with the option under the selection, and the restart
+// question that follows Restore Defaults and the Wake PC dialog. Until then the options of a drop-down may not show yet,
+// either. A key that moves the selection ends it early.
+const ACCEPT_GUARD_MS = 300;
+
 const Navigation = (function() {
   let hasFocus = false;
 
@@ -2361,16 +2423,41 @@ const Navigation = (function() {
         return;
       }
 
+      let view = Stack.get();
+      const isGuarded = view.acceptGuardUntil !== undefined && performance.now() < view.acceptGuardUntil;
+      if (!isGuarded && view.isActive && !view.isActive()) {
+        // The view of a drop-down of the settings whose options no longer show, since something else than its keys
+        // closed it (a click beside it): the view goes as well, and the key acts on the row below. Otherwise every key
+        // stayed in the hidden drop-down, where OK chose an option unseen. Right after it opened, its options don't
+        // show yet (the menu shows them with the next frame), so the view stays.
+        Stack.pop();
+        view = Stack.get();
+      }
+
       if (!hasFocus) {
         focus();
         return;
       }
 
-      const view = Stack.get();
+      // The view only just opened: OK is the second press of the one that opened it, not an answer. A key that moves the
+      // selection in between shows a choice, so OK counts again from then on (a double press has no key in between); the
+      // view still counts as just opened for the check of its options above.
+      if (isGuarded && name === 'accept' && !view.acceptGuardEnded) {
+        return;
+      }
+      if (isGuarded && (name === 'up' || name === 'down' || name === 'left' || name === 'right')) {
+        view.acceptGuardEnded = true;
+      }
       if (view[name]) {
         view[name]();
       }
     };
+  }
+
+  // Ignore OK in a view for ACCEPT_GUARD_MS from now on, for a view that is about to open
+  function guardAccept(view) {
+    view.acceptGuardUntil = performance.now() + ACCEPT_GUARD_MS;
+    view.acceptGuardEnded = false;
   }
 
   const Stack = (function() {
@@ -2381,6 +2468,17 @@ const Navigation = (function() {
     }
 
     function push(view, hostname) {
+      // A view that is already on top stays there once: a second press that opens the same menu or dialog again (two
+      // CH+ on a host, two OK on Check for updates) otherwise left a second copy of it, which swallowed the keys after
+      // the first Close
+      if (get() === view) {
+        return;
+      }
+      // A dialog that opens while a drop-down of the settings is open (e.g. the answer of a check for updates) closes
+      // the drop-down first, with its view, or takes the view of one that something else closed already
+      if (get() && get().isActive && !closeActiveVisibleMenu()) {
+        pop();
+      }
       if (get()) {
         get().leave();
       }
@@ -2455,5 +2553,6 @@ const Navigation = (function() {
     pop: Stack.pop,
     start: State.start,
     stop: State.stop,
+    guardAccept,
   };
 })();

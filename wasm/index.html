@@ -56,7 +56,7 @@
   <div class="mdl-layout mdl-js-layout">
     <header id="main-header" class="mdl-layout__header">
       <div class="mdl-layout__header-row">
-        <button type="button" id="goBackBtn" class="mdl-button mdl-js-button mdl-button--icon" role="link" aria-label="Go back">
+        <button type="button" id="goBackBtn" class="mdl-button mdl-js-button mdl-button--icon" role="link" aria-label="Back" data-i18n-aria-label="Back">
           <svg class="navigation-button-icons icon" aria-hidden="true"><use xlink:href="#i-back"/></svg>
         </button>
         <div id="goBackTooltip" class="mdl-tooltip" for="goBackBtn" data-i18n="Back">Back</div>
@@ -74,23 +74,23 @@
         <div id="header-status" class="status-chip header-status" aria-hidden="true"></div>
         <!-- Navigation bar -->
         <nav class="mdl-navigation">
-          <button type="button" id="rescanNetworkBtn" class="mdl-button mdl-js-button mdl-button--icon" aria-label="Rescan network">
+          <button type="button" id="rescanNetworkBtn" class="mdl-button mdl-js-button mdl-button--icon" aria-label="Rescan network" data-i18n-aria-label="Rescan network">
             <svg class="navigation-button-icons icon" aria-hidden="true"><use xlink:href="#i-refresh"/></svg>
           </button>
           <div id="rescanNetworkTooltip" class="mdl-tooltip" for="rescanNetworkBtn" data-i18n="Rescan network">Rescan network</div>
-          <button type="button" id="settingsBtn" class="mdl-button mdl-js-button mdl-button--icon" role="link" aria-label="Settings">
+          <button type="button" id="settingsBtn" class="mdl-button mdl-js-button mdl-button--icon" role="link" aria-label="Settings" data-i18n-aria-label="Settings">
             <svg class="navigation-button-icons icon" aria-hidden="true"><use xlink:href="#i-gear"/></svg>
           </button>
           <div id="settingsTooltip" class="mdl-tooltip" for="settingsBtn" data-i18n="Settings">Settings</div>
-          <button type="button" id="supportBtn" class="mdl-button mdl-js-button mdl-button--icon" aria-label="Support">
+          <button type="button" id="supportBtn" class="mdl-button mdl-js-button mdl-button--icon" aria-label="Support" data-i18n-aria-label="Support">
             <svg class="navigation-button-icons icon" aria-hidden="true"><use xlink:href="#i-help"/></svg>
           </button>
           <div id="supportTooltip" class="mdl-tooltip" for="supportBtn" data-i18n="Support">Support</div>
-          <button type="button" id="restoreDefaultsBtn" class="mdl-button mdl-js-button mdl-button--icon" aria-label="Restore Defaults">
+          <button type="button" id="restoreDefaultsBtn" class="mdl-button mdl-js-button mdl-button--icon" aria-label="Restore Defaults" data-i18n-aria-label="Restore Defaults">
             <svg class="navigation-button-icons icon" aria-hidden="true"><use xlink:href="#i-restore"/></svg>
           </button>
           <div id="restoreDefaultsTooltip" class="mdl-tooltip" for="restoreDefaultsBtn" data-i18n="Restore Defaults">Restore Defaults</div>
-          <button type="button" id="quitRunningAppBtn" class="mdl-button mdl-js-button mdl-button--icon" aria-label="Quit app on the PC">
+          <button type="button" id="quitRunningAppBtn" class="mdl-button mdl-js-button mdl-button--icon" aria-label="Quit app on the PC" data-i18n-aria-label="Quit app on the PC">
             <svg class="navigation-button-icons icon" aria-hidden="true"><use xlink:href="#i-quit"/></svg>
           </button>
           <div id="quitRunningAppTooltip" class="mdl-tooltip" for="quitRunningAppBtn" data-i18n="Quit app on the PC">Quit app on the PC</div>
@@ -157,7 +157,7 @@
         </div>
       </section>
       <div id="host-grid">
-        <div id="addHostContainer" class="host-add-container mdl-card mdl-shadow--4dp" role="link" tabindex="0" aria-label="Add PC">
+        <div id="addHostContainer" class="host-add-container mdl-card mdl-shadow--4dp" role="link" tabindex="0" aria-label="Add PC" data-i18n-aria-label="Add PC">
           <div id="host-add" class="mdl-card__title mdl-card--expand">
             <div class="host-title mdl-card__title-text">
               <span class="host-text" data-i18n="Add PC">Add PC</span>
@@ -216,7 +216,7 @@
                 - Applies the best image quality this TV supports (its highest resolution up to 4K, HEVC, and HDR if the TV supports it) with a bitrate that matches its network connection.
               </span>
               <div id="optimalSettingsMenu">
-                <button type="button" id="optimalSettingsBtn" class="mdl-button mdl-js-button" aria-label="Apply the optimal settings for this TV">
+                <button type="button" id="optimalSettingsBtn" class="mdl-button mdl-js-button" aria-label="Optimal settings for this TV" data-i18n-aria-label="Optimal settings for this TV">
                   <span data-i18n="Apply the optimal streaming settings for this TV">
                     Apply the optimal streaming settings for this TV
                   </span>
@@ -269,8 +269,8 @@
             </div>
             <div class="setting-option">
               <label data-i18n="Video bitrate">Video bitrate</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Increase for better image quality or decrease to improve performance on slower connections.">
-                - Increase for better image quality or decrease to improve performance on slower connections.
+              <span class="mdl-list__item-text-body" data-i18n="- A higher bitrate improves the picture less and less, but every frame takes longer to arrive: about 0.6 to 0.8 ms more latency per 10 Mbps, measured on one fast Wi-Fi connection. Lower it when frames are lost. It includes error correction and audio, so the statistics show about 9% less as received (with 5% error correction).">
+                - A higher bitrate improves the picture less and less, but every frame takes longer to arrive: about 0.6 to 0.8 ms more latency per 10 Mbps, measured on one fast Wi-Fi connection. Lower it when frames are lost. It includes error correction and audio, so the statistics show about 9% less as received (with 5% error correction).
               </span>
               <div id="videoBitrateMenu">
                 <button type="button" id="selectBitrate" class="mdl-button mdl-js-button">10 Mbps</button>
@@ -345,6 +345,11 @@
                 <li class="mdl-menu__item" data-value="WebAudio" data-i18n="Browser (Web Audio)">Browser (Web Audio)</li>
                 <li class="mdl-menu__item" data-value="Disabled" data-i18n="Disabled">Disabled</li>
               </ul>
+              <!-- A line that shows only with Web Audio, below the help text (.setting-note). It comes after the menu, since the
+                   navigation finds the options of a menu by the position of the menu in its row (navigation.js) -->
+              <span id="webAudioStereoNote" class="mdl-list__item-text-body setting-note" style="display: none" data-i18n="- Web Audio always plays stereo, so Audio configuration and Surround audio quality are not available.">
+                - Web Audio always plays stereo, so Audio configuration and Surround audio quality are not available.
+              </span>
             </div>
             <div id="audioConfigOption" class="setting-option">
               <label><span data-i18n="Audio configuration">Audio configuration</span>
@@ -364,11 +369,11 @@
             </div>
             <div id="surroundQualityOption" class="setting-option">
               <label data-i18n="Surround audio quality">Surround audio quality</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Efficient asks the PC for 5.1 and 7.1 at normal bitrate in 10 ms packets instead of 5 ms: about half the work to decode the sound (measured on a PC), about 5 ms more audio delay.">
-                - Efficient asks the PC for 5.1 and 7.1 at normal bitrate in 10 ms packets instead of 5 ms: about half the work to decode the sound (measured on a PC), about 5 ms more audio delay.
+              <span class="mdl-list__item-text-body" data-i18n="- Efficient: 256 instead of 1536 kbps for 5.1 (450 instead of 2048 kbps for 7.1), which lowers the load on the TV. For 5.1, High takes about twice the decoding time (measured on a PC). For music, High or Stereo (512 kbps) can sound better. No listening test has compared them.">
+                - Efficient: 256 instead of 1536 kbps for 5.1 (450 instead of 2048 kbps for 7.1), which lowers the load on the TV. For 5.1, High takes about twice the decoding time (measured on a PC). For music, High or Stereo (512 kbps) can sound better. No listening test has compared them.
               </span>
               <div id="surroundQualityMenu">
-                <button type="button" id="selectSurroundQuality" class="mdl-button mdl-js-button" data-value="High" data-i18n="High">High</button>
+                <button type="button" id="selectSurroundQuality" class="mdl-button mdl-js-button" data-value="Efficient" data-i18n="Efficient">Efficient</button>
               </div>
               <ul class="surroundQualityMenu mdl-menu mdl-menu--bottom-left mdl-js-menu" for="selectSurroundQuality">
                 <li class="mdl-menu__item" data-value="High" data-i18n="High">High</li>
@@ -457,7 +462,7 @@
                 - Choose the button that each button of a controller presses in games, for all controllers or for one, and calibrate worn sticks. The menus keep the usual buttons.
               </span>
               <div id="buttonMappingMenu">
-                <button type="button" id="buttonMappingBtn" class="mdl-button mdl-js-button" aria-label="Button mapping">
+                <button type="button" id="buttonMappingBtn" class="mdl-button mdl-js-button" aria-label="Button mapping" data-i18n-aria-label="Button mapping">
                   <span data-i18n="Change the buttons of the controllers">
                     Change the buttons of the controllers
                   </span>
@@ -471,7 +476,7 @@
                 - Shows every key of the remote and every button, trigger and stick of the controllers as the TV reports them.
               </span>
               <div id="inputTestMenu">
-                <button type="button" id="inputTestBtn" class="mdl-button mdl-js-button" aria-label="Input test">
+                <button type="button" id="inputTestBtn" class="mdl-button mdl-js-button" aria-label="Input test" data-i18n-aria-label="Input test">
                   <span data-i18n="Test the remote and the controllers">
                     Test the remote and the controllers
                   </span>
@@ -536,7 +541,7 @@
               <label data-i18n="Remove all PCs">Remove all PCs</label>
               <span class="mdl-list__item-text-body"></span>
               <div id="removeAllHostsMenu">
-                <button type="button" id="removeAllHostsBtn" class="mdl-button mdl-js-button" aria-label="Remove all PCs">
+                <button type="button" id="removeAllHostsBtn" class="mdl-button mdl-js-button" aria-label="Remove all PCs" data-i18n-aria-label="Remove all PCs">
                   <span data-i18n="Remove all saved PCs from the list">
                     Remove all saved PCs from the list
                   </span>
@@ -581,8 +586,8 @@
             </div>
             <div class="setting-option">
               <label data-i18n="Performance statistics">Performance statistics</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Compact shows one line with the main figures over the stream, Full every figure. While streaming, the YELLOW key and the Stream Menu switch between Off, Compact and Full.">
-                - Compact shows one line with the main figures over the stream, Full every figure. While streaming, the YELLOW key and the Stream Menu switch between Off, Compact and Full.
+              <span class="mdl-list__item-text-body" data-i18n="- Compact shows one line with the main figures over the stream, updated every second. Full shows every figure, updated every 2 seconds. While streaming, the YELLOW key and the Stream Menu switch between Off, Compact and Full.">
+                - Compact shows one line with the main figures over the stream, updated every second. Full shows every figure, updated every 2 seconds. While streaming, the YELLOW key and the Stream Menu switch between Off, Compact and Full.
               </span>
               <div id="performanceStatsMenu">
                 <button type="button" id="selectPerformanceStats" class="mdl-button mdl-js-button" data-value="0" data-i18n="Off">Off</button>
@@ -612,8 +617,8 @@
             <div class="settings-group" data-i18n="Experimental">Experimental</div>
             <div class="setting-option">
               <label data-i18n="Reference frame invalidation">Reference frame invalidation</label>
-              <span class="mdl-list__item-text-body" data-i18n="- Recovers from packet loss without a full keyframe, which avoids traffic spikes and blurry frames. Disable it if artifacts remain after a frame drop.">
-                - Recovers from packet loss without a full keyframe, which avoids traffic spikes and blurry frames. Disable it if artifacts remain after a frame drop.
+              <span class="mdl-list__item-text-body" data-i18n="- Recovers from packet loss without a full keyframe, which avoids traffic spikes and blurry frames. Only works when the PC encodes with an NVIDIA graphics card; with others it changes nothing. Disable it if artifacts remain after a frame drop.">
+                - Recovers from packet loss without a full keyframe, which avoids traffic spikes and blurry frames. Only works when the PC encodes with an NVIDIA graphics card; with others it changes nothing. Disable it if artifacts remain after a frame drop.
               </span>
               <div id="refFrameInvalidationMenu">
                 <label id="refFrameInvalidationBtn" class="mdl-switch mdl-js-switch" for="refFrameInvalidationSwitch">
@@ -649,7 +654,7 @@
               <label data-i18n="System information">System information</label>
               <span class="mdl-list__item-text-body"></span>
               <div id="systemInfoMenu">
-                <button type="button" id="systemInfoBtn" class="mdl-button mdl-js-button" aria-label="System Information">Loading system information...</button>
+                <button type="button" id="systemInfoBtn" class="mdl-button mdl-js-button" aria-label="System information" data-i18n-aria-label="System information">Loading system information...</button>
               </div>
             </div>
             <div class="setting-option">
@@ -658,7 +663,7 @@
                 - The log of this session and the one before, kept only in the memory of the TV, for a report of a problem.
               </span>
               <div id="diagnosticLogMenu">
-                <button type="button" id="diagnosticLogBtn" class="mdl-button mdl-js-button" aria-label="Diagnostic log">
+                <button type="button" id="diagnosticLogBtn" class="mdl-button mdl-js-button" aria-label="Diagnostic log" data-i18n-aria-label="Diagnostic log">
                   <span data-i18n="Show the diagnostic log">
                     Show the diagnostic log
                   </span>
@@ -672,7 +677,7 @@
                 - The keys of the remote, the keyboard and the controllers in each view and during a stream.
               </span>
               <div id="navigationGuideMenu">
-                <button type="button" id="navigationGuideBtn" class="mdl-button mdl-js-button" aria-label="Navigation guide">
+                <button type="button" id="navigationGuideBtn" class="mdl-button mdl-js-button" aria-label="Navigation guide" data-i18n-aria-label="Navigation guide">
                   <span data-i18n="Discover navigation controls for all input devices">
                     Discover navigation controls for all input devices
                   </span>
@@ -686,7 +691,7 @@
                 - Find out if a new application update is available.
               </span>
               <div id="checkForUpdatesMenu">
-                <button type="button" id="checkUpdatesBtn" class="mdl-button mdl-js-button" aria-label="Check for Updates">
+                <button type="button" id="checkUpdatesBtn" class="mdl-button mdl-js-button" aria-label="Check for updates" data-i18n-aria-label="Check for updates">
                   <span data-i18n="Check for new Moonlight updates">
                     Check for new Moonlight updates
                   </span>
@@ -700,7 +705,7 @@
                 - If you encounter issues, here you can restart the app to resolve them.
               </span>
               <div id="restartAppMenu">
-                <button type="button" id="restartAppBtn" class="mdl-button mdl-js-button" aria-label="Restart Application">
+                <button type="button" id="restartAppBtn" class="mdl-button mdl-js-button" aria-label="Restart the application" data-i18n-aria-label="Restart the application">
                   <span data-i18n="Restart the Moonlight app quickly">
                     Restart the Moonlight app quickly
                   </span>

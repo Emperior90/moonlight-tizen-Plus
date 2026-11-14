@@ -8,7 +8,7 @@
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
-const { openApp, readStorage, startHarness, waitForStorage } = require('./harness');
+const { DROPDOWN_OK_WAIT_MS, openApp, readStorage, startHarness, waitForStorage } = require('./harness');
 
 const XBOX_ID = 'Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)';
 const GENERIC_ID = 'Generic USB Joystick (Vendor: 0079 Product: 0006)';
@@ -153,14 +153,17 @@ test('the controller type setting is Auto by default, chosen with the remote, st
     assert.deepEqual(await page.evaluate(() => Views.InputSettings.view.func()),
       ['rumbleFeedbackBtn', 'mouseEmulationBtn', 'buttonMappingBtn', 'inputTestBtn', 'selectControllerType']);
 
-    // ENTER opens the menu with Auto, Xbox, PlayStation and Nintendo; DOWN twice and ENTER choose PlayStation
+    // ENTER opens the menu with Auto, Xbox, PlayStation and Nintendo, on Auto, which is set; DOWN twice and ENTER choose
+    // PlayStation
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => isPopupMenuActive('controllerTypeMenu'));
     assert.deepEqual(await page.evaluate(() => $('.controllerTypeMenu li').map(function() {
       return $(this).data('value') + '=' + $(this).text().trim();
     }).get()), ['Auto=Auto', 'Xbox=Xbox', 'PlayStation=PlayStation', 'Nintendo=Nintendo']);
+    assert.equal(await page.evaluate(() => $('ul.controllerTypeMenu li.hovered').attr('data-value')), 'Auto');
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowDown');
+    await page.waitForTimeout(DROPDOWN_OK_WAIT_MS);
     await page.keyboard.press('Enter');
     await waitForStorage(page, (values) => values.controllerType === 'PlayStation');
     assert.deepEqual(await readControllerType(page), { value: 'PlayStation', text: 'PlayStation' });

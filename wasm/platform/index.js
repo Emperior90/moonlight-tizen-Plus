@@ -42,6 +42,7 @@ var streamLaunchAnsweredAt = 0; // When the host accepted the launch or resume r
 var heldHostStartUntil = {}; // Until when each host may still hold a start of this TV that never connected (performance.now(), rememberHeldHostStart()), keyed by server UID
 var streamBitrateMbps = 0; // Bitrate in Mbps of the latest stream launch, which the bitrate entry of the Stream Menu starts from, initial value is 0
 var streamSurroundQuality = 'High'; // Surround audio quality of the latest stream launch ('High' or 'Efficient'), which the surround quality entry of the Stream Menu starts from
+var audioOverloadWarning = false; // Flag indicating whether the message about sound that keeps the TV busy has shown in the current stream session (showAudioOverloadMessage() in messages.js), initial value is false
 var pendingStreamRestart = null; // The changed settings that the stream reconnects with once it ended for the Stream Menu (restartStreamWithSettings()), { bitrateMbps, surroundQuality } with either or both, or null
 var wasmSessionStarted = false; // Flag indicating whether the start request of the current stream reached the WASM module, initial value is false
 var isDialogOpen = false; // Flag indicating whether the dialog is open, initial value is false
@@ -65,6 +66,7 @@ var autoAdjustBitrate = false; // Flag indicating whether resolution and frame r
 var keptBitrateNotice = false; // Flag indicating whether the notice about a kept hand-picked bitrate has shown, initial value is false
 var tvScreenSaverEnabled = null; // Last screensaver state requested from the TV, initial value is null (never requested)
 var streamNetworkInfo = ''; // Network connection summary shown in the performance statistics while streaming, initial value is empty
+var streamBuildInfo = ''; // The line of the full statistics with the app version, the audio backend and the audio setting of the latest stream launch (getStreamBuildInfo()), initial value is empty
 var streamConnectionType = 'unknown'; // Network connection type of the current streaming session, initial value is unknown
 var lastWifiSignalRefreshMs = 0; // Time of the last Wi-Fi signal strength refresh of the network connection summary, initial value is 0
 var repeatAction = null; // Flag indicating whether the repeat action is set, initial value is null
@@ -73,6 +75,9 @@ var lastInvokeTime = 0; // Flag indicating the last invoke time, initial value i
 var repeatTimeout = null; // Flag indicating whether the repeat timeout is set, initial value is null
 var repeatFrame = null; // Animation frame request of the running repeat action, initial value is null
 var gamepadAxisDirections = {}; // Direction (-1, 0 or 1) of each gamepad stick axis of the menus past the action threshold, keyed like repeatSource, initial value is empty
+var gamepadAxisReleases = {}; // The direction that each gamepad stick axis of the menus left last and when (performance.now()), as { direction, at }, keyed like repeatSource, initial value is empty
+var gamepadReverseSteps = {}; // The step of each gamepad stick axis into the direction opposite to the one it just left, which waits to see whether the stick only snapped back ({ timer, since, operation }), keyed like repeatSource, initial value is empty
+var gamepadButtonTimes = {}; // When each gamepad button of the menus was pressed (a D-pad button also released) last (performance.now()), as { pressedAt, releasedAt }, keyed like repeatSource, initial value is empty
 var nonStandardGamepadNotices = new Set(); // Ids of the gamepads with a non-standard layout that the notice has shown for since the app started, initial value is empty
 var navigationTimeout = null; // Flag indicating whether the navigation timeout is set, initial value is null
 const BUILD_TYPE = '__BUILD_TYPE__'; // Placeholder for build type, which should be replaced during the build process
@@ -90,12 +95,18 @@ const SMART_HUB_PROBE_TIMEOUT_MS = 5000; // Longest wait in ms for the answer of
 const SMART_HUB_PREVIEW_MAX_TIZEN = 6.0; // Newest Tizen version with the Preview tiles of Smart Hub: Samsung lists the TVs of 2016 to 2021 for them, and the app installs from Tizen 5.5 (2020) on
 const GAME_MODE_PLATFORM_VERSION_KEY = 'gameModePlatformVer'; // Key of the Tizen version that the game mode switch was stored on, so that a switch left on from before an update of the TV to Tizen 9.0 or newer gets its compatibility warning once
 var isGameModeUpdateWarningPending = false; // Whether the stored settings ask for that warning, which waits until the hosts show (warnGameModeAfterTizenUpdate())
+var isSurroundQualityNoticePending = false; // Whether the stored settings ask for the notice about the default of 'Surround audio quality' (SURROUND_QUALITY_NOTICE_KEY in tv_profile.js), which waits until the hosts show (showSurroundQualityNotice())
 
 const REPEAT_DELAY = 350; // Repeat delay set to 350ms (milliseconds)
 const REPEAT_INTERVAL = 100; // Repeat interval set to 100ms (milliseconds)
 const ACTION_THRESHOLD = 0.5; // Threshold for initial navigation set to 0.5
+const ACTION_RELEASE_THRESHOLD = 0.3; // A stick past the action threshold keeps its direction until it is back below this, so that it doesn't step again and again while it wobbles around the action threshold (gamepad.js reports the crossing, AXIS_RELEASE_THRESHOLD)
+const STICK_REVERSE_GUARD = 200; // Time in ms after a stick left a direction in which the opposite direction only counts if the stick stays there for STICK_SNAP_BACK: a stick that is let go snaps back past its centre for a moment
+const STICK_SNAP_BACK = 60; // Longest time in ms that a stick which is let go stays past its centre on the other side (30 to 40 ms measured); a quick correction into the opposite direction stays there longer
 const NAVIGATION_DELAY = 150; // Delay in ms of a move of the left stick in the menus, so that a diagonal stick movement doesn't make two steps
 const BUTTON_NAVIGATION_DELAY = 50; // Delay in ms of A, B, Select and Start of a gamepad in the menus, close to the keys of the remote, which act at once
+const BUTTON_REPEAT_GUARD = 150; // Time in ms after a press of A, B, Select or Start of a gamepad in which another press of the same button doesn't count: one press that the controller or the TV reports twice
+const DPAD_BOUNCE_GUARD = 40; // Longest release of a D-pad button in ms that counts as a bounce of the same press, two polls of the menus (MENU_POLL_INTERVAL_MS in gamepad.js); a new press comes at least three polls after the release
 const UPDATE_TIMESTAMP = 'lastUpdateCheck'; // Use the update check timestamp key to determine the last update check
 const UPDATE_VERSION = 'latestUpdateVersion'; // // Use the update version key to cache the latest version found
 const UPDATE_NOTICE_VERSION = 'updateNoticeVersion'; // Key of the newer version that the update notice was shown for, so that it shows once per version
@@ -111,6 +122,35 @@ const SURROUND_AUDIO_INFO = Object.freeze({ 'Stereo': 0x030002, '51Surround': 0x
 // unknown one, which the module streams in stereo as well (wasm/main.cpp)
 function getSurroundAudioInfo(audioConfig) {
   return Object.prototype.hasOwnProperty.call(SURROUND_AUDIO_INFO, audioConfig) ? SURROUND_AUDIO_INFO[audioConfig] : SURROUND_AUDIO_INFO.Stereo;
+}
+
+// The audio configuration that a stream asks the host for, from the audio configuration of the settings and the audio
+// backend: with the Web Audio backend always stereo. That backend hands the decoded channels to an output of the
+// browser that stays at two channels (wasm/platform/audio.js), where the Web Audio rules play only front left and
+// right of a 7.1 stream, since eight channels have no down-mix, and mix 5.1 down without the LFE and without headroom,
+// which clips. Asked for stereo, the PC mixes its sound down itself, and the TV decodes 2 instead of 6 or 8 channels.
+// The audio configuration of the settings stays as it is, so that the media player of the TV plays surround again.
+function getStreamAudioConfig(audioConfig, audioBackend) {
+  return audioBackend === 'WebAudio' ? 'Stereo' : audioConfig;
+}
+
+// The line of the full statistics that names the app and the sound of a stream, so that a photo of the overlay tells
+// which build and which audio path ran, e.g. 'Moonlight Plus 2.3.1 · TV media player (EMSS) · 5.1 Efficient': the name
+// and version of the app, the audio backend as the settings name it, and the audio configuration that the stream asks
+// the host for (getStreamAudioConfig(): stereo with Web Audio, whatever the setting) with the surround audio quality,
+// which only 5.1 and 7.1 have. What the host then sends is on the 'Audio stream' line of the statistics. With the audio
+// output disabled, the line ends with that. The module plays an audio backend that it doesn't know with the media
+// player of the TV, and an audio configuration that it doesn't know in stereo (wasm/main.cpp).
+function getStreamBuildInfo(appName, audioBackend, audioConfig, surroundQuality) {
+  const parts = [appName];
+  if (audioBackend === 'Disabled') {
+    parts.push(t('No audio output'));
+  } else {
+    parts.push(audioBackend === 'WebAudio' ? t('Browser (Web Audio)') : t('TV media player (EMSS)'));
+    const channels = audioConfig === '51Surround' ? '5.1' : (audioConfig === '71Surround' ? '7.1' : '');
+    parts.push(channels ? channels + ' ' + (surroundQuality === 'Efficient' ? t('Efficient') : t('High')) : t('Stereo'));
+  }
+  return parts.join(' \u00b7 ');
 }
 
 // The resolutions whose game settings GeForce Experience knows for 'Optimize game settings', as moonlight-android
@@ -239,7 +279,12 @@ function attachListeners() {
       if (view.isActive()) {
         Navigation.pop();
       } else {
+        // The drop-down opens on the option that is set, and ignores an OK right after it opened (navigation.js)
+        selectDropdownValue(elementId, view);
+        Navigation.guardAccept(view);
         Navigation.push(view);
+        // Once the menu has its place and size (the click handler of the MDL menu sets them)
+        setTimeout(() => keepDropdownOnScreen(elementId), 0);
       }
     });
   }
@@ -264,14 +309,64 @@ function attachListeners() {
   window.addEventListener('gamepadinputchanged', handleGamepadMenuInput);
 }
 
+// Select the option of a drop-down of the settings that is set, i.e. the one with the data-value of the button of its
+// row (rowId), so that the drop-down opens on it instead of on its first option or the one that was highlighted the
+// last time: a second OK then chooses what is set already, instead of e.g. 480p, 30 FPS or H.264. The drop-downs of the
+// two sliders (bitrate and audio jitter) have no options, and a value that no option has keeps the selection.
+function selectDropdownValue(rowId, view) {
+  const value = document.getElementById(rowId).getAttribute('data-value');
+  if (value === null) {
+    return;
+  }
+  const options = view.view.func();
+  for (let i = 0; i < options.length; i++) {
+    if (options[i].getAttribute && options[i].getAttribute('data-value') === value) {
+      view.view.index = i;
+      return;
+    }
+  }
+}
+
+// Scroll the settings pane so far that the drop-down of a row (rowId, the id of its button) shows completely: the
+// drop-downs of the last rows of a section (Controller type sent to the PC, Statistics position) opened beyond the bottom
+// of the screen, where two of their four options couldn't be seen. The stylesheet gives the drop-down a bottom padding,
+// which keeps that distance to the edge of the screen.
+function keepDropdownOnScreen(rowId) {
+  const button = document.getElementById(rowId);
+  const row = button ? button.closest('.setting-option') : null;
+  const container = row ? row.querySelector('.mdl-menu__container') : null;
+  const pane = document.getElementById('settings-right-pane');
+  if (!container || !pane) {
+    return;
+  }
+  const overflow = container.getBoundingClientRect().bottom - Math.min(pane.getBoundingClientRect().bottom, window.innerHeight);
+  if (overflow > 0) {
+    pane.scrollTop += Math.ceil(overflow);
+  }
+}
+
 // Map the gamepad input of the menus, which gamepad.js reports as 'gamepadinputchanged' events, to Navigation operations
 // (W3C standard layout, see wasm/gamepad.cpp). A accepts, B goes back, Select presses and Start switches like CH+ and
 // CH- of the remote, each after the short delay of the buttons. The D-pad moves right away and the left stick past the
-// action threshold after the longer navigation delay, and both repeat while held. A release, or a stick back below the threshold, only
-// stops the repeat that the same input started, so a jittering resting stick or another released button no longer
-// cancels a held D-pad. An action button still ends a repeat, since its operation runs on the focused item.
+// action threshold after the longer navigation delay, and both repeat while held. A release, or a stick back below the
+// release threshold, only stops the repeat that the same input started, so a jittering resting stick or another released
+// button no longer cancels a held D-pad. An action button still ends a repeat, since its operation runs on the focused item.
+//
+// One press must count once, whatever the controller or the TV reports for it, without a delay for the press itself:
+// - A, B, Select and Start ignore another press of the same button of the same gamepad within BUTTON_REPEAT_GUARD of
+//   the press that counted. A second press within the delay of the buttons used to push the operation back instead.
+// - A D-pad button that is released for at most DPAD_BOUNCE_GUARD and pressed again is the same press: it doesn't step
+//   again, and its repeat goes on as if it had never been released. Two deliberate presses, also 150 ms apart, are
+//   released for longer and both step, also when the page was busy while the button was released: gamepad.js tells by
+//   how much a read of the gamepads came late (lateBy), and the release counts from when that read was due.
+// - A stick direction holds until the stick is back below ACTION_RELEASE_THRESHOLD, and within STICK_REVERSE_GUARD of
+//   leaving a direction the opposite one only steps if the stick stays there for more than STICK_SNAP_BACK
+//   (stepStickBack()): a stick that is let go snaps back past its centre and used to step back, e.g. from the surround
+//   quality or the bitrate that was just chosen in the Stream Menu. A quick correction to the other side lasts longer
+//   and steps when the stick leaves it, or after the delay of the stick if it stays.
 function handleGamepadMenuInput(e) {
   const gamepadIndex = e.detail.gamepad;
+  const now = performance.now();
   // Iterate through each change in the gamepad input
   e.detail.changes.forEach((change) => {
     const { type, index, pressed, value } = change;
@@ -291,20 +386,37 @@ function handleGamepadMenuInput(e) {
         14: () => Navigation.left(),
         15: () => Navigation.right(),
       };
+      const times = gamepadButtonTimes[source] || (gamepadButtonTimes[source] = { pressedAt: -Infinity, releasedAt: -Infinity });
       // Handle button press
       if (pressed) {
         if (buttonMapping[index]) {
+          // The same press reported again changes nothing: the operation of the first report stays on its way
+          if (now - times.pressedAt < BUTTON_REPEAT_GUARD) {
+            return;
+          }
+          times.pressedAt = now;
           delayedNavigation(buttonMapping[index], BUTTON_NAVIGATION_DELAY);
           // Clear repeat action and timeout for non-navigation buttons
           stopRepeatAction();
         } else if (dPadMapping[index]) {
+          if (now - times.releasedAt < DPAD_BOUNCE_GUARD) {
+            // The press that bounced goes on: no step, and its repeat starts when it would have without the bounce
+            startRepeatAction(dPadMapping[index], source, Math.max(0, REPEAT_DELAY - (now - times.pressedAt)));
+            return;
+          }
+          times.pressedAt = now;
           dPadMapping[index]();
           // Set repeat action and timeout to the mapped D-Pad button
           startRepeatAction(dPadMapping[index], source);
         }
-      } else if (repeatSource === source) {
-        // Clear repeat action and timeout if the button that started it is released
-        stopRepeatAction();
+      } else {
+        // A read of the gamepads that came late (the page was busy, e.g. with drawing the step of this press) saw the
+        // release late: it counts from when that read was due, so that a press right after it is not taken for a bounce
+        times.releasedAt = now - (e.detail.lateBy || 0);
+        if (repeatSource === source) {
+          // Clear repeat action and timeout if the button that started it is released
+          stopRepeatAction();
+        }
       }
     } else if (type === 'axis') {
       // Handle axis mapping: the operations for the negative and the positive direction
@@ -315,41 +427,103 @@ function handleGamepadMenuInput(e) {
       if (!axisMapping[index]) {
         return;
       }
-      const direction = value < -ACTION_THRESHOLD ? -1 : (value > ACTION_THRESHOLD ? 1 : 0);
+      const previous = gamepadAxisDirections[source] || 0;
+      // A direction holds until the stick is back below the release threshold; a new one starts past the action threshold
+      const direction = previous !== 0 && value * previous > ACTION_RELEASE_THRESHOLD ? previous :
+        (value < -ACTION_THRESHOLD ? -1 : (value > ACTION_THRESHOLD ? 1 : 0));
       // A stick that stays on the same side of the threshold only moved a little, or jitters, so it changes nothing
-      if (direction === (gamepadAxisDirections[source] || 0)) {
+      if (direction === previous) {
         return;
       }
       gamepadAxisDirections[source] = direction;
+      if (previous !== 0) {
+        const reverseStep = gamepadReverseSteps[source];
+        if (reverseStep !== undefined) {
+          clearTimeout(reverseStep.timer);
+          delete gamepadReverseSteps[source];
+          // A read that came late (the page was busy) saw the stick leave late: it counts from when that read was due
+          if (now - (e.detail.lateBy || 0) - reverseStep.since > STICK_SNAP_BACK) {
+            // A quick correction into the opposite direction: its step comes now
+            reverseStep.operation();
+            gamepadAxisReleases[source] = { direction: previous, at: now };
+          }
+          // Otherwise the stick only snapped back past its centre: its step is dropped, and the direction that it left
+          // before stays the one it left last
+        } else {
+          gamepadAxisReleases[source] = { direction: previous, at: now };
+        }
+        if (repeatSource === source) {
+          // Clear repeat action and timeout if the axis that started it is released
+          stopRepeatAction();
+        }
+      }
       if (direction !== 0) {
         const operation = axisMapping[index][direction < 0 ? 0 : 1];
+        const released = gamepadAxisReleases[source];
+        if (released && released.direction === -direction && now - released.at < STICK_REVERSE_GUARD) {
+          stepStickBack(operation, source, now);
+          return;
+        }
         delayedNavigation(operation, NAVIGATION_DELAY);
         // Set repeat action and timeout to the mapped axis
         startRepeatAction(operation, source);
-      } else if (repeatSource === source) {
-        // Clear repeat action and timeout if the axis that started it is released
-        stopRepeatAction();
       }
     }
   });
 }
 
-// Start repeating a navigation operation of a held gamepad input after the repeat delay, replacing the repeat that runs
-function startRepeatAction(operation, source) {
+// Step into the direction opposite to the one that a stick just left (at `since`, from performance.now()) after the delay
+// of the stick if it stays there, or when it leaves it after more than STICK_SNAP_BACK (handleGamepadMenuInput(), which
+// drops the step of a shorter stay). The step has a timer of its own, so that it doesn't replace the step of the
+// direction before it that is still on its way, which a short flick of the stick leaves behind. Its repeat starts as
+// long after the step as that of any other stick move.
+function stepStickBack(operation, source, since) {
+  if (gamepadReverseSteps[source] !== undefined) {
+    clearTimeout(gamepadReverseSteps[source].timer);
+  }
+  const timer = setTimeout(() => {
+    delete gamepadReverseSteps[source];
+    operation();
+    startRepeatAction(operation, source, REPEAT_DELAY - NAVIGATION_DELAY);
+  }, NAVIGATION_DELAY);
+  gamepadReverseSteps[source] = { timer, since, operation };
+}
+
+// Start repeating a navigation operation of a held gamepad input after the repeat delay, or after the given delay in ms,
+// replacing the repeat that runs
+function startRepeatAction(operation, source, delay) {
   stopRepeatAction();
   repeatAction = operation;
   repeatSource = source;
   lastInvokeTime = Date.now();
   repeatTimeout = setTimeout(() => {
     repeatFrame = requestAnimationFrame(repeatActionHandler);
-  }, REPEAT_DELAY);
+  }, delay === undefined ? REPEAT_DELAY : delay);
 }
 
 // Drop the gamepad navigation that is on its way: the operation of a button or stick that waits for the navigation delay
 // and the repeat of a held one, e.g. of a stick that was moved for the calibration of the sticks (button_mapping.js)
 function cancelGamepadNavigation() {
   clearTimeout(navigationTimeout);
+  cancelStickStepsBack();
   stopRepeatAction();
+}
+
+// Drop the steps of the sticks that wait for the stick to stay in the direction opposite to the one it left (stepStickBack())
+function cancelStickStepsBack() {
+  Object.keys(gamepadReverseSteps).forEach((source) => clearTimeout(gamepadReverseSteps[source].timer));
+  gamepadReverseSteps = {};
+}
+
+// Forget what the sticks of the gamepads did in the menus, and stop what a held D-pad or stick still does there: for a
+// start or stop of the polling of the gamepads (a stream starts, the Stream Menu opens or closes), after which the
+// release of a held input can no longer be detected and the menus take a fresh snapshot of the gamepads. Without it a
+// step or a repeat of a stick could run on after the menus closed.
+function resetGamepadMenuInput() {
+  stopRepeatAction();
+  cancelStickStepsBack();
+  gamepadAxisDirections = {};
+  gamepadAxisReleases = {};
 }
 
 // Stop the repeat action, its pending start and its animation frame loop
@@ -425,9 +599,9 @@ function delayedNavigation(callback, delay) {
 
 // Updates the host status indicator based on the host's online and paired status
 function updateHostStatusIndicator(host) {
-  // Find the desired host cell using the server UUID
-  var hostCell = document.querySelector('#host-' + host.serverUid);
-  var indicator = document.querySelector('#host-status-' + host.serverUid);
+  // Find the desired host cell using the server UUID (by its ID, never as a selector that the UUID is a part of)
+  var hostCell = document.getElementById('host-' + host.serverUid);
+  var indicator = document.getElementById('host-status-' + host.serverUid);
 
   // Update the host cell inactive styling class
   if (hostCell) {
@@ -749,6 +923,8 @@ function restoreUiAfterWasmLoad() {
   // Warn once about an Ultra low latency mode left on from before an update of the TV, if the stored settings ask for
   // it (the settings load during the loading screen, so they may have asked already)
   scheduleGameModeUpdateWarning();
+  // Tell an existing install once that the default of 'Surround audio quality' changed its surround stream, likewise
+  scheduleSurroundQualityNotice();
 
   // Automatically check for a new update after 10 seconds delay at application startup once every 24 hours
   setTimeout(() => checkForAppUpdatesAtStartup(), 10000);
@@ -893,20 +1069,39 @@ function populateSelectFields(element, start, end, selectedValue) {
   }
 }
 
-// Initialize the IP address select fields with predefined values
-function initIpAddressFields() {
-  // Find the existing select fields elements and set the values
-  const ipAddressFields = [
-    { element: 'ipAddressField1', selectedValue: 192 },
-    { element: 'ipAddressField2', selectedValue: 168 },
-    { element: 'ipAddressField3', selectedValue: 0 },
-    { element: 'ipAddressField4', selectedValue: 0 },
-  ];
+// The ids of the four number fields of the Add PC dialog
+const IP_ADDRESS_FIELDS = ['ipAddressField1', 'ipAddressField2', 'ipAddressField3', 'ipAddressField4'];
 
-  // Populate each IP address field with the selected values
-  ipAddressFields.forEach(ipAddressField => {
-    const element = document.getElementById(ipAddressField.element);
-    populateSelectFields(element, 0, 255, ipAddressField.selectedValue);
+// The numbers that the number fields of the Add PC dialog start from: the first three numbers of the IPv4 address of
+// the TV with a 0, since the PC is nearly always in the same network (e.g. 192.168.178.0 for a TV at 192.168.178.20),
+// which leaves one number to set. 192.168.0.0, the start of earlier versions, when the TV doesn't tell its address.
+function getDefaultIpAddressNumbers() {
+  try {
+    const parts = String(webapis.network.getIp()).split('.');
+    const isIpv4 = parts.length === 4 && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255);
+    // Not for an address that is none (0.0.0.0) or the TV itself (127.x.x.x)
+    if (isIpv4 && Number(parts[0]) !== 0 && Number(parts[0]) !== 127) {
+      return [Number(parts[0]), Number(parts[1]), Number(parts[2]), 0];
+    }
+  } catch (error) {
+    // The address of the TV is unknown
+  }
+  return [192, 168, 0, 0];
+}
+
+// Set the number fields of the Add PC dialog back to the numbers they start from
+function resetIpAddressFields() {
+  const numbers = getDefaultIpAddressNumbers();
+  IP_ADDRESS_FIELDS.forEach((id, i) => {
+    document.getElementById(id).value = String(numbers[i]);
+  });
+}
+
+// Initialize the IP address select fields: the numbers 0 to 255 of each field, with the number it starts from selected
+function initIpAddressFields() {
+  const numbers = getDefaultIpAddressNumbers();
+  IP_ADDRESS_FIELDS.forEach((id, i) => {
+    populateSelectFields(document.getElementById(id), 0, 255, numbers[i]);
   });
 }
 
@@ -1161,6 +1356,10 @@ function parseHostAndPortInput(rawInput) {
   return { valid: true, addr: hostPart, port: 47989 };
 }
 
+// Number of the latest connection request of the Add PC dialog, which the answer to an earlier or cancelled one is
+// ignored by, initial value is 0
+var addHostAttempt = 0;
+
 // If the `Add PC +` is selected on the host grid, then show the 
 // Add PC dialog to enter the connection details for the host PC
 function addHostDialog() {
@@ -1169,29 +1368,39 @@ function addHostDialog() {
   var addHostOverlay = document.querySelector('#addHostDialogOverlay');
   var addHostDialog = document.querySelector('#addHostDialog');
   
-  // Show the dialog and push the view
+  // Show the dialog and push the view, which opens on the address (its first item) whatever was selected the last time
   addHostOverlay.style.display = 'flex';
   addHostDialog.showModal();
   isDialogOpen = true;
+  Views.AddHostDialog.view.index = 0;
   Navigation.push(Views.AddHostDialog);
   updateIpAddressInputValidationState();
   // Remove focus from any current active element
   document.activeElement.blur();
 
+  // The Continue button is disabled while the request to the address is on its way, and only then. It used to turn
+  // disabled 2 seconds after the press for 12 seconds, whatever became of the request, so that it was dead right after
+  // the message of a failed attempt.
+  var setAddHostPending = function(pending) {
+    $('#continueAddHost').toggleClass('mdl-button--disabled', pending).prop('disabled', pending);
+  };
+
   // Cancel the operation if the Cancel button is pressed
   $('#cancelAddHost').off('click');
   $('#cancelAddHost').on('click', function() {
     console.log('%c[index.js, addHostDialog]', 'color: green;', 'Closing app dialog and returning.');
+    // The answer to a request that is still on its way no longer counts
+    addHostAttempt++;
     addHostOverlay.style.display = 'none';
     addHostDialog.close();
     isDialogOpen = false;
     Navigation.pop();
     // Re-enable the Continue button after canceling the operation
-    $('#continueAddHost').removeClass('mdl-button--disabled').prop('disabled', false);
+    setAddHostPending(false);
     // Clear the input field after canceling the operation
     $('#ipAddressTextInput').val('');
     updateIpAddressInputValidationState();
-    initIpAddressFields();
+    resetIpAddressFields();
   });
 
   // Send a connection request if the Continue button is pressed
@@ -1222,22 +1431,19 @@ function addHostDialog() {
       snackbarLog(parsedHostInput.error);
       return;
     }
-    // Disable the Continue button to prevent multiple connection requests
-    setTimeout(() => {
-      // Add disabled state after 2 seconds
-      $('#continueAddHost').addClass('mdl-button--disabled').prop('disabled', true);
-      Navigation.switch();
-      // Re-enable the Continue button after 12 seconds
-      setTimeout(() => {
-        $('#continueAddHost').removeClass('mdl-button--disabled').prop('disabled', false);
-        Navigation.switch();
-      }, 12000);
-    }, 2000);
+    // Disable the Continue button to prevent multiple connection requests, until this one is answered
+    var attempt = ++addHostAttempt;
+    setAddHostPending(true);
     // Send a connection request to the Host object based on the given IP address
     var _nvhttpHost = new NvHTTP(parsedHostInput.addr, myUniqueid, parsedHostInput.addr);
     _nvhttpHost.httpPort = parsedHostInput.port;
     console.log('%c[index.js, addHostDialog]', 'color: green;', 'Sending connection request to host address ' + _nvhttpHost.hostname);
     _nvhttpHost.refreshServerInfoAtAddress(parsedHostInput.addr).then(function(success) {
+      // The dialog was cancelled meanwhile (or opened again), so this answer came too late
+      if (attempt !== addHostAttempt) {
+        console.log('%c[index.js, addHostDialog]', 'color: green;', 'Ignoring the answer of a cancelled connection request.');
+        return;
+      }
       snackbarLog('Connecting to %1$s...', _nvhttpHost.hostname);
       // Close the dialog if the user has provided the IP address
       console.log('%c[index.js, addHostDialog]', 'color: green;', 'Closing app dialog and returning.');
@@ -1249,15 +1455,24 @@ function addHostDialog() {
       stopPollingHosts();
       // Check if we already have record of this host. If so, we'll
       // need the PPK string to ensure our pairing status is accurate.
-      if (hosts[_nvhttpHost.serverUid] != null) {
+      // The address is cleared once the PC is paired: after a pairing that failed (e.g. a wrong PIN) the dialog opens
+      // with it again, for the next attempt
+      var clearEnteredAddress = function() {
+        $('#ipAddressTextInput').val('');
+        updateIpAddressInputValidationState();
+        resetIpAddressFields();
+      };
+      var knownHost = getHostByUid(_nvhttpHost.serverUid);
+      if (knownHost != null) {
         // Update the addresses
-        hosts[_nvhttpHost.serverUid].address = _nvhttpHost.address;
-        hosts[_nvhttpHost.serverUid].userEnteredAddress = _nvhttpHost.userEnteredAddress;
-        hosts[_nvhttpHost.serverUid].httpPort = _nvhttpHost.httpPort;
+        knownHost.address = _nvhttpHost.address;
+        knownHost.userEnteredAddress = _nvhttpHost.userEnteredAddress;
+        knownHost.httpPort = _nvhttpHost.httpPort;
         // Use the host in the array directly to ensure the PPK propagates after pairing
-        pairingDialog(hosts[_nvhttpHost.serverUid], function() {
+        pairingDialog(knownHost, function() {
           saveHosts();
           startPollingHosts();
+          clearEnteredAddress();
         }, function() {
           // Resume background polling after the pairing flow
           startPollingHosts();
@@ -1268,26 +1483,24 @@ function addHostDialog() {
           addHostToGrid(_nvhttpHost);
           saveHosts();
           startPollingHosts();
+          clearEnteredAddress();
         }, function() {
           // Resume background polling after the pairing flow
           startPollingHosts();
         });
       }
       // Re-enable the Continue button after successful processing
-      $('#continueAddHost').removeClass('mdl-button--disabled').prop('disabled', false);
-      // Clear the input field after successful processing
-      $('#ipAddressTextInput').val('');
-      updateIpAddressInputValidationState();
-      initIpAddressFields();
+      setAddHostPending(false);
     }.bind(this), function(failure) {
+      if (attempt !== addHostAttempt) {
+        return;
+      }
       console.error('%c[index.js, addHostDialog]', 'color: green;', 'Error: Failed API object:\n', _nvhttpHost, '\n' + _nvhttpHost.toString()); // Logging both object (for console) and toString-ed object (for text logs)
       snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', _nvhttpHost.hostname || t('the PC'));
-      // Re-enable the Continue button after failure processing
-      $('#continueAddHost').removeClass('mdl-button--disabled').prop('disabled', false);
-      // Clear the input field after failure processing
-      $('#ipAddressTextInput').val('');
-      updateIpAddressInputValidationState();
-      initIpAddressFields();
+      // Re-enable the Continue button after failure processing, with the focus that a disabled button loses. The
+      // address stays as it was entered, so that a wrong number can be corrected instead of entering all of them again.
+      setAddHostPending(false);
+      Navigation.switch();
     }.bind(this));
   });
 }
@@ -1410,7 +1623,9 @@ function autoWolDialog(host, onSuccess, onCancel) {
 
   // Reset the button text to their default state
   $('#cancelAutoWol').html(t('Cancel'));
-  Views.AutoWolDialog.view.reset();
+  // The dialog opens on Cancel, its second item: on the switch above it, OK turned on 'Always wake this PC
+  // automatically' for a user who only wanted to close the dialog
+  Views.AutoWolDialog.view.index = 1;
 
   // Set the checkbox state based on the host's autoWolEnabled property
   if (host.autoWolEnabled === true) {
@@ -1430,6 +1645,9 @@ function autoWolDialog(host, onSuccess, onCancel) {
   autoWolOverlay.style.display = 'flex';
   autoWolDialog.showModal();
   isDialogOpen = true;
+  // It ignores an OK right after it opened (navigation.js): the second press of a double OK on the PC or on Wake PC
+  // landed on Cancel and closed it at once, and nothing waited for the PC any more
+  Navigation.guardAccept(Views.AutoWolDialog);
   Navigation.push(Views.AutoWolDialog);
   focusElement('cancelAutoWol');
 
@@ -1543,8 +1761,8 @@ function autoWolDialog(host, onSuccess, onCancel) {
       );
       // Change the button text to "OK" to indicate that the user can acknowledge the failure
       $('#cancelAutoWol').html(t('OK'));
-      // Select OK, so that OK on the remote closes the dialog: the selection starts on the Auto-WOL switch
-      // (Views.AutoWolDialog.view.reset() above), whose focus enter() of the view restores 100 ms after the dialog opened
+      // Select OK, so that OK on the remote closes the dialog, also when the selection moved up to the Auto-WOL switch
+      // meanwhile
       if (!isClosed) {
         var wolView = Views.AutoWolDialog.view;
         if (elementId(wolView.current()) !== 'cancelAutoWol') {
@@ -1708,6 +1926,10 @@ function pushConfirmationView(view) {
 
 // Show the Host Menu dialog with host button options
 function hostMenuDialog(host) {
+  // The menu opens once: a second CH+, Play/Pause or Select before it showed otherwise put a second menu over it
+  if (document.getElementById('hostMenuDialogOverlay-' + host.serverUid)) {
+    return;
+  }
   // Create an overlay for the dialog and append it to the body
   var hostMenuDialogOverlay = $('<div>', {
     id: 'hostMenuDialogOverlay-' + host.serverUid,
@@ -1878,7 +2100,7 @@ function deleteHostDialog(host) {
   $('#continueDeleteHost').on('click', function() {
     console.log('%c[index.js, deleteHostDialog]', 'color: green;', 'Removing host, closing app dialog, and returning.');
     // Remove the host container from the grid
-    $('#host-container-' + host.serverUid).remove();
+    $(document.getElementById('host-container-' + host.serverUid)).remove();
     // Stop background polling for removed host
     endBackgroundPollingOfHost(host);
     // Remove the host from the hosts object
@@ -1896,9 +2118,12 @@ function deleteHostDialog(host) {
     deleteHostOverlay.style.display = 'none';
     deleteHostDialog.close();
     isDialogOpen = false;
-    Navigation.pop();
-    // Reset the Hosts view navigation index to prevent possible out-of-bounds errors
+    // Select the first card of the grid, which is shorter now, before the view below marks its selection again:
+    // resetting it afterwards left the mark on another card than the selection. The grid takes over, also from the
+    // menu icon of the deleted host (HostsMenuHighlight), which is gone.
     Views.Hosts.view.reset();
+    Navigation.pop();
+    Navigation.change(Views.Hosts);
     Navigation.switch();
   });
 }
@@ -1946,7 +2171,7 @@ function deleteAllHostsDialog() {
         if (hosts.hasOwnProperty(serverUid)) {
           var host = hosts[serverUid];
           // Remove the host container from the grid
-          $('#host-container-' + host.serverUid).remove();
+          $(document.getElementById('host-container-' + host.serverUid)).remove();
           // Remove the host from the hosts object
           delete hosts[host.serverUid];
           // Forget the apps that were hidden for the host
@@ -2005,12 +2230,13 @@ function hostDetailsDialog(host) {
     class: 'host-details-text',
     html: [
       t('Name: %1$s', escapeHTML(host.hostname)),
-      t('State: %1$s', escapeHTML(host.online) ? t('ONLINE') : t('OFFLINE')),
+      // The state itself decides, not its text: escapeHTML() returns a text, and 'false' counted as true
+      t('State: %1$s', host.online ? t('ONLINE') : t('OFFLINE')),
       t('Active Address: %1$s', escapeHTML(host.address) && escapeHTML(host.externalPort) ? escapeHTML(host.address) + ':' + escapeHTML(host.externalPort) : t('NULL')),
       t('UUID: %1$s', escapeHTML(host.serverUid) ? escapeHTML(host.serverUid) : t('NULL')),
       t('Local Address: %1$s', escapeHTML(host.localAddress) && escapeHTML(host.externalPort) ? escapeHTML(host.localAddress) + ':' + escapeHTML(host.externalPort) : t('NULL')),
       t('MAC Address: %1$s', escapeHTML(host.macAddress) ? escapeHTML(host.macAddress) : t('NULL')),
-      t('Pair State: %1$s', escapeHTML(host.paired) ? t('PAIRED') : t('UNPAIRED')),
+      t('Pair State: %1$s', host.paired ? t('PAIRED') : t('UNPAIRED')),
       t('Running Game ID: %1$s', escapeHTML(host.currentGame)),
       t('HTTP Port: %1$s', escapeHTML(host.httpPort) ? escapeHTML(host.httpPort) : t('NULL')),
       t('HTTPS Port: %1$s', escapeHTML(host.httpsPort) ? escapeHTML(host.httpsPort) : t('NULL'))
@@ -2051,6 +2277,8 @@ function hostDetailsDialog(host) {
   $(hostDetailsDialogOverlay).css('display', 'flex');
   hostDetailsDialog[0].showModal();
   isDialogOpen = true;
+  // The second press of a double OK on View Details doesn't close the details at once (navigation.js)
+  Navigation.guardAccept(Views.HostDetailsDialog);
   Navigation.push(Views.HostDetailsDialog);
   setTimeout(() => Navigation.switch(), 5);
 }
@@ -2460,7 +2688,10 @@ function updateAppButton(latestVersion) {
     type: 'button',
     id: 'updateAppBtn',
     class: 'mdl-button mdl-js-button mdl-button--raised mdl-button--colored',
-    'aria-label': 'Update App'
+    // Named like its text, in the language of the app, also after a change of the language (refreshUI() in i18n.js)
+    'aria-label': t('New update v%1$s', latestVersion),
+    'data-i18n-aria-label': 'New update v%1$s',
+    'data-param': latestVersion
   });
   // Create the badge icon dynamically
   var updateAppBtnBadge = $('<div>', {
@@ -2489,8 +2720,13 @@ function updateAppButton(latestVersion) {
   });
   // Append elements inside the button
   updateAppBtn.append(updateAppBtnBadge, updateAppBtnText);
+  // The button becomes the first one of the header of the hosts (Views.HostsNav in navigation.js), which moves the others
+  // one place on: keep the selection on the button that has it, since OK otherwise pressed the button before the marked
+  // one (e.g. Rescan network instead of Settings)
+  var selectedHeaderButton = Views.HostsNav.view.current();
   // Insert elements after the existing layout spacer
   $('.mdl-layout-spacer').after(updateAppBtn, updateAppBtnTooltip, extraLayoutSpacer);
+  selectHostsNavButton(selectedHeaderButton);
   // Upgrade newly added elements for MDL styling
   componentHandler.upgradeElement(updateAppBtn[0]);
   componentHandler.upgradeElement(updateAppBtnTooltip[0]);
@@ -2512,7 +2748,7 @@ function updateAppButton(latestVersion) {
         // Check if a new version update is available
         if (checkVersionUpdate(appInfo.version, latestVersion)) {
           // Show the Update Moonlight dialog with new version and release notes to inform user to update the app
-          updateAppDialog(latestVersion, releaseNotes);
+          offerAppUpdate(latestVersion, releaseNotes);
         }
       }, 500);
     }).catch(error => {
@@ -2527,6 +2763,12 @@ function updateAppDialog(latestVersion, releaseNotes) {
   // Find the existing overlay and dialog elements
   var updateAppDialogOverlay = $('#updateAppDialogOverlay');
   var updateAppDialog = $('#updateAppDialog');
+
+  // The dialog opens once, also after a second OK on Check for updates or on the update button: showModal() of an open
+  // dialog throws on older browsers, and a second view of it would swallow the keys after Close
+  if (updateAppDialog[0].open) {
+    return;
+  }
 
   // Update the dialog text dynamically
   $('#updateAppDialogText').html(
@@ -2557,17 +2799,42 @@ function updateAppDialog(latestVersion, releaseNotes) {
   Navigation.push(Views.UpdateMoonlightDialog);
 }
 
-// Check for updates when the Check for Updates button is pressed
+// Tell the user about a newer version once the answer of GitHub is there. The answer can take seconds, and the user may
+// have moved on: over a stream the dialog would cover the game and take its keys, and over another dialog it would stack
+// up, so the Update Moonlight dialog only opens while neither shows. Over another dialog a message names the version
+// instead, during a stream nothing shows, and the update button of the hosts header opens the dialog later.
+function offerAppUpdate(latestVersion, releaseNotes) {
+  if (isInGame) {
+    console.log('%c[index.js, offerAppUpdate]', 'color: green;', 'Not showing the update dialog of version ' + latestVersion + ' during a stream.');
+  } else if (document.querySelector('#updateAppDialog').open) {
+    console.log('%c[index.js, offerAppUpdate]', 'color: green;', 'The update dialog shows already.');
+  } else if (isDialogOpen || isDialogShown()) {
+    snackbarLogLong('Version %1$s is now available! Check out the latest features & improvements.', latestVersion);
+  } else {
+    // Show the Update Moonlight dialog with new version and release notes to inform user to update the app
+    updateAppDialog(latestVersion, releaseNotes);
+  }
+}
+
+// Whether a check for updates that the Check for Updates button started is on its way, initial value is false
+var isAppUpdateCheckRunning = false;
+
+// Check for updates when the Check for Updates button is pressed. One check runs at a time: a second press while the
+// first one waits for its answer (e.g. a double OK) neither asks GitHub again nor shows its messages a second time.
 function checkForAppUpdates() {
+  if (isAppUpdateCheckRunning) {
+    return;
+  }
+  isAppUpdateCheckRunning = true;
   console.log('%c[index.js, checkForAppUpdates]', 'color: green;', 'Checking for new application updates...');
   snackbarLog('Checking for available Moonlight updates...');
   // Fetch the latest release data from the GitHub API
   fetchLatestRelease().then(({ latestVersion, releaseNotes }) => {
     setTimeout(() => {
+      isAppUpdateCheckRunning = false;
       // Check if a new version update is available
       if (checkVersionUpdate(appInfo.version, latestVersion)) {
-        // Show the Update Moonlight dialog with new version and release notes to inform user to update the app
-        updateAppDialog(latestVersion, releaseNotes);
+        offerAppUpdate(latestVersion, releaseNotes);
         // Create and display the Update App button so they can access it later if they close the dialog
         updateAppButton(latestVersion);
       } else {
@@ -2576,6 +2843,7 @@ function checkForAppUpdates() {
       }
     }, 1500);
   }).catch(error => {
+    isAppUpdateCheckRunning = false;
     console.error('%c[index.js, checkForAppUpdates]', 'color: green;', 'Error: Failed to fetch the release data!', error);
     snackbarLogLong('Unable to check for updates right now. Please try again later!');
   });
@@ -2695,8 +2963,11 @@ function restoreDefaultsDialog() {
     isDialogOpen = false;
     Navigation.pop();
     Navigation.switch();
-    // Show the required Restart Moonlight dialog and push the view
-    setTimeout(() => requiredRestartAppDialog(), 2000);
+    // Show the required Restart Moonlight dialog and push the view, right away: it came 2 seconds later, over whatever
+    // the user had opened meanwhile. It ignores an OK right after it opened (navigation.js), the second press of a
+    // double OK on Continue, which would restart the app before the question was read.
+    Navigation.guardAccept(Views.RestartMoonlightDialog);
+    requiredRestartAppDialog();
   });
 }
 
@@ -2715,6 +2986,12 @@ function setWarningButtonLabels(isOptimalSettings) {
 }
 
 function warningDialog(title, message) {
+  // After a failure of the streaming engine its warning stays until its Close button restarts the app
+  // (onNativeModuleFailure()): a warning that comes later would replace its text and take the restart off the button
+  if (isNativeModuleFailureShown) {
+    console.warn('%c[index.js, warningDialog]', 'color: green;', 'Warning: Not showing "' + title + '" over the warning of the streaming engine failure.');
+    return;
+  }
   // Find the existing overlay and dialog elements
   var warningDialogOverlay = document.querySelector('#warningDialogOverlay');
   var warningDialog = document.querySelector('#warningDialog');
@@ -2730,9 +3007,13 @@ function warningDialog(title, message) {
   // Add single-button class for CSS styling when only Close button is visible
   warningDialog.classList.add('single-button');
 
-  // Show the dialog and push the view, which opens on Close, its only button
+  // Show the dialog and push the view, which opens on Close, its only button. A warning that comes while the dialog is
+  // open (e.g. after a second OK on a disabled switch) replaces its text: showModal() of an open dialog throws on older
+  // browsers, and the view stays there once (Navigation.push()).
   warningDialogOverlay.style.display = 'flex';
-  warningDialog.showModal();
+  if (!warningDialog.open) {
+    warningDialog.showModal();
+  }
   isDialogOpen = true;
   Views.WarningDialog.view.index = 0;
   Navigation.push(Views.WarningDialog);
@@ -2811,6 +3092,8 @@ function wakeOnLanWarningDialog(host) {
 // lock, so nothing here calls into it: the stream view is torn down on the JS side only, and Moonlight restarts once
 // the dialog is closed. Only the first failure is handled, because a crash can cascade into more.
 var isNativeModuleFailed = false;
+// Whether the warning of that failure shows, which stays until its Close button restarts the app, initial value is false
+var isNativeModuleFailureShown = false;
 function onNativeModuleFailure(details) {
   if (isNativeModuleFailed) {
     return;
@@ -2840,6 +3123,7 @@ function onNativeModuleFailure(details) {
   }
 
   warningDialog('Streaming engine error', 'A part of the streaming engine stopped unexpectedly. Moonlight will restart now; you can resume the game afterwards.');
+  isNativeModuleFailureShown = true;
   // Restart once the dialog is closed, after its own close handler
   $('#closeWarning').on('click', function() {
     restartApplication();
@@ -3542,8 +3826,7 @@ function showStreamMode() {
   Controller.stopWatching();
   // Cancel a held D-Pad or stick repeat, since its release can no longer be detected, and forget the stick directions,
   // since the menus take a fresh snapshot of the gamepads when they resume
-  stopRepeatAction();
-  gamepadAxisDirections = {};
+  resetGamepadMenuInput();
 }
 
 // Maximize the size of the Wasm module by scaling and resizing appropriately
@@ -3846,7 +4129,10 @@ function startGame(host, appID, restartKind, restartChange) {
       const controllerMappings = serializeButtonMappings(buttonMappings);
       var controllerType = $('#selectControllerType').data('value').toString();
       var audioBackend = $('#selectAudioBackend').data('value').toString();
-      var audioConfig = $('#selectAudio').data('value').toString();
+      // The audio configuration of the settings, and the one that this stream asks the host for, in the launch or resume
+      // request and in the start request: stereo with the Web Audio backend (getStreamAudioConfig())
+      const audioConfigSetting = $('#selectAudio').data('value').toString();
+      var audioConfig = getStreamAudioConfig(audioConfigSetting, audioBackend);
       // The setting goes to the module for every audio configuration; the module applies it to 5.1 and 7.1 only
       // (audio_capabilities.hpp)
       var surroundQuality = getSurroundQuality();
@@ -3882,7 +4168,7 @@ function startGame(host, appID, restartKind, restartChange) {
       '\n Mouse emulation: ' + mouseEmulation + 
       '\n Button mapping: ' + (controllerMappings ? controllerMappings.split('\n').length + ' controller lines' : 'none') +
       '\n Audio backend: ' + audioBackend + 
-      '\n Audio configuration: ' + audioConfig + 
+      '\n Audio configuration: ' + audioConfig + (audioConfig !== audioConfigSetting ? ' (the Web Audio backend plays stereo; the setting is ' + audioConfigSetting + ')' : '') +
       '\n Surround audio quality: ' + surroundQuality +
       '\n Audio synchronization: ' + audioSync + 
       '\n Audio jitter buffer: ' + audioJitter + ' ms' +
@@ -3908,6 +4194,9 @@ function startGame(host, appID, restartKind, restartChange) {
       streamLaunchAppTitle = appToStart.title;
       streamBitrateMbps = parseFloat($('#bitrateSlider').val());
       streamSurroundQuality = surroundQuality;
+      // The line of the full statistics about this start: the app as System information names it, and its sound
+      streamBuildInfo = getStreamBuildInfo(appInfo.name + (checkForceGMVariant() ? '-ForceGM' : '') + ' ' + getBuildVersion(appInfo.version),
+        audioBackend, audioConfig, surroundQuality);
       // The order 'Recently played' of the app list puts the app first once the host accepted its start, but never the
       // Terminate tile of Apollo or Vibepollo, which ends an app instead of streaming one (menus.js)
       var rememberStartedApp = function() {
@@ -3924,6 +4213,8 @@ function startGame(host, appID, restartKind, restartChange) {
       if (!isRestart) {
         DiagnosticLog.startSession('stream');
         StreamHeartbeat.start();
+        // A new session may get the message about sound that keeps the TV busy again (messages.js)
+        audioOverloadWarning = false;
       }
       showStreamMode();
 
@@ -3974,8 +4265,9 @@ function startGame(host, appID, restartKind, restartChange) {
               }
               wasmSessionStarted = true;
               rememberStartedApp();
-              // A video format that the TV rejected and the ports named for the termination of an earlier stream don't
-              // belong to this one (messages.js)
+              // A video format that the TV rejected, the codec that the host provided instead of the selected one and
+              // the ports named for the termination of an earlier stream don't belong to this one (messages.js)
+              streamCodecFallback = '';
               terminationBlockedPorts = '';
               rejectedVideoTrack = null;
               sendMessage('startRequest', [
@@ -3985,7 +4277,9 @@ function startGame(host, appID, restartKind, restartChange) {
                 audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
                 gameMode, disableWarnings, getPerformanceStatsLevel(), refFrameInvalidation, hdrMetadata, controllerType,
                 surroundQuality
-              ]);
+              ]).catch(function(failedStartRequest) {
+                endLaunchAfterFailedStartRequest(launchId, failedStartRequest);
+              });
               if (isRestart) {
                 startWebAudio();
               }
@@ -4053,8 +4347,9 @@ function startGame(host, appID, restartKind, restartChange) {
             }
             wasmSessionStarted = true;
             rememberStartedApp();
-            // A video format that the TV rejected and the ports named for the termination of an earlier stream don't
-            // belong to this one (messages.js)
+            // A video format that the TV rejected, the codec that the host provided instead of the selected one and
+            // the ports named for the termination of an earlier stream don't belong to this one (messages.js)
+            streamCodecFallback = '';
             terminationBlockedPorts = '';
             rejectedVideoTrack = null;
             sendMessage('startRequest', [
@@ -4064,7 +4359,9 @@ function startGame(host, appID, restartKind, restartChange) {
               audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
               gameMode, disableWarnings, getPerformanceStatsLevel(), refFrameInvalidation, hdrMetadata, controllerType,
               surroundQuality
-            ]);
+            ]).catch(function(failedStartRequest) {
+              endLaunchAfterFailedStartRequest(launchId, failedStartRequest);
+            });
             if (isRestart) {
               startWebAudio();
             }
@@ -4091,9 +4388,19 @@ function startGame(host, appID, restartKind, restartChange) {
     });
   }, function(failedRefreshInfo) {
     console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to refresh server info! Returned error was: ' + failedRefreshInfo + ' and failed server was: ' + '\n', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
+    if (launchId !== streamLaunchId) {
+      return;
+    }
     // The launch screen of a start once more still shows
-    if (isRestart && launchId === streamLaunchId) {
+    if (isRestart) {
       endStreamRestart(restartKind, 'the server info of the host could not be refreshed', restartChange);
+      return;
+    }
+    // The app list still shows, where OK otherwise seemed to do nothing, e.g. for a PC that went to sleep meanwhile
+    snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', host.hostname || t('the PC'));
+    // Close the audio scheduler that the key press opened for this start, which would otherwise keep running in the menus
+    if (isWebAudioBackendSelected() && typeof stopAudioScheduler === 'function') {
+      stopAudioScheduler();
     }
   });
 }
@@ -4360,6 +4667,22 @@ function cancelStreamLaunch() {
   isInGame = false;
   wasmSessionStarted = false;
   leaveStreamView(streamLaunchHost || api);
+}
+
+// End a launch whose start request the WASM module didn't take, and return to the app list with a message: the call
+// threw (Embind throws for an argument of the wrong type or a wrong number of arguments, e.g. after a change of only one
+// side of the call) or its promise was rejected. No stream started, so none ever ends: without this the launch screen
+// stayed for good, and only RED left it. The error goes to the console, and so to the diagnostic log, which the
+// message points to. The host accepted the launch or resume request before, so it may hold this start, which
+// cancelStreamLaunch() remembers. Not when the launch is no longer the current one, e.g. after RED.
+function endLaunchAfterFailedStartRequest(launchId, error) {
+  console.error('%c[index.js, startGame]', 'color: green;', 'Error: The start request to the WASM module failed, so no stream started. Returned error was:', error);
+  if (launchId !== streamLaunchId || isInGame !== true) {
+    console.log('%c[index.js, startGame]', 'color: green;', 'The launch of the failed start request is over already.');
+    return;
+  }
+  cancelStreamLaunch();
+  snackbarLogLong('Unable to start the stream. The reason is in the diagnostic log (Settings, About).');
 }
 
 // Read the codec modes of the host again once it accepted the launch or resume request. Sunshine probes its encoders
@@ -5065,11 +5388,15 @@ function updateAudioBackendSettings() {
     $('#audioClockSyncOption').hide();
     $('#decryptHostAudioOption').hide();
     $('#surroundQualityOption').hide();
+    $('#webAudioStereoNote').hide();
   } else {
-    // These two settings apply to all active backends, so show them normally
-    $('#audioConfigOption').show();
+    // This setting applies to all active backends, so show it normally
     $('#decryptHostAudioOption').show();
-    // The surround audio quality only with 5.1 and 7.1
+    // The audio configuration only with the media player of the TV: the Web Audio backend always plays stereo
+    // (getStreamAudioConfig()), which a line below the audio backend says in place of the two settings that don't apply
+    $('#audioConfigOption').toggle(isAudioConfigurationAvailable());
+    $('#webAudioStereoNote').toggle(!isAudioConfigurationAvailable());
+    // The surround audio quality only with 5.1 and 7.1 there
     updateSurroundQualityOption();
     // Check which backend is selected and show the appropriate setting for that backend
     if (isWebAudioBackendSelected()) {
@@ -5096,6 +5423,12 @@ function isAudioOutputDisabled() {
   return $('#selectAudioBackend').data('value') === 'Disabled';
 }
 
+// Whether the audio configuration applies to the selected audio backend: only the media player of the TV plays 5.1 and
+// 7.1, the Web Audio backend always plays stereo (getStreamAudioConfig()), and a disabled audio output plays nothing
+function isAudioConfigurationAvailable() {
+  return !isAudioOutputDisabled() && !isWebAudioBackendSelected();
+}
+
 function saveAudioConfiguration() {
   var chosenAudioConfig = $(this).data('value');
   $('#selectAudio').text($(this).text()).attr('data-value', chosenAudioConfig).data('value', chosenAudioConfig);
@@ -5108,10 +5441,10 @@ function saveAudioConfiguration() {
   updateSurroundQualityOption();
 }
 
-// The surround audio quality of the settings: 'Efficient', or 'High' (the default, also for a value the settings don't
-// know)
+// The surround audio quality of the settings: 'High', or 'Efficient' (the default, also for a value the settings don't
+// know, DEFAULT_SURROUND_QUALITY in tv_profile.js)
 function getSurroundQuality() {
-  return $('#selectSurroundQuality').data('value') === 'Efficient' ? 'Efficient' : 'High';
+  return loadedSurroundQuality($('#selectSurroundQuality').data('value'));
 }
 
 // Set the surround audio quality ('High' or 'Efficient') in the settings and store it: from its menu in the Audio
@@ -5139,9 +5472,10 @@ function isSurroundAudioSelected() {
   return audioConfig === '51Surround' || audioConfig === '71Surround';
 }
 
-// Show the surround audio quality only while the audio configuration is 5.1 or 7.1 and the audio output isn't disabled
+// Show the surround audio quality only while the audio configuration is 5.1 or 7.1 and the media player of the TV
+// plays it (isAudioConfigurationAvailable())
 function updateSurroundQualityOption() {
-  $('#surroundQualityOption').toggle(!isAudioOutputDisabled() && isSurroundAudioSelected());
+  $('#surroundQualityOption').toggle(isAudioConfigurationAvailable() && isSurroundAudioSelected());
 }
 
 function warnAudioConfiguration() {
@@ -5352,6 +5686,53 @@ function warnGameModeAfterTizenUpdate() {
   storeData(GAME_MODE_PLATFORM_VERSION_KEY, platformVer, null);
 }
 
+// Check at the start whether the stored settings still ask for the notice about the default of 'Surround audio quality'
+// (migrateSettingsSchema() stored it for an existing install whose surround stream changes by the default), and if so
+// show it once the hosts show. A stored value that can't be read leaves the check to the next start.
+function checkSurroundQualityNotice() {
+  getData(SURROUND_QUALITY_NOTICE_KEY, function(storedValue, isReadFailed) {
+    if (isReadFailed || storedValue[SURROUND_QUALITY_NOTICE_KEY] !== true) {
+      return;
+    }
+    isSurroundQualityNoticePending = true;
+    scheduleSurroundQualityNotice();
+  });
+}
+
+// Show that notice once the hosts show, whichever of the settings and the hosts comes last, a moment after the
+// compatibility warning of the Ultra low latency mode (scheduleGameModeUpdateWarning()), which goes first when both
+// wait: the notice then waits for a later start
+function scheduleSurroundQualityNotice() {
+  if (isSurroundQualityNoticePending && isStartupUiShown) {
+    setTimeout(showSurroundQualityNotice, 700);
+  }
+}
+
+// Tell the user once that surround sound now streams in the quality Efficient unless High is chosen, what that means
+// and where to change it back, and remove the stored notice. Another open dialog or a stream leaves no room for it, so
+// nothing is removed then and a later start shows it. Settings that no longer stream surround in the default quality
+// (another quality, stereo or another audio backend was chosen in the meantime) need no notice any more.
+function showSurroundQualityNotice() {
+  if (!isSurroundQualityNoticePending) {
+    return;
+  }
+  isSurroundQualityNoticePending = false;
+  if (isInGame || isDialogOpen) {
+    console.log('%c[index.js, showSurroundQualityNotice]', 'color: green;', 'Not showing the notice about the default of the surround audio quality ' +
+      (isInGame ? 'during a stream' : 'over another dialog') + ', so a later start shows it.');
+    return;
+  }
+  removeData(SURROUND_QUALITY_NOTICE_KEY, null);
+  if (!isAudioConfigurationAvailable() || !isSurroundAudioSelected() || getSurroundQuality() !== DEFAULT_SURROUND_QUALITY) {
+    return;
+  }
+  console.log('%c[index.js, showSurroundQualityNotice]', 'color: green;', 'Showing the notice about the default of the surround audio quality.');
+  warningDialog(t('Surround audio quality'),
+    t('Surround sound now streams in the quality <b>Efficient</b> unless you choose otherwise: 256 instead of 1536 kbps for 5.1 (450 instead of 2048 kbps for 7.1), which lowers the load on the TV. For 5.1, High takes about twice the decoding time (measured on a PC). For music, High or Stereo (512 kbps) can sound better.') + '<br><br>' +
+    t('To get the earlier quality back, set <b>Surround audio quality</b> to <b>High</b> in the Audio Settings, or <b>Surround quality</b> in the Stream Menu during a stream.')
+  );
+}
+
 function saveGameMode() {
   setTimeout(() => {
     const chosenGameMode = $('#gameModeSwitch').parent().hasClass('is-checked');
@@ -5532,7 +5913,8 @@ function saveHdrMetadata() {
 // which are also the defaults of the video settings: the highest resolution of the panel up to 4K at 60 FPS with HEVC,
 // HDR when the TV supports it and a bitrate for the network connection, with all frame rates unlocked only for a tested
 // model with a high refresh rate panel (VERIFIED_PROFILES), and 'Optimize game settings' on. The bitrate then follows
-// later changes of the resolution and frame rate with the bitrate presets, until the user picks one by hand.
+// later changes of the resolution and frame rate with the bitrate presets, until the user picks one by hand. 'Surround
+// audio quality' gets its default as well, Efficient, which a stream uses only with 5.1 or 7.1.
 function applyOptimalStreamingSettings(connectionType) {
   console.log('%c[index.js, applyOptimalStreamingSettings]', 'color: green;', 'Applying the optimal streaming settings for the network connection: ' + connectionType);
   const optimalSettings = deriveOptimalSettings(tvCapabilities, connectionType);
@@ -5583,6 +5965,9 @@ function applyOptimalStreamingSettings(connectionType) {
     document.querySelector('#optimizeGamesBtn').MaterialSwitch.off();
   }
   storeData('optimizeGames', optimalSettings.optimizeGames, null);
+
+  // The quality of 5.1 and 7.1 that keeps the load of the sound on the TV low
+  setSurroundQuality(optimalSettings.surroundQuality);
 
   // Set the game mode based on the Tizen platform version and the WASM player (see getGameModeDefault() in tv_profile.js)
   if (optimalSettings.gameMode === false) {
@@ -5656,12 +6041,13 @@ function optimalSettingsDialog() {
   // Start with what the settings are based on, and whether they were tested on this model (describeDetectedTv())
   let message = t('Detected: %1$s', describeDetectedTv(connectionType)) + '<br><br>';
 
-  // The line names 'Optimize game settings' of the Advanced Settings as well, which the optimal settings always turn on
-  // (deriveOptimalSettings() in tv_profile.js), within the lines that the dialog had before
+  // The line names 'Optimize game settings' of the Advanced Settings as well, which the optimal settings always turn on,
+  // and 'Surround audio quality' of the Audio Settings, which they always set to Efficient (deriveOptimalSettings() in
+  // tv_profile.js), within the lines that the dialog had before
   message += t('The following streaming settings will be applied:') + '<br>' +
     '&#8226; ' + (optimalSettings.unlockAllFps
-      ? t('Video frame pacing on, limited color range, unlock all frame rates on, optimize game settings on')
-      : t('Video frame pacing on, limited color range, unlock all frame rates off, optimize game settings on')) + '<br>';
+      ? t('Video frame pacing on, limited color range, unlock all frame rates on, optimize game settings on, surround audio quality Efficient')
+      : t('Video frame pacing on, limited color range, unlock all frame rates off, optimize game settings on, surround audio quality Efficient')) + '<br>';
   // Name the state of the ultra low latency mode, which depends on the Tizen version (the note below covers Tizen 9.0
   // and newer) and on whether the WASM player offers it
   if (optimalSettings.gameMode === true) {
@@ -5686,13 +6072,15 @@ function optimalSettingsDialog() {
     message += t('The TV is connected via Ethernet. Samsung TVs usually have a 100 Mbps Ethernet port, so to avoid packet loss from the traffic bursts of the much faster host PC, set its network adapter to 100 Mbps Full Duplex or enable flow control on your switch. Use 5 GHz Wi-Fi for higher bitrates.');
   } else if (connectionType === 'wifi') {
     message += t('The TV is connected via Wi-Fi. Use a 5 GHz network with a strong signal and connect the host PC by cable.') + ' ';
-    // Suggest how far the bitrate can go for this resolution, up to where the bitrate warning starts (bitrateRaiseLimit()
-    // in tv_profile.js), which lies above the applied bitrate on the tested model
+    // Say how far the bitrate can go for this resolution, up to where the bitrate warning starts (bitrateRaiseLimit()
+    // in tv_profile.js), which lies above the applied bitrate on the tested model, and what it costs: the advice is no
+    // longer to raise it as long as no frames drop, since every frame of a higher bitrate takes longer to arrive (about
+    // 0.6 to 0.8 ms per 10 Mbps in the one measurement there is, a 4K stream at 60 FPS over 5 GHz Wi-Fi)
     const raiseLimit = bitrateRaiseLimit(optimalSettings.resolution, optimalSettings.frameRate, tvCapabilities);
     if (raiseLimit > optimalSettings.bitrate) {
-      message += t('If the performance statistics show no dropped frames, you can raise the bitrate up to %1$s Mbps.', raiseLimit);
+      message += t('Raise the bitrate only if fast scenes look blocky, up to %1$s Mbps: each additional 10 Mbps adds about 0.6 to 0.8 ms of latency, measured on one fast Wi-Fi connection.', raiseLimit);
     } else {
-      message += t('This is the highest bitrate recommended for the video decoder of this TV, so raise it only if the performance statistics show no dropped frames.');
+      message += t('This is the highest bitrate recommended for the video decoder of this TV. More would also add latency: about 0.6 to 0.8 ms per 10 Mbps, measured on one fast Wi-Fi connection.');
     }
   } else {
     message += t('The network connection type of the TV could not be detected, so a moderate bitrate will be applied.');
@@ -5810,8 +6198,8 @@ function restoreDefaultsSettingsValues() {
   $('#selectAudio').text('Stereo').attr('data-value', defaultAudioConfig).data('value', defaultAudioConfig);
   storeData('audioConfig', defaultAudioConfig, null);
 
-  // High, the quality of earlier versions, which the restored stereo hides anyway
-  setSurroundQuality('High');
+  // 'Surround audio quality' is part of the optimal streaming settings, which applyOptimalStreamingSettings() restored
+  // above (Efficient); the restored stereo hides it
   updateSurroundQualityOption();
 
   const defaultAudioSync = false;
@@ -6040,7 +6428,9 @@ function keepSessionReport(json) {
     return;
   }
   lastSessionReport = report;
-  lastSessionReportOptions = { refFrameInvalidation: $('#refFrameInvalidationSwitch').parent().hasClass('is-checked') };
+  // The settings that the hints depend on: a hint names a remedy only where the session didn't already use it
+  lastSessionReportOptions = { refFrameInvalidation: $('#refFrameInvalidationSwitch').parent().hasClass('is-checked'),
+    surroundQuality: streamSurroundQuality };
   console.log('%c[index.js, keepSessionReport]', 'color: green;', 'Hints of the session report: ' +
     getSessionReportHints(report, lastSessionReportOptions).join(', '));
   // The lines that the module logged at the end of the stream belong to its session
@@ -6157,13 +6547,15 @@ function loadUserDataCb() {
 // changed (schema2Snapshot()) and what replaces the settings that settings schema 3 removed (schema3Replacements()),
 // and drops the stored values of those settings, which are logged first, so that the diagnostic log still says what was
 // set. An existing install of settings schema 3 or older stores the defaults of settings schema 3 that settings schema 4
-// changed (schema3Snapshot()), and only those: the steps of settings schema 3 already ran for an install of it. At every
+// changed (schema3Snapshot()), and only those: the steps of settings schema 3 already ran for an install of it. An
+// existing install of settings schema 4 or older stores nothing for settings schema 5, whose new default of 'Surround
+// audio quality' it gets unless it chose a quality, only the notice about it where its stream changes by it. At every
 // start, whatever the settings schema, a stored frame rate that the frame rate menu no longer offers (the 144 FPS of
 // 2.2.0 and earlier) is replaced as well (frameRateReplacements() in tv_profile.js), here where every value it depends on
 // has been read and before the loaders, which then load the replacement like any stored value.
 function migrateSettingsSchema(callbackFunction) {
   const keys = ['uniqueid', SETTINGS_SCHEMA_KEY].concat(LEGACY_SNAPSHOT_KEYS, Object.keys(SCHEMA_2_DEFAULTS), SCHEMA_3_REMOVED_KEYS,
-    Object.keys(SCHEMA_3_DEFAULTS))
+    Object.keys(SCHEMA_3_DEFAULTS), ['surroundQuality', 'audioConfig', 'audioBackend'])
     .filter(function(key, index, allKeys) {
       // Read each key once (e.g. optimizeBitrate is a key of both the snapshot and the removed settings)
       return allKeys.indexOf(key) === index;
@@ -6211,9 +6603,19 @@ function migrateSettingsSchema(callbackFunction) {
       }
       // Every existing install of an earlier settings schema keeps the defaults of settings schema 3 that changed, e.g.
       // 'Optimize game settings' off (schema3Snapshot())
-      const schema3Values = schema3Snapshot(storedValues);
-      console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Existing install of settings schema ' + installSchema + ', storing the defaults of settings schema 3 that changed: ' + JSON.stringify(schema3Values));
-      Object.assign(migratedValues, schema3Values);
+      if (installSchema < 4) {
+        const schema3Values = schema3Snapshot(storedValues);
+        console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Existing install of settings schema ' + installSchema + ', storing the defaults of settings schema 3 that changed: ' + JSON.stringify(schema3Values));
+        Object.assign(migratedValues, schema3Values);
+      }
+      // Settings schema 5 made Efficient the default of 'Surround audio quality', also for an existing install that
+      // never chose a quality, so nothing is stored for it. One whose stream changes by it, 5.1 or 7.1 with the media
+      // player of the TV, is told once, when the hosts show (needsSurroundQualityNotice() in tv_profile.js,
+      // showSurroundQualityNotice()).
+      if (needsSurroundQualityNotice(storedValues)) {
+        console.log('%c[index.js, migrateSettingsSchema]', 'color: green;', 'Existing install of settings schema ' + installSchema + ' with ' + storedValues.audioConfig + ' and no stored surround audio quality, which is Efficient from now on instead of High: storing the notice about it.');
+        migratedValues[SURROUND_QUALITY_NOTICE_KEY] = true;
+      }
     }
     if (!isCurrentSchema) {
       migratedValues[SETTINGS_SCHEMA_KEY] = SETTINGS_SCHEMA_VERSION;
@@ -6435,17 +6837,19 @@ function loadStoredSettings() {
     updateSurroundQualityOption();
   });
 
-  // The surround audio quality: High unless Efficient is stored. Its default keeps the audio stream of earlier versions,
-  // so an existing install needs no step of the settings schema for it.
+  // The surround audio quality: High or Efficient as stored, and Efficient, the default since settings schema 5, for an
+  // install that stored none (loadedSurroundQuality() in tv_profile.js). An existing install whose surround stream
+  // changes by that default is told once (checkSurroundQualityNotice()).
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored surroundQuality preferences.');
   getData('surroundQuality', function(previousValue) {
     $('.surroundQualityMenu li').each(function() {
-      const quality = previousValue.surroundQuality === 'Efficient' ? 'Efficient' : 'High';
+      const quality = loadedSurroundQuality(previousValue.surroundQuality);
       if ($(this).data('value') === quality) {
         $('#selectSurroundQuality').text($(this).text().trim()).attr('data-value', quality).data('value', quality);
       }
     });
   });
+  checkSurroundQualityNotice();
 
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored audioSync preferences.');
   getData('audioSync', function(previousValue) {
@@ -6725,7 +7129,7 @@ function loadHTTPCertsCb() {
 
       // load previously connected hosts, which have been killed into an object, and revive them back into a class
       getData('hosts', function(previousValue) {
-        hosts = previousValue.hosts != null ? previousValue.hosts : {};
+        hosts = keepValidStoredHosts(previousValue.hosts);
         for (var hostUID in hosts) { // Programmatically add each new host
           var revivedHost = new NvHTTP(hosts[hostUID].address, myUniqueid, hosts[hostUID].userEnteredAddress, hosts[hostUID].macAddress);
           Object.assign(revivedHost, hosts[hostUID]);
@@ -6759,6 +7163,37 @@ function loadHTTPCertsCb() {
       });
     });
   });
+}
+
+// The stored hosts that the app takes over at its start: those stored under a unique ID that the app takes
+// (isValidServerUid() in utils.js), with that kind of ID in the host as well. Up to 2.3.0 the app stored a host under
+// whatever ID its device sent, e.g. one that matches other parts of the page as a selector. Such a host is left out
+// with a line in the log, and the next save of the hosts drops it from the storage; its device is no longer listed,
+// since its server info is ignored from now on (_parseServerInfo()). The result has only own properties with valid
+// names, so the loops over the hosts and the lookups by ID find hosts and nothing else.
+function keepValidStoredHosts(storedHosts) {
+  var kept = {};
+  if (storedHosts == null || typeof storedHosts !== 'object') {
+    return kept;
+  }
+  Object.keys(storedHosts).forEach(function(hostUID) {
+    var storedHost = storedHosts[hostUID];
+    if (!isValidServerUid(hostUID) || storedHost == null || typeof storedHost !== 'object' || !isValidServerUid(storedHost.serverUid)) {
+      console.warn('%c[index.js, keepValidStoredHosts]', 'color: green;', 'Warning: Leaving out a stored host whose unique ID isn\'t one that the app takes (1 to 64 letters, digits, dashes and underscores, and no name of a property of every object): ' +
+        (storedHost && storedHost.hostname ? JSON.stringify(String(storedHost.hostname).slice(0, 40)) : 'no name') + '.');
+      return;
+    }
+    kept[hostUID] = storedHost;
+  });
+  return kept;
+}
+
+// The host with the given unique ID, or undefined. hosts is a plain object, where a name such as 'constructor' or
+// '__proto__' finds a property that every object has instead of a host, so only an ID that the app takes
+// (isValidServerUid() in utils.js) is looked up, and only among the hosts themselves: the ID of a deep link comes from
+// outside the app.
+function getHostByUid(serverUid) {
+  return isValidServerUid(serverUid) && Object.prototype.hasOwnProperty.call(hosts, serverUid) ? hosts[serverUid] : undefined;
 }
 
 // Whether the scan of the start may run and the polling of the hosts may resume after it: only while the hosts are
@@ -6820,7 +7255,7 @@ function waitForHostAndNavigate(serverUid) {
   var attempts = 0;
   var interval = setInterval(function() {
     attempts++;
-    var host = hosts[serverUid];
+    var host = getHostByUid(serverUid);
     
     if (host && (host.online || isSubnetScanFinished)) {
       clearInterval(interval);
@@ -6848,7 +7283,7 @@ function waitForHostAndNavigateToApp(serverUid, appId) {
   var attempts = 0;
   var interval = setInterval(function() {
     attempts++;
-    var host = hosts[serverUid];
+    var host = getHostByUid(serverUid);
 
     if (host && (host.online || isSubnetScanFinished)) {
       clearInterval(interval);

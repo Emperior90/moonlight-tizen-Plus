@@ -862,6 +862,12 @@ uint32_t LiGetClientDroppedVideoFrames(void);
 // or an IDR frame requested by the decoder).
 uint32_t LiGetClientVideoResets(void);
 
+// Moonlight Plus: returns whether the host of the current connection offered reference frame invalidation in its
+// answer to the RTSP DESCRIBE request (x-nv-video[0].refPicInvalidation), whatever the decoder of this client can do.
+// GeForce Experience offers it, Sunshine only with an encoder that can do it (its NVENC encoder). Valid once the RTSP
+// handshake is over, so from the setup of the video decoder to its cleanup.
+bool LiHostSupportsReferenceFrameInvalidation(void);
+
 // Session statistics of the video FEC recovery and the video socket
 typedef struct _VIDEO_NETWORK_STATS {
     // FEC blocks with lost data packets that were recovered from parity, and the data packets recovered

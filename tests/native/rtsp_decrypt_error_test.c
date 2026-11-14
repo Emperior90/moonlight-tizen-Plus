@@ -11,10 +11,11 @@
 // which answers each request once with a message encrypted like Sunshine encrypts it (AES-128-GCM, the IV from the
 // sequence number of the answer and 'H', 'R'; src/rtsp.cpp of Sunshine): with the key of the start, with another key,
 // unencrypted, or not at all. The test includes RtspConnection.c with the files it needs; RtspParser.c is built as a
-// unit of its own, because Rtsp.h, which both include, has no include guard. LC_LOG sends the log lines of
-// moonlight-common-c to ListenerCallbacks.logMessage, as in the other clients of Moonlight, instead of the console of
-// Emscripten, so that the test can read them.
-// Build with: -DLC_LOG moonlight-common-c/src/RtspParser.c -lcrypto
+// unit of its own, because Rtsp.h, which both include, has no include guard. The test reads the log lines of
+// moonlight-common-c from ListenerCallbacks.logMessage, where they only arrive with LC_LOG, which the release defines
+// in CMakeLists.txt: run.sh builds this test with the definitions of that file, not with one of its own, so the checks
+// of the log lines below fail when the release would send them to the console of Emscripten only.
+// Build with: moonlight-common-c/src/RtspParser.c -lcrypto
 
 // The socket code of moonlight-common-c needs the GNU extensions of the C library (in6_pktinfo)
 #define _GNU_SOURCE
@@ -39,6 +40,7 @@
 
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <stdarg.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -80,10 +82,15 @@ int notifyAudioPortNegotiationComplete(void) {
   return 0;
 }
 
-// The log of the client, which Limelog() hands each line formatted already (LC_LOG)
+// The log of the client, which Limelog() hands each line as the argument of the format "%s" (LC_LOG, Platform.h)
 static char clientLog[4096];
 static void clientLogMessage(const char* format, ...) {
-  strncat(clientLog, format, sizeof(clientLog) - strlen(clientLog) - 1);
+  char line[1024];
+  va_list args;
+  va_start(args, format);
+  vsnprintf(line, sizeof(line), format, args);
+  va_end(args);
+  strncat(clientLog, line, sizeof(clientLog) - strlen(clientLog) - 1);
 }
 
 // ---- The stand-in for the RTSP server of Sunshine ----

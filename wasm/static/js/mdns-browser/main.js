@@ -36,26 +36,37 @@ function findNvService(ipString) {
       return;
     }
     // Check if the host is already known by its server UID
-    if (hosts[returnedDiscoveredHost.serverUid] != null) {
+    // (only among the hosts themselves, getHostByUid() in index.js: hosts is a plain object)
+    var knownHost = getHostByUid(returnedDiscoveredHost.serverUid);
+    if (knownHost != null) {
       // Host already known — update its stored IP if it has changed
-      var existingAddress = hosts[returnedDiscoveredHost.serverUid].address;
+      var existingAddress = knownHost.address;
       // Also check if the base URL is out of sync or stale compared to the discovered host
-      var existingBaseUrl = hosts[returnedDiscoveredHost.serverUid]._baseUrlHttps;
+      var existingBaseUrl = knownHost._baseUrlHttps;
       if (existingAddress !== returnedDiscoveredHost.address || existingBaseUrl !== returnedDiscoveredHost._baseUrlHttps) {
         var isIpv4 = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(existingAddress);
         // Do not overwrite IPv6 or DNS addresses if they are currently online
-        if (!isIpv4 && hosts[returnedDiscoveredHost.serverUid].online && existingBaseUrl === returnedDiscoveredHost._baseUrlHttps) {
+        if (!isIpv4 && knownHost.online && existingBaseUrl === returnedDiscoveredHost._baseUrlHttps) {
           console.log('%c[main.js, findNvService]', 'color: gray;', 'Keeping existing non-IPv4 address since it is online:', existingAddress);
+        } else if (knownHost.ppkstr) {
+          // A paired host: the answer above came over plain HTTP from whatever device is at that address, so nothing
+          // of it is taken over. The stored host moves only once that address proved to be it (moveKnownHostTo()).
+          // At its own address there is nothing to move: the base URL of the answer differs by the HTTPS port that the
+          // device named, which proves nothing, and the polls of the stored host keep its own base URLs current.
+          if (existingAddress !== returnedDiscoveredHost.address) {
+            moveKnownHostTo(knownHost, returnedDiscoveredHost.address);
+          }
         } else {
+          // A host that isn't paired has no key to prove itself with, so the answer is taken as it is, as before
           // Update the stored address to the newly discovered IPv4 address
           console.log('%c[main.js, findNvService]', 'color: gray;', 'Updating address for server UID:', returnedDiscoveredHost.serverUid, 'from', existingAddress, 'to', returnedDiscoveredHost.address);
-          hosts[returnedDiscoveredHost.serverUid].address = returnedDiscoveredHost.address;
-          hosts[returnedDiscoveredHost.serverUid].localAddress = returnedDiscoveredHost.localAddress;
-          hosts[returnedDiscoveredHost.serverUid]._baseUrlHttp = returnedDiscoveredHost._baseUrlHttp;
-          hosts[returnedDiscoveredHost.serverUid]._baseUrlHttps = returnedDiscoveredHost._baseUrlHttps;
+          knownHost.address = returnedDiscoveredHost.address;
+          knownHost.localAddress = returnedDiscoveredHost.localAddress;
+          knownHost._baseUrlHttp = returnedDiscoveredHost._baseUrlHttp;
+          knownHost._baseUrlHttps = returnedDiscoveredHost._baseUrlHttps;
           updateMacAddress(returnedDiscoveredHost);
-          if (typeof hosts[returnedDiscoveredHost.serverUid].updateExternalAddressIP4 === 'function') {
-            hosts[returnedDiscoveredHost.serverUid].updateExternalAddressIP4();
+          if (typeof knownHost.updateExternalAddressIP4 === 'function') {
+            knownHost.updateExternalAddressIP4();
           }
           saveHosts();
         }
@@ -66,6 +77,36 @@ function findNvService(ipString) {
       beginBackgroundPollingOfHost(returnedDiscoveredHost);
       saveHosts();
     }
+  });
+}
+
+/**
+ * Move a paired host to the address where the scan found a device with its unique ID, once that device proved to be
+ * the host: it must answer the server info over HTTPS with the key that was pinned at the pairing, which
+ * refreshServerInfoAtAddress() of the stored host asks for. Only then the address and the base URLs change, with the
+ * ports, the local address and the MAC address of that authenticated answer (which _parseServerInfo() put into the
+ * host), and the hosts are saved. Any device on the local network can read the unique ID of a PC from the PC itself
+ * and answer the scan with it. Up to 2.3.0 that answer was enough: the paired PC was pointed at the device, showed
+ * offline since the key of the device didn't match, and got its MAC address for Wake-on-LAN, until a later scan found
+ * the real PC again. Now such an answer changes nothing, and says so in the log.
+ */
+function moveKnownHostTo(knownHost, discoveredAddress) {
+  var previousAddress = knownHost.address;
+  return knownHost.refreshServerInfoAtAddress(discoveredAddress).then(function() {
+    console.log('%c[main.js, moveKnownHostTo]', 'color: gray;', 'Updating address for server UID:', knownHost.serverUid, 'from', previousAddress, 'to', discoveredAddress, '(the PC proved its pinned key there)');
+    var urlAddr = formatAddressForUrl(discoveredAddress);
+    knownHost.address = discoveredAddress;
+    knownHost._baseUrlHttps = 'https://' + urlAddr + ':' + knownHost.httpsPort;
+    knownHost._baseUrlHttp = 'http://' + urlAddr + ':' + knownHost.httpPort;
+    if (typeof knownHost.updateExternalAddressIP4 === 'function') {
+      knownHost.updateExternalAddressIP4();
+    }
+    saveHosts();
+    return true;
+  }, function(error) {
+    console.warn('%c[main.js, moveKnownHostTo]', 'color: gray;', 'Warning: A device at ' + discoveredAddress + ' answered the scan with the unique ID of the paired PC ' + knownHost.hostname +
+      ', but didn\'t prove to be that PC over HTTPS with its pinned key (' + error + '). Keeping the PC at ' + previousAddress + '.');
+    return false;
   });
 }
 

@@ -1,4 +1,5 @@
 #include "moonlight_wasm.hpp"
+#include "hex_text.hpp"
 
 #include <http.h>
 #include <errors.h>
@@ -48,22 +49,28 @@ LoadResult MoonlightInstance::LoadCert(const char* certStr, const char* keyStr) 
   char* _keyStr = strdup(keyStr);
 
   BIO* bio = BIO_new_mem_buf(_certStr, -1);
-  if (!(g_Cert = PEM_read_bio_X509(bio, NULL, NULL, NULL))) {
+  g_Cert = PEM_read_bio_X509(bio, NULL, NULL, NULL);
+  BIO_free_all(bio);
+  if (!g_Cert) {
+    free(_certStr);
+    free(_keyStr);
     return LoadResult::CertErr;
   }
-  BIO_free_all(bio);
 
   bio = BIO_new_mem_buf(_keyStr, -1);
-  if (!(g_PrivateKey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL))) {
+  g_PrivateKey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
+  BIO_free_all(bio);
+  if (!g_PrivateKey) {
+    free(_certStr);
+    free(_keyStr);
     return LoadResult::PrivateKeyErr;
   }
-  BIO_free_all(bio);
 
-  // Convert the PEM cert to hex
-  g_CertHex = reinterpret_cast<char*>(malloc((strlen(certStr) * 2) + 1));
-  for (size_t i = 0; i < strlen(certStr); i++) {
-    sprintf(&g_CertHex[i * 2], "%02x", certStr[i]);
-  }
+  // Convert the PEM cert to hex: two digits for every byte, within the buffer (hex_text.hpp)
+  const size_t certLength = strlen(certStr);
+  const size_t certHexSize = certLength * 2 + 1;
+  g_CertHex = reinterpret_cast<char*>(malloc(certHexSize));
+  WriteHexText(certStr, certLength, g_CertHex, certHexSize);
 
   free(_certStr);
   free(_keyStr);

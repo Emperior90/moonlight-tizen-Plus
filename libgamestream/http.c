@@ -117,8 +117,24 @@ int http_request(const char* url, const char* ppkstr, PHTTP_DATA data) {
   curl_easy_setopt(curl, CURLOPT_SSL_ENABLE_ALPN, 0L);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, data);
 
-  const char* bracket_start = strchr(url, '[');
-  const char* bracket_end = strchr(url, ']');
+  // An IPv6 address in brackets is looked for in the host of the URL only, right after "http://" or "https://" and
+  // before the first '/', '?' or '#': a bracket in the path or the query (e.g. a parameter "name=[x]" of a request to
+  // an IPv4 address) is no address, and was taken for one before, which sent the request to a host that doesn't exist
+  const char* bracket_start = NULL;
+  const char* bracket_end = NULL;
+  const char* host = NULL;
+  if (strncmp(url, "http://", 7) == 0) {
+    host = url + 7;
+  } else if (strncmp(url, "https://", 8) == 0) {
+    host = url + 8;
+  }
+  if (host != NULL && host[0] == '[') {
+    bracket_start = host;
+    bracket_end = host + strcspn(host, "]/?#");
+    if (*bracket_end != ']') {
+      bracket_end = NULL;
+    }
+  }
 
   if (bracket_start != NULL && bracket_end != NULL && bracket_end > bracket_start) {
     int ipv6_len = bracket_end - bracket_start - 1;

@@ -17,10 +17,16 @@
 //   install notes of the earlier release v1.19.0-s90c.1 (Moonlight S90C), which only the history of the patch notes keeps,
 //   and that no current document links its German documents at its tag any more (since 2.3.1)
 // - the audio path that the section on surround sound with a soundbar describes: the 5.1 entry of the audio
-//   configuration, the 6-channel PCM track that only the EMSS backend adds, the two channels of the Web Audio output and
-//   the Audio stream line that the check reads
-// - the surround audio quality: High as the default, the row only for 5.1 and 7.1, the 15 Mbps from which the host
-//   sends its high quality, the 10 ms packets of Efficient, stereo that it never touches, and the Audio CPU line
+//   configuration, the 6-channel PCM track that only the EMSS backend adds, the two channels of the Web Audio output
+//   (for which the app asks the PC for stereo since 2.3.1) and the Audio stream line that the check reads
+// - the surround audio quality: Efficient as the default since 2.3.1, the row only for 5.1 and 7.1 with the TV media
+//   player (Web Audio streams stereo), the 15 Mbps from which the host sends its high quality, the 10 ms packets of
+//   Efficient, stereo that it never touches, the Audio CPU line and the limit of the overload message
+// - the statistics of 2.3.1: the full statistics every 2 seconds with a graph of 2 minutes, the line about the app, the
+//   receive time as a share of the frame time, what the received bitrate counts, the Wi-Fi refresh and the buffer
+//   correction of Web Audio; the latency of a higher bitrate in Finding your bitrate; the lowest host frame rate and
+//   the hints of the Last session report; the lines of moonlight-common-c and the uncaught errors in the diagnostic
+//   log, and the messages that the troubleshooting quotes
 // - what the host does with the stream: the share of the bitrate that Sunshine leaves to the encoder at a given FEC,
 //   which caps the received bitrate of the statistics, the parity packets that Moonlight asks for, the display device
 //   configuration of Sunshine that is off by default and follows the Video HDR switch that every start sends, the
@@ -242,11 +248,14 @@ test('the section on surround sound with a soundbar describes the audio path of 
   assert.match(player, /if \(g_Instance->m_AudioBackend == AudioBackend::Emss\) \{[\s\S]*?case 6:\s*channelLayout = samsung::wasm::ChannelLayout::k5_1;[\s\S]*?"audio\/webm; codecs=\\"pcm\\""/);
   assert.match(section, /With 5\.1, the app decodes it to 6-channel PCM for the media player of the TV/);
   // Web Audio plays every frame into the destination of the audio context and never raises its channel count from the
-  // default of two, so the browser mixes 5.1 down to stereo
+  // default of two, so since 2.3.1 a stream with Web Audio asks the PC for stereo, whatever the audio configuration
+  // (getStreamAudioConfig() in index.js, which the launch, resume and start requests use)
   const audio = read('wasm/platform/audio.js');
   assert.match(audio, /source\.connect\(_audContext\.destination\)/);
   assert.doesNotMatch(audio, /\.channelCount\s*=|channelCountMode|channelInterpretation/);
-  assert.match(section, /Web Audio plays through the output of the browser, which the app leaves at two channels, so it mixes 5\.1 down to stereo/);
+  assert.match(read('wasm/platform/index.js'), /function getStreamAudioConfig\(audioConfig, audioBackend\) \{\s+return audioBackend === 'WebAudio' \? 'Stereo' : audioConfig;/);
+  assert.match(section, /Web Audio plays through the output of the browser, which the app leaves at two channels, so with Web Audio the app asks the PC for stereo/);
+  assert.doesNotMatch(GUIDE, /mixes 5\.1 down to stereo/);
   // The Audio stream line names the layout as the check quotes it
   const stats = read('wasm/audio_stream_stats.hpp');
   assert.match(stats, /case 6:\s*return "5\.1 surround";/);
@@ -263,13 +272,29 @@ test('the section on the surround audio quality describes the setting, the negot
   const section = guideSection('### Surround audio quality');
   const audioSection = GUIDE.indexOf('\n## Audio\n');
   assert.ok(audioSection > 0 && GUIDE.indexOf('\n### Surround audio quality\n') > audioSection, 'a part of the section Audio');
-  // The setting: High by default, shown only with 5.1 and 7.1
+  // The setting: Efficient by default (since 2.3.1; 2.3.0 had High), shown only with 5.1 and 7.1
   const index = read('wasm/platform/index.js');
-  assert.match(index, /return \$\('#selectSurroundQuality'\)\.data\('value'\) === 'Efficient' \? 'Efficient' : 'High';/);
+  assert.match(index, /return loadedSurroundQuality\(\$\('#selectSurroundQuality'\)\.data\('value'\)\);/);
+  assert.match(read('wasm/platform/tv_profile.js'), /^const DEFAULT_SURROUND_QUALITY = 'Efficient';$/m);
   assert.match(index, /return audioConfig === '51Surround' \|\| audioConfig === '71Surround';/);
-  assert.match(read('wasm/index.html'), /id="selectSurroundQuality" class="mdl-button mdl-js-button" data-value="High"/);
-  assert.match(section, /Settings → Audio Settings → \*Surround audio quality\*, shown only with 5\.1 or 7\.1:/);
-  assert.match(section, /\*\*High\*\* \(default\)/);
+  assert.match(read('wasm/index.html'), /id="selectSurroundQuality" class="mdl-button mdl-js-button" data-value="Efficient"/);
+  // Since 2.3.1 the row also needs the TV media player: Web Audio streams stereo, so the rows of the audio configuration
+  // and of the quality don't show with it (nor without audio output)
+  assert.match(index, /function isAudioConfigurationAvailable\(\) \{\s+return !isAudioOutputDisabled\(\) && !isWebAudioBackendSelected\(\);/);
+  assert.match(index, /\$\('#surroundQualityOption'\)\.toggle\(isAudioConfigurationAvailable\(\) && isSurroundAudioSelected\(\)\);/);
+  assert.match(section, /Settings → Audio Settings → \*Surround audio quality\*, shown only with 5\.1 or 7\.1 and the TV media player:/);
+  // A chosen quality stays, an install without one follows the default, and Restore Defaults and the optimal settings
+  // button set the default (applyOptimalStreamingSettings())
+  assert.match(read('wasm/platform/tv_profile.js'), /surroundQuality: DEFAULT_SURROUND_QUALITY/);
+  assert.match(section, /A quality that you chose stays\. An install that never chose one follows the default, and the app tells it once when its stream changes/);
+  assert.match(section, /\*Restore Defaults\* and the optimal settings button set \*Efficient\*/);
+  // The overload message: more than 300 ms of work per second of sound over 10 s (wasm/audio_load.hpp)
+  const load = read('wasm/audio_load.hpp');
+  assert.match(load, /constexpr uint32_t kAudioLoadWindowMs = 10000;/);
+  assert.match(load, /constexpr uint32_t kAudioOverloadMsPerSecond = 300;/);
+  assert.match(section, /takes more than 300 ms per second of sound over 10 seconds, the app says so once per session/);
+  assert.match(section, /\*\*Efficient\*\* \(default\)/);
+  assert.doesNotMatch(section, /\*\*High\*\* \(default\)/);
   // The negotiation of moonlight-common-c: high quality surround from 15 Mbps on in 5 ms packets, unless the decoder is
   // declared slow, which gives 10 ms packets; the app declares it only for more than 2 channels
   const threshold = Number(/#define HIGH_AUDIO_BITRATE_THRESHOLD (\d+)/.exec(read('moonlight-common-c/src/Limelight-internal.h'))[1]);
@@ -278,7 +303,7 @@ test('the section on the surround audio quality describes the setting, the negot
   const sdp = read('moonlight-common-c/src/SdpGenerator.c');
   assert.match(sdp, /\(AudioCallbacks\.capabilities & CAPABILITY_SLOW_OPUS_DECODER\) == 0\) \{\s+\/\/ Enable high quality mode for surround sound/);
   assert.match(sdp, /if \(\(AudioCallbacks\.capabilities & CAPABILITY_SLOW_OPUS_DECODER\) \|\|[\s\S]{0,400}AudioPacketDuration = 10;/);
-  assert.match(section, /\*\*Efficient\*\* asks for the normal quality in 10 ms packets at every bitrate/);
+  assert.match(section, /\*\*Efficient\*\* \(default\) asks for the normal quality in 10 ms packets at every bitrate/);
   assert.match(read('wasm/audio_capabilities.hpp'), /CHANNEL_COUNT_FROM_AUDIO_CONFIGURATION\(audioConfiguration\) > 2/);
   assert.match(section, /Stereo is never affected: the app asks for the same stereo as at \*High\*\./);
   // The statistics it points to: the Audio stream line with its packet duration, and the Audio CPU line
@@ -458,11 +483,13 @@ test('the guide gives the share of the bitrate that Sunshine leaves to the encod
   assert.match(fec, /the TV decodes more video bits at the same bitrate setting/);
   // The bullet of the host settings points there instead of only saying to keep the default
   assert.doesNotMatch(GUIDE, /the share of error correction data\. Keep the default\./);
-  // The received bitrate of the statistics only adds up the video frames (wasmplayer.cpp), so it can't reach the
-  // configured bitrate, and the troubleshooting of a blocky picture gives the same ceiling as the FEC section
+  // The received bitrate of the statistics only adds up the video frames (wasmplayer.cpp), of the two stats windows
+  // that its figures cover, so it can't reach the configured bitrate, and the troubleshooting of a blocky picture gives
+  // the same ceiling as the FEC section
   const player = read('wasm/wasmplayer.cpp');
   assert.match(player, /total_bytes \+= decodeUnit->fullLength;/);
-  assert.match(player, /receivedBitrate = \(total_bytes \* 8\.0f\)/);
+  assert.match(player, /s_LastWndBytes = total_bytes;\s+total_bytes = 0;/);
+  assert.match(player, /receivedBitrate = \(\(\(uint64_t\)s_LastWndBytes \+ total_bytes\) \* 8\.0f\)/);
   const blocky = GUIDE.split('\n').find((line) => line.indexOf('- **Blocky picture although the bitrate is high:**') === 0);
   assert.ok(blocky, 'the troubleshooting item');
   assert.ok(blocky.indexOf('It counts only the video, so it tops out at the share that Sunshine leaves to the encoder') > 0, blocky);
@@ -657,4 +684,102 @@ test('the guide describes the wait after an abandoned start, the held start mess
     });
   assert.match(player, /\} else if \(!GetHostEncoderRestarts\(\)\.IsRestartKeyframe\(idrMs\)\) \{\s+s_RecoveryIdrFrames\+\+;/);
   assert.ok(guideSection('## Performance statistics').indexOf('The first keyframe of a new encoder that the PC started during the stream doesn\'t count') > 0);
+});
+
+test('the guide describes the statistics of 2.3.1 as the code makes them: the update every 2 seconds, the receive time and the received bitrate', () => {
+  const stats = guideSection('## Performance statistics');
+  // The module sends the full statistics at every second stats window of about a second, the compact line at each one,
+  // and the graph has one bar per update over 60 bars
+  assert.match(read('wasm/compact_stats.hpp'), /constexpr int kFullStatsWindows = 2;/);
+  const messages = read('wasm/platform/messages.js');
+  assert.match(messages, /const STATS_GRAPH_SLOTS = 60;/);
+  assert.match(messages, /const STATS_GRAPH_SLOT_MS = 2000;/);
+  assert.match(stats, /\*\*Full\*\* shows every line below and updates every 2 seconds\./);
+  assert.match(stats, /It updates every second\. That is the stream as set up/);
+  assert.match(stats, /a slim graph shows the last 2 minutes: one bar per update/);
+  assert.doesNotMatch(stats, /last 60 seconds|one bar per second|\*\*Network and TV, per second\*\*/);
+  // The line about the app at the top, from getStreamBuildInfo(), and the audio configuration it names
+  assert.match(read('wasm/platform/index.js'), /streamBuildInfo = getStreamBuildInfo\(/);
+  assert.match(stats, /The first line names the app with its version, the audio backend and the audio setting of the stream, e\.g\. \*Moonlight Plus 2\.3\.1 · TV media player \(EMSS\) · 5\.1 Efficient\*/);
+  // The receive time with its share of the frame time, and the bitrate line with what received counts
+  const player = read('wasm/wasmplayer.cpp');
+  assert.ok(player.indexOf('"Average frame receive time: %.2f ms (%.0f%% of the frame time)\\n"') > 0);
+  assert.ok(player.indexOf('"Bitrate: %.2f Mbps video received, %.1f Mbps configured (with FEC and audio)\\n"') > 0);
+  assert.ok(tableRow('Average frame receive time')[1].indexOf('e.g. *8.65 ms (52% of the frame time)* at 60 FPS') > 0);
+  // (the first row named Bitrate is the one of the Stream Menu)
+  assert.match(stats, /\n\| Bitrate \| The video that arrived in the last 2 seconds \(\*video received\*\), and the bitrate set in the app \(\*configured\*\), which also holds the error correction and the audio of the host/);
+  // The Wi-Fi signal is read again 5 seconds after the last reading, at the next update, which comes every 2 seconds
+  assert.match(read('wasm/platform/index.js'), /if \(now - lastWifiSignalRefreshMs < 5000\) \{/);
+  assert.match(tableRow('Network connection')[1], /refreshed about every 6 seconds/);
+  // The Web Audio value that 2.3.0 called clock sync
+  const english = JSON.parse(read('wasm/static/locales/en-US.json'));
+  assert.ok(english['Audio session: underruns %1$s, skipped %2$s, lost %3$s, buffer correction %4$s, suggested buffer %5$s']);
+  assert.match(tableRow('Audio buffer, Audio session')[1], /the \*buffer correction\* of \*Audio clock sync\*/);
+  assert.match(guideSection('## Audio'), /Its \*buffer correction\* \(called \*clock sync\* before 2\.3\.1\) is how much faster or slower the sound plays/);
+});
+
+test('the guide gives the latency of a higher bitrate and looks for the lowest bitrate that looks as good, as the texts of the app do', () => {
+  const bitrate = guideSection('## Finding your bitrate');
+  const english = JSON.parse(read('wasm/static/locales/en-US.json'));
+  // The figure that the help text and the optimal settings dialog give, with where it was measured
+  assert.ok(Object.keys(english).some((key) => key.indexOf('about 0.6 to 0.8 ms more latency per 10 Mbps, measured on one fast Wi-Fi connection') > 0));
+  assert.match(bitrate, /On one fast Wi-Fi connection \(4K at 60 FPS, 150 to 180 Mbps\), every 10 Mbps more added about 0\.6 to 0\.8 ms of latency/);
+  assert.match(bitrate, /So look for the lowest bitrate at which fast scenes look as good as at a higher one, below the first bitrate at which frames get lost:/);
+  assert.match(bitrate, /5\. If it passes and fast scenes still look blocky, raise the bitrate by about 15 to 20 %\./);
+  assert.match(bitrate, /7\. Use the lowest step that looks as good as the higher ones, and never one that failed\./);
+  assert.doesNotMatch(GUIDE, /Find the highest bitrate that stays clean|Use the highest step that passed/);
+  // No text of the app ties a higher bitrate to the absence of dropped frames any more, nor does the guide
+  assert.doesNotMatch(GUIDE, /raise the bitrate up to [^.]* if [^.]*no dropped frames|raise it only if the performance statistics show no dropped frames/i);
+  // The help text gives the gap between configured and received with its condition, the guide the same measurement
+  assert.ok(Object.keys(english).some((key) => key.indexOf('so the statistics show about 9% less as received (with 5% error correction)') > 0));
+  assert.match(bitrate, /in one measurement with 5 % error correction about 9 % below/);
+  // The 100 Mbps port: 75 Mbps at 60 FPS is 1.25 Mbit per frame, about 12.5 ms at the line rate
+  assert.equal(75 / 60 / 100 * 1000, 12.5);
+  assert.match(bitrate, /a frame of 75 Mbps at 60 FPS needs about 13 of the 16\.7 ms between two frames \(computed from the speed of the port, not measured\)/);
+});
+
+test('the guide describes the Last session report, the diagnostic log and the messages of 2.3.1 as the code does', () => {
+  const report = tableRow('Last session')[1];
+  // The lowest host frame rate: windows of 30 s without the first one and without a paused host, low below 95 %
+  const session = read('wasm/session_report.hpp');
+  assert.match(session, /constexpr uint32_t kHostRateLowPercent = 95;/);
+  assert.match(session, /constexpr uint32_t kHostRatePausedRepeatPercent = 5;/);
+  assert.ok(report.indexOf('the host frame rate of the lowest 30 seconds and in how many half minutes it stayed below 95 % of the stream rate') > 0, report);
+  assert.ok(report.indexOf('without the first half minute of a stream and without those of a paused game, in which the PC repeats at least 5 % of its frames') > 0, report);
+  // The hint about the frames of the PC only without the hints about the network and a busy encoder
+  const diagnostics = read('wasm/platform/diagnostics.js');
+  assert.match(diagnostics, /if \(!network && isHostEncoderSaturated\(report\)\) \{\s+hints\.push\('host'\);\s+\} else if \(!network && isHostShortOfFrames\(report\)\) \{\s+hints\.push\('hostFrames'\);/);
+  assert.ok(report.indexOf('Without that hint and without the one about the network, a stream of at least 2 minutes in which the PC often sent fewer frames than the stream asked for') > 0, report);
+  assert.doesNotMatch(report, /A low host frame rate alone gives no hint/);
+  // The hint about keyframes only for a PC that offered reference frame invalidation
+  assert.match(diagnostics, /report\.recoveryKeyframes >= 3 && report\.hostRfi && /);
+  assert.ok(report.indexOf('comes only after a stream from a PC that offered it (an NVIDIA graphics card)') > 0, report);
+  // The diagnostic log: the lines of moonlight-common-c with their limit by kind, and the uncaught errors
+  assert.match(read('CMakeLists.txt'), /target_compile_definitions\(moonlight-common-c PUBLIC[\s\S]*?LC_LOG\)/);
+  const ring = read('wasm/diagnostic_log.hpp');
+  assert.match(ring, /static constexpr uint32_t kKindBurst = 10;/);
+  assert.match(ring, /static constexpr uint64_t kKindRefillMs = 60000;/);
+  const log = guideSection('### Diagnostic log');
+  assert.ok(log.indexOf('A line that comes for every lost packet or frame is kept 10 times, then once a minute with the number of the similar lines that were left out') > 0, log);
+  assert.match(diagnostics, /const MAX_UNCAUGHT_LINES = 20;/);
+  assert.ok(log.indexOf('each different one once per session and at most 20') > 0, log);
+  // The lines of the streaming engine that the troubleshooting explains are those of moonlight-common-c
+  const library = ['VideoDepacketizer.c', 'RtpVideoQueue.c', 'ControlStream.c'].map((file) => read('moonlight-common-c/src/' + file)).join('\n');
+  ['Limelog("Video decode unit queue overflow\\n");', 'Limelog("Waiting for IDR frame\\n");', 'Limelog("Unrecoverable frame %d', 'Limelog("Network dropped %d frames', 'Limelog("IDR frame request sent\\n");']
+    .forEach((line) => assert.ok(library.indexOf(line) > 0, line));
+  const troubleshooting = guideSection('## Troubleshooting');
+  ['"Unrecoverable frame"', '"Waiting for IDR frame"', '"Video decode unit queue overflow"', '*IDR frame request sent*']
+    .forEach((name) => assert.ok(troubleshooting.indexOf(name) > 0, name));
+  // The messages that the troubleshooting quotes are the texts of the app
+  const english = JSON.parse(read('wasm/static/locales/en-US.json'));
+  ['Unable to start the stream. The reason is in the diagnostic log (Settings, About).',
+    'The sound is keeping the TV busy. If it stutters, set Surround audio quality to Efficient, or Audio configuration to Stereo.']
+    .forEach((message) => {
+      assert.equal(english[message], message);
+      assert.ok(troubleshooting.indexOf('| "' + message + '" |') >= 0, message);
+    });
+  assert.ok(english['The PC can\'t encode the selected codec, so it sent %1$s, which the TV rejected at %2$sx%3$s@%4$s FPS. Choose a resolution up to 1080p.']);
+  assert.ok(troubleshooting.indexOf('*The PC can\'t encode the selected codec, so it sent H.264, which the TV rejected at …*') > 0);
+  assert.match(read('wasm/auddec.cpp'), /Creating the Opus decoder failed with error %d \(%s\), so the audio stream can't start/);
+  assert.ok(troubleshooting.indexOf('*Creating the Opus decoder failed* before "audio stream establishment failed"') > 0);
 });

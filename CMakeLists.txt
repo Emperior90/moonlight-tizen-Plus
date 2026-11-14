@@ -52,8 +52,12 @@ add_library(moonlight-common-c STATIC
     moonlight-common-c/src/VideoDepacketizer.c
     moonlight-common-c/src/VideoStream.c
 )
+# LC_LOG sends the log lines of the library (Limelog() in Platform.h) to the listener of the app, which keeps them for
+# the diagnostic log (ClLibraryLogMessage() in wasm/connectionlistener.cpp). Without it they only reach the console of
+# the thread that logs. tests/native/run.sh builds the C tests with the definitions of this target.
 target_compile_definitions(moonlight-common-c PUBLIC
-    LC_CHROME)
+    LC_CHROME
+    LC_LOG)
 target_include_directories(moonlight-common-c PUBLIC
     moonlight-common-c/src
     moonlight-common-c/enet/include

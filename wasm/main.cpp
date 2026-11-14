@@ -76,8 +76,6 @@ MoonlightInstance::MoonlightInstance()
     m_AudioTrack(),
     m_VideoTrack(),
     m_ConnectionCancelled(false),
-    m_StopIssued(false),
-    m_StopThread(0),
     m_SourceClosed(false),
     m_SourceAttached(false) {
       m_Dispatcher.start();
@@ -99,7 +97,7 @@ void MoonlightInstance::OnConnectionStarted(uint32_t unused) {
 
 void MoonlightInstance::OnConnectionStopped(uint32_t error) {
   // Stop only once per stream
-  if (m_StopIssued.exchange(true)) {
+  if (!m_StreamThreads.IssueStop()) {
     ClLogMessage("Ignoring a repeated stop request\n");
     return;
   }
@@ -111,7 +109,9 @@ void MoonlightInstance::OnConnectionStopped(uint32_t error) {
   UnlockMouse();
 
   // Spawn teardown thread to cleanup EMSS pipeline
-  pthread_create(&m_StopThread, NULL, MoonlightInstance::StopThreadFunc, NULL);
+  if (!m_StreamThreads.StartStopThread(MoonlightInstance::StopThreadFunc, NULL)) {
+    ClLogMessage("Creating the stop thread failed, so the stream is not torn down\n");
+  }
 
   // Notify the JS code that the stream has ended
   PostToJs(std::string(MSG_STREAM_TERMINATED + std::to_string((int)error)));
@@ -128,8 +128,10 @@ void MoonlightInstance::StopConnection() {
 
 void* MoonlightInstance::StopThreadFunc(void* context) {
   // We must join the connection thread first, because LiStopConnection must
-  // not be invoked during LiStartConnection.
-  pthread_join(g_Instance->m_ConnectionThread, NULL);
+  // not be invoked during LiStartConnection. Only a thread that is still to be joined
+  // (stream_threads.hpp): a stop without a connection thread (it could not be created, the
+  // renderer failed, or no stream was started) would join the thread of an earlier stream again.
+  g_Instance->m_StreamThreads.JoinConnectionThread();
 
   // Force raise all modifier keys to avoid leaving them down after disconnecting
   LiSendKeyboardEvent(0xA0, KEY_ACTION_UP, 0);
@@ -169,10 +171,15 @@ void MoonlightInstance::CloseMediaSource() {
     m_SourceClosed = false;
   }
 
-  // Close the media source and release tracks to ensure WebKit garbage collection
-  m_Source->Close([](samsung::wasm::OperationResult err) {
-    g_Instance->m_AudioTrack = samsung::wasm::ElementaryMediaTrack();
-    g_Instance->m_VideoTrack = samsung::wasm::ElementaryMediaTrack();
+  // Close the media source and release tracks to ensure WebKit garbage collection. The TV can answer after the wait
+  // below gave up, when the next stream may have started and the two members hold its tracks: such an answer leaves
+  // them alone (ReleaseTracksOfClosedSource() in stream_threads.hpp).
+  const unsigned int closingStart = m_StreamThreads.StartNumber();
+  m_Source->Close([closingStart](samsung::wasm::OperationResult err) {
+    if (!ReleaseTracksOfClosedSource(g_Instance->m_StreamThreads, closingStart, g_Instance->m_AudioTrack,
+          g_Instance->m_VideoTrack)) {
+      ClLogMessage("The media source of the stream before answered its close after the next start: the tracks stay\n");
+    }
 
     std::unique_lock<std::mutex> lock(g_Instance->m_Mutex);
     g_Instance->m_SourceClosed = true;
@@ -330,13 +337,17 @@ void* MoonlightInstance::ConnectionThreadFunc(void* context) {
 
     // Notify the JS code that the stream has ended!
     // NB: We pass error code 0 here to avoid triggering a "Connection terminated" warning message.
+    // The message is the last thing this thread does, and it doesn't wait for the front end to handle it
+    // (PostToJsAsync()): no stop thread joins the thread of a start that failed on its own, so the next
+    // StartStream() does, on the main thread (stream_threads.hpp). The front end starts that stream after this
+    // message at the earliest, and this thread must not wait for the main thread then, which waits for it.
     if (me->m_ConnectionCancelled) {
       // A stop request that cancelled the start has already told the JS code
-      if (!me->m_StopIssued) {
-        PostToJs(MSG_STREAM_TERMINATED + std::to_string(0));
+      if (!me->m_StreamThreads.IsStopIssued()) {
+        PostToJsAsync(MSG_STREAM_TERMINATED + std::to_string(0));
       }
     } else {
-      PostToJs(MSG_STREAM_TERMINATED + std::to_string(err));
+      PostToJsAsync(MSG_STREAM_TERMINATED + std::to_string(err));
     }
     return NULL;
   }
@@ -362,12 +373,16 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, int performanceStats,
   bool refFrameInvalidation, bool hdrMetadata, std::string controllerType, std::string surroundQuality) {
   
-  if (m_StopThread != 0) {
-    pthread_join(m_StopThread, NULL);
-    m_StopThread = 0;
+  // Wait for the teardown of the stream before (its stop thread), and join the connection thread of a start that
+  // failed on its own, which no stop thread joined: until then it keeps its stack and its worker (stream_threads.hpp).
+  // That thread posted its termination without waiting for the front end and returned, so this only waits for a
+  // thread that is returning. Before the state below is reset, which that thread read.
+  const uint64_t joinStartMs = LiGetMillis();
+  if (m_StreamThreads.BeginStart()) {
+    ClLogMessage("Joined the connection thread of the earlier start, which had failed on its own (%d ms)\n",
+      (int)(LiGetMillis() - joinStartMs));
   }
   m_ConnectionCancelled = false;
-  m_StopIssued = false;
   m_SourceClosed = false;
   m_SourceAttached = false;
   m_InputThread = 0;
@@ -464,8 +479,9 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   // Store the audio configuration value from the stream configurations
   m_AudioConfig = m_StreamConfig.audioConfiguration;
 
-  // The quality of a stream with more than 2 channels: High (the default, also for any other value) or Efficient,
-  // which the connection thread applies to 5.1 and 7.1 only (ConnectionThreadFunc())
+  // The quality of a stream with more than 2 channels: Efficient, or High (also for any other value; the front end
+  // sends one of the two, and Efficient where none was chosen), which the connection thread applies to 5.1 and 7.1
+  // only (ConnectionThreadFunc())
   m_EfficientSurroundAudio = surroundQuality == "Efficient";
   if (!m_EfficientSurroundAudio) {
     PostToJs("Selecting the surround audio quality to: High");
@@ -590,7 +606,12 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   // Initialize the rendering surface before starting the connection
   if (InitializeRenderingSurface(m_StreamConfig.width, m_StreamConfig.height)) {
     // Start the worker thread to establish the connection
-    pthread_create(&m_ConnectionThread, NULL, MoonlightInstance::ConnectionThreadFunc, this);
+    if (!m_StreamThreads.StartConnectionThread(MoonlightInstance::ConnectionThreadFunc, this)) {
+      // Without the thread there is no connection: end the start like one whose renderer failed, instead of
+      // leaving a start that never ends
+      ClLogMessage("Creating the connection thread failed\n");
+      OnConnectionStopped(0);
+    }
   } else {
     // Failed to initialize renderer
     OnConnectionStopped(0);
