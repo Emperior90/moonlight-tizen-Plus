@@ -25,7 +25,12 @@
 // - No handle is overwritten while its thread is to be joined, and a thread never joins itself (pthread_join() fails
 //   then, and the thread would stay unjoined).
 //
-// IssueStop(), StartStopThread(), BeginStart() and StartConnectionThread() run on the main thread only.
+// BeginStart() and StartConnectionThread() run on the main thread only. IssueStop() and StartStopThread() run on the
+// thread that stops the stream: the main thread, or the input thread for the stop combination of a controller
+// (PollGamepads() in gamepad.cpp calls stopStream() there). IssueStop() lets only one of them go on to the stop thread.
+//
+// The header also counts the starts (StartNumber()), for an answer of the TV that belongs to the stream before and can
+// come after the next start: see ReleaseTracksOfClosedSource() at the end.
 
 #include <atomic>
 #include <pthread.h>
@@ -62,7 +67,14 @@ class StreamThreadsOf {
     }
     const bool joinedConnectionThread = JoinConnectionThread();
     m_StopIssued.store(false);
+    // After the joins: the threads of the start before, which close its media source, read the number of that start
+    m_StartNumber.fetch_add(1);
     return joinedConnectionThread;
+  }
+
+  // The number of the start that BeginStart() began last, which is another one for every start
+  unsigned int StartNumber() const {
+    return m_StartNumber.load();
   }
 
   // StartStream(), after BeginStart(): creates the connection thread. Returns false when there is none, because it
@@ -124,10 +136,30 @@ class StreamThreadsOf {
   // Claimed by the stop thread or by the main thread
   std::atomic<bool> m_ConnectionThreadToJoin{false};
   Handle m_StopThread = Handle();
-  // The stop thread is created and joined on the main thread
+  // The stop thread is created by the thread that stops the stream, which tells the front end afterwards, and joined
+  // on the main thread by the next start, which the front end asks for after that message at the earliest
   bool m_StopThreadToJoin = false;
-  // Set on the main thread and read by the connection thread
+  // Set by the thread that stops the stream and read by the connection thread
   std::atomic<bool> m_StopIssued{false};
+  // Raised on the main thread and read by the threads that close the media source, and by its answer
+  std::atomic<unsigned int> m_StartNumber{0};
 };
 
 typedef StreamThreadsOf<PlatformThreads> StreamThreads;
+
+// The answer of the media source of the TV to Close(), which releases the two tracks of the stream that was closed
+// (CloseMediaSource() in main.cpp). The stop waits for that answer for 5 seconds at most, so it can come after the
+// next StartStream(), and the two tracks are members of the module that the next stream assigns its own tracks to: a
+// late answer replaced the tracks of the new stream with empty ones, while its decoder thread appended packets to
+// them. closingStart is StartNumber() at the moment Close() was called. An answer that comes after a later start
+// leaves the tracks alone: they are the ones of that stream, or will be. Returns whether it released the tracks.
+template <typename Threads, typename Track>
+bool ReleaseTracksOfClosedSource(const StreamThreadsOf<Threads>& threads, unsigned int closingStart, Track& audioTrack,
+                                 Track& videoTrack) {
+  if (threads.StartNumber() != closingStart) {
+    return false;
+  }
+  audioTrack = Track();
+  videoTrack = Track();
+  return true;
+}

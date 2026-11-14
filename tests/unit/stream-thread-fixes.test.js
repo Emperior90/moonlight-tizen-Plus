@@ -9,7 +9,9 @@
 // checks every read against the end of the buffer. The fourth: the connection thread and the stop thread of a stream
 // are created and joined through wasm/stream_threads.hpp only, which joins each of them once
 // (native/stream_threads_test.cpp runs the rule; wasm/main.cpp, which calls it, is built by no native test, so the
-// places and the order of its calls are pinned here).
+// places and the order of its calls are pinned here). The same header tells an answer of the media source of the TV
+// to its close that comes after the next start from one in time (the last three tests of that native test), and the
+// last test here pins that CloseMediaSource() of main.cpp releases the tracks through that rule only.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -129,4 +131,31 @@ test('the connection thread and the stop thread of a stream are created and join
   const rule = read('wasm/stream_threads.hpp');
   assert.match(rule, /typedef StreamThreadsOf<PlatformThreads> StreamThreads;/);
   assert.match(read('tests/native/stream_threads_test.cpp'), /#include "stream_threads\.hpp"/);
+});
+
+test('the answer of the media source to its close releases the tracks only while no other stream was started', () => {
+  const main = read('wasm/main.cpp');
+  const close = functionBody(main, 'void MoonlightInstance::CloseMediaSource(');
+  // The number of the start is read before Close() and kept by the answer, which can come after the wait gave up
+  const number = close.indexOf('const unsigned int closingStart = m_StreamThreads.StartNumber();');
+  const call = close.indexOf('m_Source->Close([closingStart](samsung::wasm::OperationResult err) {');
+  assert.ok(number > 0 && call > number, 'the number of the start is read before the source is asked to close');
+  assert.match(close, /if \(!ReleaseTracksOfClosedSource\(g_Instance->m_StreamThreads, closingStart, g_Instance->m_AudioTrack,\s+g_Instance->m_VideoTrack\)\) \{\s+ClLogMessage\("[^"]*"\);\s+\}/);
+  // No track is emptied past the rule, in any file of the module
+  for (const file of ['wasm/main.cpp', 'wasm/wasmplayer.cpp', 'wasm/auddec.cpp']) {
+    assert.doesNotMatch(read(file), /m_(?:Audio|Video)Track = samsung::wasm::ElementaryMediaTrack\(\)/, file);
+  }
+  // A late answer still ends the wait of the thread that closes the source, as before
+  const answered = close.indexOf('g_Instance->m_SourceClosed = true;');
+  assert.ok(answered > call && answered < close.indexOf('m_SourceClosedCV.wait_for('));
+
+  // The rule: the number rises once per start, after the joins of the threads that close the source of the stream
+  // before, and an answer for another number leaves the tracks alone
+  const rule = read('wasm/stream_threads.hpp');
+  const begin = rule.slice(rule.indexOf('bool BeginStart() {'), rule.indexOf('bool StartConnectionThread('));
+  const raised = begin.indexOf('m_StartNumber.fetch_add(1);');
+  assert.ok(raised > begin.indexOf('Threads::Join(m_StopThread);') && raised > begin.indexOf('JoinConnectionThread();'));
+  assert.equal(rule.split('m_StartNumber.fetch_add(').length - 1, 1);
+  assert.match(rule, /if \(threads\.StartNumber\(\) != closingStart\) \{\s+return false;\s+\}\s+audioTrack = Track\(\);\s+videoTrack = Track\(\);\s+return true;/);
+  assert.match(read('tests/native/stream_threads_test.cpp'), /ReleaseTracksOfClosedSource\(threads, closingStart, audioTrack, videoTrack\)/);
 });

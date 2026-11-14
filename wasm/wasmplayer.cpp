@@ -539,8 +539,12 @@ void MoonlightInstance::VideoTrackListener::OnTrackClosed(samsung::wasm::Element
   }
 
   // The app never reopens a media source that failed, so the picture would stay frozen. End the stream with a
-  // message instead, the same way as a stop request does (this runs on the main thread, like StopStream). While the
-  // connection is still being started, the next frame on the decoder thread ends it through moonlight-common-c.
+  // message instead, the same way as a stop request does. This runs on the main thread, like a stop request of the
+  // remote (StopStream()), but not every stop does: the stop combination of a controller calls stopStream() from the
+  // input thread (PollGamepads() in gamepad.cpp), so OnConnectionStopped() also runs there. That works: only the
+  // first stop of a start goes on (IssueStop() in stream_threads.hpp), and the stop thread joins the input thread
+  // afterwards. While the connection is still being started, the next frame on the decoder thread ends it through
+  // moonlight-common-c.
   if (closeReason == kCloseReasonSourceError) {
     ClLogMessage("The video player of the TV failed during the stream\n");
     if (m_Instance->m_Running) {
@@ -1311,6 +1315,8 @@ static bool UpdatePresentationTimestamp(uint32_t hostTimeMs, uint32_t missingFra
       // frame already contains the lost frames, and a lower offset (the reference of the range while the timestamps
       // follow the capture times) counted them a second time, as ticks the host skipped.
       s_GridPtsMs += lostMs;
+      // The grid of before two late frames, which the frame after them may go back to, moves on by the lost frames too
+      s_LateFramesGridMs += lostMs;
       s_PtsMs = std::max(s_PtsMs + 1.0, s_GridPtsMs);
     } else {
       // A capture time that repeats or steps back adds nothing and keeps the later one: a frame that the host encoded

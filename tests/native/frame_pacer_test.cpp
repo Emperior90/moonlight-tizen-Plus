@@ -1257,6 +1257,75 @@ static void LateCaptureTimerPairsKeepTheGrid() {
                       __FILE__, __LINE__);
 }
 
+// Two capture times 5 and 5.5 ms late that arrive late as well, so that the timestamps follow the second one (see
+// LateCaptureTimerPairsKeepTheGrid), then frames lost on the network, a duplicate of Sunshine after them, and a frame
+// back on the grid of before: one frame lost, and the three that go missing when this client asks for a keyframe (see
+// LoseFrameUntilKeyframe). The duplicate takes the lost frames, and the frame after it is on the grid of the ticks
+// again, with the lost frames counted, like every frame after it. The grid that the way back is computed from moves
+// on by the lost frames together with the timestamps (it stayed where it was, so the way back came out a lost frame
+// duration and more too early and was rejected: the timestamps kept the shift of 2.5 ms, and the host counted as
+// irregular for a second).
+static void LossAfterALateCaptureTimerPairGoesBackToTheGrid() {
+  const double frameMs = 1000.0 / 90;
+  for (const size_t lost : {(size_t)1, (size_t)3}) {
+    const std::string name = std::to_string(lost) + (lost == 1 ? " frame lost: " : " frames lost: ");
+    std::vector<Frame> frames = Host(14, [frameMs](int k) { return 1000.37 + k * frameMs; });
+    for (const auto& late : {std::make_pair(810, 5.0), std::make_pair(811, 5.5)}) {
+      frames[late.first].captureMs += late.second;
+      frames[late.first].hostTimeMs = HostTimeMs(frames[late.first].captureMs);
+    }
+    Arrive(frames, 90, 2.0, 51);
+    // The frames after the pair are lost. The duplicate is the image of the last of them encoded again: sent 3 ms after
+    // it, stamped with the end of that send, with a frame number of its own, and it arrives 4 ms after that frame would
+    // have. frames[812] is the duplicate then, and frames[813] the frame of the next tick.
+    const size_t lastLost = 812 + lost - 1;
+    Frame duplicate = frames[lastLost];
+    duplicate.number++;
+    duplicate.captureMs += 3.0;
+    duplicate.hostTimeMs = HostTimeMs(frames[lastLost].captureMs + 4.0);
+    duplicate.arrival += 4.0 / 1000.0;
+    duplicate.duplicate = true;
+    duplicate.keyframe = true;
+    for (size_t i = lastLost + 1; i < frames.size(); i++) {
+      frames[i].number++;
+    }
+    frames[lastLost] = duplicate;
+    frames.erase(frames.begin() + 812, frames.begin() + lastLost);
+    const std::vector<Outcome> outcomes = Run(90, frames);
+    // The timestamp of a frame relative to the grid of the ticks from the first frame: frame i is on tick i up to the
+    // loss, and `lost` ticks later after it (the duplicate has a frame number, but no tick of its own)
+    const auto offGridMs = [&](size_t i, size_t tick) {
+      return (outcomes[i].pts - outcomes.front().pts - (double)tick / 90) * 1000;
+    };
+    test_support::Check(offGridMs(811, 811) > 0 && offGridMs(811, 811) <= 3.0,
+                        name + "the second frame 5.5 ms late is followed, by up to 3 ms", Describe(offGridMs(811, 811)),
+                        __FILE__, __LINE__);
+    test_support::Check(std::abs((outcomes[812].pts - outcomes[811].pts) * 1000 - lost * frameMs) < 1e-6,
+                        name + "the duplicate takes the lost frames",
+                        Describe((outcomes[812].pts - outcomes[811].pts) * 1000) + " ms", __FILE__, __LINE__);
+    test_support::Check(std::abs(offGridMs(813, 812 + lost)) < 1e-6,
+                        name + "the frame after the duplicate is back on the grid of the ticks, with the lost frames "
+                        "counted",
+                        "off it by " + Describe(offGridMs(813, 812 + lost)) + " ms", __FILE__, __LINE__);
+    int offGrid = 0;
+    std::string firstOffGrid;
+    for (size_t i = 1; i < outcomes.size(); i++) {
+      if (i == 811 || i == 812) {
+        continue;
+      }
+      const double offMs = offGridMs(i, i < 812 ? i : i + lost - 1);
+      if (std::abs(offMs) > 1e-6 && offGrid++ == 0) {
+        firstOffGrid = "frame " + std::to_string(i + 1) + " by " + Describe(offMs) + " ms";
+      }
+    }
+    test_support::Check(offGrid == 0, name + "every other timestamp on the grid of the ticks",
+                        std::to_string(offGrid) + " off it, the first " + firstOffGrid, __FILE__, __LINE__);
+    const double held = HeldPercent(outcomes, 3000);
+    test_support::Check(held > 95, name + "the pacer holds more than 95% of the frames", Describe(held), __FILE__,
+                        __LINE__);
+  }
+}
+
 // 24 FPS content (a film) in a 60 FPS stream: Sunshine sends each new image at its present, and when no new image comes
 // within two frame durations after one (half the stream rate is its default minimum frame rate), the image again, as a
 // duplicate stamped with the end of the send of the frame before. The new images keep their pace, 41.7 ms apart, and
@@ -1699,6 +1768,8 @@ int main() {
                         ShortLatencyEpisodeKeepsTheQueueShort);
   test_support::RunTest("a capture timer that wakes up late now and then keeps the pace", LateCaptureTimerKeepsThePace);
   test_support::RunTest("two late capture times in a row keep the timestamps on the grid", LateCaptureTimerPairsKeepTheGrid);
+  test_support::RunTest("a loss and a duplicate after two late capture times go back to the grid with the lost frames counted",
+                        LossAfterALateCaptureTimerPairGoesBackToTheGrid);
   test_support::RunTest("duplicates of Sunshine keep the pace of the new images", SunshineDuplicatesKeepThePaceOfTheNewImages);
   test_support::RunTest("a loss before a keyframe duplicate keeps the pace of a host below the stream rate",
                         LossBeforeAKeyframeDuplicateKeepsThePace);

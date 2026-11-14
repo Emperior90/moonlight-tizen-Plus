@@ -9,6 +9,9 @@
 // TV), so the Module below repeats the order of its calls in StartStream(), ConnectionThreadFunc(),
 // OnConnectionStopped() and StopThreadFunc(), with stand-ins for moonlight-common-c and the front end;
 // tests/unit/stream-thread-fixes.test.js pins that order in main.cpp.
+// The last three tests check the answer of the media source of the TV to Close(), which releases the tracks of the
+// stream that was closed (ReleaseTracksOfClosedSource() of the same header): in time it releases them, after the next
+// start it leaves the tracks alone, which are those of the new stream then. Before, a late answer emptied them.
 
 #include "stream_threads.hpp"
 
@@ -18,6 +21,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -689,6 +693,144 @@ static void TheThreadsOfThePlatformAreJoined() {
   CHECK(threads.IssueStop());
 }
 
+// A track of the TV, which knows the start that added it. One without a start is empty, like the
+// samsung::wasm::ElementaryMediaTrack() that the app puts in the place of a released track.
+struct TestTrack {
+  unsigned int start = 0;
+};
+
+// The part of the module that closes the media source, with the calls of wasm/main.cpp in their order
+class MediaModule {
+ public:
+  StreamThreadsOf<CountingThreads> threads;
+  // m_AudioTrack and m_VideoTrack of the module, which every stream assigns its tracks to
+  TestTrack audioTrack;
+  TestTrack videoTrack;
+  int lateAnswers = 0;
+
+  // StartStream() of main.cpp
+  void StartStream() {
+    threads.BeginStart();
+  }
+  // StartupVidDecSetup() of wasmplayer.cpp, on the connection thread: the tracks of this stream
+  void AddTracks() {
+    audioTrack.start = threads.StartNumber();
+    videoTrack.start = threads.StartNumber();
+  }
+  // CloseMediaSource() of main.cpp, without its wait of 5 seconds at most: returns the answer of the TV to Close(),
+  // which the test delivers in time or late
+  std::function<void()> CloseMediaSource() {
+    const unsigned int closingStart = threads.StartNumber();
+    return [this, closingStart] {
+      if (!ReleaseTracksOfClosedSource(threads, closingStart, audioTrack, videoTrack)) {
+        lateAnswers++;
+      }
+    };
+  }
+};
+
+static void AnAnswerOfTheMediaSourceInTimeReleasesTheTracks() {
+  CountingThreads::Reset();
+  MediaModule module;
+  module.StartStream();
+  module.AddTracks();
+  const unsigned int firstStart = module.threads.StartNumber();
+  CHECK_EQ(module.audioTrack.start, firstStart);
+  CHECK_EQ(module.videoTrack.start, firstStart);
+  // The stream stops, and the TV answers before the next one starts
+  module.CloseMediaSource()();
+  CHECK_EQ(module.audioTrack.start, 0u);
+  CHECK_EQ(module.videoTrack.start, 0u);
+  CHECK_EQ(module.lateAnswers, 0);
+  // Every start has a number of its own, so the same goes for each stream after it
+  for (int stream = 0; stream < 5; stream++) {
+    const unsigned int before = module.threads.StartNumber();
+    module.StartStream();
+    CHECK_EQ(module.threads.StartNumber(), before + 1);
+    module.AddTracks();
+    CHECK_EQ(module.videoTrack.start, before + 1);
+    module.CloseMediaSource()();
+    CHECK_EQ(module.audioTrack.start, 0u);
+    CHECK_EQ(module.videoTrack.start, 0u);
+  }
+  CHECK_EQ(module.lateAnswers, 0);
+}
+
+static void AnAnswerOfTheMediaSourceAfterTheNextStartLeavesItsTracks() {
+  CountingThreads::Reset();
+  MediaModule module;
+  module.StartStream();
+  module.AddTracks();
+  // The stream stops, and the TV doesn't answer within the wait
+  const std::function<void()> lateAnswer = module.CloseMediaSource();
+  // The next stream starts and has its tracks when the answer of the source before comes
+  module.StartStream();
+  module.AddTracks();
+  const unsigned int secondStart = module.threads.StartNumber();
+  lateAnswer();
+  CHECK_EQ(module.audioTrack.start, secondStart);
+  CHECK_EQ(module.videoTrack.start, secondStart);
+  CHECK_EQ(module.lateAnswers, 1);
+  // That stream closes its own source, whose answer in time releases them
+  module.CloseMediaSource()();
+  CHECK_EQ(module.audioTrack.start, 0u);
+  CHECK_EQ(module.videoTrack.start, 0u);
+  // An answer that comes while the next start has no tracks yet, and one that is two starts late, change nothing
+  module.StartStream();
+  module.AddTracks();
+  const std::function<void()> answerOfThird = module.CloseMediaSource();
+  module.StartStream();
+  answerOfThird();
+  CHECK_EQ(module.lateAnswers, 2);
+  module.AddTracks();
+  const std::function<void()> answerOfFourth = module.CloseMediaSource();
+  module.StartStream();
+  module.StartStream();
+  module.AddTracks();
+  const unsigned int sixthStart = module.threads.StartNumber();
+  answerOfFourth();
+  CHECK_EQ(module.lateAnswers, 3);
+  CHECK_EQ(module.audioTrack.start, sixthStart);
+  CHECK_EQ(module.videoTrack.start, sixthStart);
+}
+
+struct ClosingStopThread {
+  MediaModule module;
+  std::function<void()> answer;
+};
+
+static void* CloseTheSourceAfterAMoment(void* context) {
+  ClosingStopThread* closing = (ClosingStopThread*)context;
+  std::this_thread::sleep_for(std::chrono::milliseconds(30));
+  closing->answer = closing->module.CloseMediaSource();
+  return NULL;
+}
+
+// The stop thread closes the media source while the next StartStream() may already wait for it in BeginStart(): the
+// start number rises after that join, so the thread still reads the number of its own stream
+static void TheStopThreadClosesTheSourceOfItsOwnStream() {
+  CountingThreads::Reset();
+  ClosingStopThread closing;
+  closing.module.StartStream();
+  closing.module.AddTracks();
+  const unsigned int firstStart = closing.module.threads.StartNumber();
+  CHECK(closing.module.threads.IssueStop());
+  CHECK(closing.module.threads.StartStopThread(CloseTheSourceAfterAMoment, &closing));
+  // The next start, at once: it waits for the stop thread, which closes the source meanwhile
+  closing.module.StartStream();
+  CHECK_EQ(closing.module.threads.StartNumber(), firstStart + 1);
+  CHECK(closing.answer != nullptr);
+  if (closing.answer) {
+    // The answer comes after that start, so it is late: the tracks of the first stream stay until the new stream
+    // replaces them
+    closing.answer();
+  }
+  CHECK_EQ(closing.module.lateAnswers, 1);
+  CHECK_EQ(closing.module.videoTrack.start, firstStart);
+  closing.module.StartStream();
+  CheckNoThreadIsLeft(1);
+}
+
 int main() {
   // A join that never returns would hang the run: end it instead
   alarm(180);
@@ -712,5 +854,11 @@ int main() {
   test_support::RunTest("of several threads that try to join the connection thread at once, one does",
                         OfSeveralThreadsThatTryToJoinAtOnceOneDoes);
   test_support::RunTest("the threads of the platform are joined", TheThreadsOfThePlatformAreJoined);
+  test_support::RunTest("an answer of the media source to its close in time releases the tracks of the stream",
+                        AnAnswerOfTheMediaSourceInTimeReleasesTheTracks);
+  test_support::RunTest("an answer of the media source after the next start leaves the tracks of the new stream",
+                        AnAnswerOfTheMediaSourceAfterTheNextStartLeavesItsTracks);
+  test_support::RunTest("the stop thread closes the media source with the number of its own start",
+                        TheStopThreadClosesTheSourceOfItsOwnStream);
   return test_support::Summary();
 }

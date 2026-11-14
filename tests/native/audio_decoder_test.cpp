@@ -3,7 +3,9 @@
 // samples, not bytes) and the decoder is offered exactly that frame; a packet that the decoder rejects appends nothing
 // and leaves the buffer as it was, since the next packet carries only its own samples; the packets that the audio
 // player of the TV rejects and those that 'Limit audio delay' drops are logged for the first one and every 100th
-// instead of each one; and the time of the decoder and of the hand-over to the player (AppendPacket() of the EMSS
+// instead of each one; 'Limit audio delay' counts only the packets that the player took, so a burst of packets that the
+// player rejected or the decoder failed on doesn't make it drop the good ones after it, while it still limits a burst
+// of packets that the player took; and the time of the decoder and of the hand-over to the player (AppendPacket() of the EMSS
 // backend, the post of the Web Audio backend) reaches the audio statistics of the overlay (wasm/audio_stream_stats.hpp)
 // with the samples that were decoded.
 //
@@ -307,6 +309,42 @@ static void DroppedPacketsAreLoggedInBatches() {
   CHECK(dropped >= 300);
   CHECK_EQ(CountLogs("Dropping audio packets to avoid overflow"), (dropped + 99) / 100);
   CHECK_EQ(decodeCalls, (int)appended.size());
+}
+
+static void LimitAudioDelayCountsOnlyThePacketsThatThePlayerTook() {
+  StartAudio(AudioBackend::Emss, 2, 240, true);
+  // A second of audio in packets that the player of the TV rejects, much faster than in real time. None of it is in
+  // its buffer, so every packet is still offered to the player (the estimate ran ahead after about 21 of them, and the
+  // rest never reached it).
+  appendResult = 1;
+  Feed(200);
+  CHECK_EQ(g_AudioStreamStats.playerRejections.load(), 200u);
+  CHECK_EQ(appended.size(), (size_t)200);
+  // The player takes packets again: none of the good ones is dropped as an overflow
+  appendResult = 0;
+  appended.clear();
+  Feed(10);
+  CHECK_EQ(appended.size(), (size_t)10);
+  CHECK_EQ(CountLogs("Dropping audio packets to avoid overflow"), 0);
+  // The same after a second of packets that the decoder fails on, which are not offered to the player at all
+  decodeResult = OPUS_INVALID_PACKET;
+  Feed(200);
+  CHECK_EQ(g_AudioStreamStats.decodeErrors.load(), 200u);
+  CHECK_EQ(appended.size(), (size_t)10);
+  decodeResult = 0;
+  Feed(5);
+  CHECK_EQ(appended.size(), (size_t)15);
+  CHECK_EQ(CountLogs("Dropping audio packets to avoid overflow"), 0);
+  // The timestamps of the good packets have no gap, and their audio is what the limit counts: 75 ms so far, so a
+  // burst of packets that the player takes is cut off about 25 ms later, as before
+  if (!appended.empty()) {
+    CHECK_EQ((int)std::lround(appended.back().pts * 1000), 14 * 5);
+  }
+  Feed(400);
+  const int dropped = 415 - (int)appended.size();
+  CHECK(dropped >= 300);
+  CHECK(appended.size() >= (size_t)20);
+  CHECK(CountLogs("Dropping audio packets to avoid overflow") >= 1);
 }
 
 static void DecodeAndOutputTimesReachTheStatistics() {
@@ -625,6 +663,8 @@ int main() {
                         PlayerRejectionsAreLoggedInBatches);
   test_support::RunTest("the packets that Limit audio delay drops are logged for the first and every 100th",
                         DroppedPacketsAreLoggedInBatches);
+  test_support::RunTest("Limit audio delay counts only the packets that the player took, not rejected or undecoded ones",
+                        LimitAudioDelayCountsOnlyThePacketsThatThePlayerTook);
   test_support::RunTest("the time of the decoder and of AppendPacket() reaches the statistics",
                         DecodeAndOutputTimesReachTheStatistics);
   test_support::RunTest("the Web Audio backend counts the decode and the post", WebAudioCountsTheDecodeAndThePost);

@@ -44,6 +44,16 @@ var PREVIEW_ROUTE_PATTERN = /^\/(preview-[A-Za-z0-9_-]+\.jpg)$/;
 var tvIp = '127.0.0.1';
 var localServer = null;
 var routeMap = {};
+// The longest route that a log line shows. A request can name a route of any length, and every line also goes to the
+// app through the message port, where it lands in the diagnostic log.
+var LOG_ROUTE_MAX_LENGTH = 80;
+// How many lines about the requests of the server go to the app per minute: about the ones it didn't serve (a 404)
+// and about the ones it served. Any device on the local network can send requests as fast as it likes, also during a
+// stream, and the Smart Hub asks for each tile once in a while; the lines beyond a limit are only counted, and the next
+// line of that kind that is sent says how many they were.
+var REJECTED_LOG_LINES_PER_MINUTE = 5;
+var SERVED_LOG_LINES_PER_MINUTE = 60;
+var LOG_LIMIT_WINDOW_MS = 60000;
 
 /**
  * Sends a message to the main application and logs it.
@@ -82,7 +92,67 @@ function sendMessage(value, key) {
 }
 
 /**
- * Processes incoming app control data to extract and set preview data.
+ * A route as a log line shows it: at most LOG_ROUTE_MAX_LENGTH characters.
+ *
+ * @param {string} route - Path of a request
+ * @return {string} The route, cut where it is longer
+ */
+function shortenRoute(route) {
+  var text = String(route);
+  return text.length > LOG_ROUTE_MAX_LENGTH ? text.substring(0, LOG_ROUTE_MAX_LENGTH) + '... (' + text.length + ' characters)' : text;
+}
+
+/**
+ * Makes a logAndSend() that sends at most maxLines lines per minute to the app. A line beyond that is dropped and
+ * counted, and the next line that is sent names the count.
+ *
+ * @param {number} maxLines - Lines per LOG_LIMIT_WINDOW_MS
+ * @return {function(string)} Logs and sends the message while the limit allows it
+ */
+function createLimitedLog(maxLines) {
+  var windowStart = 0;
+  var lines = 0;
+  var skipped = 0;
+  return function(value) {
+    var now = Date.now();
+    if (now - windowStart >= LOG_LIMIT_WINDOW_MS || now < windowStart) {
+      windowStart = now;
+      lines = 0;
+    }
+    if (lines >= maxLines) {
+      skipped++;
+      return;
+    }
+    lines++;
+    if (skipped > 0) {
+      value += ' (' + skipped + ' more lines of this kind were left out since the last one)';
+      skipped = 0;
+    }
+    logAndSend(value);
+  };
+}
+
+// Log a request that the server didn't serve, and one that it served
+var logRejectedRequest = createLimitedLog(REJECTED_LOG_LINES_PER_MINUTE);
+var logServedRequest = createLimitedLog(SERVED_LOG_LINES_PER_MINUTE);
+
+/**
+ * Whether a tile may map its route to the given file: only a file whose name is the file name of the route, e.g.
+ * '/preview-881448767.jpg' to '/opt/usr/home/owner/content/Documents/preview-881448767.jpg', as the app sends it. The
+ * preview data comes through an app control, which another app on the TV may be able to send, and the server sends
+ * the mapped file to whoever on the local network asks for the route: with any path allowed, that was any file the
+ * service can read.
+ *
+ * @param {string} route - Route of the tile, already checked against PREVIEW_ROUTE_PATTERN
+ * @param {string} filePath - Path that the tile names for it
+ * @return {boolean} Whether the file name of the path is the one of the route
+ */
+function isPreviewFileOfRoute(route, filePath) {
+  return typeof filePath === 'string' && filePath.substring(filePath.lastIndexOf('/') + 1) === route.substring(1);
+}
+
+/**
+ * Starts the local HTTP server that serves the box art images of the preview tiles.
  */
 function startLocalServer() {
   if (!http) {
@@ -100,16 +170,18 @@ function startLocalServer() {
   
   localServer = http.createServer(function (req, res) {
     var route = require('url').parse(req.url).pathname; // Strip query string for cache-busting
-    logAndSend('Local HTTP server received request for: ' + route);
+    // Each request gets one line, through logRejectedRequest() or logServedRequest(), which limit how many of them
+    // reach the app; before, every request sent up to five lines there, with a route of any length
     var routeMatch = PREVIEW_ROUTE_PATTERN.exec(route || '');
     if (!routeMatch) {
-      logAndSend('Rejected a request for a route that is not a preview file name: ' + route);
+      logRejectedRequest('Rejected a request for a route that is not a preview file name: ' + shortenRoute(route));
       res.writeHead(404);
       res.end();
       return;
     }
     var fileName = routeMatch[1];
-    if (routeMap[route]) {
+    // Only a route that a tile mapped (an own property: the route is a name that the request chose)
+    if (Object.prototype.hasOwnProperty.call(routeMap, route)) {
       var imagePath = routeMap[route];
       try {
         var binaryData = fs.readFileSync(imagePath);
@@ -118,16 +190,15 @@ function startLocalServer() {
           'Content-Length': binaryData.length
         });
         res.end(binaryData);
-        logAndSend('Successfully served binary image for ' + route + ' | Size: ' + Math.round(binaryData.length / 1024) + ' KB');
+        logServedRequest('Successfully served binary image for ' + shortenRoute(route) + ' | Size: ' + Math.round(binaryData.length / 1024) + ' KB');
       } catch (err) {
-        logAndSend('Error reading binary image file for ' + route + ': ' + err.message);
+        logRejectedRequest('Error reading binary image file for ' + shortenRoute(route) + ': ' + err.message);
         res.writeHead(404);
         res.end();
       }
     } else {
       // Fallback for TV reboots when memory routeMap is empty. The path is built from the checked file name only,
       // never from the request path
-      logAndSend('Attempting fallback disk resolution for: ' + fileName);
       var fallbackPaths = [
         '/opt/usr/home/owner/content/Documents/' + fileName,
         '/home/owner/content/Documents/' + fileName
@@ -142,15 +213,14 @@ function startLocalServer() {
             'Content-Length': fallbackData.length
           });
           res.end(fallbackData);
-          logAndSend('Successfully served fallback binary image from ' + fallbackPaths[i]);
+          logServedRequest('Successfully served fallback binary image from ' + shortenRoute(fallbackPaths[i]));
           return; // Exit on success
         } catch (fallbackErr) {
           // Ignore error and try the next path
-          logAndSend('Fallback path not found or error reading: ' + fallbackErr.message);
         }
       }
 
-      logAndSend('Route not found in routeMap or fallbacks for: ' + route);
+      logRejectedRequest('Route not found in routeMap or fallbacks for: ' + shortenRoute(route));
       res.writeHead(404);
       res.end();
     }
@@ -235,12 +305,16 @@ function handleDataInRequest() {
                 if (tile.image_url && tile.txtPath) {
                   var parsedUrl = require('url').parse(tile.image_url);
                   var route = parsedUrl.pathname;
-                  // Map only the routes the server answers (PREVIEW_ROUTE_PATTERN)
-                  if (PREVIEW_ROUTE_PATTERN.test(route || '')) {
-                    routeMap[route] = tile.txtPath;
-                    logAndSend('Mapped route ' + route + ' to ' + tile.txtPath);
+                  // Map only the routes the server answers (PREVIEW_ROUTE_PATTERN), and each one only to a file
+                  // with the file name of the route (isPreviewFileOfRoute()). Any other route is served from the
+                  // documents directory by its file name, like after a reboot of the TV.
+                  if (!PREVIEW_ROUTE_PATTERN.test(route || '')) {
+                    logAndSend('Ignored the image route ' + shortenRoute(route) + ', which is not a preview file name');
+                  } else if (!isPreviewFileOfRoute(route, tile.txtPath)) {
+                    logAndSend('Not mapping the route ' + route + ' to ' + shortenRoute(tile.txtPath) + ', whose file name is not the one of the route');
                   } else {
-                    logAndSend('Ignored the image route ' + route + ', which is not a preview file name');
+                    routeMap[route] = tile.txtPath;
+                    logAndSend('Mapped route ' + route + ' to ' + shortenRoute(tile.txtPath));
                   }
                   
                   // Fallback to Samsung webapis to get the real IP

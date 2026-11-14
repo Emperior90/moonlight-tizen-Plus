@@ -171,10 +171,15 @@ void MoonlightInstance::CloseMediaSource() {
     m_SourceClosed = false;
   }
 
-  // Close the media source and release tracks to ensure WebKit garbage collection
-  m_Source->Close([](samsung::wasm::OperationResult err) {
-    g_Instance->m_AudioTrack = samsung::wasm::ElementaryMediaTrack();
-    g_Instance->m_VideoTrack = samsung::wasm::ElementaryMediaTrack();
+  // Close the media source and release tracks to ensure WebKit garbage collection. The TV can answer after the wait
+  // below gave up, when the next stream may have started and the two members hold its tracks: such an answer leaves
+  // them alone (ReleaseTracksOfClosedSource() in stream_threads.hpp).
+  const unsigned int closingStart = m_StreamThreads.StartNumber();
+  m_Source->Close([closingStart](samsung::wasm::OperationResult err) {
+    if (!ReleaseTracksOfClosedSource(g_Instance->m_StreamThreads, closingStart, g_Instance->m_AudioTrack,
+          g_Instance->m_VideoTrack)) {
+      ClLogMessage("The media source of the stream before answered its close after the next start: the tracks stay\n");
+    }
 
     std::unique_lock<std::mutex> lock(g_Instance->m_Mutex);
     g_Instance->m_SourceClosed = true;

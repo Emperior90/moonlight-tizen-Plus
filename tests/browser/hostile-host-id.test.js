@@ -111,7 +111,8 @@ test('a device that answers the scan with a hostile unique ID is ignored, and a 
     assert.equal(run.state.ownOfObjectPrototype, before.ownOfObjectPrototype);
     assert.equal(run.state.mainContent, 1);
     assert.equal(run.pollingError, '');
-    // One line in the log for each ignored device and each address that was tried (the address, then its .local name)
+    // One line in the log for each ignored device: its address is the only one that is tried (a device that is still
+    // named after its address has no name to try with .local, getLocalNameCandidate() in utils.js)
     const ignored = app.logs.filter((line) => line.indexOf('Ignoring the server info of 10.9.9.') >= 0);
     ['10.9.9.1', '10.9.9.2', '10.9.9.3', '10.9.9.4', '10.9.9.5', '10.9.9.6'].forEach((address) => {
       assert.equal(ignored.filter((line) => line.indexOf('Ignoring the server info of ' + address + ':') >= 0).length, 1, address);

@@ -158,11 +158,12 @@ static void ReleaseDecoder(OpusMSDecoder*& decoder) {
   s_DecodeBuffer.shrink_to_fit();
 }
 
-static void DecodeAndAppendPacket(samsung::wasm::ElementaryMediaTrack* track, samsung::wasm::SessionId session_id,
+// Returns whether the packet was appended to the audio track, i.e. whether the player of the TV got its audio
+static bool DecodeAndAppendPacket(samsung::wasm::ElementaryMediaTrack* track, samsung::wasm::SessionId session_id,
   OpusMSDecoder* decoder, const unsigned char* sampleData, int sampleLength) {
   // Nothing to decode with: a stream has no decoder before AudDecInit() and after AudDecCleanup()
   if (!decoder) {
-    return;
+    return false;
   }
 
   // Decode the incoming audio packet using Opus decoder. It writes at most the negotiated frame size per channel, which
@@ -175,7 +176,7 @@ static void DecodeAndAppendPacket(samsung::wasm::ElementaryMediaTrack* track, sa
   // carries only the samples that its own decode wrote, so there is nothing to clear in the buffer.
   if (decodeLen <= 0) {
     g_AudioStreamStats.decodeErrors.fetch_add(1, std::memory_order_relaxed);
-    return;
+    return false;
   }
 
   // Calculate desired buffer size in bytes for decoded audio data
@@ -208,6 +209,7 @@ static void DecodeAndAppendPacket(samsung::wasm::ElementaryMediaTrack* track, sa
         s_AppendFailures);
     }
   }
+  return appended;
 }
 
 static void DecodeAndScheduleFrame(OpusMSDecoder* decoder, const unsigned char* sampleData, int sampleLength) {
@@ -507,14 +509,18 @@ void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLe
   }
 
   // Decode and append the audio packet to the audio track
-  DecodeAndAppendPacket(&g_Instance->m_AudioTrack,
+  const bool appended = DecodeAndAppendPacket(&g_Instance->m_AudioTrack,
     g_Instance->m_AudioSessionId.load(), g_Instance->m_OpusDecoder,
     reinterpret_cast<unsigned char*>(sampleData), sampleLength
   );
   CheckAudioLoad();
 
-  // Update the estimated audio end time to prevent future overflow
-  s_estimatedAudioEnd = std::max(s_estimatedAudioEnd, ntp) + s_frameDuration;
+  // Update the estimated audio end time to prevent future overflow. Only for a packet that the player took: one that
+  // the decoder failed on or that the player rejected puts no audio into its buffer, and counting a burst of them made
+  // 'Limit audio delay' drop the good packets after it as the overflow of a buffer that was empty.
+  if (appended) {
+    s_estimatedAudioEnd = std::max(s_estimatedAudioEnd, ntp) + s_frameDuration;
+  }
 }
 
 // NOTE: The capabilities are updated before every connection in ConnectionThreadFunc, as the

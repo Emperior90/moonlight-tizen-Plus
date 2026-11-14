@@ -5,7 +5,9 @@
 // input key of a stream, the box art gets the larger answer limit of libgamestream/http.h, and the major version of the
 // host that chooses the hash of the pairing is read up to the first dot of its appversion (utils.js), so that a host
 // of version 10 or later pairs with SHA-256 like one of version 7. The pairing dialog with a wrong PIN is in
-// browser/pairing-dialog.test.js.
+// browser/pairing-dialog.test.js. LoadCert() of wasm/http.cpp, which no native test builds, writes the hex text of the
+// client certificate through wasm/hex_text.hpp (native/hex_text_test.cpp runs it) and frees what it took on its two
+// error paths.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -82,4 +84,25 @@ test('the major version of the host is read up to the first dot, so a host of ve
   assert.doesNotMatch(utils, /appVersion\.substring\(0, 1\)/);
   assert.match(read('libgamestream/pairing.c'), /return serverMajorVersion >= 7 \? 32 : 20;/);
   assert.match(read('wasm/main.cpp'), /gs_pair\(atoi\(serverMajorVersion\.c_str\(\)\)/);
+});
+
+test('LoadCert() writes the hex text of the certificate within its buffer and frees what it took on its error paths', () => {
+  const http = read('wasm/http.cpp');
+  assert.match(http, /#include "hex_text\.hpp"/);
+  // No sprintf() of a char, which is signed and printed eight digits for a byte of 0x80 or more
+  assert.doesNotMatch(http, /sprintf\(/);
+  const load = functionBody(http, 'LoadResult MoonlightInstance::LoadCert(');
+  assert.match(load, /const size_t certLength = strlen\(certStr\);\s+const size_t certHexSize = certLength \* 2 \+ 1;\s+g_CertHex = reinterpret_cast<char\*>\(malloc\(certHexSize\)\);\s+WriteHexText\(certStr, certLength, g_CertHex, certHexSize\);/);
+  // The BIO is freed before each result is looked at, and both error paths free the two copies of the texts
+  assert.match(load, /g_Cert = PEM_read_bio_X509\(bio, NULL, NULL, NULL\);\s+BIO_free_all\(bio\);\s+if \(!g_Cert\) \{\s+free\(_certStr\);\s+free\(_keyStr\);\s+return LoadResult::CertErr;\s+\}/);
+  assert.match(load, /g_PrivateKey = PEM_read_bio_PrivateKey\(bio, NULL, NULL, NULL\);\s+BIO_free_all\(bio\);\s+if \(!g_PrivateKey\) \{\s+free\(_certStr\);\s+free\(_keyStr\);\s+return LoadResult::PrivateKeyErr;\s+\}/);
+  // One BIO_free_all() for each BIO, and the copies are freed before each of the three returns
+  assert.equal(load.split('BIO_new_mem_buf(').length - 1, 2);
+  assert.equal(load.split('BIO_free_all(bio);').length - 1, 2);
+  assert.equal(load.split('return LoadResult::').length - 1, 3);
+  assert.equal(load.split('free(_certStr);').length - 1, 3);
+  assert.equal(load.split('free(_keyStr);').length - 1, 3);
+  // The conversion goes through unsigned char, and the native test runs it
+  assert.match(read('wasm/hex_text.hpp'), /const unsigned char byte = \(unsigned char\)bytes\[i\];/);
+  assert.match(read('tests/native/hex_text_test.cpp'), /#include "hex_text\.hpp"/);
 });
