@@ -56,9 +56,9 @@ RUN sed -i 's|/home/moonlight/tizen-studio-data/keystore/author/Moonlight.pwd||'
 RUN sed -i 's|/home/moonlight/tizen-studio-data/tools/certificate-generator/certificates/distributor/tizen-distributor-signer.pwd|tizenpkcs12passfordsigner|' /home/moonlight/tizen-studio-data/profile/profiles.xml
 
 # Install Samsung Emscripten SDK and configure Java path for closure compiler
-# Like the installer of Tizen Studio, the archive isn't checked against a checksum yet: the build prints its SHA-256
+# The archive is checked against the SHA-256 that docs/BUILD.md states ("What the build checks"): another file stops the build
 RUN aria2c -x 5 -s 5 -o emscripten-1.39.4.7-linux64.zip 'https://developer.samsung.com/smarttv/file/a5013a65-af11-4b59-844f-2d34f14d19a9' && \
-	sha256sum emscripten-1.39.4.7-linux64.zip
+	echo "448c61e0ffdcc013536600eeb2e764abfa4ec49177489a563be27e3d2a5d8f4e  emscripten-1.39.4.7-linux64.zip" | sha256sum -c -
 RUN unzip emscripten-1.39.4.7-linux64.zip
 
 # Replace deprecated OpenSSL download URL in Emscripten SDK ports to prevent build failure caused by invalid upstream path
