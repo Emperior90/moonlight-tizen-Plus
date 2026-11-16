@@ -152,10 +152,10 @@ test('with Web Audio the settings show no audio configuration and no surround au
     await openSettings(app.page);
     // The media player of the TV, the default: both settings, no line
     assert.deepEqual(await audioSettings(app.page), { audioConfig: true, surroundQuality: true, note: null,
-      items: ['selectAudioBackend', 'selectAudio', 'selectSurroundQuality', 'audioSyncBtn', 'playHostAudioBtn'] });
+      items: ['selectAudioBackend', 'selectAudio', 'selectSurroundQuality', 'audioSyncBtn', 'playHostAudioBtn', 'audioQosBtn'] });
     await choose(app.page, 'audioBackendMenu', 'WebAudio');
     assert.deepEqual(await audioSettings(app.page), { audioConfig: false, surroundQuality: false, note: NOTE,
-      items: ['selectAudioBackend', 'selectAudioJitter', 'audioClockSyncBtn', 'playHostAudioBtn'] });
+      items: ['selectAudioBackend', 'selectAudioJitter', 'audioClockSyncBtn', 'playHostAudioBtn', 'audioQosBtn'] });
     // The line belongs to the row of the audio backend, below its help text
     assert.equal(await app.page.evaluate(() => {
       const note = document.getElementById('webAudioStereoNote');
@@ -181,10 +181,10 @@ test('with Web Audio the settings show no audio configuration and no surround au
     // with the stored 7.1
     await choose(app.page, 'audioBackendMenu', 'Disabled');
     assert.deepEqual(await audioSettings(app.page), { audioConfig: false, surroundQuality: false, note: null,
-      items: ['selectAudioBackend', 'playHostAudioBtn'] });
+      items: ['selectAudioBackend', 'playHostAudioBtn', 'audioQosBtn'] });
     await choose(app.page, 'audioBackendMenu', 'EMSS');
     assert.deepEqual(await audioSettings(app.page), { audioConfig: true, surroundQuality: true, note: null,
-      items: ['selectAudioBackend', 'selectAudio', 'selectSurroundQuality', 'audioSyncBtn', 'playHostAudioBtn'] });
+      items: ['selectAudioBackend', 'selectAudio', 'selectSurroundQuality', 'audioSyncBtn', 'playHostAudioBtn', 'audioQosBtn'] });
     assert.equal(await app.page.evaluate(() => $('#selectAudio').data('value')), '71Surround');
     assert.deepEqual(app.errors, []);
   } finally {
@@ -197,7 +197,7 @@ test('an install with Web Audio stored opens with the line, which follows the la
   try {
     await openSettings(app.page);
     assert.deepEqual(await audioSettings(app.page), { audioConfig: false, surroundQuality: false, note: NOTE,
-      items: ['selectAudioBackend', 'selectAudioJitter', 'audioClockSyncBtn', 'playHostAudioBtn'] });
+      items: ['selectAudioBackend', 'selectAudioJitter', 'audioClockSyncBtn', 'playHostAudioBtn', 'audioQosBtn'] });
     await app.page.evaluate((locale) => i18n.setLanguage(locale), 'de-DE');
     await app.page.waitForFunction(() => document.documentElement.getAttribute('lang') === 'de-DE');
     assert.equal((await audioSettings(app.page)).note,
@@ -205,7 +205,7 @@ test('an install with Web Audio stored opens with the line, which follows the la
     // Restore Defaults goes back to the media player of the TV, without the line
     await app.page.evaluate(() => restoreDefaultsSettingsValues());
     assert.deepEqual(await audioSettings(app.page), { audioConfig: true, surroundQuality: false, note: null,
-      items: ['selectAudioBackend', 'selectAudio', 'audioSyncBtn', 'playHostAudioBtn'] });
+      items: ['selectAudioBackend', 'selectAudio', 'audioSyncBtn', 'playHostAudioBtn', 'audioQosBtn'] });
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

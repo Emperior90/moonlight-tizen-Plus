@@ -9,8 +9,8 @@
       "track": "branch",
       "branch": "master",
       "vendored": "v1.19.0 (4bb3134), the base version of Moonlight Plus",
-      "reviewed_through": "ce18df896ff7c8b4aa4962274479acc2e167ab01",
-      "reviewed_on": "2026-11-05",
+      "reviewed_through": "8b3049a9e1731c12a7ab150a1cb01aba449abded",
+      "reviewed_on": "2026-11-16",
       "note": "The app this fork is based on. Its maintainer announced with 1.20.0 that 2026 is the final year of its active development, with a final update and a final announcement perhaps in December, and it still vendors moonlight-common-c 8599b60.",
       "decisions": [
         {
@@ -77,6 +77,22 @@
           "commits": ["045b144", "70c2dd6", "ce18df8"],
           "decision": "skipped",
           "why": "The README, the changelog and the version 1.20.0 of Moonlight Tizen. The README asks forks to credit the original project, its maintainer and its contributors, which the README of Moonlight Plus does."
+        },
+        {
+          "commits": ["973a61b", "6da5b7f", "0ef676b", "087df40", "90b4a04"],
+          "decision": "taken",
+          "in": "1.19.101",
+          "why": "The Stream Menu on Play/Pause (pull request #177, merged on 10 November). Moonlight Plus has had its own Stream Menu since 1.19.101, with the idea and the order of the key presses from this pull request (through the fork moonlight-tizen-ac3), and since 2.1.0 the entry Alt + Enter where the pull request offers F11. Like 087df40 it registers Play and Pause one by one and tells the Pause key of the remote from the Pause key of a keyboard, which still goes to the PC (remote_controller.js). The texts of 0ef676b are those of its entries; Moonlight Plus has its own texts in its five languages."
+        },
+        {
+          "commits": ["a2d0009", "72caff4"],
+          "decision": "skipped",
+          "why": "French, German and Italian texts (pull request #193). Moonlight Plus has its own complete German and French translations, which its tests check against the English texts. The Italian file has 242 of the 661 texts of Moonlight Plus, so about 63 % would be missing, and nobody can review an Italian translation."
+        },
+        {
+          "commits": ["99aada9", "8b3049a"],
+          "decision": "skipped",
+          "why": "A setting that swaps the left and right mouse buttons during a stream (pull request #194, merged on 11 November). Not taken in 2.3.1, which leaves the mouse for a later version; take it with the next work on the mouse and record it as taken then."
         }
       ]
     },
@@ -87,15 +103,33 @@
       "track": "branch",
       "branch": "master",
       "vendored": "8599b60 (2024-06-10, the version of Moonlight Tizen 1.19.0) with the commits taken below and the patches of this fork (moonlight-common-c/)",
-      "reviewed_through": "5d3c0ecca00c1bb3f587acb8060476edcf8e24aa",
-      "reviewed_on": "2026-10-30",
-      "note": "The streaming library, with patches of this fork (stats, reference frame invalidation, a faster rs.c, ML_ERROR_RTSP_DECRYPT_FAILED for an RTSP answer that doesn't decrypt with the key of the start, tests/native/rtsp_decrypt_error_test.c). Port commits one at a time and keep the local patches; never replace the folder.",
+      "reviewed_through": "94c65fd364d17b223f00a8763c9a5d94a66cb8dd",
+      "reviewed_on": "2026-11-16",
+      "note": "The streaming library, with patches of this fork (stats, reference frame invalidation, a faster rs.c, ML_ERROR_RTSP_DECRYPT_FAILED for an RTSP answer that doesn't decrypt with the key of the start, tests/native/rtsp_decrypt_error_test.c; since 2.3.1 a limit of the IDR frame requests while an IDR frame is on its way, src/IdrRequestLimit.h with its use in ControlStream.c and VideoDepacketizer.c, PltWaitForEventTimeout() in Platform.c (declared in PlatformThreads.h), connectionReceivedIdrFrame() (declared in Limelight-internal.h) and the public LiGetIdrFrameRequestStats() in Limelight.h, which the app calls, tests/native/idr_request_limit_test.c; since 2.3.1 also disableAudioQos of STREAM_CONFIGURATION in Limelight.h, which SdpGenerator.c reads to ask the host for the audio of a local stream without QoS while the video keeps it, for the setting Prioritize sound on Wi-Fi, tests/native/sdp_audio_qos_test.c; since 2.3.1 also the termination reason of the host reported before the ENet peer is disconnected, and the termination callback claimed under a PLT_MUTEX, from host-termination.patch of the Nightjar client (GPL-3.0), tests/native/connection_termination_test.c). Port commits one at a time and keep the local patches; never replace the folder.",
       "decisions": [
+        {
+          "commits": ["18922a1", "a84a69a", "dc09c9f", "134eee4", "7bf16de", "2e18599", "ee160c9"],
+          "decision": "taken",
+          "in": "2.3.1",
+          "why": "Ported by hand. An audio packet with only an RTP header, plain or decrypting to nothing, is dropped instead of reaching the decoder with a length of 0, which the app counted as a lost packet and concealed. PltClearEvent() clears the event under its mutex, as the set and the wait do. isInSubnetV6() compares the bits of a prefix from the most significant bit on, so a PC at a unique local IPv6 address (fd00::/8) or a link-local one outside fe80::/16 counts as local for STREAM_CFG_AUTO again (QoS tags, the full bitrate, high quality surround sound), and fe00::/16, fe40::/16 and 7c00::/8 no longer do. The STUN request for the external address takes only a valid answer from the address it asked (recvUdpSocket() hands over the source address), checks the message length and steps over the padding of attributes; an invalid answer no longer ends the wait. SimpleStun.c equals upstream at 94c65fd. tests/native/audio_stream_start_test.c, platform_test.c and stun_test.c run the ports."
+        },
+        {
+          "commits": ["4aa7ea4"],
+          "decision": "taken",
+          "in": "2.3.1",
+          "why": "The audio socket is no longer closed a second time when a thread of the audio stream can not be created. Moonlight Plus made the same fix itself earlier in 2.3.1: only destroyAudioStream() closes the socket."
+        },
+        {
+          "commits": ["bf71226", "348d5d1", "e64327c", "ae6633e", "0b4a44d", "74a61b9"],
+          "decision": "taken",
+          "in": "2.3.1",
+          "why": "Ported by hand. A reassembled frame is limited to 32 MiB and 65,536 fragments, and a packet that continues a frame whose start never came is rejected in the release build too (it was an assert only, which -DNDEBUG leaves out); both drop the frame with a keyframe or RFI request. A frame completed while the decode unit queue is shut down at a stop is freed, and so are an RFI range and an FEC status report queued after the stop. A lock keeps a decoder refresh on the decoder thread (DR_NEED_IDR after a frame the player rejected) out of the frame state of the receive thread, so a keyframe that is arriving answers the refresh instead of being dropped; a frame is submitted with the lock released. PLT_MUTEX stands in for the C11 atomics of upstream, which are untested with the fastcomp Emscripten 1.39 of Samsung: idrFrameProcessed is read and written with the lock of the depacketizer held, hdrEnabled with the new mutex of the HDR metadata. RFI and IDR waits stay mutually exclusive, the consecutive drop count and the RTSP encryption sequence number start again with each stream, and the HDR metadata is written and copied under its mutex. The local counters of the drops of the client (clientRecvDroppedFrames, clientQueueOverflows, clientResetPending) count as before; a queue shut down at a stop counts as no overflow. The module of the TV aborts on a failed allocation (the Emscripten default ABORTING_MALLOC, which the build keeps), so the path of a decode unit that can't be allocated only runs in the native tests. tests/native/video_depacketizer_test.c, control_stream_state_test.c and rtsp_decrypt_error_test.c run the ports."
+        },
         {
           "commits": ["e80a786"],
           "decision": "taken",
           "in": "2.3.0",
-          "why": "ENet disconnects with a short header: the interceptor of the control stream sizes the ENet header by its sentTime flag and the checksum of the host instead of expecting exactly 4 bytes. So the unsequenced disconnect without sentTime that enet_peer_disconnect_now() sends, which Sunshine ends a session with, is held back until the control stream has processed what came before it, such as the termination message with the reason of the end. The peer check of 41cedb8 stays. tests/native/control_stream_disconnect_test.c runs it with the real ENet over the loopback interface. The other commits after 5d3c0ec are not reviewed yet, so reviewed_through stays."
+          "why": "ENet disconnects with a short header: the interceptor of the control stream sizes the ENet header by its sentTime flag and the checksum of the host instead of expecting exactly 4 bytes. So the unsequenced disconnect without sentTime that enet_peer_disconnect_now() sends, which Sunshine ends a session with, is held back until the control stream has processed what came before it, such as the termination message with the reason of the end. The peer check of 41cedb8 stays. tests/native/control_stream_disconnect_test.c runs it with the real ENet over the loopback interface."
         },
         {
           "commits": ["0fa805d", "dff1690", "20c05ed", "342b106", "aeba988", "4a95eb3", "0405384", "448b2c6"],
@@ -123,7 +157,7 @@
         {
           "commits": ["82ee2d6", "a3ebaaf", "e356b2c"],
           "decision": "skipped",
-          "why": "Microsecond timestamps and RTP audio and video statistics: little gain over the FEC and audio loss lines of Moonlight Plus, and presentationTimeUs changes the API for the app (sum in microseconds, divide only for display)."
+          "why": "Microsecond timestamps and RTP audio and video statistics: little gain over the FEC and audio loss lines of Moonlight Plus, and presentationTimeUs changes the API for the app (sum in microseconds, divide only for display). If they are ever ported, take the fix of the audio queue with them: at 94c65fd handleMissingPackets() in RtpAudioQueue.c compares an age in microseconds with AudioPacketDuration * RTPA_DATA_SHARDS, which is in milliseconds, so it waits about 10 ms instead of 30 to 50 ms for late audio shards and gives up FEC blocks too early on Wi-Fi (the Nightjar client multiplies it by 1000)."
         },
         {
           "commits": ["04a2f11", "12e603e", "d3d3e6c"],
@@ -181,7 +215,7 @@
           "why": "Other platforms and compilers: PS Vita, FreeBSD, Xbox (NXDK), 3DS, macOS, Windows, GCC without __has_builtin, and the IPv6 workaround of iOS with its CGN mask. None of them is built for Tizen with Emscripten."
         },
         {
-          "commits": ["1176ca6", "2d984f4", "6250fa2", "6268780", "703a069"],
+          "commits": ["1176ca6", "2d984f4", "6250fa2", "6268780", "703a069", "30b928f"],
           "decision": "skipped",
           "why": "They only move the ENet submodule, which Moonlight Plus vendors as it is. The ENet changes themselves are reviewed in the entry enet."
         },
@@ -194,6 +228,86 @@
           "commits": ["5a26329"],
           "decision": "skipped",
           "why": "Adds a section 7 permission for app store distribution to the license. This fork isn't distributed through an app store; moonlight-common-c/LICENSE.txt keeps the plain GPL-3.0."
+        },
+        {
+          "commits": ["c7dff22"],
+          "decision": "skipped",
+          "why": "Replay detection for the encrypted RTSP and control messages, a sliding window in PltDecryptMessage(). A replay on a home network can do little, as the commit itself says, and the new argument of PltCreateCryptoContext() touches every call of the crypto code, also the local RTSP decrypt patch (ML_ERROR_RTSP_DECRYPT_FAILED)."
+        },
+        {
+          "commits": ["4853e70", "7d61e2d", "f050b13"],
+          "decision": "skipped",
+          "why": "Control messages with a 32-bit length for payloads above 64 KB, no ENet backpressure for them, and a cast for MSVC. Nothing in the library sends them, and Sunshine knows only the 16-bit header type (02a5065, 15 November), so no host takes them yet."
+        },
+        {
+          "commits": ["41d6c1d", "f462147"],
+          "decision": "skipped",
+          "why": "Compiler warnings: 41d6c1d fixes getLocalAddressByUdpConnect(), which this copy does not have (305993b and 07c32c8 are skipped), and f462147 two log lines of connectTcpSocket() inside LC_WINDOWS, which the TV build does not compile."
+        },
+        {
+          "commits": ["b0deb0a", "7fd0f25", "7d884fa", "c3360b7", "edb4e9e", "e44e429"],
+          "decision": "skipped",
+          "why": "C11 atomics for the termination flag, the queue size, the counts of active objects, the thread cancellation, the initialized flag of the input functions and receivedDataFromPeer. stdatomic.h is untested with the fastcomp Emscripten 1.39 of Samsung, so Moonlight Plus keeps PLT_MUTEX where a race mattered: the termination claim of b0deb0a is done with terminationMutex in Connection.c (from host-termination.patch, see the note). The others are flags and counters that another thread only reads or polls (the cancellation of a thread, the initialized flag, receivedDataFromPeer, the size of a queue and the counts of active objects, which upstream keeps for debug builds only); a value seen a moment late does no harm there."
+        },
+        {
+          "commits": ["a0262e7"],
+          "decision": "skipped",
+          "why": "LiGetEstimatedRttInfo() with a try-lock and cached atomics. Since 20c05ed (taken in 2.1.0) it reads the round trip time of ENet without the ENet mutex; the decoder thread and, since 2.3.1, the IDR request thread read it, and a stale value only moves a line of the statistics or the window of the IDR request limit within its bounds. The peer stays valid while they run: both threads are joined before peer is set to NULL."
+        },
+        {
+          "commits": ["08ebedb", "eac4c46"],
+          "decision": "skipped",
+          "why": "08ebedb synchronizes the first call of the timing functions, which the older Platform.c of Moonlight Plus does not have: PltGetMillis() reads CLOCK_MONOTONIC directly. eac4c46 wakes every waiter of a queue or an event instead of one; upstream says the broken case is not reached, and every queue and event of the library has a single waiter."
+        },
+        {
+          "commits": ["541e396"],
+          "decision": "skipped",
+          "why": "The RTP statistics API (LiGetRTPAudioStats(), LiGetRTPVideoStats()) of the skipped series 82ee2d6, a3ebaaf, e356b2c, made race-free with atomics. This copy does not have that API."
+        },
+        {
+          "commits": ["3387805"],
+          "decision": "skipped",
+          "why": "Compares the frame index as 32 bits in RtpVideoQueue.c and an assert of ControlStream.c. The 16-bit compare of this copy gives the same result for any two frames less than 32,768 frames apart, which is always the case there."
+        },
+        {
+          "commits": ["3b6ee9d"],
+          "decision": "skipped",
+          "why": "Removes LiPeekNextVideoFrame(), which the app never calls; removing it brings nothing."
+        },
+        {
+          "commits": ["274ec03", "d5b38a3"],
+          "decision": "skipped",
+          "why": "Follow-ups of the rewrite of the input batching (e59a5f5 and its series, skipped): the constant fields of a controller packet written before it is queued, and the ENet batching flag for mouse and UTF-8 packets. The older batching of this copy builds every packet before it queues it. Take them with that series."
+        },
+        {
+          "commits": ["f0df33c", "a1aa0a1"],
+          "decision": "skipped",
+          "why": "The check of invalid motion types of LiSendControllerMotionEvent(), which the app never calls (no motion sensors), and unsigned types for two arguments of LiSendMultiControllerEvent(), which change nothing for the values the app passes."
+        },
+        {
+          "commits": ["2b45ee9"],
+          "decision": "skipped",
+          "why": "Reserves a whole block of PKCS7 padding for a length that is a multiple of 16. The CBC encryption it fixes is the input of hosts before generation 7 (GeForce Experience); Sunshine and its forks use AES-GCM there. The audio buffer of 1400 bytes rounds to 1408 bytes with both macros."
+        },
+        {
+          "commits": ["2804982", "a879f89"],
+          "decision": "skipped",
+          "why": "PltSleepMs() with nanosleep() for long sleeps, and unsigned sleep durations. The longest sleep of this copy is 1000 ms, which usleep() takes on musl."
+        },
+        {
+          "commits": ["67996ec", "98210be", "e6b1aaf", "cf68e15"],
+          "decision": "skipped",
+          "why": "The clock and headers of Darwin, poll() with a timeout of 0 on the 3DS, and an overflow of PltGetMicroseconds() on Windows. None of them is built for Tizen with Emscripten, and PltGetMillis() of this copy already uses CLOCK_MONOTONIC."
+        },
+        {
+          "commits": ["0d92c94"],
+          "decision": "skipped",
+          "why": "Intra refresh on request (CAPABILITY_INTRA_REFRESH, x-ss-video[0].intraRefresh). Sunshine implements it only for NVENC with H.264 and HEVC, reference frame invalidation already covers the recovery there, and how the video player of the TV handles a picture without keyframes is untested."
+        },
+        {
+          "commits": ["94c65fd"],
+          "decision": "skipped",
+          "why": "The README of upstream only (it no longer names the Chrome client)."
         }
       ]
     },
@@ -204,14 +318,19 @@
       "track": "submodule",
       "pinned_in": { "repo": "moonlight-stream/moonlight-common-c", "path": "enet" },
       "vendored": "bbf7185 (moonlight-common-c/enet)",
-      "reviewed_through": "44c85e16279553d9c052e572bcbfcd745fb74abf",
-      "reviewed_on": "2026-10-30",
-      "note": "Watched through the version that upstream moonlight-common-c pins. The updates after 44c85e1 (moonlight-common-c 1176ca6 to 703a069: FreeBSD, PS Vita, Wii U, 3DS, Xbox, and a source address only for sockets bound to any address) are not reviewed yet.",
+      "reviewed_through": "98dbb897ac4a7208038e0782cddedf89dcf0723a",
+      "reviewed_on": "2026-11-16",
+      "note": "Watched through the version that upstream moonlight-common-c pins (98dbb89 at its 94c65fd).",
       "decisions": [
         {
           "range": "bbf71856bb144729af4ed08af6bc2f5826a96db5..44c85e16279553d9c052e572bcbfcd745fb74abf",
           "decision": "skipped",
           "why": "The wakeup and ping interval logic of enet_host_service() (moonlight-common-c 04a2f11 and 12e603e): fewer late pings, little benefit. Take it together with moonlight-common-c d3d3e6c."
+        },
+        {
+          "range": "44c85e16279553d9c052e572bcbfcd745fb74abf..98dbb897ac4a7208038e0782cddedf89dcf0723a",
+          "decision": "skipped",
+          "why": "Platforms only (moonlight-common-c 1176ca6 to 703a069 and 30b928f): PS Vita, FreeBSD, the Windows headers in lower case, NXDK (Xbox) and the 3DS, and the local source address of a packet passed only by a host bound to any address (78cc9b4), which matters for a server with several addresses, not for the socket of the client. None of them changes the build for Tizen."
         }
       ]
     },
@@ -247,37 +366,53 @@
     {
       "id": "sunshine",
       "name": "Sunshine releases",
-      "repo": "LizardByte/Sunshine",
+      "repo": "SunshineStream/Sunshine",
       "track": "releases",
       "vendored": "nothing (the host); the app uses its features",
-      "reviewed_through": "v2026.1028.122642",
-      "reviewed_on": "2026-10-30",
-      "note": "New host features that the app could ask for or explain.",
+      "reviewed_through": "v2026.914.233613",
+      "reviewed_on": "2026-11-16",
+      "note": "New host features that the app could ask for or explain. The repository moved from LizardByte/Sunshine (which redirects) to SunshineStream/Sunshine, and it deletes the tags of its pre-releases: v2026.1028.122642, reviewed through until 2.3.0, and v2026.1115.54751 and v2026.1115.163045 of 15 November were gone on 16 November. So reviewed_through stays at a stable release (v2026.914.233613, the release marked Latest on 16 November), and a pre-release that was read gets a decision by its tag; a release whose tag was deleted simply no longer comes up. Move reviewed_through only to a stable release. Sunshine publishes a stable release by turning a pre-release into a full release under the same tag, so a newer full release is reported even when its tag has a decision (check-upstream-dependencies.js); then move reviewed_through to it and update the guide lines that say a feature is only in a pre-release.",
       "decisions": [
         {
           "tags": ["v2026.516.143833"],
           "decision": "taken",
           "in": "2.0.0",
-          "why": "Continuous audio during silence (fbcf2116, first in this release): the setting Continuous audio from the host asks for it."
+          "why": "Continuous audio during silence (fbcf2116, first in this release). The app asks for it at every start (continuousAudio=1); the setting Continuous audio from the host of 2.0.0 and 2.1.0 is gone since 2.2.0."
+        },
+        {
+          "tags": ["v2026.1115.211404"],
+          "decision": "taken",
+          "in": "2.3.1",
+          "why": "Pre-release of 15 November; its tag may be deleted later like the earlier ones. First release with the separate audio and video receive endpoints (#6021), the 7.1 mapping rotated up to the channel count (#6019), fec_percentage 0 turning error correction off (#5454), the option dscp_tagging (#6067), max_stream_resolution (#5512), the pairing fixes #5737 and #5915, the 10-bit probe that has to succeed (#5690) and fp16_sdr_gamma_encoded (#5106), checked with git tag --contains. The guide of 2.3.1 names each of them where it matters for the TV. The app needs no change for them: its 7.1 correction touches only the wrong order of the older hosts, and Prioritize sound on Wi-Fi does for the sound on every host what dscp_tagging = disabled does on this one."
+        },
+        {
+          "tags": ["v2026.1116.25010"],
+          "decision": "skipped",
+          "why": "Pre-release of 16 November. Over v2026.1115.211404 it only adds MiniUPnPc 2.3.4 to the Flatpak (#6111) and a seat suffix for the virtual input devices on Linux (#6109); nothing for a client."
         }
       ]
     },
     {
       "id": "sunshine-pr-5917",
       "name": "Sunshine pull request #5917 (Dolby AC-3 and E-AC-3 audio)",
-      "repo": "LizardByte/Sunshine",
+      "repo": "SunshineStream/Sunshine",
       "track": "pull",
       "pull": 5917,
       "vendored": "nothing",
-      "reviewed_through": "bf9ce40affd94b274f4150d2630954c12aea79fd",
+      "reviewed_through": "31044d8af7f8fdb0795c6bc2e460eed8ccb07782",
       "reviewed_state": "open",
-      "reviewed_on": "2026-10-30",
+      "reviewed_on": "2026-11-16",
       "note": "The host side of Dolby passthrough to a soundbar. Vibeshine ships AC-3 and E-AC-3 in its stable releases since 2.0.2, with the same negotiation as fidoboy's fork; Moonlight Plus still waits for a check on a TV before it offers Dolby.",
       "decisions": [
         {
           "commits": ["bf9ce40"],
           "decision": "skipped",
           "why": "Dolby passthrough waits for the surround check on a TV (guide, section 11) and for this pull request to be merged, or for Vibeshine to ship it in a stable release, since the protocol can still change."
+        },
+        {
+          "commits": ["31044d8"],
+          "decision": "skipped",
+          "why": "Only merges master into the branch of the pull request (8 November); its AC-3 and E-AC-3 changes are still those of bf9ce40. GitHub still had a merge ref for the pull request on 16 November, so it was open."
         }
       ]
     }

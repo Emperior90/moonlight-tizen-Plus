@@ -66,10 +66,10 @@ test('the report of the session carries what the host offered, and the hint asks
   assert.match(cleanup, /report\.hostRfi = LiHostSupportsReferenceFrameInvalidation\(\);\s+const std::string reportMessage = FormatSessionReportMessage\(report\);/);
   const report = read('wasm/session_report.hpp');
   assert.match(report, /bool hostRfi = false;/);
-  assert.match(report, /\\"audioOverloadedWindows\\":%u,\\"hostRfi\\":%u\}",/);
-  assert.match(report, /report\.audioOverloadedWindows, report\.hostRfi \? 1u : 0u\);/);
+  assert.match(report, /\\"audioDriftMsPerHour\\":%s,\\"hostRfi\\":%u\}",/);
+  assert.match(report, /report\.audioLeadMaxMs, drift,\s+report\.hostRfi \? 1u : 0u\);/);
   // The message is built in a buffer with room to spare, and one that doesn't fit is still not sent
-  assert.match(report, /constexpr size_t kSessionReportMessageSize = 1024;/);
+  assert.match(report, /constexpr size_t kSessionReportMessageSize = 1280;/);
   assert.match(report, /char json\[kSessionReportMessageSize\];/);
   assert.match(report, /return length > 0 && length < static_cast<int>\(sizeof\(json\)\) \? std::string\(json\) : std::string\(\);/);
   const diagnostics = read('wasm/platform/diagnostics.js');

@@ -211,9 +211,11 @@ static void test_log_leaves_out_the_query(void) {
   // The whole URL still reaches curl
   CHECK(strcmp(transfer.url, launch) == 0);
 
-  output = logged_request("http://10.0.0.2:47989/pair?uniqueid=0123456789ABCDEF&devicename=roth&updateState=1&clientchallenge=0f0e");
+  // A pairing request as gs_pair() sends it, with the device name that the app passes (native/pairing_test.c)
+  output = logged_request("http://10.0.0.2:47989/pair?uniqueid=0123456789ABCDEF&devicename=Moonlight%20Plus%20%28QE55S90CAT%29&updateState=1&clientchallenge=0f0e");
   CHECK(strstr(output, "CURL: http://10.0.0.2:47989/pair?... ") != NULL);
   CHECK(strstr(output, "clientchallenge") == NULL);
+  CHECK(strstr(output, "devicename") == NULL);
 
   output = logged_request("http://10.0.0.2:47989/serverinfo");
   CHECK(strstr(output, "CURL: http://10.0.0.2:47989/serverinfo (PPK") != NULL);

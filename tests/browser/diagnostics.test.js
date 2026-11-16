@@ -5,8 +5,10 @@
 // merged, the input keys, the unique ID of the install (also in the lines about a host), the RTSP address, the public IP
 // address and the MAC address of a host hidden (its name and local address shown),
 // scrolled with UP and DOWN and closed with RETURN; a new session of the log for each stream, not for its start once
-// more; the report of the last session in System information, also in German, and System information that fits the
-// screen and scrolls with UP and DOWN in every language; and the heartbeat of a stream: the notice at the next start
+// more; the report of the last session in System information, also in German, with the line of the sound that ran ahead
+// of the clock of the TV and its hint (in French, none with 'Limit audio delay'), and System information that fits the
+// screen and scrolls with UP and DOWN in every language, and whose lines and hints don't run out of the box sideways,
+// also with 10 % wider text; and the heartbeat of a stream: the notice at the next start
 // that the app ended during a stream, shown once, no notice after a stream that ended normally, and none after a start
 // that the host refused or that failed.
 
@@ -15,6 +17,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { startHarness, openApp, reloadApp } = require('./harness');
+const { forEachTextWidth } = require('./text-stress');
 
 let harness;
 before(async () => {
@@ -222,6 +225,7 @@ test('a stream starts a session of the log, keeps its report, and its heartbeat 
       'Durchschnittliche Empfangszeit pro Frame: 11,10 ms (67 % der Zeit zwischen zwei Frames), höchster Sekundenwert: 13,85 ms (83 %)',
       'Bildrate des PCs (beste 30 s): 59,84 FPS, mittlere Verarbeitungslatenz des PCs: 8,4 ms',
       'Bildrate des PCs (schwächste 30 s): 50,90 FPS, unter 57 FPS in 12 von 39 halben Minuten',
+      'Vorsprung des empfangenen Tons vor der Uhr des TVs: 24 ms nach der ersten Minute, 25 ms am Ende, höchstens 27 ms; Drift +1 ms pro Stunde',
       'WASM-Heap am Ende: 62 von 128 MB (+1 MB in dieser Sitzung)',
       'Tipp: Der PC hat oft weniger Frames gesendet, als der Stream verlangt: in 12 von 39 halben Minuten weniger als 57 pro Sekunde, ' +
         'in der schwächsten 50,9. Das ist normal bei einem Spiel oder Video, das auf weniger Frames begrenzt ist, oder wenn der ' +
@@ -302,6 +306,9 @@ const fixtureReport = (name) => fs.readFileSync(path.join(__dirname, '..', 'fixt
 const THREE_HINTS_REPORT = fixtureReport('everything');
 // The message of a stream whose PC delivered fewer frames than the stream asked for (the row 'host-frames')
 const HOST_FRAMES_REPORT = fixtureReport('host-frames');
+// The message of a stream of 75 minutes whose sound ran 53 ms per hour ahead of the clock of the TV (the row
+// 'audio-drift')
+const AUDIO_DRIFT_REPORT = fixtureReport('audio-drift');
 // Four controllers with long names
 const FOUR_PADS = ['Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)',
   'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)',
@@ -341,11 +348,11 @@ test('System information with four controllers and a report with three hints fit
       });
       const first = await box();
       assert.equal(first.focus, 'systemInfoBtn', locale);
-      // Four controllers, an empty line, eight lines of the report (with the frame receive time and the two lines of
-      // the host) and three hints
+      // Four controllers, an empty line, nine lines of the report (with the frame receive time, the two lines of the
+      // host and the line of the sound) and three hints
       const info = await app.page.evaluate(() => document.getElementById('systemInfoBtn').innerHTML.split(/<br\s*\/?>/));
       assert.equal(info.filter((line) => /: 8BitDo Ultimate 2C|: Pro Controller|: DualSense|: Xbox Wireless/.test(line)).length, 4, locale);
-      assert.equal(info.length - info.indexOf('') - 1, 11, locale + ': ' + info.join('\n'));
+      assert.equal(info.length - info.indexOf('') - 1, 12, locale + ': ' + info.join('\n'));
       // The whole box is on the screen, below the top of the pane
       assert.ok(first.top >= first.paneTop && first.bottom <= first.screen, locale + ': ' + JSON.stringify(first));
       if (first.maxScroll <= 0) {
@@ -395,6 +402,76 @@ test('System information with four controllers and a report with three hints fit
   }
   for (const locale of ['de_DE', 'es_ES', 'fr_FR', 'pt_BR']) {
     assert.ok(scrolled.includes(locale), locale + ': the lines are taller than the box');
+  }
+});
+
+test('System information with the line and the hint of the sound that ran ahead, or three hints, fits sideways in every language, also with 10 % wider text', async () => {
+  for (const locale of ['en_US', 'de_DE', 'es_ES', 'fr_FR', 'pt_BR']) {
+    for (const [name, report] of [['audio-drift', AUDIO_DRIFT_REPORT], ['everything', THREE_HINTS_REPORT]]) {
+      const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi', locale } });
+      try {
+        await app.page.evaluate((message) => {
+          handleMessage(message);
+          $('#settingsBtn').trigger('click');
+        }, report);
+        await app.page.waitForFunction(() => $('#settings-list').is(':visible') && !$('#wasmSpinner').is(':visible'));
+        await app.page.evaluate(() => {
+          handleSettingsView('aboutSettings');
+          loadSystemInfo();
+        });
+        await app.page.waitForTimeout(400);
+        await forEachTextWidth(app.page, async (stress) => {
+          const box = await app.page.evaluate(() => {
+            const info = document.getElementById('systemInfoBtn');
+            const rect = info.getBoundingClientRect();
+            return {
+              scrollWidth: info.scrollWidth, clientWidth: info.clientWidth, right: rect.right, bottom: rect.bottom,
+              screenWidth: window.innerWidth, screenHeight: window.innerHeight, lines: info.innerHTML.split(/<br\s*\/?>/).length,
+              sound: / 53 /.test(info.textContent.replace(/\u00a0/g, ' ')),
+            };
+          });
+          const where = locale + ' ' + name + stress + ': ' + JSON.stringify(box);
+          // The line and the hint of the sound are there, no line runs out of the box sideways (it wraps), and the box
+          // stays on the screen
+          assert.ok(name !== 'audio-drift' || box.sound, where);
+          assert.ok(box.scrollWidth <= box.clientWidth + 1, where);
+          assert.ok(box.right <= box.screenWidth && box.bottom <= box.screenHeight, where);
+        });
+        assert.deepEqual(app.errors, [], locale + ' ' + name);
+      } finally {
+        await app.context.close();
+      }
+    }
+  }
+});
+
+test('the sound that ran ahead of the TV clock shows its line and its hint in System information, and no hint with Limit audio delay', async () => {
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi', locale: 'fr_FR' } });
+  try {
+    const show = () => app.page.evaluate((message) => {
+      handleMessage(message);
+      loadSystemInfo();
+      return document.getElementById('systemInfoBtn').innerHTML.replace(/&nbsp;/g, '\u00a0').split(/<br\s*\/?>/);
+    }, AUDIO_DRIFT_REPORT);
+    const sound = 'Son reçu en avance sur l’horloge du téléviseur\u00a0: 25 ms après la première minute, 92 ms à la fin, au plus 95 ms\u00a0; ' +
+      'dérive de +53 ms par heure';
+    const hint = 'Conseil\u00a0: Le PC a envoyé 53 ms de son de plus par heure que ce qu’a compté l’horloge du téléviseur, si bien ' +
+      'que lors de longues sessions le son peut prendre de plus en plus de retard sur l’image\u00a0: activez Limiter le délai audio dans les ' +
+      'Paramètres audio.';
+    const off = await show();
+    assert.ok(off.indexOf(sound) > 0, off.join('\n'));
+    assert.equal(off[off.length - 1], hint, off.join('\n'));
+    assert.equal(off.indexOf(sound) + 2, off.length - 1, 'the line of the sound comes before the heap, the hint last');
+    assert.ok(app.logs.some((line) => line.indexOf('Hints of the session report: audioDrift') >= 0), 'the hint is logged');
+    // With Limit audio delay on, which kept the delay at 100 ms, the line stays and the hint goes
+    await app.page.evaluate(() => document.getElementById('audioSyncSwitch').parentElement.MaterialSwitch.on());
+    const on = await show();
+    assert.ok(on.indexOf(sound) > 0, on.join('\n'));
+    assert.equal(on.filter((line) => line.indexOf('Conseil') === 0).length, 1);
+    assert.ok(/Aucun problème|aucun problème/.test(on[on.length - 1]), on[on.length - 1]);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
   }
 });
 

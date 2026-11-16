@@ -41,6 +41,10 @@
 // - the wait after an abandoned start (the 11 seconds, the countdown and the starts that the app remembers), the start
 //   once more and the message after a start that the PC dropped, and the log line of a restart of the encoder of the PC,
 //   whose keyframe the statistics leave out
+// - the fork package of 2.3.1: a stored PC that is unknown until its first poll answers, the device name of a pairing,
+//   Prioritize sound on Wi-Fi, continuous audio without a switch, the drift of the sound with its hint, the limit of the
+//   requests for a keyframe, the 7.1 correction that leaves a fixed host alone, the Sunshine versions that accept FEC 0,
+//   HDR10+ that never reaches the TV in HEVC, and the new name of the Sunshine repository
 // The release notes of a release (docs/RELEASE_NOTES.md) only give the essentials, so the statements that they
 // carried until 1.19.100 are checked in the guide and the patch notes (docs/PATCH_NOTES.md), where they are now.
 
@@ -203,6 +207,10 @@ test('the documents describe the controller type of System information and the S
   assert.ok(Object.prototype.hasOwnProperty.call(locale, '%1$s (setting, detected: %2$s)'));
   assert.ok(Object.prototype.hasOwnProperty.call(locale, 'Controller %1$s: %2$s (%3$s, %4$s buttons, %5$s axes, rumble: %6$s, type: %7$s)'));
   assert.ok(tableRow('Controller N')[1].indexOf('*PlayStation (setting, detected: Xbox)*') >= 0);
+  // The README lists the Nightjar client among the projects that Moonlight Plus took code from, as the source comments
+  // and the list of local changes of moonlight-common-c do
+  assert.match(read('README.md'), /from `host-termination\.patch` of the Nightjar client \(GPL-3\.0\)\. The source files and the notices name what comes from where\./);
+  assert.match(read('moonlight-common-c/src/ControlStream.c'), /from host-termination\.patch of Nightjar/);
   const controllers = read('docs/CONTROLLERS.md');
   assert.match(controllers, /System information shows the type sent to the PC for each controller\. When the setting overrides the detection, it names the detected type as well/);
   assert.doesNotMatch(controllers, /System information shows the type that Auto detects/);
@@ -400,6 +408,10 @@ test('the guide gives the tested bitrate steps of the S90C itself, and no docume
 });
 
 test('the controller page names the menu buttons that the navigation guide leaves out', () => {
+  // The README lists the Nightjar client among the projects that Moonlight Plus took code from, as the source comments
+  // and the list of local changes of moonlight-common-c do
+  assert.match(read('README.md'), /from `host-termination\.patch` of the Nightjar client \(GPL-3\.0\)\. The source files and the notices name what comes from where\./);
+  assert.match(read('moonlight-common-c/src/ControlStream.c'), /from host-termination\.patch of Nightjar/);
   const controllers = read('docs/CONTROLLERS.md');
   const start = controllers.indexOf('\n## Buttons in the menus\n');
   const section = controllers.slice(start, controllers.indexOf('\n## ', start + 1));
@@ -473,9 +485,17 @@ test('the guide gives the share of the bitrate that Sunshine leaves to the encod
   assert.match(fec, /at least 2 parity packets in every block of a frame, so 2 lost packets in a block are always repaired/);
   assert.match(fec, /20 → 10 → 5 \(not 0, see \[Host settings\]/);
   // The stable Sunshine and its forks accept fec_percentage 1 to 255 (int_between_f in src/config.cpp keeps the default
-  // for any other value); only the Sunshine pre-releases from v2026.1103 on accept 0, which turns FEC off
+  // for any other value); 0 turns FEC off from the Sunshine pre-release v2026.1115.211404 (#5454, 82b22c7) on, and from
+  // the nightlies Vibepollo 2.14.11 and Vibeshine 2.14.0 on (git tag --contains). No v2026.1103 release exists. The
+  // pre-release reads it with {0, 100}, the nightlies with {0, 255} (src/config.cpp of each tag).
   const host = guideSection('## Host settings (Sunshine)');
-  assert.match(host, /accept 1 to 255 and ignore any other value without a warning, so 0 leaves it at 20\. Only the Sunshine pre-releases from v2026\.1103 on accept 0, which turns error correction off/);
+  assert.match(host, /The stable releases of Sunshine \(v2026\.914\.233613\), Apollo \(v0\.4\.8\), Vibepollo and Vibeshine \(2\.0\.6\) accept 1 to 255 and ignore any other value without a warning, so 0 leaves it at 20\. Only the Sunshine pre-release v2026\.1115\.211404 and newer \(#5454, which accepts 0 to 100 and ignores a value above 100\), the Vibepollo nightly 2\.14\.11 and newer and the Vibeshine nightly 2\.14\.0 and newer \(0 to 255\) accept 0, which turns error correction off/);
+  assert.doesNotMatch(GUIDE, /v2026\.1103/);
+  // The pacing ceiling of Vibepollo and Vibeshine starts from the encoder bitrate, which already has the error
+  // correction taken out of the bitrate of the app (src/rtsp.cpp and pacing_reservation_for_config() in src/stream.cpp
+  // of Vibepollo 2.0.6), so the guide doesn't add the FEC on top of the bitrate a second time
+  assert.match(GUIDE, /set it well above the bitrate of the app plus about 10 %: the error correction comes out of that bitrate/);
+  assert.doesNotMatch(GUIDE, /× \(1 \+ `fec_percentage` \/ 100\)/);
   // max_bitrate is only read by the avcodec encoders; the NVENC encoder of Sunshine on Windows takes the client bitrate
   assert.match(host, /caps the bitrate of the encoder \(after error correction and audio\) with AMD, Intel and software encoding and on Linux; Sunshine's NVENC encoder on Windows ignores it/);
   assert.match(fec, /as long as \*Session frames dropped by network\* stays at 0 and \*Worst FEC block\* doesn't often come close to its limit/);
@@ -598,7 +618,14 @@ test('the guide describes the latency modes and the Game Mode of the two files a
   assert.match(picture, /\*\*Game HDR:\*\* \*Basic\* \(HGiG\)\. The TV then doesn't tone-map HDR itself/);
   // Foundation Sunshine sends HDR10+ to a client that reports no dynamic HDR capabilities, as this app; the other hosts
   // of the Sunshine family send none
-  assert.match(picture, /\*\*HDR10\+ Gaming:\*\* off\. It is a feature for HDMI sources\. LizardByte Sunshine, Apollo and Vibepollo send no HDR10\+ metadata; Foundation Sunshine sends HDR10\+ dynamic metadata/);
+  assert.match(picture, /\*\*HDR10\+ Gaming:\*\* off\. It is a feature for HDMI sources\. Sunshine, Apollo and Vibepollo send no HDR10\+ metadata; Foundation Sunshine sends HDR10\+ dynamic metadata/);
+  // HDR10+ travels in SEI messages, which moonlight-common-c strips from the start of every H.264 and HEVC frame and from
+  // the parameter sets of a keyframe, so in HEVC it never reaches the player; an AV1 frame goes through unparsed
+  const depacketizer = read('moonlight-common-c/src/VideoDepacketizer.c');
+  assert.match(depacketizer, /while \(isAccessUnitDelimiter\(currentPos\) \|\| isSeiNal\(currentPos\)\) \{\s+skipToNextNal\(currentPos\);/);
+  assert.match(depacketizer, /while \(isSeiNal\(&currentPos\)\) \{\s+skipToNextNal\(&currentPos\);/);
+  assert.match(read('wasm/wasmplayer.cpp'), /An AV1 frame comes as one temporal unit that moonlight-common-c doesn't parse/);
+  assert.match(picture, /In HEVC it never reaches the TV: HDR10\+ travels in SEI messages in front of the picture data of a frame, and the streaming library of the app drops every such message\. In AV1 the app doesn't parse the frames, so the metadata reaches the video player of the TV; whether the player uses it is untested\./);
   assert.doesNotMatch(GUIDE, /Neither Sunshine nor the app sends HDR10\+ metadata/);
   assert.match(picture, /\*\*Dynamic Black Equalizer:\*\* 0\./);
   assert.match(picture, /Some features of the TV belong to its HDMI inputs and do nothing for the stream of an app: VRR and FreeSync, ALLM/);
@@ -676,6 +703,10 @@ test('the guide describes the wait after an abandoned start, the held start mess
   assert.equal(GUIDE.indexOf('Nothing on the TV causes it'), -1);
   // A new controller type takes effect once Sunshine creates a new virtual controller, which the guide and
   // CONTROLLERS.md list the same ways (input.cpp and process.cpp of Sunshine 2026.914)
+  // The README lists the Nightjar client among the projects that Moonlight Plus took code from, as the source comments
+  // and the list of local changes of moonlight-common-c do
+  assert.match(read('README.md'), /from `host-termination\.patch` of the Nightjar client \(GPL-3\.0\)\. The source files and the notices name what comes from where\./);
+  assert.match(read('moonlight-common-c/src/ControlStream.c'), /from host-termination\.patch of Nightjar/);
   const controllers = read('docs/CONTROLLERS.md');
   ['the game that the app started was closed on the PC', 'a restart of Sunshine', 'the controller disconnects during a stream']
     .forEach((way) => {
@@ -782,4 +813,83 @@ test('the guide describes the Last session report, the diagnostic log and the me
   assert.ok(troubleshooting.indexOf('*The PC can\'t encode the selected codec, so it sent H.264, which the TV rejected at …*') > 0);
   assert.match(read('wasm/auddec.cpp'), /Creating the Opus decoder failed with error %d \(%s\), so the audio stream can't start/);
   assert.ok(troubleshooting.indexOf('*Creating the Opus decoder failed* before "audio stream establishment failed"') > 0);
+});
+
+test('the guide describes the changes of the fork package of 2.3.1 as the code makes them', () => {
+  const index = read('wasm/platform/index.js');
+  const utils = read('wasm/static/js/utils.js');
+  // A stored PC is unknown until its first poll answers, OK waits for it, and its details say Unknown
+  // (loadHTTPCertsCb(), hostChosen(), hostDetailsDialog() in index.js)
+  assert.match(index, /revivedHost\.online = null;\s+revivedHost\.currentGame = 0;/);
+  assert.match(index, /'Waiting for the first answer of ' \+ host\.hostname \+ ' before opening it\.'/);
+  assert.match(index, /host\.online === true \? t\('ONLINE'\) : \(host\.online === false \? t\('OFFLINE'\) : t\('Unknown'\)\)/);
+  assert.match(GUIDE, /Right after the app starts, a PC that the app knows shows no state until its first check answers/);
+  assert.match(GUIDE, /Meanwhile its menu offers \*Wake PC\* and its details say \*State: Unknown\*\./);
+  // The device name of a pairing: Moonlight Plus (model of the TV), roth for GeForce Experience; Apollo and Vibepollo
+  // store it with brackets, and a TV paired earlier keeps its name there
+  assert.match(utils, /var PAIRING_DEVICE_NAME_PREFIX = 'Moonlight Plus \(';/);
+  assert.match(utils, /var PAIRING_DEVICE_NAME_DEFAULT = 'roth';/);
+  assert.match(utils, /if \(isNvidiaServerSoftware \|\| typeof model !== 'string'\) \{\s+return PAIRING_DEVICE_NAME_DEFAULT;/);
+  assert.match(GUIDE, /Sunshine lists the waiting request as \*Moonlight Plus \(model of the TV\)\*, e\.g\. \*Moonlight Plus \(QE55S90CAT\)\*/);
+  assert.match(guideSection('### Apollo and Vibepollo'), /shows there as \*Moonlight Plus \[model of the TV\]\*, e\.g\. \*Moonlight Plus \[QE55S90CAT\]\* \(Apollo and Vibepollo turn the parentheses of the name into brackets\)/);
+  assert.match(read('README.md'), /When pairing, the app tells the PC the model name of the TV as System information shows it/);
+  // Prioritize sound on Wi-Fi: on by default and after Restore Defaults, only the audio of a local stream loses its QoS
+  const audio = guideSection('## Audio');
+  assert.match(read('wasm/index.html'), /<label data-i18n="Prioritize sound on Wi-Fi">Prioritize sound on Wi-Fi<\/label>/);
+  assert.match(index, /const defaultAudioQos = true;/);
+  assert.match(index, /if \(previousValue\.audioQos == null\) \{[^}]{0,400}?#audioQosBtn.\)\.MaterialSwitch\.on\(\);/);
+  assert.match(read('moonlight-common-c/src/SdpGenerator.c'), /"x-nv-aqos\.qosTrafficType", StreamConfig\.disableAudioQos \? "0" : "4"\);/);
+  assert.match(audio, /\*\*Prioritize sound on Wi-Fi\*\* \(Settings → Audio Settings, on by default, since 2\.3\.1\)/);
+  assert.match(audio, /the PC then sends the sound without priority, and the picture keeps it/);
+  assert.ok(index.indexOf("'\\n Prioritize sound on Wi-Fi (audio QoS on the local network): ' + audioQos") > 0);
+  assert.ok(audio.indexOf('*Prioritize sound on Wi-Fi (audio QoS on the local network): 0*') > 0);
+  // The app always asks for continuous audio, without a switch
+  assert.match(index, /const continuousAudio = 1;/);
+  assert.doesNotMatch(read('wasm/index.html'), /continuousAudio/i);
+  assert.match(audio, /Sunshine does it from v2026\.516\.143833 on, Vibeshine from 1\.14\.7 and Vibepollo from 2\.0\.2; older versions and other host software ignore the request\./);
+  assert.match(audio, /and there is no switch for it any more\./);
+  // The drift of the sound: at least 10 minutes of sound after the first minute, a hint from 50 ms per hour
+  const lead = read('wasm/audio_lead.hpp');
+  assert.match(lead, /constexpr double kAudioLeadSettleSeconds = 60\.0;/);
+  assert.match(lead, /constexpr double kAudioDriftMinSeconds = 600\.0;/);
+  assert.match(read('wasm/platform/diagnostics.js'), /const AUDIO_DRIFT_HINT_MS_PER_HOUR = 50;/);
+  assert.ok(JSON.parse(read('wasm/static/locales/en-US.json'))['Sound received ahead of the TV clock: %1$s ms after the first minute, %2$s ms at the end, at most %3$s ms; drift %4$s ms per hour']);
+  assert.match(audio, /After at least 10 minutes of sound, the \[report of the last session\]\(#system-information-and-diagnostic-log\) has a line such as \*Sound received ahead of the TV clock: 25 ms after the first minute, 92 ms at the end, at most 95 ms; drift \+53 ms per hour\*\./);
+  assert.match(audio, /From \+50 ms per hour on, while \*Limit audio delay\* is off, the report suggests turning it on/);
+  assert.match(tableRow('Last session')[1], /A drift of the sound of 50 ms per hour or more gets a hint to turn on \*Limit audio delay\*, while it is off\./);
+  assert.match(lead, /"Audio lead of the stream \(sound received ahead of the TV clock, %u s "/);
+  assert.ok(guideSection('### Diagnostic log').indexOf('*Audio lead of the stream (sound received ahead of the TV clock, 10 s averages): …*') > 0);
+  // The requests for a keyframe: held for 50 to 250 ms while one is on its way, counted at the end of the stream
+  const limit = read('moonlight-common-c/src/IdrRequestLimit.h');
+  assert.match(limit, /#define IDR_LIMIT_MIN_WINDOW_MS 50\n#define IDR_LIMIT_MAX_WINDOW_MS 250\n/);
+  assert.match(read('wasm/wasmplayer.cpp'), /"IDR frame requests of the stream: %u sent, %u held while an IDR frame was on its way\\n"/);
+  assert.match(guideSection('## Troubleshooting'), /further requests wait until it arrives, for at most twice the round trip time plus two frame times \(50 to 250 ms\)/);
+  // or a quarter longer than the last keyframe took, within the same bound, and the end line names the slowest one
+  assert.match(limit, /uint32_t answeredMs = limit->answerMs \+ limit->answerMs \/ 4;/);
+  assert.match(guideSection('## Troubleshooting'), /or a quarter longer than the last keyframe took to arrive if that was longer \(a large keyframe over Wi-Fi; still at most 250 ms\)/);
+  assert.match(read('wasm/wasmplayer.cpp'), /"IDR frame came %u ms after its request\\n"/);
+  assert.ok(guideSection('## Troubleshooting').indexOf('(*the slowest IDR frame came … ms after its request*)') > 0);
+  assert.ok(guideSection('### Diagnostic log').indexOf('*IDR frame requests of the stream: 3 sent, 17 held while an IDR frame was on its way*') > 0);
+  // The lines of the frame bounds and the start check that the ports of 2.3.1 added to the depacketizer
+  const depacketizer = read('moonlight-common-c/src/VideoDepacketizer.c');
+  ['Limelog("Depacketizer detected invalid frame start: %u\\n"', 'Limelog("Depacketizer rejected oversized or unallocatable frame: %u\\n"']
+    .forEach((line) => assert.ok(depacketizer.indexOf(line) > 0, line));
+  assert.match(depacketizer, /#define MAX_VIDEO_REASSEMBLED_FRAME_SIZE \(32 \* 1024 \* 1024\)/);
+  assert.ok(guideSection('## Troubleshooting').indexOf('*Depacketizer detected invalid frame start* and *Depacketizer rejected oversized or unallocatable frame* (since 2.3.1) mark a frame that arrived broken or far too large (over 32 MiB)') > 0);
+  // The 7.1 correction touches only the wrong order of the older hosts, so a fixed host plays as it is
+  assert.match(read('wasm/opus_layout.hpp'), /static const unsigned char kMisrotatedMapping\[8\] = \{ 0, 1, 2, 7, 4, 5, 3, 6 \};/);
+  assert.match(guideSection('### Surround audio quality'), /Sunshine fixed it in its pre-release v2026\.1115\.211404 \(#6019\); Apollo v0\.4\.8, Vibepollo up to its nightly 2\.17\.3 and Vibeshine up to its nightly 2\.14\.5 still announce it wrongly\. The app now corrects exactly this wrong order and leaves the right order of a fixed host as it is/);
+  assert.doesNotMatch(GUIDE, /Sunshine fixed it in November 2026/);
+  // The Sunshine repository moved; the documents link its new name
+  for (const [file, text] of [['README.md', read('README.md')], ['docs/GUIDE.md', GUIDE]]) {
+    assert.doesNotMatch(text, /github\.com\/LizardByte\/Sunshine/, file);
+    assert.match(text, /\(https:\/\/github\.com\/SunshineStream\/Sunshine\)/, file);
+  }
+  // The README lists the Nightjar client among the projects that Moonlight Plus took code from, as the source comments
+  // and the list of local changes of moonlight-common-c do
+  assert.match(read('README.md'), /from `host-termination\.patch` of the Nightjar client \(GPL-3\.0\)\. The source files and the notices name what comes from where\./);
+  assert.match(read('moonlight-common-c/src/ControlStream.c'), /from host-termination\.patch of Nightjar/);
+  const controllers = read('docs/CONTROLLERS.md');
+  assert.doesNotMatch(controllers, /github\.com\/LizardByte\/Sunshine/);
+  assert.match(controllers, /\(https:\/\/github\.com\/SunshineStream\/Sunshine\/blob\/master\/docs\/configuration\.md\)/);
 });

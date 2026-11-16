@@ -40,6 +40,11 @@ uint32_t LiGetClientVideoResets(void) {
 bool LiHostSupportsReferenceFrameInvalidation(void) {
   return false;
 }
+void LiGetIdrFrameRequestStats(uint32_t* sent, uint32_t* held, uint32_t* slowestAnswerMs) {
+  *sent = 0;
+  *held = 0;
+  *slowestAnswerMs = 0;
+}
 uint32_t LiGetClientDroppedVideoFrames(void) {
   return 0;
 }

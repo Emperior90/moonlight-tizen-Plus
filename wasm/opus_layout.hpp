@@ -15,14 +15,16 @@
 // For the normal quality of 5.1 and 7.1 the DESCRIBE answer doesn't carry that mapping as it is: moonlight-common-c
 // moves the last entry to position 3 there, for the channel order of GeForce Experience (parseOpusConfigurations() in
 // RtspConnection.c), and Sunshine rotates its mapping the other way before it sends it, so that both cancel out. Up to
-// its commit 8952d44 of 3 November 2026 (its release v2026.914 is from before) Sunshine rotated the entries 3 to 5
-// whatever the layout, instead of the entries from 3 to the last one (std::rotate(mapping + 3, mapping + 4,
-// mapping + audio::MAX_STREAM_CONFIG) in its src/rtsp.cpp, where MAX_STREAM_CONFIG is the number of its layouts, 6).
-// Apollo and Vibeshine still did on 13 November 2026. For 5.1 that is the same. For 7.1 such a host announces
-// surround-params=85301245367 instead of 85301245673, which moonlight-common-c turns into the mapping 0 1 2 7 4 5 3 6
-// instead of 0 1 2 3 4 5 6 7: the LFE output plays the side right channel of the host, the side left output its LFE and
-// the side right output its side left. These hosts encode like a fixed one, so the stream is decoded with
-// 0 1 2 3 4 5 6 7.
+// its commit 8952d44 of 3 November 2026 (#6019, first in its pre-release v2026.1115.211404; its stable release
+// v2026.914.233613 still has the old line) Sunshine rotated the entries 3 to 5 whatever the layout, instead of the
+// entries from 3 to the last one (std::rotate(mapping + 3, mapping + 4, mapping + audio::MAX_STREAM_CONFIG) in its
+// src/rtsp.cpp, where MAX_STREAM_CONFIG is the number of its layouts, 6). Apollo (v0.4.8 and its master), Vibepollo (up
+// to its nightly 2.17.3) and Vibeshine (up to its nightly 2.14.5) still did on 16 November 2026; Foundation Sunshine
+// rotates up to the channel count (its release v2026.1031.121458). For 5.1 that is the same. For 7.1 such a host
+// announces surround-params=85301245367 instead of 85301245673, which moonlight-common-c turns into the mapping
+// 0 1 2 7 4 5 3 6 instead of 0 1 2 3 4 5 6 7: the LFE output plays the side right channel of the host, the side left
+// output its LFE and the side right output its side left. These hosts encode like a fixed one, so the stream is
+// decoded with 0 1 2 3 4 5 6 7.
 //
 // Only exactly this layout is corrected. No host means it: it would need an encoder that codes side right together
 // with the center in one stereo stream. Every other layout of Sunshine (stereo, 5.1 in both qualities, 7.1 in high

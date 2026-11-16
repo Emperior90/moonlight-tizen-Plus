@@ -2,7 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
-- [2.3.1](#231): pre-release, lighter sound and statistics, fewer double presses in the menus, and fixes from a review
+- [2.3.1](#231): pre-release, lighter sound and statistics, fewer double presses, a switch for sound on Wi-Fi, and fixes from a review and from other Moonlight clients
 - [2.3.0](#230): 2026-11-08, smoother motion, a picture refresh in the Stream Menu and a longer guide
 - [2.2.1](#221): 2026-11-05, no more 144 FPS, and controllers that work on 2020 TVs
 - [2.2.0](#220): 2026-11-03, a tidier app with fixes and a smaller download
@@ -19,38 +19,38 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ## 2.3.1
 
-*Pre-release, in testing.* Lighter surround sound and statistics, fewer double presses in the menus, a fuller diagnostic log and fixes from a review of the app.
+*Pre-release, in testing.* Lighter surround sound and statistics, fewer double presses, a Wi-Fi sound switch, a sturdier streaming engine and fixes from a review.
 
 > **Install:** by hand over 2.3.0 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >
-> **Tested:** with simulated TVs, hosts and controllers only; Tizen 10, the sound changes and the controller guards still need a test on a TV.
+> **Tested:** with simulated TVs, hosts and controllers only; Tizen 10, sound, controller guards, PC state, pairing and the engine still need a test on a TV.
 
 ### New
 
+- *Prioritize sound on Wi-Fi* in the Audio Settings: turn it off if only the sound crackles or drops out over Wi-Fi
 - One warning on Tizen 9 or newer if *Ultra low latency mode* is on from before a TV update or from 2.3.0 or older
-- A message when the sound of a 5.1 or 7.1 stream keeps the TV too busy, with the setting that helps
-- Statistics: app version and audio setting, how long a frame takes to arrive, the lowest frame rate of the PC
+- After a long session, the last-session report shows if the sound drifted ahead, with a tip when it grows fast
 
 ### Sound
 
 - *Surround audio quality* is now *Efficient* unless you chose one; a notice tells you if your stream changes
 - With Web Audio the app always asks for stereo: 7.1 no longer loses its dialogue, and 5.1 no longer distorts
-- 7.1 at *Efficient* plays every channel from its own speaker (checked with test signals, not yet by ear)
+- 7.1 at *Efficient* plays every channel from its own speaker; a message when 5.1 or 7.1 keeps the TV too busy
 
 ### Changed
 
-- The full statistics update every 2 seconds, without text shadow and in a smaller box; the graph shows 2 minutes
+- Lighter statistics every 2 s with a 2-minute graph, the app version, frame arrival time and lowest PC frame rate
 - The bitrate texts name the latency that more bitrate costs instead of saying to raise it until frames drop
-- The guide names Tizen 10 (set up like Tizen 9, untested) and says to check the switch after a TV update
-- The app starts its Smart Hub service only on Tizen 5.5 and 6.0, which have Preview tiles, and waits 5 s for it
+- While a keyframe is on its way, the app no longer asks the PC for another one after every lost frame
+- When pairing, the PC sees the TV as *Moonlight Plus (model of the TV)* instead of "roth"
+- The guide covers Sunshine of November 2026 and Tizen 10 (untested); Smart Hub service only on Tizen 5.5 and 6.0
 
 ### Fixed
 
-- A double OK or A no longer changes a setting or closes the Wake PC dialog; a controller press counts once
-- Dialogs no longer open twice, trap the keys or lose their selection; Add PC starts from the network of the TV
-- A failed start or a PC that doesn't answer now gives a message, and failed starts no longer cost memory
-- The diagnostic log shows the streaming engine, script errors and refused setup steps; fewer misleading hints
-- Safer against devices that pose as a PC or send odd details; pairing is ready for hosts with version 10 or later
+- A double OK or A no longer changes a setting; dialogs no longer open twice, trap the keys or lose their selection
+- A PC shows its real state at start, not ONLINE from last time; failed starts and silent PCs now give a message
+- Streaming engine fixes: quicker recovery after a player hiccup, IPv6 home PCs, the PC's reason when it ends
+- Fuller diagnostic log, fewer misleading hints; safer against devices that pose as a PC or send odd details
 
 ## 2.3.0
 

@@ -11,7 +11,9 @@
 // of the last session read from the messages of tests/fixtures/session-reports.tsv with their hints and its lines for
 // System information (also the frame receive time as a share of the frame time, the lowest host frame rate with its
 // windows, and the hint about a PC that delivered fewer frames than the stream asked for; a report without these
-// figures, as 2.3.0 sent it, is read as before), a report that
+// figures, as 2.3.0 sent it, is read as before; the requests for an IDR frame that the module sent and held are read
+// but neither shown nor a hint of their own; how far the sound ran ahead of the clock of the TV has a line only with a
+// drift, and a hint only for a drift of at least 50 ms per hour without 'Limit audio delay'), a report that
 // can't be read logged with the reason and its whole text, and the heartbeat of a stream that reports once at the next
 // start that the app ended during it (not for a stream in the background), that the native lines come from the ring
 // that every log line of the module enters, that the module sets the listener that logs the errors of the media
@@ -70,6 +72,9 @@ test('the log hides the input keys, the pairing secrets, the PIN, the unique ID 
     ['https://10.0.0.2:47984/launch?uniqueid=0123456789ABCDEF&appid=8&rikey=00112233445566778899aabbccddeeff&rikeyid=12345678&localAudioPlayMode=0',
       'https://10.0.0.2:47984/launch?uniqueid=<hidden>&appid=8&rikey=<hidden>&rikeyid=<hidden>&localAudioPlayMode=0'],
     ['pair?devicename=roth&updateState=1&phrase=getservercert&salt=00ff&clientcert=ABCD', 'pair?devicename=roth&updateState=1&phrase=getservercert&salt=<hidden>&clientcert=<hidden>'],
+    // The device name of the TV (its model, pairingDeviceName() of utils.js) stays readable
+    ['pair?uniqueid=0123456789ABCDEF&devicename=Moonlight%20Plus%20%28QE55S90CAT%29&updateState=1&phrase=pairchallenge',
+      'pair?uniqueid=<hidden>&devicename=Moonlight%20Plus%20%28QE55S90CAT%29&updateState=1&phrase=pairchallenge'],
     ['pair?clientchallenge=11&serverchallengeresp=22&clientpairingsecret=33', 'pair?clientchallenge=<hidden>&serverchallengeresp=<hidden>&clientpairingsecret=<hidden>'],
     ['Setting the RTSP session URL to: rtsp://10.0.0.2:48010', 'Setting the RTSP session URL to: rtsp://<hidden>'],
     ['sessionUrl0 rtspenc://192.168.1.20:48010/x and RTSPRU://host:1', 'sessionUrl0 rtsp://<hidden> and rtsp://<hidden>'],
@@ -514,7 +519,7 @@ function readReports() {
   return fs.readFileSync(path.join(REPO_ROOT, 'tests/fixtures/session-reports.tsv'), 'utf8')
     .split('\n').filter((line) => line && line[0] !== '#').map((line) => {
       const fields = line.split('\t');
-      return { name: fields[0], fields, message: fields[29], hints: fields[30].split(',') };
+      return { name: fields[0], fields, message: fields[35], hints: fields[36].split(',') };
     });
 }
 
@@ -523,9 +528,9 @@ test('the report of each message of the fixture, with its hints', () => {
   const parse = app.platform.get('parseSessionReport');
   const hints = app.platform.get('getSessionReportHints');
   const reports = readReports();
-  assert.equal(reports.length, 31);
+  assert.equal(reports.length, 36);
   reports.forEach((entry) => {
-    assert.equal(entry.fields.length, 31, entry.name);
+    assert.equal(entry.fields.length, 37, entry.name);
     assert.ok(entry.message.indexOf('SessionReportMsg: ') === 0, entry.name);
     const report = plain(parse(entry.message.slice('SessionReportMsg: '.length)));
     assert.equal(report.durationMs, Number(entry.fields[1]), entry.name);
@@ -539,6 +544,10 @@ test('the report of each message of the fixture, with its hints', () => {
     assert.equal(report.hostRfi, entry.fields[23] === '1', entry.name);
     assert.deepEqual([report.hostFrameRateLowX100, report.hostWindows, report.hostLowWindows, report.receiveTimeX100,
       report.receiveTimePeakX100], entry.fields.slice(24, 29).map(Number), entry.name);
+    assert.deepEqual([report.idrRequestsSent, report.idrRequestsHeld], entry.fields.slice(29, 31).map(Number), entry.name);
+    assert.deepEqual([report.audioLeadMs, report.audioLeadEndMs, report.audioLeadMaxMs], entry.fields.slice(31, 34).map(Number),
+      entry.name);
+    assert.equal(report.audioDriftMsPerHour, entry.fields[34] === 'null' ? null : Number(entry.fields[34]), entry.name);
     assert.deepEqual(plain(hints(report, { refFrameInvalidation: false })), entry.hints, entry.name);
   });
   // The fixture has a PC that delivered too few frames, with and without the other hints that go before it
@@ -655,6 +664,7 @@ test('the report shows the frame receive time as a share of the frame time, and 
     'Average frame receive time: 11.10 ms (67% of the frame time), highest second: 13.85 ms (83%)',
     'Host frame rate (best 30 s): 59.84 FPS, average host processing latency: 8.4 ms',
     'Host frame rate (lowest 30 s): 50.90 FPS, below 57 FPS in 12 of 39 half minutes',
+    'Sound received ahead of the TV clock: 24 ms after the first minute, 25 ms at the end, at most 27 ms; drift +1 ms per hour',
     'WASM heap at the end: 62 of 128 MB (+1 MB in this session)',
     'Hint: The PC often sent fewer frames than the stream asked for: in 12 of 39 half minutes fewer than 57 per second, 50.9 at the lowest. ' +
       'That is normal for a game or video limited to fewer frames, or for a display of the PC set to fewer Hz than the frame rate of the ' +
@@ -742,6 +752,98 @@ test('the hint about recovery keyframes names Reference frame invalidation only 
   });
   assert.equal(plain(parse('{"frames":10,"hostRfi":1}')).hostRfi, true);
   assert.equal(plain(parse('{"frames":10,"hostRfi":true}')).hostRfi, true);
+});
+
+test('the requests for an IDR frame are read from the report, but neither shown nor a hint of their own', () => {
+  const app = loadDiagnostics();
+  const parse = app.platform.get('parseSessionReport');
+  const hints = app.platform.get('getSessionReportHints');
+  const describe = app.platform.get('describeSessionReport');
+  const reports = readReports();
+  // The Wi-Fi session of moonlight-tv issue #639 with the limit of 2.3.1: 64 requests sent and 1830 held while a
+  // keyframe was on its way. It loses 1.2 % of its frames, so the hint about the network names the remedy.
+  const storm = plain(parse(reports.filter((entry) => entry.name === 'keyframe-requests')[0].message.slice(18)));
+  assert.deepEqual([storm.idrRequestsSent, storm.idrRequestsHeld, storm.recoveryKeyframes], [64, 1830, 58]);
+  assert.deepEqual(plain(hints(storm, {})), ['network']);
+  // Every session of the fixture gets the same hints and lines without the two figures: they change nothing
+  reports.forEach((entry) => {
+    const report = plain(parse(entry.message.slice(18)));
+    const without = Object.assign({}, report, { idrRequestsSent: 0, idrRequestsHeld: 0 });
+    assert.deepEqual(plain(hints(report, {})), plain(hints(without, {})), entry.name);
+    assert.deepEqual(plain(describe(report, {})), plain(describe(without, {})), entry.name);
+  });
+  assert.equal(plain(describe(storm, {})).filter((line) => /IDR|request/i.test(line)).length, 0);
+  // A report without them (2.3.0 and the first builds of 2.3.1) reads them as 0, and figures that aren't numbers too
+  const report230 = plain(parse(MESSAGE_230));
+  assert.deepEqual([report230.idrRequestsSent, report230.idrRequestsHeld], [0, 0]);
+  const broken = plain(parse('{"frames":10,"idrRequestsSent":"64","idrRequestsHeld":-3}'));
+  assert.deepEqual([broken.idrRequestsSent, broken.idrRequestsHeld], [0, 0]);
+});
+
+test('the sound received ahead of the TV clock has a line only with a drift, and a hint only for a large one without Limit audio delay', () => {
+  const app = loadDiagnostics();
+  const parse = app.platform.get('parseSessionReport');
+  const hints = app.platform.get('getSessionReportHints');
+  const text = app.platform.get('getSessionReportHintText');
+  const describe = app.platform.get('describeSessionReport');
+  const byName = (name) => plain(parse(readReports().filter((entry) => entry.name === name)[0].message.slice(18)));
+  const soundLines = (report, options) => plain(describe(report, options || {})).filter((line) => line.indexOf('Sound received') === 0);
+  // The session of moonlight-qt PR #2101 on the TV media player: 25 to 92 ms in 75 minutes, a PC 53 ms per hour faster
+  const drift = byName('audio-drift');
+  assert.deepEqual([drift.audioLeadMs, drift.audioLeadEndMs, drift.audioLeadMaxMs, drift.audioDriftMsPerHour], [25, 92, 95, 53]);
+  assert.deepEqual(plain(hints(drift, {})), ['audioDrift']);
+  const hint = 'The PC sent 53 ms more sound per hour than the clock of the TV counted, so in long sessions the sound can fall further and further behind the picture: turn on Limit audio delay in the Audio Settings.';
+  assert.equal(text('audioDrift', drift), hint);
+  const lines = plain(describe(drift, {}));
+  assert.deepEqual(lines.slice(-3), [
+    'Sound received ahead of the TV clock: 25 ms after the first minute, 92 ms at the end, at most 95 ms; drift +53 ms per hour',
+    'WASM heap at the end: 61 of 128 MB (+1 MB in this session)',
+    'Hint: ' + hint,
+  ]);
+  // With Limit audio delay, which kept the delay at 100 ms, the line stays and the hint goes
+  assert.deepEqual(plain(hints(drift, { audioSync: true })), ['ok']);
+  assert.equal(soundLines(drift, { audioSync: true }).length, 1);
+  // The threshold: 50 ms per hour, a PC 14 ppm faster, which makes 100 ms more in 2 hours
+  assert.deepEqual(plain(hints(Object.assign({}, drift, { audioDriftMsPerHour: 50 }), {})), ['audioDrift']);
+  assert.deepEqual(plain(hints(Object.assign({}, drift, { audioDriftMsPerHour: 49.9 }), {})), ['ok']);
+  // A small drift over 2 hours, and a PC whose clock is slower: the line with the sign, no hint
+  assert.deepEqual(plain(hints(byName('audio-drift-small'), {})), ['ok']);
+  assert.deepEqual(soundLines(byName('audio-drift-small')),
+    ['Sound received ahead of the TV clock: 22 ms after the first minute, 58 ms at the end, at most 60 ms; drift +18 ms per hour']);
+  const slower = byName('audio-drift-slower');
+  assert.deepEqual(plain(hints(slower, {})), ['ok']);
+  assert.deepEqual(plain(hints(Object.assign({}, slower, { audioDriftMsPerHour: -500 }), {})), ['ok']);
+  assert.deepEqual(soundLines(slower),
+    ['Sound received ahead of the TV clock: 22 ms after the first minute, 21 ms at the end, at most 25 ms; drift -40 ms per hour']);
+  assert.deepEqual(soundLines(Object.assign({}, slower, { audioDriftMsPerHour: 0 })),
+    ['Sound received ahead of the TV clock: 22 ms after the first minute, 21 ms at the end, at most 25 ms; drift 0 ms per hour']);
+  // A session of 10 minutes has no drift: no line and no hint, although its lead grew
+  const short = byName('audio-drift-short');
+  assert.equal(short.audioDriftMsPerHour, null);
+  assert.ok(short.audioLeadEndMs > short.audioLeadMs);
+  assert.deepEqual(soundLines(short), []);
+  assert.deepEqual(plain(hints(short, {})), ['ok']);
+  // The fixture: a line exactly for the sessions with a drift, and the hint only in the one with a large drift
+  readReports().forEach((entry) => {
+    const report = plain(parse(entry.message.slice(18)));
+    assert.equal(soundLines(report).length, entry.fields[34] === 'null' ? 0 : 1, entry.name);
+    assert.equal(plain(hints(report, {})).indexOf('audioDrift') >= 0, entry.name === 'audio-drift', entry.name);
+  });
+  // A report without the figures (2.3.0 and the first builds of 2.3.1) has neither, and a drift that isn't a number
+  // is none, while a negative one is read as it is
+  const report230 = plain(parse(MESSAGE_230));
+  assert.deepEqual([report230.audioLeadMs, report230.audioLeadEndMs, report230.audioLeadMaxMs, report230.audioDriftMsPerHour],
+    [0, 0, 0, null]);
+  assert.deepEqual(soundLines(report230), []);
+  assert.equal(plain(parse('{"frames":10,"audioDriftMsPerHour":"53"}')).audioDriftMsPerHour, null);
+  assert.equal(plain(parse('{"frames":10,"audioDriftMsPerHour":null}')).audioDriftMsPerHour, null);
+  assert.equal(plain(parse('{"frames":10,"audioDriftMsPerHour":-40}')).audioDriftMsPerHour, -40);
+  assert.equal(plain(parse('{"frames":10,"audioLeadMs":-5,"audioLeadMaxMs":"95"}')).audioLeadMaxMs, 0);
+  // With the network, the TV and the sound thread before it, the hint falls behind the three that a report shows
+  assert.deepEqual(plain(hints(Object.assign({}, drift, { networkDroppedFrames: 2000, tvDroppedFrames: 2000, audioChannels: 8,
+    audioOverloadedWindows: 2 }), {})), ['network', 'tv', 'audio']);
+  assert.deepEqual(plain(hints(Object.assign({}, drift, { heapTopMb: 120, hostFrameRateX100: 5994 }), {})),
+    ['audioDrift', 'memory', 'hostRefresh']);
 });
 
 test('the hint about the sound comes for a surround stream with a window above the limit of the module, with its busiest window', () => {
@@ -883,6 +985,7 @@ test('the lines of the report in System information', () => {
   assert.deepEqual(refreshLines.slice(5), [
     'Host frame rate (best 30 s): 59.94 FPS, average host processing latency: 4.7 ms',
     'Host frame rate (lowest 30 s): 59.93 FPS, below 57 FPS in 0 of 59 half minutes',
+    'Sound received ahead of the TV clock: 22 ms after the first minute, 21 ms at the end, at most 24 ms; drift -1 ms per hour',
     'WASM heap at the end: 61 of 128 MB (+1 MB in this session)',
     'Hint: The PC sent 59.94 instead of 60 frames per second, which shows as a short stutter about every 17 seconds: set the display of the PC to exactly 60 Hz.',
   ]);

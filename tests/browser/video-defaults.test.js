@@ -146,6 +146,7 @@ const CUSTOMIZED_SETTINGS = {
   audioJitter: '50',
   audioClockSync: true,
   playHostAudio: true,
+  audioQos: false,
   decryptHostAudio: true,
   refFrameInvalidation: true,
   hdrMetadata: true,
@@ -174,6 +175,8 @@ const DEFAULT_OTHER_SETTINGS = {
   audioJitter: '100',
   audioClockSync: false,
   playHostAudio: false,
+  // On: the audio keeps the QoS that every earlier version asked for on the local network
+  audioQos: true,
   decryptHostAudio: false,
   refFrameInvalidation: false,
   hdrMetadata: false,

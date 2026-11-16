@@ -4,13 +4,15 @@
 // .github/scripts/check-upstream-dependencies.js and the baseline file .github/dependency-baselines.json):
 // - the baseline file is valid, names every project the owner asked for (Moonlight Tizen, moonlight-common-c, ENet,
 //   Opus, libgamestream, the Sunshine releases and Sunshine pull request 5917), matches the vendored versions of
-//   submodulesVer.txt, and records as taken every upstream commit that the changelog says was ported
+//   submodulesVer.txt, and records as taken every upstream commit that the changelog says was ported; the review of
+//   16 November 2026 moved Moonlight Tizen to 8b3049a, moonlight-common-c to 94c65fd and ENet to 98dbb89 with a
+//   decision for every commit in between, and keeps Sunshine (now SunshineStream/Sunshine) at its stable release
 // - the checker of the file finds a commit with two decisions, a decision without its reason or version, and states
 //   that the script can't compare
 // - the script against a simulated GitHub API: new commits on a branch, commits that touch a folder, a moved submodule,
-//   new release tags and releases, a changed pull request, a rewritten history and a project that can't be read; one
-//   issue that a later run updates, that is closed once nothing is left to review, and that never mentions a GitHub
-//   user or an issue of this repository
+//   new release tags and releases, a project that deletes the tags of its pre-releases and stays at a stable release
+//   (and a recorded pre-release that becomes its stable release), a changed pull request, a rewritten history and a project that can't be read; one issue that a later run updates,
+//   that is closed once nothing is left to review, and that never mentions a GitHub user or an issue of this repository
 // - the workflow runs only when started by hand, with no more access than reading the repository and writing issues
 
 const test = require('node:test');
@@ -107,8 +109,9 @@ test('the baseline file is valid and names every project the owner asked for', (
   assert.deepEqual([byId.enet.track, byId.enet.pinned_in], ['submodule', { repo: 'moonlight-stream/moonlight-common-c', path: 'enet' }]);
   assert.deepEqual([byId.opus.repo, byId.opus.track], ['xiph/opus', 'tags']);
   assert.deepEqual([byId.libgamestream.repo, byId.libgamestream.path], ['moonlight-stream/moonlight-embedded', 'libgamestream']);
-  assert.deepEqual([byId.sunshine.repo, byId.sunshine.track], ['LizardByte/Sunshine', 'releases']);
-  assert.deepEqual([byId['sunshine-pr-5917'].track, byId['sunshine-pr-5917'].pull], ['pull', 5917]);
+  // Sunshine moved from LizardByte/Sunshine to SunshineStream/Sunshine (the old name redirects)
+  assert.deepEqual([byId.sunshine.repo, byId.sunshine.track], ['SunshineStream/Sunshine', 'releases']);
+  assert.deepEqual([byId['sunshine-pr-5917'].repo, byId['sunshine-pr-5917'].track, byId['sunshine-pr-5917'].pull], ['SunshineStream/Sunshine', 'pull', 5917]);
   // Every decision says why, and every taken change names the version of Moonlight Plus that has it
   data.dependencies.forEach((dep) => dep.decisions.forEach((decision) => {
     assert.ok(decision.why.length >= 20, `${dep.id}: a reason of its own`);
@@ -127,6 +130,49 @@ test('the baseline file starts from the vendored versions of submodulesVer.txt',
   assert.ok(byId.enet.decisions[0].range.indexOf(pin('enet')) === 0, 'the first ENet range starts at the vendored version');
   assert.ok(byId.opus.vendored.indexOf(pin('opus')) >= 0 && byId.opus.vendored.indexOf(/\| (v[\d.]+)/.exec(versions)[1]) === 0);
   assert.ok(byId.opus.decisions[0].range.indexOf('v1.5.2..') === 0);
+});
+
+// The upstream commits that the review of 16 November 2026 read, oldest first (git log of each project): Moonlight Tizen
+// after ce18df8 up to 8b3049a, moonlight-common-c after 5d3c0ec up to 94c65fd
+const TIZEN_COMMITS_TO_8B3049A = ['973a61b', 'a2d0009', '72caff4', '6da5b7f', '0ef676b', '087df40', '90b4a04', '99aada9', '8b3049a'];
+const COMMON_C_COMMITS_TO_94C65FD = [
+  'c7dff22', '4853e70', '7d61e2d', 'f050b13', '41d6c1d', 'f462147', '134eee4', '7bf16de', '2e18599', 'ee160c9', 'e80a786',
+  '3387805', 'a84a69a', 'bf71226', '348d5d1', '4aa7ea4', '3b6ee9d', 'b0deb0a', '7fd0f25', '7d884fa', 'c3360b7', 'edb4e9e',
+  'e44e429', 'eac4c46', '274ec03', '74a61b9', '08ebedb', '541e396', 'd5b38a3', 'a0262e7', 'e64327c', 'ae6633e', '0b4a44d',
+  'dc09c9f', 'f0df33c', 'a1aa0a1', '2b45ee9', '18922a1', '2804982', 'e6b1aaf', 'cf68e15', '98210be', 'a879f89', '30b928f',
+  '67996ec', '0d92c94', '94c65fd',
+];
+
+test('the review of November 2026 moved each project to the upstream state it read, with a decision for every change in between', () => {
+  const byId = Object.fromEntries(readBaselines().dependencies.map((dep) => [dep.id, dep]));
+  const decisionsOf = (dep, hash) => dep.decisions.filter((decision) => (decision.commits || []).indexOf(hash) >= 0);
+  const expectOneDecision = (id, hashes) => hashes.forEach((hash) => assert.equal(decisionsOf(byId[id], hash).length, 1, `${id} ${hash}`));
+  assert.equal(byId['moonlight-tizen'].reviewed_through, '8b3049a9e1731c12a7ab150a1cb01aba449abded');
+  expectOneDecision('moonlight-tizen', TIZEN_COMMITS_TO_8B3049A);
+  assert.equal(byId['moonlight-common-c'].reviewed_through, '94c65fd364d17b223f00a8763c9a5d94a66cb8dd');
+  assert.equal(COMMON_C_COMMITS_TO_94C65FD.length, 47);
+  expectOneDecision('moonlight-common-c', COMMON_C_COMMITS_TO_94C65FD);
+  // The commits ported in 2.3.1 are taken, the C11 atomics and the protocol extensions skipped
+  ['bf71226', '348d5d1', 'e64327c', 'ae6633e', '0b4a44d', '74a61b9', '18922a1', 'a84a69a', 'dc09c9f', '134eee4', '7bf16de', '2e18599', 'ee160c9', '4aa7ea4']
+    .forEach((hash) => assert.deepEqual([decisionsOf(byId['moonlight-common-c'], hash)[0].decision, decisionsOf(byId['moonlight-common-c'], hash)[0].in], ['taken', '2.3.1'], hash));
+  ['b0deb0a', 'c7dff22', '4853e70', '0d92c94'].forEach((hash) => assert.equal(decisionsOf(byId['moonlight-common-c'], hash)[0].decision, 'skipped', hash));
+  // The skipped microsecond series carries the warning about its audio queue, and no decision says any more that the
+  // commits after 5d3c0ec wait for a review
+  assert.match(decisionsOf(byId['moonlight-common-c'], '82ee2d6')[0].why, /handleMissingPackets\(\) in RtpAudioQueue\.c compares an age in microseconds/);
+  byId['moonlight-common-c'].decisions.forEach((decision) => assert.doesNotMatch(decision.why, /not reviewed yet/));
+  // The termination change of the Nightjar client is listed with the local patches
+  assert.match(byId['moonlight-common-c'].note, /from host-termination\.patch of the Nightjar client \(GPL-3\.0\), tests\/native\/connection_termination_test\.c/);
+  // ENet up to the version that moonlight-common-c 94c65fd pins, the last range ending there
+  const enetRanges = byId.enet.decisions.map((decision) => decision.range);
+  assert.equal(byId.enet.reviewed_through, '98dbb897ac4a7208038e0782cddedf89dcf0723a');
+  assert.equal(enetRanges[enetRanges.length - 1], '44c85e16279553d9c052e572bcbfcd745fb74abf..98dbb897ac4a7208038e0782cddedf89dcf0723a');
+  // Sunshine deletes the tags of its pre-releases, so it stays at its stable release, with the pre-releases it read
+  // recorded by their tags; pull request 5917 only merged master since bf9ce40
+  assert.equal(byId.sunshine.reviewed_through, 'v2026.914.233613');
+  assert.match(byId.sunshine.note, /deletes the tags of its pre-releases/);
+  assert.match(byId.sunshine.note, /a newer full release is reported even when its tag has a decision/);
+  assert.deepEqual(byId.sunshine.decisions.map((decision) => decision.tags[0]), ['v2026.516.143833', 'v2026.1115.211404', 'v2026.1116.25010']);
+  assert.deepEqual([byId['sunshine-pr-5917'].reviewed_through, byId['sunshine-pr-5917'].reviewed_state], ['31044d8af7f8fdb0795c6bc2e460eed8ccb07782', 'open']);
 });
 
 test('every upstream commit that the changelog says was ported is recorded as taken', () => {
@@ -325,7 +371,7 @@ test('new release tags are listed newest first, without release candidates', asy
   assert.deepEqual(current.github.writes(), []);
 });
 
-test('new releases are listed with pre-releases marked, and a release with a decision is left out', async () => {
+test('new releases are listed with pre-releases marked, and a pre-release with a decision is left out', async () => {
   const dep = {
     id: 'sunshine', name: 'Sunshine releases', repo: 'up/sunshine', track: 'releases', vendored: 'nothing',
     reviewed_through: 'v2026.1028.122642', decisions: [{ tags: ['v2026.1101.1'], decision: 'skipped', why: 'Only a Linux fix.' }],
@@ -333,12 +379,56 @@ test('new releases are listed with pre-releases marked, and a release with a dec
   const release = (tag, extra) => Object.assign({ tag_name: tag, published_at: '2026-11-02T10:00:00Z', prerelease: false, draft: false }, extra);
   const body = issueBody(await runWatch([dep], Object.assign({
     'GET /repos/up/sunshine/releases?per_page=30': ok([
-      release('v2026.1105.1', { draft: true }), release('v2026.1103.1', { prerelease: true }), release('v2026.1101.1'), release('v2026.1028.122642'),
+      release('v2026.1105.1', { draft: true }), release('v2026.1103.1', { prerelease: true }), release('v2026.1101.1', { prerelease: true }), release('v2026.1028.122642'),
     ]),
   }, NO_ISSUES)));
   assert.ok(body.indexOf('2 new releases since v2026.1028.122642: [compare](https://github.test/up/sunshine/compare/v2026.1028.122642...v2026.1103.1)') >= 0, body);
   assert.ok(body.indexOf('[v2026.1103.1](https://github.test/up/sunshine/releases/tag/v2026.1103.1) pre-release (2026-11-02)') >= 0);
-  assert.ok(body.indexOf('v2026.1105.1') < 0 && body.indexOf('[v2026.1101.1]') < 0, 'no draft and no release with a decision');
+  assert.ok(body.indexOf('v2026.1105.1') < 0 && body.indexOf('[v2026.1101.1]') < 0, 'no draft and no pre-release with a decision');
+});
+
+test('a project that deletes the tags of its pre-releases stays at a stable release and is up to date once every newer release has a decision', async () => {
+  // As Sunshine: reviewed_through is its stable release, and the two pre-releases after it were read
+  const dep = {
+    id: 'sunshine', name: 'Sunshine releases', repo: 'up/sunshine', track: 'releases', vendored: 'nothing',
+    reviewed_through: 'v2026.914.233613',
+    decisions: [
+      { tags: ['v2026.1115.211404'], decision: 'taken', in: '2.3.1', why: 'The guide names its fixes.' },
+      { tags: ['v2026.1116.25010'], decision: 'skipped', why: 'Nothing for a client.' },
+    ],
+  };
+  const release = (tag, extra) => Object.assign({ tag_name: tag, published_at: '2026-11-16T10:00:00Z', prerelease: false, draft: false }, extra);
+  const route = 'GET /repos/up/sunshine/releases?per_page=30';
+  const read = [release('v2026.1116.25010', { prerelease: true }), release('v2026.1115.211404', { prerelease: true }), release('v2026.914.233613'), release('v2026.906.222525')];
+  // Every newer release has a decision: nothing to review, and the stable tag is named in full, not cut like a commit
+  const quiet = await runWatch([dep], { [route]: ok(read) }, { DRY_RUN: 'true', GITHUB_TOKEN: '' });
+  assert.equal(quiet.code, 0);
+  assert.ok(quiet.logs.indexOf('sunshine: up to date') >= 0, quiet.logs.join('\n'));
+  assert.ok(quiet.logs.some((line) => line.indexOf('### Up to date\n\n- Sunshine releases (up/sunshine): reviewed through v2026.914.233613\n') >= 0), quiet.logs.join('\n'));
+  // The issue of an earlier run is closed
+  const closing = await runWatch([dep], {
+    [route]: ok(read),
+    [`GET /repos/${REPOSITORY}/issues?state=open&per_page=100`]: ok([{ number: 9, title: watch.ISSUE_TITLE, body: watch.MARKER + '\nlist' }]),
+  });
+  assert.deepEqual(closing.github.writes().map((write) => [write.method, write.route, write.body.state]), [['PATCH', `/repos/${REPOSITORY}/issues/9`, 'closed']]);
+  // Later both pre-release tags are gone and a new pre-release came: only that one comes up
+  const pruned = issueBody(await runWatch([dep], Object.assign({ [route]: ok([release('v2026.1201.1', { prerelease: true }), release('v2026.914.233613'), release('v2026.906.222525')]) }, NO_ISSUES)));
+  assert.ok(pruned.indexOf('1 new release since v2026.914.233613: [compare](https://github.test/up/sunshine/compare/v2026.914.233613...v2026.1201.1)') >= 0, pruned);
+  assert.ok(pruned.indexOf('[v2026.1201.1](https://github.test/up/sunshine/releases/tag/v2026.1201.1) pre-release (2026-11-16)') >= 0, pruned);
+  // Sunshine publishes a stable release by turning a pre-release into a full release under the same tag: a recorded
+  // pre-release that became the stable release is reported again, so the guide's "only in the pre-release" lines and
+  // reviewed_through get moved
+  const promotedRead = [release('v2026.1116.25010'), release('v2026.1115.211404', { prerelease: true }), release('v2026.914.233613'), release('v2026.906.222525')];
+  const promoted = issueBody(await runWatch([dep], Object.assign({ [route]: ok(promotedRead) }, NO_ISSUES)));
+  assert.ok(promoted.indexOf('2 new releases since v2026.914.233613') >= 0, promoted);
+  assert.ok(promoted.indexOf('[v2026.1116.25010](https://github.test/up/sunshine/releases/tag/v2026.1116.25010) (2026-11-16): a full release now, and it has a decision: move reviewed_through to it') >= 0, promoted);
+  assert.ok(promoted.indexOf('[v2026.1115.211404]') < 0, 'the recorded pre-release stays left out');
+  // A reviewed release that is gone itself is still reported, with the newest releases
+  const lost = issueBody(await runWatch([Object.assign({}, dep, { reviewed_through: 'v2026.1028.122642' })], Object.assign({ [route]: ok(read) }, NO_ISSUES)));
+  assert.ok(lost.indexOf('The reviewed release v2026.1028.122642 is not among the 4 newest releases. The newest:') >= 0, lost);
+  // Commits are still shortened in the list of projects that are up to date
+  const commits = await runWatch([BRANCH_DEP], { 'GET /repos/up/common-c/commits/master': ok(commit(sha('a'), 'Reviewed')) }, { DRY_RUN: 'true', GITHUB_TOKEN: '' });
+  assert.ok(commits.logs.some((line) => line.indexOf('reviewed through aaaaaaa\n') >= 0), commits.logs.join('\n'));
 });
 
 test('a pull request with a new head commit or a new state is listed', async () => {

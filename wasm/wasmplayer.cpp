@@ -36,6 +36,12 @@
 #define MAX_HDR_METADATA_SEI_SIZE 64
 static_assert(kAv1HdrMetadataMaxSize <= MAX_HDR_METADATA_SEI_SIZE, "room for the AV1 HDR metadata OBUs");
 
+// The largest the decode buffer grows to: the largest frame that moonlight-common-c reassembles (32 MiB,
+// MAX_VIDEO_REASSEMBLED_FRAME_SIZE in VideoDepacketizer.c) with the room reserved in a keyframe. A keyframe of a 4K
+// stream at 150 Mbps is a few MB. A larger frame is dropped with a keyframe request instead of growing the buffer in
+// the fixed heap of the module, where a failed allocation aborts the module.
+#define MAX_DECODE_BUFFER_LEN (32 * 1024 * 1024 + MAX_SPS_EXTRA_SIZE + MAX_HDR_METADATA_SEI_SIZE)
+
 using std::chrono_literals::operator""s;
 using std::chrono_literals::operator""ms;
 using EmssReadyState = samsung::wasm::ElementaryMediaStreamSource::ReadyState;
@@ -291,6 +297,8 @@ static bool s_FramePacingEnabled = false;
 static bool s_HdrMetadataEnabled = false;
 // The results of InsertAv1HdrMetadata() (one bit each) that the stream has logged, so that each shows once per stream
 static unsigned s_Av1HdrMetadataLogged = 0;
+// Whether the stream has logged a frame larger than MAX_DECODE_BUFFER_LEN, so that the line shows once per stream
+static bool s_OversizedFrameLogged = false;
 
 // Start the HDR metadata state of a new stream: whether 'HDR static metadata' is on, and nothing logged about it yet
 static void ResetHdrMetadataState(bool enabled) {
@@ -988,6 +996,7 @@ int MoonlightInstance::VidDecSetup(int videoFormat, int width, int height, int r
 
   // Resize the decode buffer based on initial decode buffer length
   s_DecodeBuffer.resize(INITIAL_DECODE_BUFFER_LEN);
+  s_OversizedFrameLogged = false;
 
   // Set the video format, video resolution and video frame rate based on the input parameters
   s_VideoFormat = videoFormat;
@@ -1142,6 +1151,27 @@ void MoonlightInstance::VidDecCleanup(void) {
   report.audioLoadMsPerS = g_AudioStreamStats.loadMsPerSecond.exchange(0);
   report.audioLoadPeakMsPerS = g_AudioStreamStats.loadPeakMsPerSecond.exchange(0);
   report.audioOverloadedWindows = g_AudioStreamStats.overloadedWindows.exchange(0);
+  // How far the sound of the TV media player ran ahead of the clock of the TV, which AudDecCleanup() stored the same way
+  // (audio_lead.hpp)
+  report.audioLeadMs = g_AudioStreamStats.leadMs.exchange(0);
+  report.audioLeadEndMs = g_AudioStreamStats.leadEndMs.exchange(0);
+  report.audioLeadMaxMs = g_AudioStreamStats.leadMaxMs.exchange(0);
+  report.hasAudioDrift = g_AudioStreamStats.hasDrift.exchange(false);
+  report.audioDriftMsPerHour = g_AudioStreamStats.driftMsPerHour.exchange(0);
+  // The requests for an IDR frame of the stream: sent to the host, and held while the IDR frame of an earlier one was
+  // on its way (IdrRequestLimit.h of moonlight-common-c). The control stream still runs, so a held request may yet be
+  // sent at the end of its window; the video has stopped, so no new one comes. With the longest time from a request
+  // to its IDR frame, which also lengthens the window of the limit, when one was measured.
+  uint32_t slowestIdrAnswerMs = 0;
+  LiGetIdrFrameRequestStats(&report.idrRequestsSent, &report.idrRequestsHeld, &slowestIdrAnswerMs);
+  if (slowestIdrAnswerMs > 0) {
+    ClLogMessage("IDR frame requests of the stream: %u sent, %u held while an IDR frame was on its way; the slowest "
+                 "IDR frame came %u ms after its request\n",
+      (unsigned)report.idrRequestsSent, (unsigned)report.idrRequestsHeld, (unsigned)slowestIdrAnswerMs);
+  } else {
+    ClLogMessage("IDR frame requests of the stream: %u sent, %u held while an IDR frame was on its way\n",
+      (unsigned)report.idrRequestsSent, (unsigned)report.idrRequestsHeld);
+  }
   // What the host offered in the RTSP handshake of this stream, which is over long before the video decoder starts
   report.hostRfi = LiHostSupportsReferenceFrameInvalidation();
   const std::string reportMessage = FormatSessionReportMessage(report);
@@ -1639,8 +1669,25 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     totalLength += MAX_HDR_METADATA_SEI_SIZE;
   }
 
+  // A frame larger than the decode buffer may grow to is dropped, and moonlight-common-c asks the host for a keyframe
+  if (totalLength > MAX_DECODE_BUFFER_LEN) {
+    if (!s_OversizedFrameLogged) {
+      s_OversizedFrameLogged = true;
+      ClLogMessage("Dropped a video frame of %u bytes, more than the decode buffer takes (%u bytes)\n",
+                   (unsigned)decodeUnit->fullLength, (unsigned)MAX_DECODE_BUFFER_LEN);
+    }
+    return DR_NEED_IDR;
+  }
+
   // Ensure the decode buffer is large enough to hold the full packet
   if (totalLength > s_DecodeBuffer.size()) {
+    // Grow the capacity to an explicit size, at most MAX_DECODE_BUFFER_LEN: resize() alone grows it geometrically
+    // (libc++ to twice the old capacity), which could pass the cap and, while the old block is copied, need about
+    // three times the cap of the fixed heap. reserve() allocates exactly what it is asked for.
+    if (totalLength > s_DecodeBuffer.capacity()) {
+      s_DecodeBuffer.reserve(std::min<size_t>(std::max<size_t>(2 * s_DecodeBuffer.capacity(), totalLength),
+                                              MAX_DECODE_BUFFER_LEN));
+    }
     // Resize decode buffer to accommodate the larger data
     s_DecodeBuffer.resize(totalLength);
   }

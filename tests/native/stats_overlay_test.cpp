@@ -8,8 +8,10 @@
 // highest number of pending frames and the frame intervals, and the session totals include them. The line of the frame
 // receive time also shows it as a share of the time between two frames, and the bitrate line says that the received
 // figure is the video alone. When the stream ends, VidDecCleanup() sends the totals of the session for its report
-// (wasm/session_report.hpp), with the lowest 30 s window of the host frame rate that counts and the average frame
-// receive time over the stream and in its highest stats window. The functions
+// (wasm/session_report.hpp), with the lowest 30 s window of the host frame rate that counts, the average frame
+// receive time over the stream and in its highest stats window, the requests for an IDR frame that
+// moonlight-common-c sent and held, which a line of the diagnostic log also gives, and the lead of the sound that the
+// audio stream left (taking it empties it). The functions
 // below stand in for moonlight-common-c and the rest of the module; LiGetMillis() follows a clock of the test.
 // VidDecSetup() waits for the media pipeline of the TV, so the test sets up the state of a stream the same way instead
 // (StartStream() below).
@@ -18,6 +20,8 @@
 
 #include "test_support.h"
 
+#include <cstdarg>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -82,6 +86,15 @@ static bool hostOffersRfi = false;
 bool LiHostSupportsReferenceFrameInvalidation(void) {
   return hostOffersRfi;
 }
+// The requests for an IDR frame of the stream that moonlight-common-c sent and held (IdrRequestLimit.h)
+static uint32_t idrRequestsSent = 0;
+static uint32_t idrRequestsHeld = 0;
+static uint32_t slowestIdrAnswerMs = 0;
+void LiGetIdrFrameRequestStats(uint32_t* sent, uint32_t* held, uint32_t* slowestAnswerMs) {
+  *sent = idrRequestsSent;
+  *held = idrRequestsHeld;
+  *slowestAnswerMs = slowestIdrAnswerMs;
+}
 uint32_t LiGetClientDroppedVideoFrames(void) {
   return 0;
 }
@@ -109,7 +122,16 @@ void PostToJsAsync(std::string message) {
   postedAsync.push_back(message);
   postedAsyncAtMs.push_back(nowMs);
 }
-void MoonlightInstance::ClLogMessage(const char*, ...) {}
+// The lines that the module logged
+static std::vector<std::string> logged;
+void MoonlightInstance::ClLogMessage(const char* format, ...) {
+  char line[1024];
+  va_list args;
+  va_start(args, format);
+  std::vsnprintf(line, sizeof(line), format, args);
+  va_end(args);
+  logged.push_back(line);
+}
 void MoonlightInstance::CancelPendingSetup() {}
 void MoonlightInstance::OnConnectionStopped(uint32_t) {}
 
@@ -478,9 +500,15 @@ static void EveryFigureCoversTheTwoWindowsOfItsMessage() {
 static void TheEndOfTheStreamSendsTheSessionReport() {
   // A stream of about 2 seconds, in which 4 frames never arrived, sends its totals once its decoder is cleaned up, with
   // the window that was still open, without waiting for the main thread. Its audio stream, which ended before the
-  // video stream, left the load of the audio thread for it (AudDecCleanup() in wasm/auddec.cpp). Its host offered
-  // reference frame invalidation, which the report carries for its hint about recovery keyframes.
+  // video stream, left the load of the audio thread for it (AudDecCleanup() in wasm/auddec.cpp), with how far its sound
+  // ran ahead of the clock of the TV and the drift of that lead (audio_lead.hpp). Its host offered
+  // reference frame invalidation, which the report carries for its hint about recovery keyframes. moonlight-common-c
+  // sent 3 requests for an IDR frame and held 17 while the IDR frame of an earlier one was on its way, which the report
+  // and one line of the diagnostic log carry; the line names the slowest IDR frame, 64 ms after its request.
   hostOffersRfi = true;
+  idrRequestsSent = 3;
+  idrRequestsHeld = 17;
+  slowestIdrAnswerMs = 64;
   StartStream(kPerformanceStatsOff);
   nextFrame = 1;
   SubmitFrames(70);
@@ -491,14 +519,26 @@ static void TheEndOfTheStreamSendsTheSessionReport() {
   g_AudioStreamStats.loadMsPerSecond = 412;
   g_AudioStreamStats.loadPeakMsPerSecond = 447;
   g_AudioStreamStats.overloadedWindows = 3;
+  g_AudioStreamStats.leadMs = 25;
+  g_AudioStreamStats.leadEndMs = 92;
+  g_AudioStreamStats.leadMaxMs = 95;
+  g_AudioStreamStats.hasDrift = true;
+  g_AudioStreamStats.driftMsPerHour = -53;
+  logged.clear();
   MoonlightInstance::VidDecCleanup();
   CHECK_EQ(postedAsync.size(), 1u);
   CHECK(posted.empty());
+  size_t idrLines = 0;
+  for (const std::string& line : logged) {
+    idrLines += line == "IDR frame requests of the stream: 3 sent, 17 held while an IDR frame was on its way; the slowest "
+                        "IDR frame came 64 ms after its request\n" ? 1 : 0;
+  }
+  CHECK_EQ(idrLines, 1u);
   const uintptr_t heapTop = (uintptr_t)sbrk(0);
   const std::string expected = "SessionReportMsg: {\"durationMs\":" + std::to_string(nowMs - 100000) +
     ",\"codec\":\"HEVC Main10\",\"width\":3840,\"height\":2160,\"fps\":60,\"bitrateKbps\":75000,\"frames\":94,"
-    "\"networkDroppedFrames\":4,\"tvDroppedFrames\":0,\"videoResets\":0,\"recoveryKeyframes\":0,\"fecRecoveredBlocks\":0,"
-    "\"fecFailures\":0,\"heapTopMb\":" + std::to_string(heapTop >> 20) + ",\"heapTotalMb\":128,\"heapGrowthMb\":";
+    "\"networkDroppedFrames\":4,\"tvDroppedFrames\":0,\"videoResets\":0,\"recoveryKeyframes\":0,\"idrRequestsSent\":3,"
+    "\"idrRequestsHeld\":17,\"fecRecoveredBlocks\":0,\"fecFailures\":0,\"heapTopMb\":" + std::to_string(heapTop >> 20) + ",\"heapTotalMb\":128,\"heapGrowthMb\":";
   CHECK(!postedAsync.empty() && postedAsync.back().compare(0, expected.size(), expected) == 0);
   if (!postedAsync.empty() && postedAsync.back().compare(0, expected.size(), expected) != 0) {
     std::printf("  # got %s\n  # expected %s...\n", postedAsync.back().c_str(), expected.c_str());
@@ -507,7 +547,8 @@ static void TheEndOfTheStreamSendsTheSessionReport() {
   // arrive, over the stream and in its one stats window
   const std::string end = ",\"hostFrameRateX100\":0,\"hostProcessingLatencyX10\":40,\"hostFrameRateLowX100\":0,"
     "\"hostWindows\":0,\"hostLowWindows\":0,\"receiveTimeX100\":100,\"receiveTimePeakX100\":100,\"audioChannels\":8,"
-    "\"audioLoadMsPerS\":412,\"audioLoadPeakMsPerS\":447,\"audioOverloadedWindows\":3,\"hostRfi\":1}";
+    "\"audioLoadMsPerS\":412,\"audioLoadPeakMsPerS\":447,\"audioOverloadedWindows\":3,\"audioLeadMs\":25,"
+    "\"audioLeadEndMs\":92,\"audioLeadMaxMs\":95,\"audioDriftMsPerHour\":-53,\"hostRfi\":1}";
   CHECK(!postedAsync.empty() && postedAsync.back().size() > end.size() &&
     postedAsync.back().compare(postedAsync.back().size() - end.size(), end.size(), end) == 0);
 
@@ -515,13 +556,27 @@ static void TheEndOfTheStreamSendsTheSessionReport() {
   // starts first) reports none, instead of the figures of the stream before it. Its host (e.g. Sunshine with an AMD
   // or Intel encoder) offered no reference frame invalidation.
   CHECK_EQ(g_AudioStreamStats.loadChannels.load(), 0u);
+  CHECK_EQ(g_AudioStreamStats.leadMaxMs.load(), 0u);
+  CHECK(!g_AudioStreamStats.hasDrift.load());
+  CHECK_EQ(g_AudioStreamStats.driftMsPerHour.load(), 0);
   hostOffersRfi = false;
+  idrRequestsSent = 0;
+  idrRequestsHeld = 0;
+  slowestIdrAnswerMs = 0;
   StartStream(kPerformanceStatsOff);
   postedAsync.clear();
+  logged.clear();
   MoonlightInstance::VidDecCleanup();
+  // Without a measured answer the line leaves the slowest IDR frame out
+  idrLines = 0;
+  for (const std::string& line : logged) {
+    idrLines += line == "IDR frame requests of the stream: 0 sent, 0 held while an IDR frame was on its way\n" ? 1 : 0;
+  }
+  CHECK_EQ(idrLines, 1u);
   // (and without a frame, no frame receive time)
   const std::string noAudio = ",\"receiveTimeX100\":0,\"receiveTimePeakX100\":0,\"audioChannels\":0,\"audioLoadMsPerS\":0,"
-    "\"audioLoadPeakMsPerS\":0,\"audioOverloadedWindows\":0,\"hostRfi\":0}";
+    "\"audioLoadPeakMsPerS\":0,\"audioOverloadedWindows\":0,\"audioLeadMs\":0,\"audioLeadEndMs\":0,\"audioLeadMaxMs\":0,"
+    "\"audioDriftMsPerHour\":null,\"hostRfi\":0}";
   CHECK(!postedAsync.empty() && postedAsync.back().size() > noAudio.size() &&
     postedAsync.back().compare(postedAsync.back().size() - noAudio.size(), noAudio.size(), noAudio) == 0);
 }

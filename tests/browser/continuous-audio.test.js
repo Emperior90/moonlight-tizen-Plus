@@ -62,7 +62,7 @@ test('there is no switch for it, and every launch and resume asks the host for a
     }));
     assert.equal(shown.rows, 0);
     // (Decrypt host audio is in the Experimental block of the Advanced Settings since 2.2.0)
-    assert.deepEqual(shown.items, ['selectAudioBackend', 'selectAudio', 'audioSyncBtn', 'playHostAudioBtn']);
+    assert.deepEqual(shown.items, ['selectAudioBackend', 'selectAudio', 'audioSyncBtn', 'playHostAudioBtn', 'audioQosBtn']);
     assert.equal(Object.prototype.hasOwnProperty.call(await readStorage(app.page), 'continuousAudio'), false);
 
     assert.deepEqual(await launchRequest(app.page, 0), { path: '/launch', continuousAudio: '1', surroundAudioInfo: String(0x030002) });

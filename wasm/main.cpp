@@ -371,7 +371,7 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, std::string buttonMappings,
   std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
   std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, int performanceStats,
-  bool refFrameInvalidation, bool hdrMetadata, std::string controllerType, std::string surroundQuality) {
+  bool refFrameInvalidation, bool hdrMetadata, std::string controllerType, std::string surroundQuality, bool audioQos) {
   
   // Wait for the teardown of the stream before (its stop thread), and join the connection thread of a start that
   // failed on its own, which no stop thread joined: until then it keeps its stack and its worker (stream_threads.hpp).
@@ -412,6 +412,7 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   PostToJs("Setting the Audio jitter buffer to: " + std::to_string(audioJitterMs) + " ms");
   PostToJs("Setting the Play host audio to: " + std::to_string(playHostAudio));
   PostToJs("Setting the Decrypt host audio to: " + std::to_string(decryptHostAudio));
+  PostToJs("Setting the Prioritize sound on Wi-Fi to: " + std::to_string(audioQos));
   PostToJs("Setting the Video codec to: " + videoCodec);
   PostToJs("Setting the Video HDR mode to: " + std::to_string(hdrMode));
   PostToJs("Setting the Full color range to: " + std::to_string(fullRange));
@@ -429,6 +430,9 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   m_StreamConfig.bitrate = stoi(bitrate); // kilobits per second
   m_StreamConfig.packetSize = 1392;
   m_StreamConfig.streamingRemotely = STREAM_CFG_AUTO;
+  // 'Prioritize sound on Wi-Fi' off asks the host to send the audio without QoS, on the local network where the
+  // library would ask for it; video keeps its QoS (disableAudioQos in moonlight-common-c/src/Limelight.h)
+  m_StreamConfig.disableAudioQos = !audioQos;
 
   // Initialize the audio backend with default value
   m_AudioBackend = AudioBackend::Emss;
@@ -653,9 +657,13 @@ void MoonlightInstance::STUN(int callbackId) {
   m_Dispatcher.post_job(std::bind(&MoonlightInstance::STUN_private, this, callbackId), false);
 }
 
-void MoonlightInstance::Pair_private(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber) {
+// deviceName is the URL-encoded name that the host shows for this TV (pairingDeviceName() in wasm/static/js/utils.js),
+// which gs_pair() checks once more before it puts it into the requests
+void MoonlightInstance::Pair_private(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber,
+                                     std::string deviceName) {
   char* ppkstr = NULL;
-  int err = gs_pair(atoi(serverMajorVersion.c_str()), address.c_str(), (unsigned short)httpPort, randomNumber.c_str(), &ppkstr);
+  int err = gs_pair(atoi(serverMajorVersion.c_str()), address.c_str(), (unsigned short)httpPort, randomNumber.c_str(),
+                    deviceName.c_str(), &ppkstr);
 
   // The PIN stays out of the log, like the remote input key of a stream. A wrong PIN is GS_PIN_WRONG (-7), which
   // pairingDialog() in index.js reports as such.
@@ -668,9 +676,11 @@ void MoonlightInstance::Pair_private(int callbackId, std::string serverMajorVers
   }
 }
 
-void MoonlightInstance::Pair(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber) {
+void MoonlightInstance::Pair(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber,
+                             std::string deviceName) {
   ClLogMessage("%s with host address: %s:%d\n", __func__, address.c_str(), httpPort);
-  m_Dispatcher.post_job(std::bind(&MoonlightInstance::Pair_private, this, callbackId, serverMajorVersion, address, httpPort, randomNumber), false);
+  m_Dispatcher.post_job(std::bind(&MoonlightInstance::Pair_private, this, callbackId, serverMajorVersion, address, httpPort, randomNumber,
+                                  deviceName), false);
 }
 
 void MoonlightInstance::WakeOnLan(int callbackId, std::string macAddress, std::string subnetBroadcast) {
@@ -787,12 +797,12 @@ MessageResult startStream(std::string host, int httpPort, std::string width, std
   bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, std::string buttonMappings,
   std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
   std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, int performanceStats,
-  bool refFrameInvalidation, bool hdrMetadata, std::string controllerType, std::string surroundQuality) {
+  bool refFrameInvalidation, bool hdrMetadata, std::string controllerType, std::string surroundQuality, bool audioQos) {
   PostToJs("Starting the streaming session...");
   return g_Instance->StartStream(host, httpPort, width, height, fps, bitrate, rikey, rikeyid, appversion, gfeversion, rtspurl, serverCodecModeSupport,
   framePacing, optimizeGames, rumbleFeedback, mouseEmulation, buttonMappings, audioBackend, audioConfig, audioSync,
   audioJitterMs, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange, gameMode, disableWarnings, performanceStats,
-  refFrameInvalidation, hdrMetadata, controllerType, surroundQuality);
+  refFrameInvalidation, hdrMetadata, controllerType, surroundQuality, audioQos);
 }
 
 MessageResult stopStream() {
@@ -831,12 +841,13 @@ void stun(int callbackId) {
   g_Instance->STUN(callbackId);
 }
 
-void pair(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber, std::string uniqueId) {
+void pair(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber, std::string uniqueId,
+          std::string deviceName) {
   if (g_UniqueId) {
     free(g_UniqueId);
   }
   g_UniqueId = strdup(uniqueId.c_str());
-  g_Instance->Pair(callbackId, serverMajorVersion, address, httpPort, randomNumber);
+  g_Instance->Pair(callbackId, serverMajorVersion, address, httpPort, randomNumber, deviceName);
 }
 
 void wakeOnLan(int callbackId, std::string macAddress, std::string subnetBroadcast) {

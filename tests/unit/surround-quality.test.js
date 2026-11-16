@@ -2,8 +2,9 @@
 
 // Pins how the setting 'Surround audio quality' reaches the module, which the native tests can't check since they
 // don't build the Embind registration or ConnectionThreadFunc() of wasm/main.cpp:
-// - startStream() of wasm/main.cpp and wasm/moonlight_wasm.hpp take it as their last parameter, and both start requests
-//   of startGame() (index.js) send exactly as many arguments, with it last, and StartStream() logs whether the stream
+// - startStream() of wasm/main.cpp and wasm/moonlight_wasm.hpp take it as their last parameter but one (the last is
+//   'Prioritize sound on Wi-Fi' since 2.3.1, tests/unit/audio-qos.test.js), and both start requests of startGame()
+//   (index.js) send exactly as many arguments, with it in the same place, and StartStream() logs whether the stream
 //   gets it (not a stereo stream, which keeps its quality);
 // - the connection thread takes the capabilities of the audio renderer from GetAudioRendererCapabilities() of
 //   wasm/audio_capabilities.hpp with the setting and the audio configuration of the stream, which
@@ -44,17 +45,17 @@ function parameters(source, start) {
   return source.slice(open + 1, close).split(',').map((parameter) => parameter.trim().split(/\s+/).pop());
 }
 
-test('startStream() takes the surround audio quality last, and both start requests send it', () => {
+test('startStream() takes the surround audio quality last but one, and both start requests send it', () => {
   const main = read('wasm/main.cpp');
   const header = read('wasm/moonlight_wasm.hpp');
   const definition = parameters(main, 'MessageResult startStream(');
-  assert.equal(definition.length, 33);
-  assert.equal(definition[definition.length - 1], 'surroundQuality');
+  assert.equal(definition.length, 34);
+  assert.equal(definition[definition.length - 2], 'surroundQuality');
   assert.deepEqual(parameters(main, 'MessageResult MoonlightInstance::StartStream('), definition);
   assert.deepEqual(parameters(header, 'MessageResult startStream('), definition);
   assert.deepEqual(parameters(header, '  MessageResult StartStream('), definition);
   // startStream() hands it on, and StartStream() logs and keeps it
-  assert.match(functionBody(main, 'MessageResult startStream('), /refFrameInvalidation, hdrMetadata, controllerType, surroundQuality\);/);
+  assert.match(functionBody(main, 'MessageResult startStream('), /refFrameInvalidation, hdrMetadata, controllerType, surroundQuality, audioQos\);/);
   const start = functionBody(main, 'MessageResult MoonlightInstance::StartStream(');
   assert.match(start, /PostToJs\("Setting the Surround audio quality to: " \+ surroundQuality\);/);
   assert.match(start, /m_EfficientSurroundAudio = surroundQuality == "Efficient";/);
@@ -63,7 +64,7 @@ test('startStream() takes the surround audio quality last, and both start reques
   assert.ok(start.indexOf('m_AudioConfig = m_StreamConfig.audioConfiguration;') < start.indexOf('Efficient (normal quality, 10 ms packets)'));
   assert.match(main, /emscripten::function\("startStream", &startStream\);/);
 
-  // The two start requests of startGame() (resume and launch) send one argument per parameter, the setting last (each
+  // The two start requests of startGame() (resume and launch) send one argument per parameter, the setting last but one (each
   // ends with the handler of a call that the module didn't take, tests/browser/start-request-failure.test.js)
   const index = read('wasm/platform/index.js');
   const requests = [...index.matchAll(/sendMessage\('startRequest', \[([\s\S]*?)\]\)\.catch\(/g)].map((match) =>
@@ -71,9 +72,9 @@ test('startStream() takes the surround audio quality last, and both start reques
   assert.equal(requests.length, 2);
   requests.forEach((request) => {
     assert.equal(request.length, definition.length, request.join(' '));
-    assert.equal(request[request.length - 1], 'surroundQuality');
+    assert.equal(request[request.length - 2], 'surroundQuality');
   });
-  assert.match(read('wasm/platform/messages.js'), /hdrMetadata, controllerType, surroundQuality \*\//);
+  assert.match(read('wasm/platform/messages.js'), /hdrMetadata, controllerType, surroundQuality, audioQos \*\//);
 });
 
 test('the connection thread takes the capabilities of the audio renderer from audio_capabilities.hpp', () => {

@@ -15,6 +15,9 @@
 // moonlight-common-c from ListenerCallbacks.logMessage, where they only arrive with LC_LOG, which the release defines
 // in CMakeLists.txt: run.sh builds this test with the definitions of that file, not with one of its own, so the checks
 // of the log lines below fail when the release would send them to the console of Emscripten only.
+// Also the sequence number of the encrypted requests, which is the IV of their encryption: each start numbers its
+// requests from 1 again (upstream 0b4a44d), also a second start in the same process, as every reconnect of the Stream
+// Menu and the silent retry make. It used to go on from the start before.
 // Build with: moonlight-common-c/src/RtspParser.c -lcrypto
 
 // The socket code of moonlight-common-c needs the GNU extensions of the C library (in6_pktinfo)
@@ -103,6 +106,8 @@ static int listenFd = -1;
 static uint16_t serverPort;
 static enum answer serverAnswer;
 static unsigned char serverKey[16];
+// The sequence number of the first encrypted request that the server got, 0 before one came
+static uint32_t firstRequestSequenceNumber;
 
 static const unsigned char keyOfStart[16] = { 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
                                              0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f };
@@ -174,6 +179,11 @@ static void* serverThread(void* context) {
     if (readFully(fd, header, sizeof(header))) {
       uint32_t typeAndLength;
       memcpy(&typeAndLength, header, 4);
+      if (firstRequestSequenceNumber == 0) {
+        uint32_t sequenceField;
+        memcpy(&sequenceField, header + 4, 4);
+        firstRequestSequenceNumber = ntohl(sequenceField);
+      }
       uint32_t length = ntohl(typeAndLength) & ~0x80000000u;
       unsigned char payload[2048];
       if (length <= sizeof(payload) && readFully(fd, payload, length) && !answered && serverAnswer != ANSWER_NOTHING) {
@@ -202,6 +212,7 @@ static void startServer(void) {
 static int handshake(enum answer answer, const unsigned char* answerKey) {
   startServer();
   serverAnswer = answer;
+  firstRequestSequenceNumber = 0;
   memcpy(serverKey, answerKey, sizeof(serverKey));
   pthread_t thread;
   CHECK(pthread_create(&thread, NULL, serverThread, NULL) == 0);
@@ -275,6 +286,16 @@ static void test_other_failures_stay_minus_one(void) {
   CHECK(strstr(clientLog, "RTSP OPTIONS request failed: -1") != NULL);
 }
 
+// A second start in the same process numbers its encrypted requests from 1 again, like the first
+static void test_each_start_numbers_its_requests_from_one(void) {
+  int result = handshake(ANSWER_WITH_KEY_OF_START, keyOfStart);
+  CHECK_EQ_INT(result, -1);
+  CHECK_EQ_INT(firstRequestSequenceNumber, 1);
+  result = handshake(ANSWER_WITH_KEY_OF_START, keyOfStart);
+  CHECK_EQ_INT(result, -1);
+  CHECK_EQ_INT(firstRequestSequenceNumber, 1);
+}
+
 // The code differs from the termination codes of moonlight-common-c and from -1
 static void test_the_code_is_its_own(void) {
   const int others[] = { -1, ML_ERROR_GRACEFUL_TERMINATION, ML_ERROR_NO_VIDEO_TRAFFIC, ML_ERROR_NO_VIDEO_FRAME,
@@ -291,5 +312,6 @@ int main(void) {
   RUN_TEST("an answer encrypted with the key of the start decrypts", test_answer_with_the_key_of_the_start_decrypts);
   RUN_TEST("an unencrypted answer and no answer keep -1", test_other_failures_stay_minus_one);
   RUN_TEST("ML_ERROR_RTSP_DECRYPT_FAILED is a code of its own", test_the_code_is_its_own);
+  RUN_TEST("each start numbers its encrypted requests from 1", test_each_start_numbers_its_requests_from_one);
   return test_summary();
 }

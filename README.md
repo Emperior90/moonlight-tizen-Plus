@@ -1,6 +1,6 @@
 # Moonlight Plus
 
-Moonlight Plus is an unofficial fork of [Moonlight Tizen](https://github.com/brightcraft/moonlight-tizen) by brightcraft. Like Moonlight Tizen, it streams games, programs or the whole desktop from your PC to a Samsung Smart TV, with [Sunshine](https://github.com/LizardByte/Sunshine) on the PC. It is based on Moonlight Tizen 1.19.0 and adds settings that adapt to your TV, clearer messages and many fixes.
+Moonlight Plus is an unofficial fork of [Moonlight Tizen](https://github.com/brightcraft/moonlight-tizen) by brightcraft. Like Moonlight Tizen, it streams games, programs or the whole desktop from your PC to a Samsung Smart TV, with [Sunshine](https://github.com/SunshineStream/Sunshine) on the PC. It is based on Moonlight Tizen 1.19.0 and adds settings that adapt to your TV, clearer messages and many fixes.
 
 > [!NOTE]
 >
@@ -32,7 +32,7 @@ What changed in each version, in short: [patch notes](docs/PATCH_NOTES.md). Ever
 ## Requirements
 
 - **TV:** a Samsung Smart TV with Tizen 5.5 or newer (model year 2020 or later), including Tizen 10 of the models of 2026, which Moonlight Plus has not been tested on yet (see [Installation](#installation)).
-- **Host:** a PC with [Sunshine](https://github.com/LizardByte/Sunshine) and a GPU with a hardware video encoder.
+- **Host:** a PC with [Sunshine](https://github.com/SunshineStream/Sunshine) and a GPU with a hardware video encoder.
 - **Network:** the host PC on a cable, the TV on 5 GHz Wi-Fi or Ethernet. Most Samsung TVs have a 100 Mbps Ethernet port, so Wi-Fi allows higher bitrates.
 - **Controller (optional):** see [Controllers](docs/CONTROLLERS.md).
 
@@ -100,7 +100,7 @@ To support the developer of Moonlight Tizen or to get help with the regular Moon
 
 Moonlight Plus has no analytics, telemetry, ads or accounts, and sends nothing to its developer. On its own it connects only to:
 
-- **The PCs you add or that the scan finds**, for pairing and streaming: at their address, their name with `.local`, their local address and, if none of these answers, the public address of their network. The TV has no mDNS, so the lookup of the name with `.local` can reach the DNS server of your network.
+- **The PCs you add or that the scan finds**, for pairing and streaming: at their address, their name with `.local`, their local address and, if none of these answers, the public address of their network. The TV has no mDNS, so the lookup of the name with `.local` can reach the DNS server of your network. When pairing, the app tells the PC the model name of the TV as System information shows it (e.g. *Moonlight Plus (QE55S90CAT)*), never the name you gave the TV; GeForce Experience gets the placeholder *roth* that Moonlight clients have always sent.
 - **Your local network**, at startup while the PC list shows and when you choose *Rescan network*: one HTTP request to port 47989 of every address of the /24 network of the TV (e.g. 192.168.1.1 to 192.168.1.254), to find PCs with Sunshine. The *Wake PC* dialog repeats this scan while it waits for a PC, which may come back with a new address.
 - **api.github.com (GitHub)**, at startup at most once a day and when you choose *Check for updates*, to read the latest release of this fork. GitHub sees the IP address of your network and the usual headers of the browser of the TV, such as its user agent, and no identifier of the TV or of you.
 - **stun.moonlight-stream.org (the Moonlight project), UDP port 3478**, when the scan finds a new PC or a new address of a known PC, to learn the public IP address of your network (inherited from Moonlight).
@@ -124,7 +124,7 @@ Moonlight Plus is free software: you can redistribute it and/or modify it under 
 
 The third-party components and their licences, with the full licence texts, are listed in [wasm/static/licenses/THIRD-PARTY-NOTICES.txt](wasm/static/licenses/THIRD-PARTY-NOTICES.txt). This file and LICENSE are also inside the app package.
 
-**Code from other projects:** Moonlight Plus contains code ported from the GPL-3.0 forks of Moonlight Tizen by [fidoboy](https://github.com/fidoboy/moonlight-tizen-ac3) (moonlight-tizen-ac3), [mmadej20](https://github.com/mmadej20/moonlight-tizen-modern) (moonlight-tizen-modern), [samirmartins](https://github.com/samirmartins/moonlight-tizen), [Diogo8500](https://github.com/Diogo8500/moonlight-tizen) and [waresz](https://github.com/waresz/moonlight-tizen) (each moonlight-tizen). The source files and the notices name what comes from where.
+**Code from other projects:** Moonlight Plus contains code ported from the GPL-3.0 forks of Moonlight Tizen by [fidoboy](https://github.com/fidoboy/moonlight-tizen-ac3) (moonlight-tizen-ac3), [mmadej20](https://github.com/mmadej20/moonlight-tizen-modern) (moonlight-tizen-modern), [samirmartins](https://github.com/samirmartins/moonlight-tizen), [Diogo8500](https://github.com/Diogo8500/moonlight-tizen) and [waresz](https://github.com/waresz/moonlight-tizen) (each moonlight-tizen), and the order in which moonlight-common-c reports the reason of the PC for ending a stream from `host-termination.patch` of the Nightjar client (GPL-3.0). The source files and the notices name what comes from where.
 
 **Source code:** each release links the commit it was built from, which is its source code. [docs/BUILD.md](docs/BUILD.md) lists the SDKs and the sources of the libraries that the build downloads.
 

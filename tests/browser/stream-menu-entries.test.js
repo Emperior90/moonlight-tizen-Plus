@@ -475,8 +475,8 @@ const surroundEntry = (page) => page.evaluate(() => ({
   higherLimit: $('#streamMenuSurroundHigher').hasClass('is-limit'),
 }));
 
-// The argument surroundQuality of the latest start request (the last one, SyncFunctions.startRequest in messages.js)
-const startRequestQuality = (page) => page.evaluate(() => window.__startStreamArgs[window.__startStreamArgs.length - 1]);
+// The argument surroundQuality of the latest start request (the last but one, SyncFunctions.startRequest in messages.js)
+const startRequestQuality = (page) => page.evaluate(() => window.__startStreamArgs[32]);
 
 test('the surround quality entry shows only for a stream with more than 2 audio channels', async () => {
   // Stereo, the default: the menu doesn't grow

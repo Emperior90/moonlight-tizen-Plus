@@ -90,7 +90,7 @@ X means the left face button (Square on PlayStation controllers), whatever the b
 
 ## Controller type sent to the PC
 
-When a stream starts, and whenever a controller connects during a stream, the app announces each controller to the PC with a controller type: Xbox, PlayStation, Nintendo or unknown. With its *gamepad* option on `auto` (the default), Sunshine uses this type to pick the controller it emulates on the PC, e.g. a PlayStation-style controller with PlayStation button prompts in games. For an unknown type it emulates an Xbox-style controller ([Sunshine configuration](https://github.com/LizardByte/Sunshine/blob/master/docs/configuration.md)).
+When a stream starts, and whenever a controller connects during a stream, the app announces each controller to the PC with a controller type: Xbox, PlayStation, Nintendo or unknown. With its *gamepad* option on `auto` (the default), Sunshine uses this type to pick the controller it emulates on the PC, e.g. a PlayStation-style controller with PlayStation button prompts in games. For an unknown type it emulates an Xbox-style controller ([Sunshine configuration](https://github.com/SunshineStream/Sunshine/blob/master/docs/configuration.md)).
 
 **Auto detection** reads the name (id) that the browser reports for the controller:
 

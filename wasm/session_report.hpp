@@ -4,11 +4,11 @@
 // wasm/wasmplayer.cpp gathers them when the stream ends and sends them as one small JSON object, e.g.
 //   SessionReportMsg: {"durationMs":754000,"codec":"HEVC Main10","width":3840,"height":2160,"fps":60,...}
 // so the front end never parses the text of the performance statistics, which only exists while they are shown. The
-// figures are those of the session lines of the full statistics, the load of the audio thread (audio_load.hpp), the
-// frame rate of the host in its best and its lowest 30 s window, and the time a frame took to arrive. The idea of a
-// report at the end of a stream comes from the fork of samirmartins (moonlight-tizen, 1d8f2e3 and bcdcda5,
-// diagnostics.js). The header has no other dependencies, so the native tests can check it on its own
-// (tests/native/session_report_test.cpp).
+// figures are those of the session lines of the full statistics, the load of the audio thread (audio_load.hpp), how far
+// the sound ran ahead of the clock of the TV (audio_lead.hpp), the frame rate of the host in its best and its lowest
+// 30 s window, and the time a frame took to arrive. The idea of a report at the end of a stream comes from the fork of
+// samirmartins (moonlight-tizen, 1d8f2e3 and bcdcda5, diagnostics.js). The header has no other dependencies, so the
+// native tests can check it on its own (tests/native/session_report_test.cpp).
 
 #include <cstddef>
 #include <cstdint>
@@ -27,6 +27,10 @@ struct SessionReport {
   uint32_t tvDroppedFrames = 0; // frames the TV dropped itself (e.g. a full decode unit queue)
   uint32_t videoResets = 0; // resets of the video pipeline of moonlight-common-c
   uint32_t recoveryKeyframes = 0; // keyframes the host sent to recover the stream after a loss
+  // The requests for an IDR frame that this client sent to the host, and those it held because the IDR frame of an
+  // earlier request was still on its way (LiGetIdrFrameRequestStats() and IdrRequestLimit.h of moonlight-common-c)
+  uint32_t idrRequestsSent = 0;
+  uint32_t idrRequestsHeld = 0;
   uint32_t fecRecoveredBlocks = 0; // losses that the parity packets repaired
   uint32_t fecFailures = 0; // losses that they couldn't repair
   uint32_t heapTopMb = 0; // top of the WASM heap at the end of the stream
@@ -60,16 +64,26 @@ struct SessionReport {
   uint32_t audioLoadMsPerS = 0;
   uint32_t audioLoadPeakMsPerS = 0;
   uint32_t audioOverloadedWindows = 0;
+  // How far the sound of the TV media player ran ahead of the clock of the TV, in averages of 10 s (audio_lead.hpp):
+  // after the first minute, at the end and at the highest, in milliseconds, all 0 when nothing was measured (Web Audio,
+  // no sound, a stream that ended in its first minute). And the drift of the sound that arrived against that clock, in
+  // milliseconds per hour, negative for a host whose clock is slower, only with hasAudioDrift (at least 10 minutes of
+  // sound); the message has null without it.
+  uint32_t audioLeadMs = 0;
+  uint32_t audioLeadEndMs = 0;
+  uint32_t audioLeadMaxMs = 0;
+  bool hasAudioDrift = false;
+  int32_t audioDriftMsPerHour = 0;
   // Whether the host offered reference frame invalidation for this stream (LiHostSupportsReferenceFrameInvalidation()
   // of moonlight-common-c): only then can the setting of that name recover a loss without a keyframe, so only then
   // does the hint about recovery keyframes name it. Sunshine offers it with its NVENC encoder alone.
   bool hostRfi = false;
 };
 
-// The size of the buffer that the message is built in. The longest message, with every figure at its largest, has 771
+// The size of the buffer that the message is built in. The longest message, with every figure at its largest, has 944
 // characters (tests/native/session_report_test.cpp checks that it fits with room for three more figures): a message that
 // doesn't fit is not sent at all.
-constexpr size_t kSessionReportMessageSize = 1024;
+constexpr size_t kSessionReportMessageSize = 1280;
 
 // The 30 s windows of the host frame rate that count for the lowest frame rate of the report. UpdateHostFrameRate() in
 // wasmplayer.cpp completes a window and hands it to AddHostRateWindow(). Two kinds of windows say nothing about a host
@@ -128,19 +142,28 @@ inline const char* VideoFormatReportName(int videoFormat) {
 inline std::string FormatSessionReportMessage(const SessionReport& report) {
   // Only 32-bit values go through the varargs of snprintf: a stream would need 49 days to pass UINT32_MAX ms
   const uint32_t durationMs = report.durationMs > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(report.durationMs);
+  // The drift of the sound is a signed number, or null for a stream without one
+  char drift[16] = "null";
+  if (report.hasAudioDrift) {
+    std::snprintf(drift, sizeof(drift), "%d", static_cast<int>(report.audioDriftMsPerHour));
+  }
   char json[kSessionReportMessageSize];
   const int length = std::snprintf(json, sizeof(json),
     "SessionReportMsg: {\"durationMs\":%u,\"codec\":\"%s\",\"width\":%u,\"height\":%u,\"fps\":%u,\"bitrateKbps\":%u,"
     "\"frames\":%u,\"networkDroppedFrames\":%u,\"tvDroppedFrames\":%u,\"videoResets\":%u,\"recoveryKeyframes\":%u,"
+    "\"idrRequestsSent\":%u,\"idrRequestsHeld\":%u,"
     "\"fecRecoveredBlocks\":%u,\"fecFailures\":%u,\"heapTopMb\":%u,\"heapTotalMb\":%u,\"heapGrowthMb\":%u,"
     "\"hostFrameRateX100\":%u,\"hostProcessingLatencyX10\":%u,\"hostFrameRateLowX100\":%u,\"hostWindows\":%u,"
     "\"hostLowWindows\":%u,\"receiveTimeX100\":%u,\"receiveTimePeakX100\":%u,\"audioChannels\":%u,"
-    "\"audioLoadMsPerS\":%u,\"audioLoadPeakMsPerS\":%u,\"audioOverloadedWindows\":%u,\"hostRfi\":%u}",
+    "\"audioLoadMsPerS\":%u,\"audioLoadPeakMsPerS\":%u,\"audioOverloadedWindows\":%u,\"audioLeadMs\":%u,"
+    "\"audioLeadEndMs\":%u,\"audioLeadMaxMs\":%u,\"audioDriftMsPerHour\":%s,\"hostRfi\":%u}",
     durationMs, report.codec ? report.codec : "", report.width, report.height,
     report.fps, report.bitrateKbps, report.frames, report.networkDroppedFrames, report.tvDroppedFrames, report.videoResets,
-    report.recoveryKeyframes, report.fecRecoveredBlocks, report.fecFailures, report.heapTopMb, report.heapTotalMb,
-    report.heapGrowthMb, report.hostFrameRateX100, report.hostProcessingLatencyX10, report.hostFrameRateLowX100,
-    report.hostWindows, report.hostLowWindows, report.receiveTimeX100, report.receiveTimePeakX100, report.audioChannels,
-    report.audioLoadMsPerS, report.audioLoadPeakMsPerS, report.audioOverloadedWindows, report.hostRfi ? 1u : 0u);
+    report.recoveryKeyframes, report.idrRequestsSent, report.idrRequestsHeld, report.fecRecoveredBlocks, report.fecFailures,
+    report.heapTopMb, report.heapTotalMb, report.heapGrowthMb, report.hostFrameRateX100, report.hostProcessingLatencyX10,
+    report.hostFrameRateLowX100, report.hostWindows, report.hostLowWindows, report.receiveTimeX100,
+    report.receiveTimePeakX100, report.audioChannels, report.audioLoadMsPerS, report.audioLoadPeakMsPerS,
+    report.audioOverloadedWindows, report.audioLeadMs, report.audioLeadEndMs, report.audioLeadMaxMs, drift,
+    report.hostRfi ? 1u : 0u);
   return length > 0 && length < static_cast<int>(sizeof(json)) ? std::string(json) : std::string();
 }
