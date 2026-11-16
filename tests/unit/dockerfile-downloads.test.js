@@ -40,11 +40,6 @@ const UNCHECKED = [
     why: 'Open: the SHA-256 of the installer of Tizen Studio 6.1 is not recorded yet. The build prints it instead.',
     docs: /\n\| Tizen Studio 6\.1 installer \| \*\*Not checked yet\.\*\* [^\n]*prints/,
   },
-  {
-    id: 'https://developer.samsung.com/smarttv/file/a5013a65-af11-4b59-844f-2d34f14d19a9',
-    why: 'Open: the SHA-256 of the Samsung Emscripten SDK 1.39.4.7 is not recorded yet. The build prints it instead.',
-    docs: /\n\| Samsung Emscripten SDK 1\.39\.4\.7 \| \*\*Not checked yet\.\*\* [^\n]*prints/,
-  },
 ];
 const UNCHECKED_IDS = UNCHECKED.map((entry) => entry.id);
 
