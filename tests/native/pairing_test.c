@@ -6,8 +6,9 @@
 // stale session on a host that keeps the session of a client like Sunshine v2025.924, which would fail the next
 // attempt; that the fields of the answers are only read with their exact length (a longer one
 // would overflow the buffers on the stack, which the address sanitizer catches); and, through the leak check of the
-// address sanitizer at exit, that the signature of the client is freed. http_request() is replaced by the simulated
-// host, so no network is needed.
+// address sanitizer at exit, that the signature of the client is freed; and that every pairing request names the TV
+// with the device name that the app passes (devicename=..., "roth" for none or one that isn't a valid URL-encoded name
+// of at most 64 bytes). http_request() is replaced by the simulated host, so no network is needed.
 //
 // Build with: -ftrivial-auto-var-init=pattern -lcrypto
 // (the pattern fills the variables on the stack that the code leaves unset, so that sending one shows in the test)
@@ -136,6 +137,10 @@ static struct {
   // What happened
   int requests;
   int unpairs;
+  int pairRequests;          // the /pair requests
+  int pairRequestsNamed;     // those whose devicename was expectedDeviceName
+  char lastDeviceName[256];  // the devicename of the last /pair request, "(none)" without one
+  const char* expectedDeviceName;
   bool gotClientPairingSecret;
   bool clientSecretSigned;  // the client's pairing secret carried a valid signature of the client's key
   bool clientProvedPin;  // the hash and signature of the client's pairing secret were right
@@ -150,8 +155,15 @@ static IDENTITY otherKey;
 // The phases of a pairing session of Sunshine (PAIR_PHASE)
 enum { PHASE_NONE, PHASE_GETSERVERCERT, PHASE_CLIENTCHALLENGE, PHASE_SERVERCHALLENGERESP };
 
+// The device name that pair() passes to gs_pair(): what the app sends for a Samsung QE55S90CAT
+// (pairingDeviceName() in wasm/static/js/utils.js, see unit/pairing-device-name.test.js)
+#define TV_DEVICE_NAME "Moonlight%20Plus%20%28QE55S90CAT%29"
+static const char* pairDeviceName = TV_DEVICE_NAME;
+
 static void reset_host(int version, const char* pin) {
   memset(&host, 0, sizeof(host));
+  host.expectedDeviceName = TV_DEVICE_NAME;
+  pairDeviceName = TV_DEVICE_NAME;
   host.identity = realHost;
   host.version = version;
   snprintf(host.pin, sizeof(host.pin), "%s", pin);
@@ -336,9 +348,29 @@ void http_free_data(PHTTP_DATA data) {
   }
 }
 
+// Count a /pair request and whether it carries the expected device name, as the parameter between devicename= and the
+// next &
+static void record_device_name(const char* url) {
+  if (strstr(url, "/pair?") == NULL) {
+    return;
+  }
+  host.pairRequests++;
+  const char* start = strstr(url, "&devicename=");
+  if (start == NULL) {
+    snprintf(host.lastDeviceName, sizeof(host.lastDeviceName), "%s", "(none)");
+    return;
+  }
+  start += strlen("&devicename=");
+  snprintf(host.lastDeviceName, sizeof(host.lastDeviceName), "%.*s", (int)strcspn(start, "&"), start);
+  if (host.expectedDeviceName != NULL && strcmp(host.lastDeviceName, host.expectedDeviceName) == 0) {
+    host.pairRequestsNamed++;
+  }
+}
+
 int http_request(const char* url, const char* ppkstr, PHTTP_DATA data) {
   (void)ppkstr;
   host.requests++;
+  record_device_name(url);
   if (strstr(url, "/unpair?") != NULL) {
     host.unpairs++;
     // Sunshine has no such route and answers 404, which curl reports as a completed request
@@ -359,7 +391,7 @@ int http_request(const char* url, const char* ppkstr, PHTTP_DATA data) {
 
 static int pair(const char* pin) {
   char* ppk = NULL;
-  int result = gs_pair(host.version, "10.0.0.2", 47989, pin, &ppk);
+  int result = gs_pair(host.version, "10.0.0.2", 47989, pin, pairDeviceName, &ppk);
   if (result == GS_OK) {
     CHECK(ppk != NULL && strncmp(ppk, "sha256//", 8) == 0);
   } else {
@@ -521,6 +553,68 @@ static void test_hex_to_bytes(void) {
   CHECK_EQ_INT(hex_to_bytes(NULL, bytes, 3), GS_INVALID);
 }
 
+static void test_every_pairing_request_names_the_tv(void) {
+  // getservercert, clientchallenge, serverchallengeresp and clientpairingsecret
+  reset_host(7, "1234");
+  CHECK_EQ_INT(pair("1234"), GS_OK);
+  CHECK_EQ_INT(host.pairRequests, 4);
+  CHECK_EQ_INT(host.pairRequestsNamed, 4);
+  CHECK(strcmp(host.lastDeviceName, TV_DEVICE_NAME) == 0);
+
+  // A wrong PIN: the four stages, the last one with the secret of random bytes that ends the session on the host, all
+  // with the name, and the /unpair after them without
+  reset_host(7, "9999");
+  CHECK_EQ_INT(pair("1234"), GS_PIN_WRONG);
+  CHECK(host.gotClientPairingSecret);
+  CHECK_EQ_INT(host.unpairs, 1);
+  CHECK_EQ_INT(host.requests, 5);
+  CHECK_EQ_INT(host.pairRequests, 4);
+  CHECK_EQ_INT(host.pairRequestsNamed, 4);
+
+  // A pairing that a host stops after getservercert sent the name with that request
+  reset_host(7, "1234");
+  host.plainCertHex = "";
+  CHECK_EQ_INT(pair("1234"), GS_FAILED);
+  CHECK_EQ_INT(host.pairRequests, 1);
+  CHECK_EQ_INT(host.pairRequestsNamed, 1);
+}
+
+static void test_device_name_falls_back_to_roth(void) {
+  // No name, and names that aren't a URL-encoded name of at most 64 bytes, go out as "roth", which every Moonlight
+  // client sent before. Without the check, a space, an & or an = would end or change the parameters of the request.
+  const char* invalid[] = {
+    NULL, "", "Moonlight Plus", "TV&uniqueid=0", "TV=1", "TV%2", "TV%zz", "TV%", "TV\xc3\xa4", "TV/1", "TV?", "TV#1",
+    // 65 bytes once decoded
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41"
+    "%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41",
+  };
+  for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++) {
+    reset_host(7, "1234");
+    pairDeviceName = invalid[i];
+    host.expectedDeviceName = "roth";
+    CHECK_EQ_INT(pair("1234"), GS_OK);
+    CHECK_EQ_INT(host.pairRequestsNamed, 4);
+    CHECK(strcmp(host.lastDeviceName, "roth") == 0);
+  }
+
+  // Names that are valid as they are: unreserved characters and %XX escapes, up to 64 bytes once decoded
+  const char* valid[] = {
+    "roth", "Moonlight%20Plus%20%28UE43T5300AU%29", "a-b.c_d~e", "%4d%4F",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41"
+    "%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41%41",
+  };
+  for (size_t i = 0; i < sizeof(valid) / sizeof(valid[0]); i++) {
+    reset_host(7, "1234");
+    pairDeviceName = valid[i];
+    host.expectedDeviceName = valid[i];
+    CHECK_EQ_INT(pair("1234"), GS_OK);
+    CHECK_EQ_INT(host.pairRequestsNamed, 4);
+    CHECK(strcmp(host.lastDeviceName, valid[i]) == 0);
+  }
+}
+
 static void test_xml_search_reads_the_value_after_its_start_tag(void) {
   char* value = NULL;
   char answer[] = "<root></paired><paired>1</paired></root>";
@@ -558,6 +652,10 @@ int main(void) {
   RUN_TEST("the PIN must have 4 digits", test_pin_must_have_four_digits);
   RUN_TEST("hex fields are decoded only with their exact length and hex digits", test_hex_to_bytes);
   RUN_TEST("an XML value is read after its start tag", test_xml_search_reads_the_value_after_its_start_tag);
+  RUN_TEST("every pairing request names the TV with the device name that the app passes",
+           test_every_pairing_request_names_the_tv);
+  RUN_TEST("the device name is 'roth' when none or no valid URL-encoded name of at most 64 bytes is passed",
+           test_device_name_falls_back_to_roth);
 
   free(g_CertHex);
   free_identity(&client);

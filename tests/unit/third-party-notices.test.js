@@ -83,6 +83,8 @@ test('the header gives the licence, the missing warranty, the source and the cop
   ['fidoboy/moonlight-tizen-ac3', 'mmadej20/moonlight-tizen-modern', 'samirmartins/moonlight-tizen', 'Diogo8500/moonlight-tizen',
     'waresz/moonlight-tizen'].forEach((fork) => assert.ok(header.indexOf('https://github.com/' + fork) >= 0, fork));
   assert.match(header, /Portions Copyright \(C\) fidoboy, mmadej20, samirmartins, Diogo8500, waresz/);
+  // and the termination order of moonlight-common-c from another Moonlight client (2.3.1)
+  assert.match(header, /comes from host-termination\.patch of the Nightjar client \(GPL-3\.0\)/);
 });
 
 test('every component of the package has an entry with its version and licence', () => {

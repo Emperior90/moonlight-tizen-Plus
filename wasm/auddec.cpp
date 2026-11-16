@@ -1,10 +1,12 @@
 #include "moonlight_wasm.hpp"
+#include "audio_lead.hpp"
 #include "audio_load.hpp"
 #include "audio_stream_stats.hpp"
 #include "opus_layout.hpp"
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 
 #include <emscripten.h>
@@ -46,6 +48,10 @@ AudioStreamStats g_AudioStreamStats;
 // The load of the audio stream on this thread, from the totals of the statistics above (audio_load.hpp). Only touched
 // where the statistics are counted: on the audio thread, and before it starts and after it ended.
 static AudioLoadMonitor s_AudioLoad;
+
+// How far the sound of the TV media player runs ahead of the clock of the TV over the stream, and its drift
+// (audio_lead.hpp). Only touched on the audio thread, and before it starts and after it ended, like the load above.
+static AudioLeadTracker s_AudioLead;
 
 static TimeStamp s_frameDuration;
 static TimeStamp s_pktPts;
@@ -316,6 +322,11 @@ int MoonlightInstance::AudDecInit(int audioConfiguration, POPUS_MULTISTREAM_CONF
   // Judge the load of this stream from its first packet; without an audio output nothing is decoded and nothing judged
   s_AudioLoad.Reset(s_AudioBackend == AudioBackend::Disabled ? 0 : opusConfig->sampleRate);
 
+  // Measure the lead of the sound from the first packet that the TV media player gets. The browser of the Web Audio
+  // backend plays the sound on a clock of its own, which its scheduler steers (wasm/platform/audio.js).
+  s_AudioLead.Reset(s_AudioBackend == AudioBackend::Emss ?
+    FrameDuration(opusConfig->samplesPerFrame, opusConfig->sampleRate).count() : 0.0);
+
   // Skip creating the Opus decoder when the audio output is disabled, as every audio packet is discarded
   if (s_AudioBackend == AudioBackend::Disabled) {
     // No audio lines in the performance stats
@@ -460,6 +471,24 @@ void MoonlightInstance::AudDecCleanup(void) {
     g_AudioStreamStats.overloadedWindows = load.overloadedWindows;
   }
   s_AudioLoad.Reset(0);
+
+  // Log how far the sound of the TV media player ran ahead of the clock of the TV, and keep the figures for the report
+  // of the session like the load above. A stream that never played a packet with it has neither.
+  if (s_AudioLead.packets != 0) {
+    const AudioLeadSummary lead = s_AudioLead.Finish();
+    char line[256];
+    if (FormatAudioLeadLog(lead, line, sizeof(line)) > 0) {
+      ClLogMessage("%s", line);
+    }
+    if (lead.measured) {
+      g_AudioStreamStats.leadMs = (uint32_t)std::lround(lead.startMs);
+      g_AudioStreamStats.leadEndMs = (uint32_t)std::lround(lead.endMs);
+      g_AudioStreamStats.leadMaxMs = (uint32_t)std::lround(lead.maxMs);
+      g_AudioStreamStats.driftMsPerHour = lead.hasDrift ? (int32_t)std::lround(lead.driftMsPerHour) : 0;
+      g_AudioStreamStats.hasDrift = lead.hasDrift;
+    }
+  }
+  s_AudioLead.Reset(0.0);
 }
 
 void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLength) {
@@ -505,6 +534,8 @@ void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLe
       ClLogMessage("Dropping audio packets to avoid overflow: %d packets of this stream, PTS=%.03f NTP=%.03f\n",
         s_DroppedPackets, s_pktPts.count(), ntp.count());
     }
+    // The host sent this sound all the same, so it counts for the drift
+    s_AudioLead.AddPacket(ntp.count(), (s_estimatedAudioEnd - ntp).count());
     return;
   }
 
@@ -521,6 +552,10 @@ void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLe
   if (appended) {
     s_estimatedAudioEnd = std::max(s_estimatedAudioEnd, ntp) + s_frameDuration;
   }
+
+  // How far the sound runs ahead of the clock of the TV after this packet (audio_lead.hpp), also after one that the
+  // player rejected or the decoder failed on, which the host sent all the same
+  s_AudioLead.AddPacket(ntp.count(), (s_estimatedAudioEnd - ntp).count());
 }
 
 // NOTE: The capabilities are updated before every connection in ConnectionThreadFunc, as the

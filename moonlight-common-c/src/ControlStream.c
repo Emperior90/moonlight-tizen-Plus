@@ -3,6 +3,9 @@
 // This is a private header, but it just contains some time macros
 #include <enet/time.h>
 
+// Moonlight Plus: the limit of the IDR frame requests while an IDR frame is on its way
+#include "IdrRequestLimit.h"
+
 // NV control stream packet header for TCP
 typedef struct _NVCTL_TCP_PACKET_HEADER {
     unsigned short type;
@@ -84,6 +87,10 @@ static bool disconnectPending;
 static bool encryptedControlStream;
 static bool hdrEnabled;
 static SS_HDR_METADATA hdrMetadata;
+// Guards hdrEnabled and hdrMetadata, which the control receive thread writes and the video receive, decoder and
+// callback threads read (upstream 74a61b9; upstream makes hdrEnabled atomic, here it is read with the mutex held, since
+// the C11 atomics are not used with Emscripten 1.39). Nothing else is locked while it is held.
+static PLT_MUTEX hdrMutex;
 
 static int intervalGoodFrameCount;
 static int intervalTotalFrameCount;
@@ -97,6 +104,13 @@ static LINKED_BLOCKING_QUEUE invalidReferenceFrameTuples;
 static LINKED_BLOCKING_QUEUE frameFecStatusQueue;
 static LINKED_BLOCKING_QUEUE asyncCallbackQueue;
 static PLT_EVENT idrFrameRequiredEvent;
+
+// Moonlight Plus: the requests for an IDR frame of this stream (IdrRequestLimit.h). LiRequestIdrFrame() and
+// connectionReceivedIdrFrame() run on the threads of the receive path and the decoder, some of them with stateLock of
+// VideoDepacketizer.c held, and the IDR request thread decides under the same mutex. It is a leaf lock: nothing else
+// is locked while it is held, and the event is set and waited for after it is released.
+static PLT_MUTEX idrRequestLimitMutex;
+static IDR_REQUEST_LIMIT idrRequestLimit;
 
 static PPLT_CRYPTO_CONTEXT encryptionCtx;
 static PPLT_CRYPTO_CONTEXT decryptionCtx;
@@ -278,10 +292,13 @@ static bool supportsIdrFrameRequest;
 int initializeControlStream(void) {
     stopping = false;
     PltCreateEvent(&idrFrameRequiredEvent);
+    PltCreateMutex(&idrRequestLimitMutex);
+    IdrLimitReset(&idrRequestLimit);
     LbqInitializeLinkedBlockingQueue(&invalidReferenceFrameTuples, 20);
     LbqInitializeLinkedBlockingQueue(&frameFecStatusQueue, 8); // Limits number of frame status reports per periodic ping interval
     LbqInitializeLinkedBlockingQueue(&asyncCallbackQueue, 30);
     PltCreateMutex(&enetMutex);
+    PltCreateMutex(&hdrMutex);
 
     encryptedControlStream = APP_VERSION_AT_LEAST(7, 1, 431);
 
@@ -357,7 +374,9 @@ void destroyControlStream(void) {
     freeBasicLbqList(LbqDestroyLinkedBlockingQueue(&frameFecStatusQueue));
     freeBasicLbqList(LbqDestroyLinkedBlockingQueue(&asyncCallbackQueue));
 
+    PltDeleteMutex(&hdrMutex);
     PltDeleteMutex(&enetMutex);
+    PltDeleteMutex(&idrRequestLimitMutex);
 }
 
 static void queueFrameInvalidationTuple(uint32_t startFrame, uint32_t endFrame) {
@@ -367,11 +386,15 @@ static void queueFrameInvalidationTuple(uint32_t startFrame, uint32_t endFrame) 
         PQUEUED_FRAME_INVALIDATION_TUPLE qfit;
         qfit = malloc(sizeof(*qfit));
         if (qfit != NULL) {
+            int err;
+
             qfit->startFrame = startFrame;
             qfit->endFrame = endFrame;
-            if (LbqOfferQueueItem(&invalidReferenceFrameTuples, qfit, &qfit->entry) == LBQ_BOUND_EXCEEDED) {
-                // Too many invalidation tuples, so we need an IDR frame now
-                Limelog("RFI range list reached maximum size limit\n");
+
+            err = LbqOfferQueueItem(&invalidReferenceFrameTuples, qfit, &qfit->entry);
+            if (err != LBQ_SUCCESS) {
+                // Too many invalidation tuples (or the queue is shut down), so we need an IDR frame now
+                Limelog("Failed to queue RFI range: %d\n", err);
                 free(qfit);
                 LiRequestIdrFrame();
             }
@@ -391,8 +414,36 @@ void LiRequestIdrFrame(void) {
     // We require a full IDR frame to recover.
     freeBasicLbqList(LbqFlushQueueItems(&invalidReferenceFrameTuples));
 
+    // Moonlight Plus: note the request for the limit of IdrRequestLimit.h; the IDR request thread decides whether it
+    // is sent at once or held while the IDR frame of an earlier request is on its way
+    PltLockMutex(&idrRequestLimitMutex);
+    IdrLimitOnRequest(&idrRequestLimit, PltGetMillis());
+    PltUnlockMutex(&idrRequestLimitMutex);
+
     // Request the IDR frame
     PltSetEvent(&idrFrameRequiredEvent);
+}
+
+// Moonlight Plus: called by the depacketizer at the first packet of an IDR frame, where it stops waiting for one
+// (with stateLock held). The IDR frame answers every request before it and ends the hold of later ones
+// (IdrRequestLimit.h). The IDR request thread needn't wake for it: a held request was answered, and the next request
+// wakes it.
+void connectionReceivedIdrFrame(void) {
+    uint64_t nowMs = PltGetMillis();
+
+    PltLockMutex(&idrRequestLimitMutex);
+    IdrLimitOnIdrFrame(&idrRequestLimit, nowMs);
+    PltUnlockMutex(&idrRequestLimitMutex);
+}
+
+// Moonlight Plus: the requests for an IDR frame of this stream that were sent to the host, those held while the IDR
+// frame of an earlier one was on its way, and the longest time from a request to its IDR frame (see Limelight.h)
+void LiGetIdrFrameRequestStats(uint32_t* sent, uint32_t* held, uint32_t* slowestAnswerMs) {
+    PltLockMutex(&idrRequestLimitMutex);
+    *sent = idrRequestLimit.sent;
+    *held = idrRequestLimit.held;
+    *slowestAnswerMs = idrRequestLimit.slowestAnswerMs;
+    PltUnlockMutex(&idrRequestLimitMutex);
 }
 
 // Invalidate reference frames lost by the network
@@ -416,7 +467,7 @@ void connectionSendFrameFecStatus(PSS_FRAME_FEC_STATUS fecStatus) {
     PQUEUED_FRAME_FEC_STATUS queuedFecStatus = malloc(sizeof(*queuedFecStatus));
     if (queuedFecStatus != NULL) {
         queuedFecStatus->fecStatus = *fecStatus;
-        if (LbqOfferQueueItem(&frameFecStatusQueue, queuedFecStatus, &queuedFecStatus->entry) == LBQ_BOUND_EXCEEDED) {
+        if (LbqOfferQueueItem(&frameFecStatusQueue, queuedFecStatus, &queuedFecStatus->entry) != LBQ_SUCCESS) {
             free(queuedFecStatus);
         }
     }
@@ -974,7 +1025,7 @@ static void asyncCallbackThreadFunc(void* context) {
                 queuedCb = nextCb;
             }
 
-            ListenerCallbacks.setHdrMode(hdrEnabled);
+            ListenerCallbacks.setHdrMode(LiGetCurrentHostDisplayHdrMode());
             break;
 
         case IDX_SET_MOTION_EVENT:
@@ -1218,6 +1269,8 @@ static void controlReceiveThreadFunc(void* context) {
 
                 BbInitializeWrappedBuffer(&bb, (char*)ctlHdr, sizeof(*ctlHdr), packetLength - sizeof(*ctlHdr), BYTE_ORDER_LITTLE);
 
+                PltLockMutex(&hdrMutex);
+
                 BbGet8(&bb, &enableByte);
                 if (IS_SUNSHINE()) {
                     // Zero the metadata buffer to properly handle older servers if we have to add new fields
@@ -1238,6 +1291,8 @@ static void controlReceiveThreadFunc(void* context) {
                 }
 
                 hdrEnabled = (enableByte != 0);
+
+                PltUnlockMutex(&hdrMutex);
             }
 
             // Process client callbacks in a separate thread
@@ -1315,10 +1370,17 @@ static void controlReceiveThreadFunc(void* context) {
                 // message once it sends this message, so we mark the peer as fully
                 // disconnected now to avoid delays waiting for an ack that will
                 // never arrive.
+                //
+                // Moonlight Plus (from host-termination.patch of Nightjar): the reason
+                // of the host is reported before the peer is disconnected. A thread that
+                // sends on the control stream (input, loss stats, IDR and RFI requests)
+                // fails once the peer is disconnected and reports a generic error, which
+                // used to win when it came in between. The shim in Connection.c takes the
+                // first reason and runs the callback of the client on a thread of its own.
+                ListenerCallbacks.connectionTerminated((int)terminationErrorCode);
                 PltLockMutex(&enetMutex);
                 enet_peer_disconnect_now(peer, 0);
                 PltUnlockMutex(&enetMutex);
-                ListenerCallbacks.connectionTerminated((int)terminationErrorCode);
                 free(ctlHdr);
                 return;
             }
@@ -1536,14 +1598,46 @@ static void invalidateRefFramesFunc(void* context) {
     }
 }
 
+// Moonlight Plus: the window in which further requests are held after one was sent (IdrRequestLimit.h), from the
+// round trip time that ENet measures on the control stream (read like LiGetEstimatedRttInfo() does for the statistics,
+// without enetMutex: a stale value only moves the window within its bounds) and the frame rate of the stream
+static uint32_t idrRequestWindowMs(void) {
+    uint32_t rttMs = 0;
+    bool rttKnown = LiGetEstimatedRttInfo(&rttMs, NULL);
+
+    return IdrLimitWindowMs(rttKnown, rttMs, StreamConfig.fps);
+}
+
 static void requestIdrFrameFunc(void* context) {
+    // Moonlight Plus: with a held request, how long to wait at most for the end of its hold (IdrRequestLimit.h)
+    uint32_t waitMs = 0;
+
     while (!PltIsThreadInterrupted(&requestIdrFrameThread)) {
-        PltWaitForEvent(&idrFrameRequiredEvent);
+        bool send;
+
+        if (waitMs > 0) {
+            PltWaitForEventTimeout(&idrFrameRequiredEvent, (int)waitMs);
+        }
+        else {
+            PltWaitForEvent(&idrFrameRequiredEvent);
+        }
         PltClearEvent(&idrFrameRequiredEvent);
 
         if (stopping) {
             // Bail if we're stopping
             return;
+        }
+
+        // Moonlight Plus: send the request now, or hold it while the IDR frame of the last one is on its way
+        {
+            uint32_t windowMs = idrRequestWindowMs();
+
+            PltLockMutex(&idrRequestLimitMutex);
+            send = IdrLimitNext(&idrRequestLimit, PltGetMillis(), windowMs, &waitMs);
+            PltUnlockMutex(&idrRequestLimitMutex);
+        }
+        if (!send) {
+            continue;
         }
 
         // Any pending reference frame invalidation requests are now redundant
@@ -1988,14 +2082,30 @@ int startControlStream(void) {
 }
 
 bool LiGetCurrentHostDisplayHdrMode(void) {
-    return hdrEnabled;
+    bool enabled;
+
+    PltLockMutex(&hdrMutex);
+    enabled = hdrEnabled;
+    PltUnlockMutex(&hdrMutex);
+
+    return enabled;
 }
 
 bool LiGetHdrMetadata(PSS_HDR_METADATA metadata) {
-    if (!IS_SUNSHINE() || !hdrEnabled) {
+    if (!IS_SUNSHINE()) {
+        return false;
+    }
+
+    PltLockMutex(&hdrMutex);
+
+    // Check inside the lock, so that the metadata is the one of the HDR mode it reads
+    if (!hdrEnabled) {
+        PltUnlockMutex(&hdrMutex);
         return false;
     }
 
     *metadata = hdrMetadata;
+    PltUnlockMutex(&hdrMutex);
+
     return true;
 }

@@ -6,7 +6,10 @@
 // - "branch": the commits on a branch after reviewed_through (optionally only those that touch a path)
 // - "submodule": the commit that another repository pins as a submodule (ENet in moonlight-common-c)
 // - "tags": release tags that match tag_pattern and are newer than reviewed_through (Opus)
-// - "releases": GitHub releases published after reviewed_through (Sunshine)
+// - "releases": GitHub releases published after reviewed_through (Sunshine); with every newer pre-release recorded by
+//   its tag, the project counts as up to date, so reviewed_through can stay at a stable release of a project that
+//   deletes the tags of its pre-releases. A newer full release is always listed, also one recorded while it was a
+//   pre-release (Sunshine publishes a stable release by promoting a pre-release with the same tag)
 // - "pull": a pull request whose head commit or state changed (open, closed, merged)
 // New commits that already have a decision in the file are left out of the list. The issue carries a marker, so a
 // later run updates it instead of opening another one, and closes it once nothing is left to review. It only reads the
@@ -353,13 +356,22 @@ const CHECKS = {
     }
     const newer = index < 0 ? releases : releases.slice(0, index);
     const recorded = (tag) => dep.decisions.some((decision) => (decision.tags || []).indexOf(tag) >= 0);
-    const open = newer.filter((release) => !recorded(release.tag_name));
+    // A project that deletes the tags of its pre-releases (Sunshine) keeps reviewed_through at a stable release and
+    // records the pre-releases it read by their tags, so it is up to date once every newer pre-release has a decision.
+    // A newer full release is listed even with a decision: reviewed_through moves only to a stable release, and a
+    // pre-release that was read can become the stable release under the same tag
+    const open = newer.filter((release) => !recorded(release.tag_name) || !release.prerelease);
+    if (index > 0 && open.length === 0) {
+      return { pending: false, latest: releases[0].tag_name };
+    }
     const lines = [index < 0
       ? `- The reviewed release ${plain(dep.reviewed_through)} is not among the ${releases.length} newest releases. The newest:`
       : `- ${newer.length} new ${newer.length === 1 ? 'release' : 'releases'} since ${plain(dep.reviewed_through)}: [compare](${server}/${dep.repo}/compare/${enc(dep.reviewed_through)}...${enc(newer[0].tag_name)})`];
     open.slice(0, MAX_LISTED).forEach((release) => {
       const date = release.published_at ? ` (${release.published_at.slice(0, 10)})` : '';
-      lines.push(`  - [${plain(release.tag_name)}](${server}/${dep.repo}/releases/tag/${enc(release.tag_name)})${release.prerelease ? ' pre-release' : ''}${date}`);
+      const promoted = !release.prerelease && recorded(release.tag_name)
+        ? ': a full release now, and it has a decision: move reviewed_through to it' : '';
+      lines.push(`  - [${plain(release.tag_name)}](${server}/${dep.repo}/releases/tag/${enc(release.tag_name)})${release.prerelease ? ' pre-release' : ''}${date}${promoted}`);
     });
     if (open.length > MAX_LISTED) {
       lines.push(`  - … and ${open.length - MAX_LISTED} more`);
@@ -423,7 +435,9 @@ function buildIssueBody(results, context) {
   if (current.length > 0) {
     lines.push('### Up to date', '');
     current.forEach((result) => {
-      const reviewed = result.dep.reviewed_through === null ? 'not reviewed' : short(result.dep.reviewed_through);
+      // A commit is shortened; a tag (e.g. v2026.914.233613) is named in full
+      const reviewed = result.dep.reviewed_through === null ? 'not reviewed'
+        : FULL_SHA.test(result.dep.reviewed_through) ? short(result.dep.reviewed_through) : result.dep.reviewed_through;
       lines.push(`- ${plain(result.dep.name)} (${plain(result.dep.repo)}): reviewed through ${plain(reviewed)}`);
     });
     lines.push('');

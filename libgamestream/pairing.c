@@ -312,6 +312,35 @@ static unsigned short sanitize_http_port(unsigned short httpPort) {
   return httpPort;
 }
 
+// The name that the pairing requests give this TV (devicename=...), which the host shows for it: Sunshine in its list
+// of pairing requests that wait for a PIN, Apollo and Vibepollo as the name of the paired client. The app builds it from
+// the model name of the TV and sends it URL-encoded (pairingDeviceName() in wasm/static/js/utils.js); "roth" is the name
+// that every Moonlight client sent before, which GeForce Experience gets and which stands in when the model is unknown.
+// The name goes into the URL as it is, so anything but unreserved characters and %XX escapes, an empty name and one of
+// more than 64 bytes once decoded become "roth" here as well.
+#define PAIRING_DEVICE_NAME_DEFAULT "roth"
+#define PAIRING_DEVICE_NAME_MAX_BYTES 64
+
+static const char* pairing_device_name(const char* name) {
+  size_t bytes = 0;
+  if (name == NULL || name[0] == '\0')
+    return PAIRING_DEVICE_NAME_DEFAULT;
+
+  for (const char* c = name; *c != '\0'; bytes++) {
+    if (bytes >= PAIRING_DEVICE_NAME_MAX_BYTES)
+      return PAIRING_DEVICE_NAME_DEFAULT;
+    if ((*c >= 'A' && *c <= 'Z') || (*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') ||
+        *c == '-' || *c == '.' || *c == '_' || *c == '~') {
+      c++;
+    } else if (*c == '%' && hex_digit_value(c[1]) >= 0 && hex_digit_value(c[2]) >= 0) {
+      c += 3;
+    } else {
+      return PAIRING_DEVICE_NAME_DEFAULT;
+    }
+  }
+  return name;
+}
+
 int gs_unpair(const char* address, unsigned short httpPort) {
   int ret = GS_OK;
   char url[4096];
@@ -335,18 +364,20 @@ int gs_unpair(const char* address, unsigned short httpPort) {
 // attempt would get the stale session back and fail with 'Out of order call to getservercert'. A pairing secret of
 // random bytes, not signed with our key, fails the check of the host (paired 0) and removes the session, while no valid
 // signed secret leaves the client. The answer doesn't matter.
-static void abandon_pairing_session(const char* host_for_url, unsigned short httpPort, PHTTP_DATA data) {
+static void abandon_pairing_session(const char* host_for_url, unsigned short httpPort, const char* device_name,
+                                    PHTTP_DATA data) {
   unsigned char random_secret[16 + 256];
   char random_secret_hex[(16 + 256) * 2 + 1];
   char url[4096];
 
   RAND_bytes(random_secret, sizeof(random_secret));
   bytes_to_hex(random_secret, random_secret_hex, sizeof(random_secret));
-  snprintf(url, sizeof(url), "http://%s:%u/pair?uniqueid=%s&devicename=roth&updateState=1&clientpairingsecret=%s", host_for_url, httpPort, g_UniqueId, random_secret_hex);
+  snprintf(url, sizeof(url), "http://%s:%u/pair?uniqueid=%s&devicename=%s&updateState=1&clientpairingsecret=%s", host_for_url, httpPort, g_UniqueId, device_name, random_secret_hex);
   http_request(url, NULL, data);
 }
 
-int gs_pair(int serverMajorVersion, const char* address, unsigned short httpPort, const char* pin, char** curl_ppk_string) {
+int gs_pair(int serverMajorVersion, const char* address, unsigned short httpPort, const char* pin, const char* deviceName,
+            char** curl_ppk_string) {
   int ret = GS_OK;
   char* result = NULL;
   X509* server_cert = NULL;
@@ -355,6 +386,7 @@ int gs_pair(int serverMajorVersion, const char* address, unsigned short httpPort
   unsigned short sanitizedHttpPort = sanitize_http_port(httpPort);
   unsigned char salt_data[16];
   char salt_hex[33];
+  const char* device_name = pairing_device_name(deviceName);
 
   *curl_ppk_string = NULL;
   // The PIN is the 4 digits that the user enters on the host, which the AES key below is derived from
@@ -367,7 +399,7 @@ int gs_pair(int serverMajorVersion, const char* address, unsigned short httpPort
   char host_for_url[256];
   format_address_for_url(address, host_for_url, sizeof(host_for_url));
 
-  snprintf(url, sizeof(url), "http://%s:%u/pair?uniqueid=%s&devicename=roth&updateState=1&phrase=getservercert&salt=%s&clientcert=%s", host_for_url, sanitizedHttpPort, g_UniqueId, salt_hex, g_CertHex);
+  snprintf(url, sizeof(url), "http://%s:%u/pair?uniqueid=%s&devicename=%s&updateState=1&phrase=getservercert&salt=%s&clientcert=%s", host_for_url, sanitizedHttpPort, g_UniqueId, device_name, salt_hex, g_CertHex);
   PHTTP_DATA data = http_create_data();
   if (data == NULL)
     return GS_OUT_OF_MEMORY;
@@ -412,7 +444,7 @@ int gs_pair(int serverMajorVersion, const char* address, unsigned short httpPort
   AES_encrypt(challenge_data, challenge_enc, &enc_key);
   bytes_to_hex(challenge_enc, challenge_hex, 16);
 
-  snprintf(url, sizeof(url), "http://%s:%u/pair?uniqueid=%s&devicename=roth&updateState=1&clientchallenge=%s", host_for_url, sanitizedHttpPort, g_UniqueId, challenge_hex);
+  snprintf(url, sizeof(url), "http://%s:%u/pair?uniqueid=%s&devicename=%s&updateState=1&clientchallenge=%s", host_for_url, sanitizedHttpPort, g_UniqueId, device_name, challenge_hex);
   if ((ret = http_request(url, NULL, data)) != GS_OK)
     goto cleanup;
 
@@ -474,7 +506,7 @@ int gs_pair(int serverMajorVersion, const char* address, unsigned short httpPort
   }
   bytes_to_hex(challenge_response_hash_enc, challenge_response_hex, 32);
 
-  snprintf(url, sizeof(url), "http://%s:%u/pair?uniqueid=%s&devicename=roth&updateState=1&serverchallengeresp=%s", host_for_url, sanitizedHttpPort, g_UniqueId, challenge_response_hex);
+  snprintf(url, sizeof(url), "http://%s:%u/pair?uniqueid=%s&devicename=%s&updateState=1&serverchallengeresp=%s", host_for_url, sanitizedHttpPort, g_UniqueId, device_name, challenge_response_hex);
   if ((ret = http_request(url, NULL, data)) != GS_OK)
     goto cleanup;
 
@@ -512,7 +544,7 @@ int gs_pair(int serverMajorVersion, const char* address, unsigned short httpPort
                                               challenge_response_data, sizeof(challenge_response_data))) != GS_OK) {
     // The host is waiting for our pairing secret: let it end the session, so that the next attempt starts afresh
     if (ret == GS_PIN_WRONG)
-      abandon_pairing_session(host_for_url, sanitizedHttpPort, data);
+      abandon_pairing_session(host_for_url, sanitizedHttpPort, device_name, data);
     goto cleanup;
   }
 
@@ -528,7 +560,7 @@ int gs_pair(int serverMajorVersion, const char* address, unsigned short httpPort
   memcpy(client_pairing_secret + 16, signature, 256);
   bytes_to_hex(client_pairing_secret, client_pairing_secret_hex, 16 + 256);
 
-  snprintf(url, sizeof(url), "http://%s:%u/pair?uniqueid=%s&devicename=roth&updateState=1&clientpairingsecret=%s", host_for_url, sanitizedHttpPort, g_UniqueId, client_pairing_secret_hex);
+  snprintf(url, sizeof(url), "http://%s:%u/pair?uniqueid=%s&devicename=%s&updateState=1&clientpairingsecret=%s", host_for_url, sanitizedHttpPort, g_UniqueId, device_name, client_pairing_secret_hex);
   if ((ret = http_request(url, NULL, data)) != GS_OK)
     goto cleanup;
 

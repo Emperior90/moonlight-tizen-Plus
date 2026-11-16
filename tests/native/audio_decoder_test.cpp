@@ -22,6 +22,11 @@
 // performance stats, a stream below the limit tells nothing, and every stream that decoded audio logs its figures when
 // it ends and leaves them for the report of the session.
 //
+// Every packet of the EMSS backend after the audio track opened, also one that the decoder failed on, that the player
+// rejected or that 'Limit audio delay' skipped, reaches the lead of the sound (wasm/audio_lead.hpp, whose rule
+// audio_lead_test.cpp checks) with the lead that auddec.cpp keeps, while the Web Audio backend measures nothing. Each
+// start begins it afresh, and the end of a stream logs it and leaves its figures for the report of the session.
+//
 // auddec.cpp has an EM_ASM block without arguments, whose stub takes the GNU form of __VA_ARGS__ (run.sh):
 // Build with: -std=gnu++17
 
@@ -654,6 +659,89 @@ static void LayoutIsLoggedAndOnlyTheMisrotated71IsCorrected() {
   CHECK(g_Instance->*Pointer(OpusDecoderMember()) == nullptr);
 }
 
+static void EveryPacketOfTheEmssPathReachesTheLeadOfTheSound() {
+  // Each start begins the lead of the sound afresh, with the duration of its packets (audio_lead.hpp)
+  StartAudio(AudioBackend::Emss, 2, 480, false);
+  CHECK_EQ(s_AudioLead.packets, 0u);
+  CHECK_EQ(s_AudioLead.packetSeconds, 0.010);
+  StartAudio(AudioBackend::Emss, 2, 240, false);
+  CHECK_EQ(s_AudioLead.packetSeconds, 0.005);
+  // Nothing before the audio track is open, which plays nothing either
+  (g_Instance->*Pointer(AudioStartedMember())) = false;
+  Feed(3);
+  CHECK_EQ(s_AudioLead.packets, 0u);
+  (g_Instance->*Pointer(AudioStartedMember())) = true;
+  // The first packet starts the clock of the stream. The test skips the first minute after it, so that the window
+  // shows the leads of the packets: each one that the player took adds its 5 ms, which the test feeds much faster than
+  // in real time, while one that the decoder failed on or the player rejected adds nothing but still counts, since the
+  // host sent it
+  Feed(1);
+  CHECK_EQ(s_AudioLead.packets, 1u);
+  s_AudioLead.settleUntil = 0.0;
+  Feed(3);
+  decodeResult = OPUS_INVALID_PACKET;
+  Feed(1);
+  decodeResult = 0;
+  appendResult = 1;
+  Feed(1);
+  appendResult = 0;
+  CHECK_EQ(s_AudioLead.packets, 6u);
+  CHECK_EQ(s_AudioLead.windowPackets, 5u);
+  // 10, 15, 20, 20 and 20 ms ahead of the time of each packet, which is a little after the first
+  CHECK(s_AudioLead.windowLeadSum <= 0.085 + 1e-9);
+  CHECK(s_AudioLead.windowLeadSum > 0.085 - 5 * 0.005);
+  // The packets that 'Limit audio delay' skips count as well
+  StartAudio(AudioBackend::Emss, 2, 240, true);
+  Feed(400);
+  CHECK(appended.size() < (size_t)100);
+  CHECK_EQ(s_AudioLead.packets, 400u);
+  MoonlightInstance::AudDecCleanup();
+  // The Web Audio backend plays the sound on a clock of the browser, so it is not measured
+  StartAudio(AudioBackend::WebAudio, 2, 240, false);
+  Feed(10);
+  CHECK_EQ(s_AudioLead.packets, 0u);
+  logs.clear();
+  MoonlightInstance::AudDecCleanup();
+  CHECK_EQ(CountLogs("Audio lead of the stream"), 0);
+}
+
+static void TheEndOfTheStreamLogsTheLeadAndKeepsItForTheReport() {
+  // A stream that ended in its first minute logs that it measured nothing, and leaves no figures
+  StartAudio(AudioBackend::Emss, 2, 240, false);
+  Feed(20);
+  logs.clear();
+  MoonlightInstance::AudDecCleanup();
+  CHECK_EQ(CountLogs("Audio lead of the stream: not measured, too little sound after the first minute (0 gaps)\n"), 1);
+  CHECK_EQ(g_AudioStreamStats.leadMaxMs.load(), 0u);
+  CHECK(!g_AudioStreamStats.hasDrift.load());
+  CHECK_EQ(s_AudioLead.packets, 0u);
+  // A stream of 20 minutes from a host whose clock runs 53 ms per hour faster, on a clean network: the packets as the
+  // audio thread would have handed them over, with the lead that auddec.cpp keeps
+  StartAudio(AudioBackend::Emss, 2, 240, false);
+  double end = 0.0;
+  for (int i = 0; i < 20 * 60 * 200; i++) {
+    const double now = i * 0.005 * (1.0 - 53.0 / 3600000.0);
+    end = std::max(end, now) + 0.005;
+    s_AudioLead.AddPacket(now, end - now);
+  }
+  logs.clear();
+  MoonlightInstance::AudDecCleanup();
+  CHECK_EQ(CountLogs("Audio lead of the stream (sound received ahead of the TV clock, 10 s averages): 6 ms after the "
+                     "first minute, 23 ms at the end, 23 ms at most; drift +53 ms per hour from 19.0 min of sound, "
+                     "0 gaps\n"), 1);
+  CHECK_EQ(g_AudioStreamStats.leadMs.load(), 6u);
+  CHECK_EQ(g_AudioStreamStats.leadEndMs.load(), 23u);
+  CHECK_EQ(g_AudioStreamStats.leadMaxMs.load(), 23u);
+  CHECK(g_AudioStreamStats.hasDrift.load());
+  CHECK_EQ(g_AudioStreamStats.driftMsPerHour.load(), 53);
+  // The next start begins without them (VidDecCleanup() of the stream takes them for its report)
+  StartAudio(AudioBackend::Emss, 2, 240, false);
+  CHECK_EQ(g_AudioStreamStats.leadMaxMs.load(), 0u);
+  CHECK(!g_AudioStreamStats.hasDrift.load());
+  CHECK_EQ(g_AudioStreamStats.driftMsPerHour.load(), 0);
+  MoonlightInstance::AudDecCleanup();
+}
+
 int main() {
   test_support::RunTest("the decode buffer of the EMSS backend holds one negotiated frame, in samples",
                         DecodeBufferHoldsOneFrameInSamples);
@@ -679,5 +767,9 @@ int main() {
                         DecoderThatCannotBeCreatedFailsTheAudioStart);
   test_support::RunTest("each start logs the layout, and only the 7.1 of a host with the faulty rotation is corrected",
                         LayoutIsLoggedAndOnlyTheMisrotated71IsCorrected);
+  test_support::RunTest("every packet of the EMSS path reaches the lead of the sound, also rejected and skipped ones",
+                        EveryPacketOfTheEmssPathReachesTheLeadOfTheSound);
+  test_support::RunTest("the end of the stream logs the lead of the sound and keeps it for the report",
+                        TheEndOfTheStreamLogsTheLeadAndKeepsItForTheReport);
   return test_support::Summary();
 }

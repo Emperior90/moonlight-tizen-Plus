@@ -2,8 +2,9 @@
 
 // Checks the audio parameters of the launch and resume requests (NvHTTP.launchApp() and resumeApp() in
 // wasm/static/js/utils.js): with continuousAudio, Sunshine keeps sending audio packets during silence (fbcf2116, from
-// v2026.516.143833 on; other hosts ignore it). It is in the request only when the caller passes it, so that the request
-// without it is exactly the one of earlier versions; the start of a stream always passes it. The surroundAudioInfo of
+// v2026.516.143833 on, in Vibeshine from 1.14.7 and Vibepollo from 2.0.2; older versions and other hosts ignore it).
+// It is in the request only when the caller passes it, so that the request without it is exactly the one of earlier
+// versions; the start of a stream always passes it. The surroundAudioInfo of
 // each audio configuration of the settings (getSurroundAudioInfo() in wasm/platform/index.js) is the value that
 // moonlight-common-c defines for it. tests/browser/continuous-audio.test.js checks that the start of a stream passes
 // both.

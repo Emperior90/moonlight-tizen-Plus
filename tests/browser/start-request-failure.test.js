@@ -2,7 +2,7 @@
 
 // Checks the end of a launch whose start request the WebAssembly module didn't take (endLaunchAfterFailedStartRequest()
 // in wasm/platform/index.js, the handler of both start requests of startGame()). Embind throws for an argument of the
-// wrong type or a wrong number of arguments (startStream() of wasm/main.cpp takes 33), which is what a change of only
+// wrong type or a wrong number of arguments (startStream() of wasm/main.cpp takes 34), which is what a change of only
 // one side of the call looks like on the TV; sendMessage() of messages.js turns that into a rejected promise. Nobody
 // handled it: the launch screen stayed on 'Starting ...' for good, since no stream started that could end, and only RED
 // left it. Now the app returns to the app list with a message that points to the diagnostic log, which holds the error,
@@ -120,7 +120,7 @@ test('a start request that throws after the launch request returns to the app li
       return { events: window.__events.splice(0), screen: window.screen_(), log: window.logLines(), heldMs };
     });
     // The module got the start request, which threw: the message, then the app list, and nothing after it
-    assert.deepEqual(run.events, ['launch', 'start request with 33 arguments', 'message: ' + MESSAGE, 'app list']);
+    assert.deepEqual(run.events, ['launch', 'start request with 34 arguments', 'message: ' + MESSAGE, 'app list']);
     // Before, the launch screen stayed with 'Starting Game 7...' and both flags set
     assert.deepEqual(run.screen, ENDED);
     // The diagnostic log, which the message points to, has the error of the module at level E
@@ -142,7 +142,7 @@ test('a start request that throws after the launch request returns to the app li
       handleMessage('Connection Established');
       return { events: window.__events.splice(0), screen: window.screen_() };
     });
-    assert.deepEqual(next.events, ['resume', 'start request with 33 arguments']);
+    assert.deepEqual(next.events, ['resume', 'start request with 34 arguments']);
     assert.deepEqual([next.screen.isInGame, next.screen.wasmSessionStarted, next.screen.spinner, next.screen.video, next.screen.heartbeat],
       [true, true, false, true, 'streaming']);
     assert.deepEqual(app.errors, []);
@@ -164,7 +164,7 @@ test('a start request that throws after the resume request returns to the app li
       return { events: window.__events.splice(0), screen: window.screen_(), log: window.logLines(), heldMs };
     });
     // In the language of the app
-    assert.deepEqual(run.events, ['resume', 'start request with 33 arguments', 'message: ' + MESSAGE_DE, 'app list']);
+    assert.deepEqual(run.events, ['resume', 'start request with 34 arguments', 'message: ' + MESSAGE_DE, 'app list']);
     assert.deepEqual(run.screen, ENDED);
     assert.equal(run.log.filter((line) => /^E \[index\.js, startGame\] Error: The start request to the WASM module failed.*BindingError: Cannot pass "undefined" as a int$/.test(line)).length, 1);
     assert.ok(run.heldMs > 0, String(run.heldMs));
@@ -188,9 +188,9 @@ test('a start request that the module rejects ends the launch the same way, for 
       await window.wait(400);
       return { launched, resumed: { events: window.__events.splice(0), screen: window.screen_(), log: window.logLines() } };
     });
-    assert.deepEqual(run.launched.events, ['launch', 'start request with 33 arguments', 'message: ' + MESSAGE, 'app list']);
+    assert.deepEqual(run.launched.events, ['launch', 'start request with 34 arguments', 'message: ' + MESSAGE, 'app list']);
     assert.deepEqual(run.launched.screen, ENDED);
-    assert.deepEqual(run.resumed.events, ['resume', 'start request with 33 arguments', 'message: ' + MESSAGE, 'app list']);
+    assert.deepEqual(run.resumed.events, ['resume', 'start request with 34 arguments', 'message: ' + MESSAGE, 'app list']);
     assert.deepEqual(run.resumed.screen, ENDED);
     // Each start has its session of the log, with its error
     [run.launched.log, run.resumed.log].forEach((log) => {
@@ -235,12 +235,12 @@ test('a start request that throws during the silent retry or the reconnect of th
       runs.reconnect = { events: window.__events.splice(0), screen: window.screen_() };
       return runs;
     });
-    assert.deepEqual(run.retry.events, ['launch', 'start request with 33 arguments', 'resume', 'start request with 33 arguments',
+    assert.deepEqual(run.retry.events, ['launch', 'start request with 34 arguments', 'resume', 'start request with 34 arguments',
       'message: ' + MESSAGE, 'app list']);
     assert.deepEqual(run.retry.screen, ENDED);
     assert.equal(run.restarting, true);
-    assert.deepEqual(run.reconnect.events, ['resume', 'start request with 33 arguments', 'stop', 'resume',
-      'start request with 33 arguments', 'message: ' + MESSAGE, 'app list']);
+    assert.deepEqual(run.reconnect.events, ['resume', 'start request with 34 arguments', 'stop', 'resume',
+      'start request with 34 arguments', 'message: ' + MESSAGE, 'app list']);
     assert.deepEqual(run.reconnect.screen, ENDED);
     assert.deepEqual(app.errors, []);
   } finally {
@@ -263,7 +263,7 @@ test('the failure of a start request whose launch is over already shows nothing 
       return { events: window.__events.splice(0), screen: window.screen_(), log: window.logLines() };
     });
     // One return to the app list, from the cancelled launch, and no message
-    assert.deepEqual(run.events, ['launch', 'start request with 33 arguments', 'app list']);
+    assert.deepEqual(run.events, ['launch', 'start request with 34 arguments', 'app list']);
     assert.deepEqual(run.screen, ENDED);
     // The error is still in the log
     assert.equal(run.log.filter((line) => line.indexOf('The start request to the WASM module failed') >= 0).length, 1);

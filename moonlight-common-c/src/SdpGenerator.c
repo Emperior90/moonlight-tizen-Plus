@@ -398,7 +398,9 @@ static PSDP_OPTION getAttributesList(char*urlSafeAddr) {
     // former, it may have the same problem as other IPv4 traffic.
     if (StreamConfig.streamingRemotely == STREAM_CFG_LOCAL) {
         err |= addAttributeString(&optionHead, "x-nv-vqos[0].qosTrafficType", "5");
-        err |= addAttributeString(&optionHead, "x-nv-aqos.qosTrafficType", "4");
+        // Moonlight Plus: the app can ask for the audio without QoS while video keeps it (disableAudioQos of
+        // STREAM_CONFIGURATION in Limelight.h)
+        err |= addAttributeString(&optionHead, "x-nv-aqos.qosTrafficType", StreamConfig.disableAudioQos ? "0" : "4");
     }
     else {
         err |= addAttributeString(&optionHead, "x-nv-vqos[0].qosTrafficType", "0");

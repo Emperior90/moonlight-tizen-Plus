@@ -72,6 +72,8 @@ void PltCloseEvent(PLT_EVENT* event);
 void PltSetEvent(PLT_EVENT* event);
 void PltClearEvent(PLT_EVENT* event);
 void PltWaitForEvent(PLT_EVENT* event);
+// Moonlight Plus: waits at most timeoutMs, returns whether the event is set (Platform.c)
+bool PltWaitForEventTimeout(PLT_EVENT* event, int timeoutMs);
 
 int PltCreateConditionVariable(PLT_COND* cond, PLT_MUTEX* mutex);
 void PltDeleteConditionVariable(PLT_COND* cond);

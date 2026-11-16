@@ -8,6 +8,10 @@
 //    AudDecInit()) is not followed by a call of its cleanup callback, so the init callback has to leave nothing
 //    behind; and the cleanup callback of a stream that ran is called after the receive thread, which decodes the
 //    packets, has ended, so it may destroy the decoder.
+//  - An audio packet without payload, only an RTP header, plain or decrypting to nothing, is dropped and doesn't reach
+//    the decoder of the app (upstream 18922a1, 'Reject audio packets with no payload'). It used to be handed over with
+//    a length of 0, which the app takes for a lost packet: it counted it as lost and played a packet of concealment.
+//    The placeholder of the queue for a lost packet is still handed over as before (NULL, 0).
 //
 // The threads, the sockets and the queues are stand-ins: a thread is never run, and a socket is a number whose state
 // the test keeps.
@@ -83,11 +87,14 @@ int setNonFatalRecvTimeoutMs(SOCKET s, int timeoutMs) {
   (void)timeoutMs;
   return 0;
 }
-int recvUdpSocket(SOCKET s, char* buffer, int size, bool useSelect) {
+int recvUdpSocket(SOCKET s, char* buffer, int size, bool useSelect, struct sockaddr_storage* remoteAddr,
+                  SOCKADDR_LEN* addrLen) {
   (void)s;
   (void)buffer;
   (void)size;
   (void)useSelect;
+  (void)remoteAddr;
+  (void)addrLen;
   return 0;
 }
 
@@ -139,8 +146,10 @@ uint64_t PltGetMillis(void) {
   return 0;
 }
 
-// The decryption and the queues, which a stream without packets doesn't use
+// The decryption and the queues, which a stream without packets doesn't use. The decryption fails unless a test asks
+// it to succeed: it then hands the data over unchanged, so that a payload of 0 bytes decrypts to nothing.
 static PLT_CRYPTO_CONTEXT cryptoContext;
+static bool decryptionSucceeds;
 PPLT_CRYPTO_CONTEXT PltCreateCryptoContext(void) {
   return &cryptoContext;
 }
@@ -159,11 +168,12 @@ bool PltDecryptMessage(PPLT_CRYPTO_CONTEXT ctx, int algorithm, int flags, unsign
   (void)ivLength;
   (void)tag;
   (void)tagLength;
-  (void)inputData;
-  (void)inputDataLength;
-  (void)outputData;
-  (void)outputDataLength;
-  return false;
+  if (!decryptionSucceeds) {
+    return false;
+  }
+  memcpy(outputData, inputData, (size_t)inputDataLength);
+  *outputDataLength = inputDataLength;
+  return true;
 }
 int LbqInitializeLinkedBlockingQueue(PLINKED_BLOCKING_QUEUE queueHead, int sizeBound) {
   (void)queueHead;
@@ -237,9 +247,14 @@ static void rendererStop(void) {
 static void rendererCleanup(void) {
   event("cleanup", NULL);
 }
+// What the decoder of the app got: the number of calls, and the length and the first byte of the last one (-1 for NULL)
+static int decodeCalls;
+static int lastDecodeLength;
+static int lastDecodeFirstByte;
 static void rendererDecodeAndPlaySample(char* sampleData, int sampleLength) {
-  (void)sampleData;
-  (void)sampleLength;
+  decodeCalls++;
+  lastDecodeLength = sampleLength;
+  lastDecodeFirstByte = sampleData != NULL && sampleLength > 0 ? (unsigned char)sampleData[0] : -1;
 }
 
 // The connection up to the stage before the audio stream starts: initializeAudioStream() and the audio socket with
@@ -367,6 +382,87 @@ static void test_a_stream_that_ran_cleans_the_renderer_up_after_its_receive_thre
   CHECK_EQ_INT(closeCalls, 1);
 }
 
+// ---- The packets that reach the decoder ----
+
+// A packet of the queue: the RTP header with the given sequence number, then `payloadLength` bytes from 0xF8 on (an
+// Opus TOC byte first); `placeholder` makes it the placeholder of the queue for a lost packet (size 0)
+static void decode(uint16_t sequenceNumber, int payloadLength, bool placeholder) {
+  PQUEUED_AUDIO_PACKET packet = (PQUEUED_AUDIO_PACKET)calloc(1, sizeof(*packet));
+  CHECK(packet != NULL);
+  if (packet == NULL) {
+    return;
+  }
+  PRTP_PACKET rtp = (PRTP_PACKET)&packet->data[0];
+  rtp->packetType = 97;
+  rtp->sequenceNumber = sequenceNumber;
+  for (int i = 0; i < payloadLength; i++) {
+    packet->data[sizeof(*rtp) + i] = (char)(0xF8 + i);
+  }
+  packet->header.size = placeholder ? 0 : (int)sizeof(*rtp) + payloadLength;
+  decodeInputData(packet);
+  free(packet);
+}
+
+static void startDecoding(bool encrypted) {
+  connectUpToTheAudioStart(CAPABILITY_DIRECT_SUBMIT);
+  AudioEncryptionEnabled = encrypted;
+  decryptionSucceeds = encrypted;
+  decodeCalls = 0;
+  lastDecodeLength = 0;
+  lastDecodeFirstByte = 0;
+}
+
+static void stopDecoding(void) {
+  AudioEncryptionEnabled = false;
+  decryptionSucceeds = false;
+  destroyAudioStream();
+  events[0] = 0;
+}
+
+static void test_a_packet_without_payload_does_not_reach_the_decoder(void) {
+  startDecoding(false);
+  // A packet with 20 bytes of Opus data is handed over whole
+  decode(1, 20, false);
+  CHECK_EQ_INT(decodeCalls, 1);
+  CHECK_EQ_INT(lastDecodeLength, 20);
+  CHECK_EQ_INT(lastDecodeFirstByte, 0xF8);
+  // One with only the RTP header is dropped; the old code handed it over with a length of 0
+  decode(2, 0, false);
+  CHECK_EQ_INT(decodeCalls, 1);
+  CHECK_EQ_INT(lastDecodeLength, 20);
+  // The next packet goes on as before
+  decode(3, 20, false);
+  CHECK_EQ_INT(decodeCalls, 2);
+  CHECK_EQ_INT(lastDecodeLength, 20);
+  stopDecoding();
+}
+
+static void test_an_encrypted_packet_that_decrypts_to_nothing_does_not_reach_the_decoder(void) {
+  startDecoding(true);
+  decode(1, 32, false);
+  CHECK_EQ_INT(decodeCalls, 1);
+  CHECK_EQ_INT(lastDecodeLength, 32);
+  CHECK_EQ_INT(lastDecodeFirstByte, 0xF8);
+  decode(2, 0, false);
+  CHECK_EQ_INT(decodeCalls, 1);
+  // A packet that doesn't decrypt is dropped as before
+  decryptionSucceeds = false;
+  decode(3, 32, false);
+  CHECK_EQ_INT(decodeCalls, 1);
+  stopDecoding();
+}
+
+static void test_the_placeholder_of_a_lost_packet_still_asks_for_concealment(void) {
+  for (int encrypted = 0; encrypted <= 1; encrypted++) {
+    startDecoding(encrypted != 0);
+    decode(1, 0, true);
+    CHECK_EQ_INT(decodeCalls, 1);
+    CHECK_EQ_INT(lastDecodeLength, 0);
+    CHECK_EQ_INT(lastDecodeFirstByte, -1);
+    stopDecoding();
+  }
+}
+
 int main(void) {
   RUN_TEST("a receive thread that can't be created leaves the audio socket to destroyAudioStream(), which closes it once (upstream 4aa7ea4)",
            test_a_receive_thread_that_cannot_be_created_leaves_the_socket_to_the_cleanup);
@@ -376,5 +472,11 @@ int main(void) {
            test_a_failed_init_of_the_renderer_fails_the_start_without_a_cleanup_call);
   RUN_TEST("the renderer of a stream that ran is cleaned up after its receive thread ended",
            test_a_stream_that_ran_cleans_the_renderer_up_after_its_receive_thread_ended);
+  RUN_TEST("an audio packet without payload doesn't reach the decoder (upstream 18922a1)",
+           test_a_packet_without_payload_does_not_reach_the_decoder);
+  RUN_TEST("an encrypted audio packet that decrypts to nothing doesn't reach the decoder (upstream 18922a1)",
+           test_an_encrypted_packet_that_decrypts_to_nothing_does_not_reach_the_decoder);
+  RUN_TEST("the placeholder of a lost audio packet still asks the decoder for concealment",
+           test_the_placeholder_of_a_lost_packet_still_asks_for_concealment);
   return test_summary();
 }

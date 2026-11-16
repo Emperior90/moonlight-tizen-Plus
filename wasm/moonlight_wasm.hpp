@@ -100,13 +100,14 @@ class MoonlightInstance {
     bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, std::string buttonMappings,
     std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
     std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, int performanceStats,
-    bool refFrameInvalidation, bool hdrMetadata, std::string controllerType, std::string surroundQuality);
+    bool refFrameInvalidation, bool hdrMetadata, std::string controllerType, std::string surroundQuality, bool audioQos);
   MessageResult StopStream();
 
   MessageResult CancelRequest();
 
   void STUN(int callbackId);
-  void Pair(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber);
+  void Pair(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber,
+            std::string deviceName);
   void WakeOnLan(int callbackId, std::string macAddress, std::string subnetBroadcast);
 
   virtual ~MoonlightInstance();
@@ -224,7 +225,8 @@ class MoonlightInstance {
 
   void OpenUrl_private(int callbackId, std::string url, std::string ppk, bool binaryResponse);
   void STUN_private(int callbackId);
-  void Pair_private(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber);
+  void Pair_private(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber,
+                    std::string deviceName);
   void WakeOnLan_private(int callbackId, std::string macAddress, std::string subnetBroadcast);
 
   void LockMouse();
@@ -328,7 +330,7 @@ MessageResult startStream(std::string host, int httpPort, std::string width, std
   bool framePacing, bool optimizeGames, bool rumbleFeedback, bool mouseEmulation, std::string buttonMappings,
   std::string audioBackend, std::string audioConfig, bool audioSync, int audioJitterMs, bool playHostAudio, bool decryptHostAudio,
   std::string videoCodec, bool hdrMode, bool fullRange, bool gameMode, bool disableWarnings, int performanceStats,
-  bool refFrameInvalidation, bool hdrMetadata, std::string controllerType, std::string surroundQuality);
+  bool refFrameInvalidation, bool hdrMetadata, std::string controllerType, std::string surroundQuality, bool audioQos);
 MessageResult stopStream();
 
 MessageResult cancelRequest();
@@ -340,7 +342,8 @@ bool requestIdrFrame();
 int getAudioChannelCount();
 std::string takeDiagnosticLog();
 void stun(int callbackId);
-void pair(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber, std::string uniqueId);
+void pair(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber, std::string uniqueId,
+          std::string deviceName);
 void wakeOnLan(int callbackId, std::string macAddress, std::string subnetBroadcast);
 
 EM_BOOL handleKeyDown(int eventType, const EmscriptenKeyboardEvent* keyEvent, void* userData);

@@ -385,7 +385,9 @@ void PltClearEvent(PLT_EVENT* event) {
 #if defined(LC_WINDOWS)
     ResetEvent(*event);
 #else
+    PltLockMutex(&event->mutex);
     event->signalled = false;
+    PltUnlockMutex(&event->mutex);
 #endif
 }
 
@@ -398,6 +400,54 @@ void PltWaitForEvent(PLT_EVENT* event) {
         PltWaitForConditionVariable(&event->cond, &event->mutex);
     }
     PltUnlockMutex(&event->mutex);
+#endif
+}
+
+// Moonlight Plus: waits until the event is set or timeoutMs have passed, and returns whether it is set. The IDR frame
+// request thread waits with it for the end of the hold of a held request (IdrRequestLimit.h, ControlStream.c). The
+// condition variables of POSIX wait by CLOCK_REALTIME, as std::condition_variable::wait_for() of the app does, so a
+// change of the clock of the TV during the wait can end it early or late; the caller checks the time itself after it.
+bool PltWaitForEventTimeout(PLT_EVENT* event, int timeoutMs) {
+#if defined(LC_WINDOWS)
+    return WaitForSingleObjectEx(*event, timeoutMs, FALSE) == WAIT_OBJECT_0;
+#elif defined(__vita__) || defined(__WIIU__) || defined(__3DS__)
+    // Without a timed wait of their condition variables here, these platforms look every millisecond
+    uint64_t endMs = PltGetMillis() + (timeoutMs > 0 ? timeoutMs : 0);
+    bool signalled;
+
+    for (;;) {
+        PltLockMutex(&event->mutex);
+        signalled = event->signalled;
+        PltUnlockMutex(&event->mutex);
+        if (signalled || PltGetMillis() >= endMs) {
+            return signalled;
+        }
+        PltSleepMs(1);
+    }
+#else
+    struct timespec deadline;
+    bool signalled;
+
+    clock_gettime(CLOCK_REALTIME, &deadline);
+    if (timeoutMs > 0) {
+        deadline.tv_sec += timeoutMs / 1000;
+        deadline.tv_nsec += (long)(timeoutMs % 1000) * 1000000L;
+        if (deadline.tv_nsec >= 1000000000L) {
+            deadline.tv_sec++;
+            deadline.tv_nsec -= 1000000000L;
+        }
+    }
+
+    PltLockMutex(&event->mutex);
+    while (!event->signalled) {
+        // Any error ends the wait, ETIMEDOUT at the deadline among them
+        if (pthread_cond_timedwait(&event->cond, &event->mutex, &deadline) != 0) {
+            break;
+        }
+    }
+    signalled = event->signalled;
+    PltUnlockMutex(&event->mutex);
+    return signalled;
 #endif
 }
 

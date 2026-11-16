@@ -3,6 +3,12 @@
 static int stage = STAGE_NONE;
 static ConnListenerConnectionTerminated originalTerminationCallback;
 static bool alreadyTerminated;
+// Moonlight Plus: guards alreadyTerminated, so that of the threads that end the connection at
+// the same time only the first one is reported, with its own error code (a PLT_MUTEX in place
+// of the atomic exchange of upstream b0deb0a and of host-termination.patch of Nightjar). It
+// exists from LiStartConnection() until LiStopConnection() has joined the stream threads.
+static PLT_MUTEX terminationMutex;
+static bool terminationMutexCreated;
 static PLT_THREAD terminationCallbackThread;
 static int terminationCallbackErrorCode;
 
@@ -74,7 +80,14 @@ void LiTerminateConnectionAsync(int errorCode) {
 // Stop the connection by undoing the step at the current stage and those before it
 void LiStopConnection(void) {
     // Disable termination callbacks now
-    alreadyTerminated = true;
+    if (terminationMutexCreated) {
+        PltLockMutex(&terminationMutex);
+        alreadyTerminated = true;
+        PltUnlockMutex(&terminationMutex);
+    }
+    else {
+        alreadyTerminated = true;
+    }
 
     // Set the interrupted flag
     LiInterruptConnection();
@@ -135,6 +148,11 @@ void LiStopConnection(void) {
         // Nothing to do
         stage--;
     }
+    // The threads that can end the connection are joined now
+    if (terminationMutexCreated) {
+        PltDeleteMutex(&terminationMutex);
+        terminationMutexCreated = false;
+    }
     if (stage == STAGE_PLATFORM_INIT) {
         Limelog("Cleaning up platform...");
         cleanupPlatform();
@@ -165,13 +183,18 @@ static void ClInternalConnectionTerminated(int errorCode)
 {
     int err;
 
-    // Avoid recursion and issuing multiple callbacks
+    // Avoid recursion and issuing multiple callbacks. Moonlight Plus: the check and the
+    // claim are one step, so that only the first of several threads that fail at the
+    // same time is reported, with its own error code.
+    PltLockMutex(&terminationMutex);
     if (alreadyTerminated || ConnectionInterrupted) {
+        PltUnlockMutex(&terminationMutex);
         return;
     }
 
     terminationCallbackErrorCode = errorCode;
     alreadyTerminated = true;
+    PltUnlockMutex(&terminationMutex);
 
     // Invoke the termination callback on a separate thread
     err = PltCreateThread("AsyncTerm", terminationCallbackThreadFunc, NULL, &terminationCallbackThread);
@@ -284,6 +307,14 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     else {
         Limelog("RTSP port: %u\n", RtspPortNumber);
     }
+
+    // Moonlight Plus: before the first thread that can end the connection starts
+    err = PltCreateMutex(&terminationMutex);
+    if (err != 0) {
+        Limelog("Failed to create the termination mutex: %d\n", err);
+        goto Cleanup;
+    }
+    terminationMutexCreated = true;
 
     alreadyTerminated = false;
     ConnectionInterrupted = false;

@@ -100,6 +100,12 @@ typedef struct _STREAM_CONFIGURATION {
     // in /launch and /resume requests.
     char remoteInputAesKey[16];
     char remoteInputAesIv[16];
+
+    // Moonlight Plus: if true, a stream on the local network asks the host to send its audio without QoS
+    // (x-nv-aqos.qosTrafficType 0 in the SDP, which turns off the DSCP tag of the audio socket of the host), while
+    // video keeps its QoS. Some Wi-Fi access points handle audio in their voice queue badly. A remote stream asks
+    // for no QoS either way. False, the value of LiInitializeStreamConfiguration(), keeps the QoS of upstream.
+    bool disableAudioQos;
 } STREAM_CONFIGURATION, *PSTREAM_CONFIGURATION;
 
 // Use this function to zero the stream configuration when allocated on the stack or heap
@@ -1005,6 +1011,14 @@ bool LiGetHdrMetadata(PSS_HDR_METADATA metadata);
 // call this API instead. Note that this function does not guarantee that the *next* frame will be an IDR
 // frame, just that an IDR frame will arrive soon.
 void LiRequestIdrFrame(void);
+
+// Moonlight Plus: the requests for an IDR frame of the current stream (LiRequestIdrFrame(), which the library also
+// calls itself after a loss) that were sent to the host, and those that were held instead because the IDR frame of
+// an earlier request was still on its way (moonlight-common-c/src/IdrRequestLimit.h). A held request is answered by
+// that IDR frame, or sent once its window has passed without one. slowestAnswerMs is the longest time from a request
+// sent to the IDR frame that answered it, 0 when none was measured. Valid while the control stream exists, so from the
+// setup of the video decoder to its cleanup.
+void LiGetIdrFrameRequestStats(uint32_t* sent, uint32_t* held, uint32_t* slowestAnswerMs);
 
 // This function returns any extended feature flags supported by the host.
 #define LI_FF_PEN_TOUCH_EVENTS        0x01 // LiSendTouchEvent()/LiSendPenEvent() supported

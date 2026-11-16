@@ -8,7 +8,10 @@
 // window.__sunshine holds the state that a test reads or changes: the running app (currentGame), the app list, the
 // requests (http, as '/path' or '/path appid'), the started streams (starts) and the stopped ones (stops). An init script
 // can set window.__sunshineConfig = { currentGame: <app ID> } for a PC that already runs an app when the TV starts, and
-// { apps: [{ id, title }, ...] } for another app list than the five apps below.
+// { apps: [{ id, title }, ...] } for another app list than the five apps below. { offline: true } makes it a PC that is
+// off: every request fails like one that nobody answers (state.offline = false turns it on again). { hold: true } holds
+// the answers until the test calls state.release(), e.g. to see the app before the first poll of a stored PC ended; the
+// app gives up on a request after 5 s (sendMessage() in messages.js), so a test releases them before that.
 (function() {
   'use strict';
   var config = window.__sunshineConfig || {};
@@ -20,6 +23,15 @@
     starts: [],
     stops: 0,
     delayMs: 30,
+    offline: !!config.offline,
+    hold: !!config.hold,
+    held: [],
+    release: function() {
+      state.hold = false;
+      state.held.splice(0).forEach(function(answer) {
+        setTimeout(answer, 0);
+      });
+    },
   };
 
   function serverInfo() {
@@ -47,8 +59,10 @@
       return;
     }
     state.http.push(path + (appId ? ' ' + appId[1] : ''));
-    setTimeout(function() {
-      if (path === '/serverinfo') {
+    var answer = function() {
+      if (state.offline) {
+        handlePromiseMessage(id, 'reject', -1);
+      } else if (path === '/serverinfo') {
         handlePromiseMessage(id, 'resolve', serverInfo());
       } else if (path === '/applist') {
         handlePromiseMessage(id, 'resolve', appList());
@@ -63,7 +77,12 @@
       } else {
         handlePromiseMessage(id, 'reject', -1);
       }
-    }, state.delayMs);
+    };
+    if (state.hold) {
+      state.held.push(answer);
+    } else {
+      setTimeout(answer, state.delayMs);
+    }
   };
 
   var startStream = Module.startStream;

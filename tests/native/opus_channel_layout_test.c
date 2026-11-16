@@ -1,9 +1,10 @@
 // Checks the channel mapping that the Opus decoder of a stream is created with (GetOpusDecoderMapping() of
 // wasm/opus_layout.hpp, which AudDecInit() in wasm/auddec.cpp uses) against the layouts that Sunshine announces: the
 // test builds the surround-params lines of the DESCRIBE answer from the tables of Sunshine as its src/rtsp.cpp does,
-// once with the rotation of its release v2026.914 (over the entries 3 to 5 whatever the layout; Apollo and Vibeshine
-// have the same line) and once with the rotation since its commit 8952d44 (from entry 3 to the last one), and runs
-// them through the real parseOpusConfigurations() of moonlight-common-c (RtspConnection.c, included directly).
+// once with the rotation of its release v2026.914 (over the entries 3 to 5 whatever the layout; Apollo, Vibepollo and
+// Vibeshine have the same line) and once with the rotation since its commit 8952d44 (from entry 3 to the last one, first
+// in its pre-release v2026.1115.211404), and runs them through the real parseOpusConfigurations() of moonlight-common-c
+// (RtspConnection.c, included directly).
 //
 // Sunshine encodes every layout with the mapping 0 1 2 ..., from channels in the order FL FR FC LFE BL BR SL SR that
 // the output of the decoder has too, so every channel plays in its place exactly when the decoder gets that mapping
@@ -110,7 +111,7 @@ static const struct HostLayout kHostLayouts[MAX_STREAM_CONFIG] = {
     { FRONT_LEFT, FRONT_RIGHT, FRONT_CENTER, LOW_FREQUENCY, BACK_LEFT, BACK_RIGHT, SIDE_LEFT, SIDE_RIGHT } },
 };
 
-// The two hosts: Sunshine v2026.914 with Apollo and Vibeshine, and Sunshine since its commit 8952d44
+// The two hosts: Sunshine v2026.914 with Apollo, Vibepollo and Vibeshine, and Sunshine since its commit 8952d44
 enum { HOST_ROTATES_3_TO_5, HOST_ROTATES_TO_THE_LAST_CHANNEL, HOST_COUNT };
 static const char* const kHostNames[HOST_COUNT] = { "the host that rotates the entries 3 to 5",
                                                     "the host that rotates up to the last channel" };

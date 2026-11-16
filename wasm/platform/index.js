@@ -27,6 +27,8 @@ var isSubnetScanFinished = false; // Indicates if the initial subnet scan has co
 var isStartupUiShown = false; // Whether restoreUiAfterWasmLoad() showed the hosts after the start, initial value is false
 var activePolls = {}; // Hosts currently being polled. An associated array of polling IDs, keyed by server UID
 var pollGenerations = {}; // Number of the latest start of the polling of each host, keyed by server UID
+var hostStatusChecks = {}; // The first request of the latest start of the polling of each host (beginBackgroundPollingOfHost()), which decides whether a stored host is online, keyed by server UID
+var hostChoiceWait = null; // The host that was chosen while its state was still unknown (hostChosen()), as { host }, or null
 var appGridGeneration = 0; // Number of the latest build of the app grid (showApps()), whose box art downloads are the only ones still wanted
 var appGridBoxArtUrls = []; // The object URLs of the box art that the app grid shows (makeBoxArtUrl() in utils.js), freed when the grid is built again
 var pairingCert; // Loads the generated certificate
@@ -256,6 +258,7 @@ function attachListeners() {
   $('#audioClockSyncSwitch').on('click', saveAudioClockSync);
   $('#jitterSlider').on('input', saveAudioJitter);
   $('#playHostAudioSwitch').on('click', savePlayHostAudio);
+  $('#audioQosSwitch').on('click', saveAudioQos);
   $('#decryptHostAudioSwitch').on('click', saveDecryptHostAudio);
   $('.videoCodecMenu li').on('click', saveVideoCodec);
   $('#hdrModeSwitch').on('click', saveHdrMode);
@@ -672,8 +675,10 @@ function beginBackgroundPollingOfHost(host) {
   // Ensure the key exists so the check in scheduleNextPoll passes
   activePolls[host.serverUid] = null;
 
-  // Refresh server info before attempting to start background polling of the host
-  return host.refreshServerInfo().then(function(ret) {
+  // Refresh server info before attempting to start background polling of the host. This request sets whether the host is
+  // online in any case, so a host that is unknown since the start (online null, loadHTTPCertsCb()) is known once it ends,
+  // within the timeouts of the request (_openUrlWithTimeout() in utils.js); hostChosen() and the deep links wait for it.
+  var statusCheck = host.refreshServerInfo().then(function(ret) {
     console.log('%c[index.js, beginBackgroundPollingOfHost]', 'color: green;', 'Starting background polling of host ' + host.serverUid, host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
     
     // The fast-path ping succeeded! Mark the host online instantly to prevent the UI from
@@ -735,6 +740,19 @@ function beginBackgroundPollingOfHost(host) {
       scheduleNextPoll(0);
     }
   });
+  hostStatusChecks[host.serverUid] = statusCheck;
+  return statusCheck;
+}
+
+// Resolves once the host answered or failed to answer, i.e. host.online is true or false. A stored host is unknown (null)
+// from the start of the app until the first request of its polling ends (beginBackgroundPollingOfHost()), which starts
+// with the start of the app; a host whose polling never started gets it now.
+function whenHostStatusKnown(host) {
+  if (host.online === true || host.online === false) {
+    return Promise.resolve();
+  }
+  var statusCheck = hostStatusChecks[host.serverUid] || beginBackgroundPollingOfHost(host);
+  return statusCheck.then(function() {}, function() {});
 }
 
 function startPollingHosts() {
@@ -944,6 +962,9 @@ function hostChosen(host, onSuccessCallback) {
     return;
   }
 
+  // A new choice takes the place of one that still waits for its host to answer (below)
+  hostChoiceWait = null;
+
   // Set the flag to indicate that a host is currently being opened
   isHostOpening = true;
 
@@ -959,6 +980,30 @@ function hostChosen(host, onSuccessCallback) {
   // the stream that the tile starts, nor keeps the Stream Menu from opening (isDialogShown() in menus.js).
   closeAppMenu();
   localStorage.setItem('lastOpenedHost', host.serverUid);
+
+  // The host hasn't answered since the start of the app (a stored host is unknown until then, loadHTTPCertsCb()): wait
+  // for the first request of its polling, which ends within its timeouts, and then go on as for an online or an offline
+  // host. Acting on the state of the last session asked a PC that is off now for its app list and waited for that, and
+  // offered Wake PC for a PC that was off then but answers now. Only the latest choice goes on, only while the hosts
+  // are still shown without a dialog over them, e.g. not after the user went to the settings meanwhile, and only for a
+  // host that is still in the list, not one deleted meanwhile (Delete PC in its menu).
+  if (host.online !== true && host.online !== false) {
+    isHostOpening = false;
+    var wait = { host: host };
+    hostChoiceWait = wait;
+    console.log('%c[index.js, hostChosen]', 'color: green;', 'Waiting for the first answer of ' + host.hostname + ' before opening it.');
+    whenHostStatusKnown(host).then(function() {
+      if (hostChoiceWait !== wait) {
+        return;
+      }
+      hostChoiceWait = null;
+      if ((host.online === true || host.online === false) && getHostByUid(host.serverUid) === host &&
+          $('#host-grid').is(':visible') && !isDialogOpen) {
+        hostChosen(host, onSuccessCallback);
+      }
+    });
+    return;
+  }
 
   // If the host is already offline or fails to connect, notify the user.
   if (!host.online) {
@@ -1961,13 +2006,14 @@ function hostMenuDialog(host) {
 
   // The entries of the menu, in their order. An entry that can't run for the state of the host (Refresh apps of a host
   // that is offline, Wake PC of one that is online) is left out instead of showing disabled, so the focus never lands
-  // on it, and the red Delete PC comes after the harmless entries.
+  // on it, and the red Delete PC comes after the harmless entries. While the state is still unknown (right after the
+  // start of the app), Wake PC shows: its dialog closes at once if the PC turns out to be on, and Refresh apps needs it.
   var hostMenuDialogOptions = [
     {
       id: 'refreshApps-' + host.hostname,
       icon: 'refresh',
       text: t('Refresh apps'),
-      shown: !!host.online,
+      shown: host.online === true,
       action: function() {
         // Refresh the list of apps for the target host
         snackbarLogLong('Refreshing the list of %1$s applications...', host.hostname);
@@ -1979,7 +2025,7 @@ function hostMenuDialog(host) {
       id: 'wakeHost-' + host.hostname,
       icon: 'power',
       text: t('Wake PC'),
-      shown: !host.online,
+      shown: host.online !== true,
       action: function() {
         // Check if MAC is randomized
         if (isRandomMacAddress(host.macAddress)) {
@@ -2230,8 +2276,9 @@ function hostDetailsDialog(host) {
     class: 'host-details-text',
     html: [
       t('Name: %1$s', escapeHTML(host.hostname)),
-      // The state itself decides, not its text: escapeHTML() returns a text, and 'false' counted as true
-      t('State: %1$s', host.online ? t('ONLINE') : t('OFFLINE')),
+      // The state itself decides, not its text: escapeHTML() returns a text, and 'false' counted as true. Unknown until
+      // the PC answered for the first time since the start of the app (loadHTTPCertsCb()).
+      t('State: %1$s', host.online === true ? t('ONLINE') : (host.online === false ? t('OFFLINE') : t('Unknown'))),
       t('Active Address: %1$s', escapeHTML(host.address) && escapeHTML(host.externalPort) ? escapeHTML(host.address) + ':' + escapeHTML(host.externalPort) : t('NULL')),
       t('UUID: %1$s', escapeHTML(host.serverUid) ? escapeHTML(host.serverUid) : t('NULL')),
       t('Local Address: %1$s', escapeHTML(host.localAddress) && escapeHTML(host.externalPort) ? escapeHTML(host.localAddress) + ':' + escapeHTML(host.externalPort) : t('NULL')),
@@ -4143,6 +4190,9 @@ function startGame(host, appID, restartKind, restartChange) {
       // utils.js); the switch of earlier versions for an A/B test is gone
       const continuousAudio = 1;
       const decryptHostAudio = $('#decryptHostAudioSwitch').parent().hasClass('is-checked') ? 1 : 0;
+      // 'Prioritize sound on Wi-Fi': off asks the host to send the audio without QoS (DSCP) on the local network, while
+      // the video keeps its QoS (disableAudioQos in moonlight-common-c/src/Limelight.h)
+      const audioQos = $('#audioQosSwitch').parent().hasClass('is-checked') ? 1 : 0;
       var videoCodec = $('#selectCodec').data('value').toString();
       const hdrMode = $('#hdrModeSwitch').parent().hasClass('is-checked') ? 1 : 0;
       const fullRange = $('#fullRangeSwitch').parent().hasClass('is-checked') ? 1 : 0;
@@ -4175,6 +4225,7 @@ function startGame(host, appID, restartKind, restartChange) {
       '\n Play host audio: ' + playHostAudio + 
       '\n Continuous audio from the host: ' + continuousAudio +
       '\n Decrypt host audio: ' + decryptHostAudio + 
+      '\n Prioritize sound on Wi-Fi (audio QoS on the local network): ' + audioQos +
       '\n Video codec: ' + videoCodec + 
       '\n Video HDR mode: ' + hdrMode + 
       '\n Full color range: ' + fullRange + 
@@ -4276,7 +4327,7 @@ function startGame(host, appID, restartKind, restartChange) {
                 framePacing, optimizeGames, rumbleFeedback, mouseEmulation, controllerMappings,
                 audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
                 gameMode, disableWarnings, getPerformanceStatsLevel(), refFrameInvalidation, hdrMetadata, controllerType,
-                surroundQuality
+                surroundQuality, audioQos
               ]).catch(function(failedStartRequest) {
                 endLaunchAfterFailedStartRequest(launchId, failedStartRequest);
               });
@@ -4358,7 +4409,7 @@ function startGame(host, appID, restartKind, restartChange) {
               framePacing, optimizeGames, rumbleFeedback, mouseEmulation, controllerMappings,
               audioBackend, audioConfig, audioSync, audioJitter, playHostAudio, decryptHostAudio, videoCodec, hdrMode, fullRange,
               gameMode, disableWarnings, getPerformanceStatsLevel(), refFrameInvalidation, hdrMetadata, controllerType,
-              surroundQuality
+              surroundQuality, audioQos
             ]).catch(function(failedStartRequest) {
               endLaunchAfterFailedStartRequest(launchId, failedStartRequest);
             });
@@ -5524,6 +5575,14 @@ function savePlayHostAudio() {
   }, 100);
 }
 
+function saveAudioQos() {
+  setTimeout(() => {
+    const chosenAudioQos = $('#audioQosSwitch').parent().hasClass('is-checked');
+    console.log('%c[index.js, saveAudioQos]', 'color: green;', 'Saving prioritize sound on Wi-Fi state: ' + chosenAudioQos);
+    storeData('audioQos', chosenAudioQos, null);
+  }, 100);
+}
+
 function saveDecryptHostAudio() {
   setTimeout(() => {
     const chosenDecryptHostAudio = $('#decryptHostAudioSwitch').parent().hasClass('is-checked');
@@ -6219,6 +6278,10 @@ function restoreDefaultsSettingsValues() {
   document.querySelector('#playHostAudioBtn').MaterialSwitch.off();
   storeData('playHostAudio', defaultPlayHostAudio, null);
 
+  const defaultAudioQos = true;
+  document.querySelector('#audioQosBtn').MaterialSwitch.on();
+  storeData('audioQos', defaultAudioQos, null);
+
   const defaultDecryptHostAudio = false;
   document.querySelector('#decryptHostAudioBtn').MaterialSwitch.off();
   storeData('decryptHostAudio', defaultDecryptHostAudio, null);
@@ -6430,7 +6493,7 @@ function keepSessionReport(json) {
   lastSessionReport = report;
   // The settings that the hints depend on: a hint names a remedy only where the session didn't already use it
   lastSessionReportOptions = { refFrameInvalidation: $('#refFrameInvalidationSwitch').parent().hasClass('is-checked'),
-    surroundQuality: streamSurroundQuality };
+    surroundQuality: streamSurroundQuality, audioSync: $('#audioSyncSwitch').parent().hasClass('is-checked') };
   console.log('%c[index.js, keepSessionReport]', 'color: green;', 'Hints of the session report: ' +
     getSessionReportHints(report, lastSessionReportOptions).join(', '));
   // The lines that the module logged at the end of the stream belong to its session
@@ -6891,6 +6954,19 @@ function loadStoredSettings() {
     }
   });
 
+  console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored audioQos preferences.');
+  getData('audioQos', function(previousValue) {
+    if (previousValue.audioQos == null) {
+      // On by default (an install of an earlier version stored none): the sound keeps the priority that every version
+      // asked for on the local network
+      document.querySelector('#audioQosBtn').MaterialSwitch.on();
+    } else if (previousValue.audioQos == false) {
+      document.querySelector('#audioQosBtn').MaterialSwitch.off();
+    } else {
+      document.querySelector('#audioQosBtn').MaterialSwitch.on();
+    }
+  });
+
   console.log('%c[index.js, loadUserDataCb]', 'color: green;', 'Load stored decryptHostAudio preferences.');
   getData('decryptHostAudio', function(previousValue) {
     if (previousValue.decryptHostAudio == null) {
@@ -7147,6 +7223,17 @@ function loadHTTPCertsCb() {
           revivedHost.hostname = hosts[hostUID].hostname;
           revivedHost.ppkstr = hosts[hostUID].ppkstr;
           revivedHost.autoWolEnabled = hosts[hostUID].autoWolEnabled || false;
+          // The hosts are stored as they were (saveHosts()), but what the last session knew about the PC is out of date
+          // now: a PC that is off now showed ONLINE (or Running, with the app it ran then) and a quick OK waited for its
+          // app list, and a PC that was off then showed OFFLINE although it answers now. So its state is unknown (null,
+          // no state on its card) until the first request of its polling ends (beginBackgroundPollingOfHost()), which
+          // hostChosen() and the Smart Hub deep links wait for. The polls of the last session go as well: one that ran
+          // while the hosts were saved left its callbacks stored as null, and pollServer() waited for that poll forever.
+          revivedHost.online = null;
+          revivedHost.currentGame = 0;
+          revivedHost._pollCompletionCallbacks = [];
+          revivedHost._consecutivePollFailures = 0;
+          revivedHost._pollCount = 0;
           hosts[hostUID] = revivedHost;
           addHostToGrid(revivedHost);
         }
@@ -7249,6 +7336,13 @@ function normalizePreviewImageUris(previewApps) {
   });
 }
 
+// Whether a Smart Hub deep link may go on with the host: once it is online, or offline after the scan at startup ended,
+// which may still find it at a new address. A stored host is neither until its first poll ended (online null,
+// loadHTTPCertsCb()), so the deep link waits for that and doesn't go on with the state of the last session.
+function isHostReadyForDeepLink(host) {
+  return !!host && (host.online === true || (host.online === false && isSubnetScanFinished));
+}
+
 // Navigates to a specific host once it has been loaded and becomes available.
 // Polls the hosts object at 1-second intervals for up to 30 seconds.
 function waitForHostAndNavigate(serverUid) {
@@ -7257,7 +7351,7 @@ function waitForHostAndNavigate(serverUid) {
     attempts++;
     var host = getHostByUid(serverUid);
     
-    if (host && (host.online || isSubnetScanFinished)) {
+    if (isHostReadyForDeepLink(host)) {
       clearInterval(interval);
       console.log('%c[index.js, waitForHostAndNavigate]', 'color: green;', 'Host found for deep link, navigating: ' + serverUid);
       hostChosen(host);
@@ -7269,7 +7363,7 @@ function waitForHostAndNavigate(serverUid) {
     } else if (attempts > 30) {
       clearInterval(interval);
       console.warn('%c[index.js, waitForHostAndNavigate]', 'color: orange;', 'Warning: Timed out waiting for host ' + serverUid + ' to load.');
-      if (host) hostChosen(host); // Fallback to trigger offline error or Auto WOL
+      if (host) hostChosen(host); // Fallback to trigger offline error or Auto WOL (or to wait for a host that has not answered yet)
     }
   }, 1000);
 }
@@ -7285,12 +7379,12 @@ function waitForHostAndNavigateToApp(serverUid, appId) {
     attempts++;
     var host = getHostByUid(serverUid);
 
-    if (host && (host.online || isSubnetScanFinished)) {
+    if (isHostReadyForDeepLink(host)) {
       clearInterval(interval);
       console.log('%c[index.js, waitForHostAndNavigateToApp]', 'color: green;', 'Host found for deep link, checking availability: ' + serverUid);
 
       // Check whether the host is online before trying to connect
-      if (!host.online) {
+      if (host.online === false) {
         hostChosen(host, function() {
           // Success callback: The host is now online. Retry the deep link navigation.
           waitForHostAndNavigateToApp(serverUid, appId);
@@ -7356,7 +7450,7 @@ function waitForHostAndNavigateToApp(serverUid, appId) {
     } else if (attempts > 30) { // 30s timeout
       clearInterval(interval);
       console.warn('%c[index.js, waitForHostAndNavigateToApp]', 'color: orange;', 'Warning: Timed out waiting for host ' + serverUid + ' to load.');
-      if (host) hostChosen(host); // Fallback to trigger offline error or Auto WOL
+      if (host) hostChosen(host); // Fallback to trigger offline error or Auto WOL (or to wait for a host that has not answered yet)
     }
   }, 1000);
 }

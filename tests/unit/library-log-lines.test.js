@@ -96,15 +96,22 @@ test('the release and the native tests take LC_LOG from the same place, the libr
   assert.doesNotMatch(run.replace(/^\s*#.*$/gm, ''), /LC_[A-Z]+/);
   assert.doesNotMatch(read('Dockerfile'), /LC_LOG|LC_CHROME/);
   // A C test that includes a file of the library which logs provides the listener, as Connection.c does in the app
+  // (or includes Connection.c itself, as native/connection_termination_test.c does)
   fs.readdirSync(native).filter((name) => /_test\.c$/.test(name)).forEach((name) => {
     const source = fs.readFileSync(path.join(native, name), 'utf8');
     const included = /#include "\.\.\/\.\.\/moonlight-common-c\/src\/([A-Za-z]+\.c)"/g;
     let match;
     let logs = false;
+    let connection = false;
     while ((match = included.exec(source)) !== null) {
       logs = logs || /\bLimelog\s*\(/.test(read(LIBRARY + '/' + match[1]));
+      connection = connection || match[1] === 'Connection.c';
     }
-    if (logs) {
+    if (connection) {
+      assert.match(read(LIBRARY + '/Connection.c'), /^CONNECTION_LISTENER_CALLBACKS ListenerCallbacks;$/m, name);
+      assert.doesNotMatch(source, /^CONNECTION_LISTENER_CALLBACKS ListenerCallbacks;$/m, name);
+    }
+    else if (logs) {
       assert.match(source, /^CONNECTION_LISTENER_CALLBACKS ListenerCallbacks;$/m, name);
     }
   });

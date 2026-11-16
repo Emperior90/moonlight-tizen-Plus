@@ -3,11 +3,17 @@
 // Pins the fixes of upstream moonlight-common-c that this fork took into its vendored copy (moonlight-common-c/, based
 // on upstream 8599b60 with local patches) in the code, so that a later sync or merge can't drop them unnoticed. The
 // RTSP option list (5ec8397), the RTSP parser of aeba988, the loss reports of the RTP video queue (d85371c), the
-// input packets of 4a95eb3, 0405384 and 448b2c6, the interceptor of ENet disconnects (41cedb8, e80a786) and the audio
-// socket of a failed audio start (4aa7ea4) also have native tests that run the code (native/rtsp_parser_test.c,
-// native/rtp_video_queue_test.c, native/input_stream_test.c, native/control_stream_disconnect_test.c and
-// native/audio_stream_start_test.c); the other fixes sit in functions that need a network connection, so this file
-// checks their code.
+// input packets of 4a95eb3, 0405384 and 448b2c6, the interceptor of ENet disconnects (41cedb8, e80a786), the audio
+// socket of a failed audio start (4aa7ea4), the frame state of the depacketizer (bf71226, 348d5d1, e64327c, ae6633e,
+// 0b4a44d), the HDR metadata and the queues of the control stream (74a61b9, 348d5d1), the sequence number of the
+// encrypted RTSP requests (0b4a44d), audio packets without payload (18922a1), the clear of an event (a84a69a), private
+// IPv6 addresses (dc09c9f), the answer of a STUN server (134eee4, 7bf16de, 2e18599, ee160c9) and the end of a stream by
+// the host (host-termination.patch of Nightjar, a local change) also have native tests that run the code
+// (native/rtsp_parser_test.c, native/rtp_video_queue_test.c, native/input_stream_test.c,
+// native/control_stream_disconnect_test.c, native/audio_stream_start_test.c, native/video_depacketizer_test.c,
+// native/control_stream_state_test.c, native/rtsp_decrypt_error_test.c, native/platform_test.c, native/stun_test.c and
+// native/connection_termination_test.c); the other fixes sit in functions that need a network connection, so this
+// file checks their code.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -129,4 +135,120 @@ test('4aa7ea4: a failed audio start leaves the audio socket to destroyAudioStrea
   const native = fs.readFileSync(path.join(REPO_ROOT, 'tests/native/audio_stream_start_test.c'), 'utf8');
   assert.match(native, /#include "\.\.\/\.\.\/moonlight-common-c\/src\/AudioStream\.c"/);
   assert.ok(native.includes('(upstream 4aa7ea4)'));
+});
+
+test('bf71226, 348d5d1, e64327c, ae6633e, 0b4a44d and 74a61b9 are in the code the native tests run', () => {
+  const native = (file) => fs.readFileSync(path.join(REPO_ROOT, 'tests/native', file), 'utf8');
+  const depacketizerTest = native('video_depacketizer_test.c');
+  assert.match(depacketizerTest, /#include "\.\.\/\.\.\/moonlight-common-c\/src\/VideoDepacketizer\.c"/);
+  for (const commit of ['bf71226', '348d5d1', 'e64327c', 'ae6633e', '0b4a44d']) {
+    assert.ok(depacketizerTest.includes(commit), 'a test of ' + commit);
+  }
+  const controlTest = native('control_stream_state_test.c');
+  assert.match(controlTest, /#include "\.\.\/\.\.\/moonlight-common-c\/src\/ControlStream\.c"/);
+  for (const commit of ['74a61b9', '348d5d1']) {
+    assert.ok(controlTest.includes(commit), 'a test of ' + commit);
+  }
+  const rtspTest = native('rtsp_decrypt_error_test.c');
+  assert.match(rtspTest, /#include "\.\.\/\.\.\/moonlight-common-c\/src\/RtspConnection\.c"/);
+  assert.ok(rtspTest.includes('0b4a44d'));
+  assert.match(functionBody(read('RtspConnection.c'), 'int performRtspHandshake(PSERVER_INFORMATION serverInfo) {'),
+    /\n {4}encryptionSequenceNumber = 0;\n/);
+});
+
+test('e64327c: the lock of the depacketizer is a PLT_MUTEX, released to submit a frame and to ask for the keyframe of a refresh', () => {
+  const source = read('VideoDepacketizer.c');
+  // Not the C11 atomics of upstream, which are untested with the fastcomp Emscripten 1.39 of Samsung
+  assert.match(source, /\nstatic PLT_MUTEX stateLock;\n/);
+  assert.doesNotMatch(source + read('ControlStream.c'), /stdatomic|atomic_bool|atomic_load|atomic_store/);
+  // A frame submitted on the receive thread can return DR_NEED_IDR, which takes the lock again in requestDecoderRefresh()
+  const reassemble = functionBody(source, 'static void reassembleFrame(int frameNumber) {');
+  assert.match(reassemble, /PltUnlockMutex\(&stateLock\);\s+validateDecodeUnitForPlayback\(&qdu->decodeUnit\);\s+LiCompleteVideoFrame\(qdu, VideoCallbacks\.submitDecodeUnit\(&qdu->decodeUnit\)\);\s+PltLockMutex\(&stateLock\);/);
+  const refresh = functionBody(source, 'void requestDecoderRefresh(void) {');
+  const unlock = refresh.indexOf('PltUnlockMutex(&stateLock);');
+  assert.ok(refresh.indexOf('PltLockMutex(&stateLock);') >= 0 && unlock > 0);
+  assert.ok(unlock < refresh.indexOf('freeDecodeUnitList(') && unlock < refresh.indexOf('LiRequestIdrFrame();'));
+  assert.match(functionBody(source, 'static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,'),
+    /PltLockMutex\(&stateLock\);\s+processRtpPayloadLocked\([^;]+\);\s+PltUnlockMutex\(&stateLock\);/);
+  assert.match(functionBody(source, 'void notifyFrameLost(unsigned int frameNumber, bool speculative) {'),
+    /^[^{]*\{\s+PltLockMutex\(&stateLock\);[^]*PltUnlockMutex\(&stateLock\);\s+\}$/);
+});
+
+test('the decode buffer of the app takes the largest frame of the depacketizer and no more', () => {
+  // native/decode_buffer_cap_test.cpp runs the cap; the two bounds are defined in two files and stay in step
+  assert.match(read('VideoDepacketizer.c'), /#define MAX_VIDEO_REASSEMBLED_FRAME_SIZE \(32 \* 1024 \* 1024\)/);
+  const player = fs.readFileSync(path.join(REPO_ROOT, 'wasm/wasmplayer.cpp'), 'utf8');
+  assert.match(player, /#define MAX_DECODE_BUFFER_LEN \(32 \* 1024 \* 1024 \+ MAX_SPS_EXTRA_SIZE \+ MAX_HDR_METADATA_SEI_SIZE\)/);
+  // Each stream logs its first frame over the cap: VidDecSetup(), which waits for the media pipeline of the TV and so
+  // runs in no native test, starts the flag afresh before the media pipeline is set up
+  const start = player.indexOf('int MoonlightInstance::VidDecSetup(');
+  const setup = player.slice(start, player.indexOf('\n}\n', start));
+  assert.match(setup, /\n {2}s_OversizedFrameLogged = false;\n/);
+  assert.ok(setup.indexOf('s_OversizedFrameLogged = false;') < setup.indexOf('StartupVidDecSetup('));
+});
+
+test('18922a1, a84a69a, dc09c9f, 134eee4, 7bf16de, 2e18599 and ee160c9 are in the code the native tests run', () => {
+  const native = (file) => fs.readFileSync(path.join(REPO_ROOT, 'tests/native', file), 'utf8');
+  // An audio packet without payload is dropped, encrypted or not
+  const decode = functionBody(read('AudioStream.c'), 'static void decodeInputData(PQUEUED_AUDIO_PACKET packet) {');
+  assert.equal((decode.match(/if \(dataLength == 0\) \{\s+LC_ASSERT_VT\(false\);\s+return;\s+\}/g) || []).length, 2);
+  assert.ok(native('audio_stream_start_test.c').includes('(upstream 18922a1)'));
+  // The clear of an event takes the mutex of the event, as the set and the wait do
+  assert.match(functionBody(read('Platform.c'), 'void PltClearEvent(PLT_EVENT* event) {'),
+    /PltLockMutex\(&event->mutex\);\s+event->signalled = false;\s+PltUnlockMutex\(&event->mutex\);/);
+  // The bits of an IPv6 prefix from the most significant bit of each byte on
+  const sockets = read('PlatformSockets.c');
+  assert.match(functionBody(sockets, 'bool isInSubnetV6('), /unsigned char mask = 0x80 >> \(i % 8\);/);
+  const platformTest = native('platform_test.c');
+  assert.match(platformTest, /#include "\.\.\/\.\.\/moonlight-common-c\/src\/Platform\.c"/);
+  assert.match(platformTest, /#include "\.\.\/\.\.\/moonlight-common-c\/src\/PlatformSockets\.c"/);
+  for (const commit of ['a84a69a', 'dc09c9f']) {
+    assert.ok(platformTest.includes('(upstream ' + commit + ')'), 'a test of ' + commit);
+  }
+  // A STUN answer counts only when it is valid and comes from the address that the request went to
+  const stun = read('SimpleStun.c');
+  const validate = functionBody(stun, 'static bool validateStunResponse(');
+  assert.ok(validate.indexOf('remoteAddrMatch') < validate.indexOf('STUN message truncated'), 'the source first');
+  assert.match(validate, /if \(\(stunBodyLen & 0x3\) != 0\) \{/);
+  assert.match(validate, /else if \(bytesRead < \(int\)\(sizeof\(STUN_MESSAGE\) \+ stunBodyLen\)\) \{/);
+  assert.match(stun, /int attrPaddedLen = \(attrLen \+ 3\) & ~3;/);
+  assert.equal((stun.match(/validResponse = validateStunResponse\(bytesRead, &reqMsg, &resp\.hdr, stunAddrs, &remoteAddr\);/g) || []).length, 2);
+  // Every caller of recvUdpSocket() names the source address it wants, or NULL
+  assert.match(read('PlatformSockets.h'), /int recvUdpSocket\(SOCKET s, char\* buffer, int size, bool useSelect,\s+struct sockaddr_storage\* remoteAddr, SOCKADDR_LEN\* addrLen\);/);
+  for (const file of ['AudioStream.c', 'VideoStream.c', 'SimpleStun.c']) {
+    const calls = read(file).match(/= recvUdpSocket\([^;]*\);/g) || [];
+    assert.ok(calls.length > 0, file);
+    calls.forEach((call) => assert.equal(call.split(',').length, 6, file + ': ' + call));
+  }
+  const stunTest = native('stun_test.c');
+  assert.match(stunTest, /#include "\.\.\/\.\.\/moonlight-common-c\/src\/SimpleStun\.c"/);
+  for (const commit of ['134eee4', '7bf16de', '2e18599', 'ee160c9']) {
+    assert.ok(stunTest.includes('(upstream ' + commit + ')'), 'a test of ' + commit);
+  }
+});
+
+test('the host termination reason is taken before the ENet peer is disconnected, and claimed under a PLT_MUTEX', () => {
+  // The local change of host-termination.patch of Nightjar, which native/connection_termination_test.c runs
+  const receive = functionBody(read('ControlStream.c'), 'static void controlReceiveThreadFunc(void* context) {');
+  const termination = receive.slice(receive.indexOf('packetTypes[IDX_TERMINATION]'));
+  const callback = termination.indexOf('ListenerCallbacks.connectionTerminated((int)terminationErrorCode);');
+  const disconnect = termination.indexOf('enet_peer_disconnect_now(peer, 0);');
+  assert.ok(callback > 0 && disconnect > callback, 'the reason of the host is reported before the disconnect');
+  const connection = read('Connection.c');
+  // Not the atomic exchange of upstream and of Nightjar: C11 atomics are untested with the fastcomp Emscripten 1.39
+  assert.doesNotMatch(connection, /stdatomic|atomic_bool|atomic_exchange|atomic_store/);
+  assert.match(connection, /\nstatic PLT_MUTEX terminationMutex;\n/);
+  assert.match(functionBody(connection, 'static void ClInternalConnectionTerminated(int errorCode)'),
+    /PltLockMutex\(&terminationMutex\);\s+if \(alreadyTerminated \|\| ConnectionInterrupted\) \{\s+PltUnlockMutex\(&terminationMutex\);\s+return;\s+\}\s+terminationCallbackErrorCode = errorCode;\s+alreadyTerminated = true;\s+PltUnlockMutex\(&terminationMutex\);/);
+  // The mutex exists before the first stage that starts a thread and until the last of them is undone
+  const start = functionBody(connection, 'int LiStartConnection(');
+  const created = start.indexOf('PltCreateMutex(&terminationMutex)');
+  assert.ok(created > 0 && created < start.indexOf('alreadyTerminated = false;'));
+  assert.ok(created < start.indexOf('initializePlatform()'));
+  const stop = functionBody(connection, 'void LiStopConnection(void) {');
+  const deleted = stop.indexOf('PltDeleteMutex(&terminationMutex);');
+  assert.ok(deleted > stop.indexOf('destroyAudioStream();') && deleted < stop.indexOf('cleanupPlatform();'));
+  const native = fs.readFileSync(path.join(REPO_ROOT, 'tests/native/connection_termination_test.c'), 'utf8');
+  assert.match(native, /#include "\.\.\/\.\.\/moonlight-common-c\/src\/Connection\.c"/);
+  assert.match(native, /#include "\.\.\/\.\.\/moonlight-common-c\/src\/ControlStream\.c"/);
 });

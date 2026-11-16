@@ -282,7 +282,7 @@ test('the sections and their rows come in the order of 2.2.0: streaming first, U
     assert.deepEqual(order.panes, CATEGORIES);
     assert.deepEqual(order.basic, ['optimalSettingsBtn', 'selectResolution', 'selectFramerate', 'unlockAllFpsBtn', 'selectBitrate']);
     assert.deepEqual(order.video, ['selectCodec', 'hdrModeBtn', 'framePacingBtn', 'gameModeBtn']);
-    assert.deepEqual(order.audio, ['selectAudioBackend', 'selectAudio', 'audioSyncBtn', 'playHostAudioBtn']);
+    assert.deepEqual(order.audio, ['selectAudioBackend', 'selectAudio', 'audioSyncBtn', 'playHostAudioBtn', 'audioQosBtn']);
     assert.deepEqual(order.general, ['selectLanguage', 'selectSortAppsList', 'ipAddressFieldModeBtn', 'removeAllHostsBtn']);
     assert.deepEqual(order.advanced, ['optimizeGamesBtn', 'fullRangeBtn', 'disableWarningsBtn', 'selectPerformanceStats', 'selectStatsPosition',
       'refFrameInvalidationBtn', 'hdrMetadataBtn', 'decryptHostAudioBtn']);

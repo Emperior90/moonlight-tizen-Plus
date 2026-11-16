@@ -521,7 +521,13 @@ const DiagnosticLog = (function() {
 // wasm/session_report.hpp), or null for one that isn't one. A figure that the message lacks is 0, and a message without
 // hostRfi (2.3.0 sent none) tells nothing about the host, which counts as a host that didn't offer it. The same goes for
 // the lowest host frame rate with its windows and for the frame receive time, which 2.3.0 didn't send either: at 0
-// their lines and the hint about the frames of the PC are left out.
+// their lines and the hint about the frames of the PC are left out. The requests for an IDR frame that the module sent
+// to the PC and held while a keyframe was on its way (idrRequestsSent, idrRequestsHeld, from 2.3.1 on) are read but not
+// shown: the recovery keyframes already count what the user sees, and a session with many requests loses frames
+// while it waits for the keyframes, which the hints about the network and the TV name with their remedies. The
+// diagnostic log has them in a line of their own. How far the sound ran ahead of the clock of the TV (audioLeadMs,
+// audioLeadEndMs, audioLeadMaxMs, from 2.3.1 on) is 0 when it wasn't measured, and its drift (audioDriftMsPerHour) is
+// a signed number, or null for a session without one and for a report without it.
 function parseSessionReport(json) {
   let data = null;
   try {
@@ -545,6 +551,8 @@ function parseSessionReport(json) {
     tvDroppedFrames: number('tvDroppedFrames'),
     videoResets: number('videoResets'),
     recoveryKeyframes: number('recoveryKeyframes'),
+    idrRequestsSent: number('idrRequestsSent'),
+    idrRequestsHeld: number('idrRequestsHeld'),
     fecRecoveredBlocks: number('fecRecoveredBlocks'),
     fecFailures: number('fecFailures'),
     heapTopMb: number('heapTopMb'),
@@ -561,6 +569,11 @@ function parseSessionReport(json) {
     audioLoadMsPerS: number('audioLoadMsPerS'),
     audioLoadPeakMsPerS: number('audioLoadPeakMsPerS'),
     audioOverloadedWindows: number('audioOverloadedWindows'),
+    audioLeadMs: number('audioLeadMs'),
+    audioLeadEndMs: number('audioLeadEndMs'),
+    audioLeadMaxMs: number('audioLeadMaxMs'),
+    audioDriftMsPerHour: typeof data.audioDriftMsPerHour === 'number' && isFinite(data.audioDriftMsPerHour) ?
+      data.audioDriftMsPerHour : null,
     hostRfi: data.hostRfi === 1 || data.hostRfi === true,
   };
 }
@@ -629,10 +642,32 @@ function isAudioThreadOverloaded(report) {
   return report.audioChannels > 2 && report.audioOverloadedWindows > 0;
 }
 
+// The hint about a sound that runs ahead of the clock of the TV comes from this drift on, in milliseconds per hour: a
+// PC whose clock is 14 ppm faster than the TV's, the case of moonlight-qt PR #2101 (+53 ms per hour). Then a session of
+// 2 hours ends with 100 ms more delay of the sound, which together with the delay that the sound already has is about
+// where people notice that it lags behind the picture (about 125 ms, ITU-R BT.1359). The module only has a drift for a
+// session with at least 10 minutes of sound (wasm/audio_lead.hpp), whose measurement is good to a few ms per hour, so
+// a drift this large is not noise. A slower PC (a negative drift) makes the player run short now and then instead,
+// and gets no hint, and neither does a session with 'Limit audio delay', which kept the delay at 100 ms.
+const AUDIO_DRIFT_HINT_MS_PER_HOUR = 50;
+
+// Whether the sound of the session ran ahead of the clock of the TV fast enough for a hint (see above)
+function isAudioDriftLarge(report, options) {
+  return typeof report.audioDriftMsPerHour === 'number' && report.audioDriftMsPerHour >= AUDIO_DRIFT_HINT_MS_PER_HOUR &&
+    !(options && options.audioSync);
+}
+
+// A drift in milliseconds per hour as a text with its sign: +53, -40, 0
+function formatAudioDrift(msPerHour) {
+  const rounded = Math.round(msPerHour);
+  return (rounded > 0 ? '+' : rounded < 0 ? '-' : '') + formatReportNumber(Math.abs(rounded));
+}
+
 // The hints of a report in plain language, at most 3, most important first, as keys of SESSION_REPORT_HINTS. The options
 // say whether reference frame invalidation was on, which a hint about recovery keyframes suggests otherwise, but only
 // for a host that offered it for the stream (hostRfi of the report: GeForce Experience, and Sunshine with its NVENC
-// encoder). Every other host answers an invalidation with a keyframe, so the setting can't spare any there.
+// encoder). Every other host answers an invalidation with a keyframe, so the setting can't spare any there. They also say
+// whether 'Limit audio delay' was on (audioSync), which already keeps the sound from running ahead.
 function getSessionReportHints(report, options) {
   const opts = options || {};
   if (report.frames === 0) {
@@ -662,6 +697,9 @@ function getSessionReportHints(report, options) {
   }
   if (report.recoveryKeyframes >= 3 && report.hostRfi && !opts.refFrameInvalidation && /^(HEVC|AV1)/.test(report.codec)) {
     hints.push('keyframes');
+  }
+  if (isAudioDriftLarge(report, opts)) {
+    hints.push('audioDrift');
   }
   if (!network && (report.fecFailures > 0 || report.fecRecoveredBlocks / minutes >= 60)) {
     hints.push('fec');
@@ -704,6 +742,9 @@ function getSessionReportHintText(hint, report, options) {
         formatReportNumber((figures.hostFrameRateLowX100 || 0) / 100, 1));
     case 'keyframes':
       return t('The PC often sent whole frames again after a loss: turn on Reference frame invalidation in the Advanced Settings.');
+    case 'audioDrift':
+      return t('The PC sent %1$s ms more sound per hour than the clock of the TV counted, so in long sessions the sound can fall further and further behind the picture: turn on Limit audio delay in the Audio Settings.',
+        formatReportNumber(Math.round(figures.audioDriftMsPerHour || 0)));
     case 'fec':
       return t('Error correction repaired many lost packets: the network is near its limit, so a cable or a lower bitrate gives more headroom.');
     case 'memory':
@@ -735,13 +776,16 @@ function formatReportNumber(value, decimals) {
 //   Average frame receive time: 4.12 ms (25% of the frame time), highest second: 6.55 ms (39%)
 //   Host frame rate (best 30 s): 60.00 FPS, average host processing latency: 5.2 ms
 //   Host frame rate (lowest 30 s): 59.96 FPS, below 57 FPS in 0 of 24 half minutes
+//   Sound received ahead of the TV clock: 22 ms after the first minute, 23 ms at the end, at most 25 ms; drift +3 ms per hour
 //   WASM heap at the end: 61 of 128 MB (+1 MB in this session)
 //   Hint: No problems found in this session.
 // The host line is left out when the host sent neither figure (e.g. a session without video). The frame receive time
 // shows what the bitrate costs: the time from the first to the last packet of a frame, as the full statistics show it,
 // also as a share of the time between two frames of the stream; its line is left out without a frame, and its highest
 // second without a stats window that counts. The line of the lowest host frame rate is left out without a 30 s window
-// that counts for it (a session of less than a minute, a paused host, or a report of 2.3.0).
+// that counts for it (a session of less than a minute, a paused host, or a report of 2.3.0). The line of the sound is
+// there only with a drift, i.e. after at least 10 minutes of sound with the TV media player: the leads of a shorter
+// session say little about a long one.
 function describeSessionReport(report, options) {
   if (!report) {
     return [t('Last session: %1$s', t('None yet'))];
@@ -780,6 +824,11 @@ function describeSessionReport(report, options) {
     lines.push(t('Host frame rate (lowest 30 s): %1$s FPS, below %2$s FPS in %3$s of %4$s half minutes',
       formatReportNumber(report.hostFrameRateLowX100 / 100, 2), formatHostLowRate(report.fps),
       formatReportNumber(report.hostLowWindows), formatReportNumber(report.hostWindows)));
+  }
+  if (typeof report.audioDriftMsPerHour === 'number') {
+    lines.push(t('Sound received ahead of the TV clock: %1$s ms after the first minute, %2$s ms at the end, at most %3$s ms; drift %4$s ms per hour',
+      formatReportNumber(report.audioLeadMs), formatReportNumber(report.audioLeadEndMs), formatReportNumber(report.audioLeadMaxMs),
+      formatAudioDrift(report.audioDriftMsPerHour)));
   }
   lines.push(t('WASM heap at the end: %1$s of %2$s MB (+%3$s MB in this session)', report.heapTopMb, report.heapTotalMb, report.heapGrowthMb));
   getSessionReportHints(report, options).forEach(function(hint) {

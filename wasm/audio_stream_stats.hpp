@@ -50,6 +50,15 @@ struct AudioStreamStats {
   std::atomic<uint32_t> loadMsPerSecond{0};
   std::atomic<uint32_t> loadPeakMsPerSecond{0};
   std::atomic<uint32_t> overloadedWindows{0};
+  // How far the sound of the TV media player ran ahead of the clock of the TV over the stream that ended, in averages
+  // of 10 s (audio_lead.hpp): after the first minute, at the end and at the highest, in milliseconds, and the drift in
+  // milliseconds per hour when the stream had enough sound for one. AudDecCleanup() stores them and VidDecCleanup()
+  // takes them like the load above; all 0 for a stream that measured nothing.
+  std::atomic<uint32_t> leadMs{0};
+  std::atomic<uint32_t> leadEndMs{0};
+  std::atomic<uint32_t> leadMaxMs{0};
+  std::atomic<bool> hasDrift{false};
+  std::atomic<int32_t> driftMsPerHour{0};
 
   // Start the statistics of a new audio stream
   void Reset(int channels, int samples, int rate, uint64_t nowMs) {
@@ -57,6 +66,11 @@ struct AudioStreamStats {
     loadMsPerSecond = 0;
     loadPeakMsPerSecond = 0;
     overloadedWindows = 0;
+    leadMs = 0;
+    leadEndMs = 0;
+    leadMaxMs = 0;
+    hasDrift = false;
+    driftMsPerHour = 0;
     receivedBytes = 0;
     receivedPackets = 0;
     lostPackets = 0;

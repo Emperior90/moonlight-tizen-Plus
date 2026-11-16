@@ -450,6 +450,39 @@ function isValidServerUid(serverUid) {
   return typeof serverUid === 'string' && SERVER_UID_PATTERN.test(serverUid) && !(serverUid in Object.prototype);
 }
 
+// The name that the pairing requests give this TV (devicename=... of every /pair request, in gs_pair() of
+// libgamestream/pairing.c and in NvHTTP.pair() below). Sunshine shows it next to the address in its list of pairing
+// requests that wait for a PIN (the name it keeps is the one typed there), Apollo and Vibepollo keep it as the name of
+// the paired client unless one is typed with the PIN, which their permission lists show (with [ ] for the parentheses
+// of the name), and Foundation Sunshine keeps it unless it is 'roth'. Up to 2.3.0 the app sent 'roth', the placeholder
+// of every Moonlight client, which Apollo and Vibepollo show as 'Legacy Moonlight Client', so several TVs couldn't be
+// told apart. The name is 'Moonlight Plus (<model>)' with the model name of the TV that System information shows
+// (getRealModel() of webapis.productinfo, tv_profile.js), never the name that the user gave the TV. Only letters,
+// digits, spaces, dots, dashes and underscores of the model are kept, so the name is plain ASCII and at most 64 bytes
+// long. 'roth' stays for GeForce Experience, whose handling of other names is unknown, and when no model is known. A
+// host matches a paired client by its certificate, never by this name, so a TV that was paired before keeps working and
+// keeps the name that the host stored then.
+var PAIRING_DEVICE_NAME_DEFAULT = 'roth';
+var PAIRING_DEVICE_NAME_MAX_BYTES = 64;
+var PAIRING_DEVICE_NAME_PREFIX = 'Moonlight Plus (';
+var PAIRING_DEVICE_NAME_SUFFIX = ')';
+function pairingDeviceName(model, isNvidiaServerSoftware) {
+  if (isNvidiaServerSoftware || typeof model !== 'string') {
+    return PAIRING_DEVICE_NAME_DEFAULT;
+  }
+  var room = PAIRING_DEVICE_NAME_MAX_BYTES - PAIRING_DEVICE_NAME_PREFIX.length - PAIRING_DEVICE_NAME_SUFFIX.length;
+  var code = model.replace(/[^A-Za-z0-9 ._-]+/g, '').replace(/ +/g, ' ').trim().slice(0, room).trim();
+  return code ? PAIRING_DEVICE_NAME_PREFIX + code + PAIRING_DEVICE_NAME_SUFFIX : PAIRING_DEVICE_NAME_DEFAULT;
+}
+
+// The device name as a URL parameter: every character but letters, digits and - . _ ~ as %XX, which is what gs_pair()
+// takes (encodeURIComponent() leaves ! ' ( ) * as they are)
+function encodePairingDeviceName(name) {
+  return encodeURIComponent(name).replace(/[!'()*]/g, function(c) {
+    return '%' + c.charCodeAt(0).toString(16).toUpperCase();
+  });
+}
+
 // The rules for the other fields of a server info, which like the unique ID come from whatever device answered, for a
 // host that isn't paired over plain HTTP, and which the app stores with the host. Up to 2.3.0 they were kept as they
 // came: an address such as 'evil.example/x?' became part of the URL of the next poll, a missing HTTPS port stood as NaN
@@ -1607,10 +1640,12 @@ NvHTTP.prototype = {
   },
 
   // With continuousAudio, the host keeps sending audio packets during silence (Sunshine since v2026.516.143833 with
-  // fbcf2116, which leaves them out otherwise; other hosts ignore the parameter), so that the audio player of the TV
-  // and the link to a soundbar don't run dry, and the audio statistics count only real losses. The start of a stream
-  // always passes it (startGame() in index.js), as moonlight-tv (1cd208b) does with every launch. Without it the
-  // request is the one of versions before 1.19.102.
+  // fbcf2116, which leaves them out otherwise, Vibeshine since 1.14.7 and Vibepollo since 2.0.2 with the same change;
+  // older versions and other hosts ignore the parameter), so that the audio player of the TV and the link to a soundbar
+  // don't run dry, and the audio statistics count only real losses. The start of a stream always passes it (startGame()
+  // in index.js), as moonlight-tv (1cd208b) does with every launch, also for Vibepollo 2.0.2 to 2.0.6, whose sound can
+  // crackle with it (its issue #703, a fix in its nightly 2.2.0 and newer). Without it the request is the one of
+  // versions before 1.19.102.
   launchApp: function(appId, mode, sops, rikey, rikeyid, enableHdr, localAudio, surroundAudioInfo, gamepadMask, continuousAudio) {
     return sendMessage('openUrl', [
       this._baseUrlHttps + '/launch?' + this._buildUidStr() + '&appid=' + appId + '&mode=' + mode +
@@ -1670,12 +1705,17 @@ NvHTTP.prototype = {
       if (this.paired && this.ppkstr) {
         return true;
       }
+      // Decided after the server info above, which tells GeForce Experience apart
+      var name = pairingDeviceName(typeof tvCapabilities !== 'undefined' && tvCapabilities ? tvCapabilities.modelName : null,
+        this.isNvidiaServerSoftware);
+      console.log('%c[utils.js, pair]', 'color: gray;', 'Pairing with ' + this.hostname + ' as \'' + name + '\'.');
+      var deviceName = encodePairingDeviceName(name);
       return sendMessage('pair', [
-        this.serverMajorVersion.toString(), this.address, this.httpPort, randomNumber, this.getUid()
+        this.serverMajorVersion.toString(), this.address, this.httpPort, randomNumber, this.getUid(), deviceName
       ]).then(function(ppkstr) {
         this.ppkstr = ppkstr;
         return sendMessage('openUrl', [
-          this._baseUrlHttps + '/pair?uniqueid=' + this.getUid() + '&devicename=roth&updateState=1&phrase=pairchallenge', this.ppkstr, false, 5000
+          this._baseUrlHttps + '/pair?uniqueid=' + this.getUid() + '&devicename=' + deviceName + '&updateState=1&phrase=pairchallenge', this.ppkstr, false, 5000
         ]).catch(function(error) {
           throw error;
         }.bind(this)).then(function(ret) {

@@ -33,7 +33,7 @@ const START_REQUEST_FIELDS = ['host', 'httpPort', 'width', 'height', 'frameRate'
   'gfeVersion', 'rtspUrl', 'codecModes', 'framePacing', 'optimizeGames', 'rumbleFeedback', 'mouseEmulation', 'controllerMappings',
   'audioBackend', 'audioConfig', 'audioSync', 'audioJitter', 'playHostAudio', 'decryptHostAudio', 'videoCodec',
   'hdrMode', 'fullRange', 'gameMode', 'disableWarnings', 'performanceStats', 'refFrameInvalidation', 'hdrMetadata', 'controllerType',
-  'surroundQuality'];
+  'surroundQuality', 'audioQos'];
 
 // Start a stream against a host simulated in the page (as in stream-lifecycle.test.js) and return the start request
 async function simulatedStreamStart(page) {

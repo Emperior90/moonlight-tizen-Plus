@@ -23,7 +23,9 @@
 extern "C" {
 #endif
 
-int gs_pair(int serverMajorVersion, const char* address, unsigned short httpPort, const char* pin, char** server_cert_der_string);
+// deviceName: the URL-encoded name that the host shows for this client (devicename=...), "roth" when NULL or not valid
+int gs_pair(int serverMajorVersion, const char* address, unsigned short httpPort, const char* pin, const char* deviceName,
+            char** server_cert_der_string);
 
 #ifdef __cplusplus
 }

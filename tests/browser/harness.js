@@ -288,6 +288,7 @@ function readOtherSettings(page) {
       audioJitter: String($('#jitterSlider').val()),
       audioClockSync: switchState('audioClockSyncSwitch'),
       playHostAudio: switchState('playHostAudioSwitch'),
+      audioQos: switchState('audioQosSwitch'),
       decryptHostAudio: switchState('decryptHostAudioSwitch'),
       refFrameInvalidation: switchState('refFrameInvalidationSwitch'),
       hdrMetadata: switchState('hdrMetadataSwitch'),
