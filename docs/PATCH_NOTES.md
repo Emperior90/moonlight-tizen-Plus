@@ -2,7 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
-- [2.3.1](#231): pre-release, lighter sound and statistics, fewer double presses, a switch for sound on Wi-Fi, and fixes from a review and from other Moonlight clients
+- [2.3.1](#231): 2026-11-18, lighter sound and statistics, fewer double presses, a switch for sound on Wi-Fi, and fixes from a review and from other Moonlight clients
 - [2.3.0](#230): 2026-11-08, smoother motion, a picture refresh in the Stream Menu and a longer guide
 - [2.2.1](#221): 2026-11-05, no more 144 FPS, and controllers that work on 2020 TVs
 - [2.2.0](#220): 2026-11-03, a tidier app with fixes and a smaller download
@@ -19,7 +19,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ## 2.3.1
 
-*Pre-release, in testing.* Lighter surround sound and statistics, fewer double presses, a Wi-Fi sound switch, a sturdier streaming engine and fixes from a review.
+*2026-11-18.* Lighter surround sound and statistics, fewer double presses, a Wi-Fi sound switch, a sturdier streaming engine and fixes from a review.
 
 > **Install:** by hand over 2.3.0 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >
