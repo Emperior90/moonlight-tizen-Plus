@@ -37,7 +37,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 ### Changed
 
 - The times of each step of a frame are finer than whole milliseconds (about 0.1 ms where the TV's browser allows)
-- Spanish: a shorter label for the frame receive time, so the statistics still fit the screen
+- Spanish: shorter labels for four lines of the statistics, so they still fit the screen
 
 ### Fixed
 
