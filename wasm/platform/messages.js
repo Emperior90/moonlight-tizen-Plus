@@ -159,9 +159,21 @@ function replaceKnownStatsLabels(text) {
     .replace(/\((\d+)% of the frame time\)/g, function(match, share) {
       return t('(%1$s% of the frame time)', share);
     })
+    // The rate at which the data packets of the frames arrived (FormatVideoStats() in wasm/wasmplayer.cpp,
+    // wasm/frame_arrival.hpp), as a whole, so that a language orders the words its own way
+    .replace(/Frames arrive at: (\d+) Mbps/g, function(match, rate) {
+      return t('Frames arrive at: %1$s Mbps', rate);
+    })
     .replace(/Average frame wait time:/g, t('Average frame wait time:'))
     .replace(/Average frame pacing delay:/g, t('Average frame pacing delay:'))
     .replace(/Average rendering time:/g, t('Average rendering time:'))
+    // The longest time of a single frame in each of these stages in the windows of the message (FormatVideoStats() in
+    // wasm/wasmplayer.cpp), as a whole, so that a language orders the words its own way
+    .replace(/Longest frame times \(ms\): receive ([\d.]+), wait ([\d.]+), pacing ([\d.]+), rendering ([\d.]+)/g,
+      function(match, receive, wait, pacing, rendering) {
+        return t('Longest frame times (ms): receive %1$s, wait %2$s, pacing %3$s, rendering %4$s', receive, wait, pacing,
+          rendering);
+      })
     .replace(/Pending frames:/g, t('Pending frames:'))
     .replace(/Session frames dropped by network:/g, t('Session frames dropped by network:'))
     .replace(/Session frames dropped by the TV:/g, t('Session frames dropped by the TV:'))

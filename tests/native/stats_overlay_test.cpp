@@ -11,8 +11,13 @@
 // (wasm/session_report.hpp), with the lowest 30 s window of the host frame rate that counts, the average frame
 // receive time over the stream and in its highest stats window, the requests for an IDR frame that
 // moonlight-common-c sent and held, which a line of the diagnostic log also gives, and the lead of the sound that the
-// audio stream left (taking it empties it). The functions
-// below stand in for moonlight-common-c and the rest of the module; LiGetMillis() follows a clock of the test.
+// audio stream left (taking it empties it). Since 2.3.2 the times of the stages of a frame come from the clock in
+// microseconds: the averages show steps finer than a millisecond, the line 'Longest frame times' the longest time of a
+// single frame in the two windows of its message, and the report of the session the longest of the stream. Also since
+// 2.3.2, the line 'Frames arrive at' gives the rate at which the data packets of the frames of the two windows arrived
+// (wasm/frame_arrival.hpp), from the arrival figures of the decode units, and the report the rate of the stream. The
+// functions below stand in for moonlight-common-c and the rest of the module; LiGetMillis() follows a clock of the
+// test, and LiGetMicroseconds() the same clock with the microseconds that a hand-over to the player adds.
 // VidDecSetup() waits for the media pipeline of the TV, so the test sets up the state of a stream the same way instead
 // (StartStream() below).
 
@@ -68,11 +73,26 @@ static std::vector<uint64_t> postedAsyncAtMs;
 static int pendingFrames = 0;
 // The size of the frames that SubmitFrame() submits
 static int frameBytes = 100000;
-// The time from the first to the last packet of the frames that SubmitFrame() submits, in milliseconds
+// The time from the first to the last packet of the frames that SubmitFrame() submits, in milliseconds, with
+// frameReceiveExtraUs microseconds on top
 static unsigned int frameReceiveMs = 1;
+static unsigned int frameReceiveExtraUs = 0;
+// The time these frames waited in the decode unit queue for the decoder thread, in microseconds
+static unsigned int frameWaitUs = 2000;
+// The arrival figures of these frames, as moonlight-common-c measures them: the time from the first to the last data
+// packet in microseconds and the bytes at IP level that arrived in that time (none unless a test sets them)
+static uint32_t frameArrivalUs = 0;
+static uint32_t frameArrivalBytes = 0;
+// The microseconds of the clock beyond nowMs, which the stub of AppendPacket() advances by appendUs (the time the
+// player takes to accept a frame) and SubmitFrame() starts again from 0
+static uint64_t nowExtraUs = 0;
+static unsigned int appendUs = 0;
 
 uint64_t LiGetMillis(void) {
   return nowMs;
+}
+uint64_t LiGetMicroseconds(void) {
+  return nowMs * 1000 + nowExtraUs;
 }
 void LiRequestIdrFrame(void) {}
 bool LiGetHdrMetadata(PSS_HDR_METADATA) {
@@ -150,7 +170,17 @@ static void StartStream(int level) {
   pendingFrames = 0;
   frameBytes = 100000;
   frameReceiveMs = 1;
+  frameReceiveExtraUs = 0;
+  frameWaitUs = 2000;
+  frameArrivalUs = 0;
+  frameArrivalBytes = 0;
+  appendUs = 0;
   nowMs = 100000;
+  nowExtraUs = 0;
+  samsung::wasm::TestAppendPacketHook() = [](const samsung::wasm::ElementaryMediaPacket&) {
+    nowExtraUs += appendUs;
+    return 0;
+  };
   std::memset(&s_TestNetworkStats, 0, sizeof(s_TestNetworkStats));
 
   s_VideoFormat = VIDEO_FORMAT_H265_MAIN10;
@@ -202,10 +232,16 @@ static void SubmitFrame(int frameNumber, unsigned int captureMs, bool repeat, ui
   unit.frameType = frameNumber == 1 ? FRAME_TYPE_IDR : FRAME_TYPE_PFRAME;
   unit.frameHostProcessingLatency = repeat ? 0 : hostLatency;
   unit.presentationTimeMs = captureMs;
-  // The last packet came frameReceiveMs (1 ms unless a test changes it) after the first, and the frame waited 2 ms for
-  // the decoder thread
-  unit.receiveTimeMs = nowMs - 2 - frameReceiveMs;
-  unit.enqueueTimeMs = nowMs - 2;
+  // The last packet came frameReceiveMs (1 ms unless a test changes it) and frameReceiveExtraUs after the first, and
+  // the frame waited frameWaitUs (2 ms unless a test changes it) for the decoder thread, on the clock in microseconds;
+  // the times in milliseconds are those divided by 1000, as moonlight-common-c sets them
+  nowExtraUs = 0;
+  unit.enqueueTimeUs = nowMs * 1000 - frameWaitUs;
+  unit.receiveTimeUs = unit.enqueueTimeUs - frameReceiveMs * 1000 - frameReceiveExtraUs;
+  unit.enqueueTimeMs = unit.enqueueTimeUs / 1000;
+  unit.receiveTimeMs = unit.receiveTimeUs / 1000;
+  unit.arrivalTimeUs = frameArrivalUs;
+  unit.arrivalBytes = frameArrivalBytes;
   unit.fullLength = frameBytes;
   unit.bufferList = &entry;
   // (CHECK_EQ evaluates its arguments twice)
@@ -546,7 +582,9 @@ static void TheEndOfTheStreamSendsTheSessionReport() {
   // No 30 s window of the host frame rate was completed in 2 seconds; each frame took the host 4 ms, and 1 ms to
   // arrive, over the stream and in its one stats window
   const std::string end = ",\"hostFrameRateX100\":0,\"hostProcessingLatencyX10\":40,\"hostFrameRateLowX100\":0,"
-    "\"hostWindows\":0,\"hostLowWindows\":0,\"receiveTimeX100\":100,\"receiveTimePeakX100\":100,\"audioChannels\":8,"
+    "\"hostWindows\":0,\"hostLowWindows\":0,\"receiveTimeX100\":100,\"receiveTimePeakX100\":100,"
+    "\"receiveTimeMaxX10\":10,\"waitTimeMaxX10\":20,\"pacingDelayMaxX10\":0,\"renderTimeMaxX10\":0,\"arrivalMbps\":0,"
+    "\"audioChannels\":8,"
     "\"audioLoadMsPerS\":412,\"audioLoadPeakMsPerS\":447,\"audioOverloadedWindows\":3,\"audioLeadMs\":25,"
     "\"audioLeadEndMs\":92,\"audioLeadMaxMs\":95,\"audioDriftMsPerHour\":-53,\"hostRfi\":1}";
   CHECK(!postedAsync.empty() && postedAsync.back().size() > end.size() &&
@@ -574,7 +612,9 @@ static void TheEndOfTheStreamSendsTheSessionReport() {
   }
   CHECK_EQ(idrLines, 1u);
   // (and without a frame, no frame receive time)
-  const std::string noAudio = ",\"receiveTimeX100\":0,\"receiveTimePeakX100\":0,\"audioChannels\":0,\"audioLoadMsPerS\":0,"
+  const std::string noAudio = ",\"receiveTimeX100\":0,\"receiveTimePeakX100\":0,\"receiveTimeMaxX10\":0,"
+    "\"waitTimeMaxX10\":0,\"pacingDelayMaxX10\":0,\"renderTimeMaxX10\":0,\"arrivalMbps\":0,\"audioChannels\":0,"
+    "\"audioLoadMsPerS\":0,"
     "\"audioLoadPeakMsPerS\":0,\"audioOverloadedWindows\":0,\"audioLeadMs\":0,\"audioLeadEndMs\":0,\"audioLeadMaxMs\":0,"
     "\"audioDriftMsPerHour\":null,\"hostRfi\":0}";
   CHECK(!postedAsync.empty() && postedAsync.back().size() > noAudio.size() &&
@@ -765,13 +805,13 @@ static void TheFrameReceiveTimeShowsAsAShareOfTheFrameTime() {
     SubmitFrames(1, delayMs);
   } while (total_bytes != 0);
   CHECK(m_LastWndVideoStats.decodedFrames >= 5 && m_LastWndVideoStats.decodedFrames < 30);
-  CHECK(m_LastWndVideoStats.totalReassemblyTime / m_LastWndVideoStats.decodedFrames > 100);
+  CHECK(m_LastWndVideoStats.totalReassemblyTimeUs / m_LastWndVideoStats.decodedFrames > 100000);
   CHECK_EQ(s_ReceiveTimePeakX100, 1200u);
   // ... and neither do the 10 frames of the window that is still open when the stream ends, while the average over
   // the stream has them all
   frameReceiveMs = 4;
   SubmitFrames(10, delayMs);
-  const uint64_t totalMs = (uint64_t)m_GlobalVideoStats.totalReassemblyTime + m_ActiveWndVideoStats.totalReassemblyTime;
+  const uint64_t totalMs = (m_GlobalVideoStats.totalReassemblyTimeUs + m_ActiveWndVideoStats.totalReassemblyTimeUs) / 1000;
   const uint32_t frames = m_GlobalVideoStats.decodedFrames + m_ActiveWndVideoStats.decodedFrames;
   CHECK(m_ActiveWndVideoStats.decodedFrames < 30);
   postedAsync.clear();
@@ -809,6 +849,191 @@ static void TheFrameReceiveTimeShowsAsAShareOfTheFrameTime() {
   CHECK_EQ(JsonNumber(postedAsync.back(), "receiveTimePeakX100"), 0L);
 }
 
+// The stages of a frame on the clock in microseconds (2.3.2): frames that take 1.30 ms from their first to their last
+// packet, wait 1.40 ms for the decoder thread and 0.40 ms for the player show these averages, which a clock in
+// milliseconds showed as 1.00, 1.00 or 2.00 and 0.00 ms, and the longest of a single frame in the two windows of the
+// message; the compact line has the wait plus the pacing as before
+static void TheFrameTimesAreFinerThanAMillisecondWithTheLongest() {
+  StartStream(kPerformanceStatsFull);
+  nextFrame = 1;
+  frameReceiveExtraUs = 300;
+  frameWaitUs = 1400;
+  appendUs = 400;
+  SubmitFrames(200);
+  CHECK(!postedAsync.empty());
+  std::string last = postedAsync.empty() ? std::string() : postedAsync.back();
+  CHECK_EQ(LineAfter(last, "Average frame receive time: "), std::string("1.30 ms (8% of the frame time)"));
+  CHECK_EQ(LineAfter(last, "Average frame wait time: "), std::string("1.40 ms"));
+  CHECK_EQ(LineAfter(last, "Average frame pacing delay: "), std::string("0.00 ms"));
+  CHECK_EQ(LineAfter(last, "Average rendering time: "), std::string("0.40 ms"));
+  CHECK_EQ(LineAfter(last, "Longest frame times (ms): "), std::string("receive 1.3, wait 1.4, pacing 0.0, rendering 0.4"));
+  // The line follows the averages, before the pending frames
+  CHECK(last.find("\nAverage rendering time: 0.40 ms\nLongest frame times (ms): ") != std::string::npos);
+  CHECK(last.find("Longest frame times") < last.find("\nPending frames: "));
+  if (LineAfter(last, "Longest frame times (ms): ").empty()) {
+    std::printf("  # got %s\n", last.c_str());
+  }
+
+  // One slow frame in the first window of a message (6.43 ms to arrive, 2.66 ms in the queue, 1.21 ms for the player):
+  // the message of its two windows shows it as the longest, the next message no longer does
+  SubmitFramesToTheEndOfTheWindow();
+  SubmitFramesToTheEndOfTheWindow();
+  const size_t messages = postedAsync.size();
+  SubmitFrames(5);
+  frameReceiveMs = 6;
+  frameReceiveExtraUs = 430;
+  frameWaitUs = 2660;
+  appendUs = 1210;
+  SubmitFrames(1);
+  frameReceiveMs = 1;
+  frameReceiveExtraUs = 300;
+  frameWaitUs = 1400;
+  appendUs = 400;
+  SubmitFramesToTheEndOfTheWindow();
+  CHECK_EQ(postedAsync.size(), messages);
+  SubmitFramesToTheEndOfTheWindow();
+  CHECK_EQ(postedAsync.size(), messages + 1);
+  last = postedAsync.back();
+  CHECK_EQ(LineAfter(last, "Longest frame times (ms): "), std::string("receive 6.4, wait 2.7, pacing 0.0, rendering 1.2"));
+  SubmitFramesToTheEndOfTheWindow();
+  SubmitFramesToTheEndOfTheWindow();
+  CHECK_EQ(postedAsync.size(), messages + 2);
+  CHECK_EQ(LineAfter(postedAsync.back(), "Longest frame times (ms): "),
+    std::string("receive 1.3, wait 1.4, pacing 0.0, rendering 0.4"));
+
+  // The report of the session has the longest of the whole stream, in tenths of a millisecond
+  MoonlightInstance::VidDecCleanup();
+  const std::string report = postedAsync.back();
+  CHECK_EQ(JsonNumber(report, "receiveTimeMaxX10"), 64L);
+  CHECK_EQ(JsonNumber(report, "waitTimeMaxX10"), 27L);
+  CHECK_EQ(JsonNumber(report, "pacingDelayMaxX10"), 0L);
+  CHECK_EQ(JsonNumber(report, "renderTimeMaxX10"), 12L);
+  // and the average receive time in hundredths of a millisecond, finer than the clock in milliseconds gave it
+  const long average = JsonNumber(report, "receiveTimeX100");
+  CHECK(average >= 130 && average <= 132);
+  CHECK(report.find(",\"receiveTimePeakX100\":") < report.find(",\"receiveTimeMaxX10\":") &&
+    report.find(",\"renderTimeMaxX10\":") < report.find(",\"audioChannels\":"));
+
+  // The compact line: the wait plus the pacing per frame
+  StartStream(kPerformanceStatsCompact);
+  nextFrame = 1;
+  frameWaitUs = 1400;
+  SubmitFrames(200);
+  CHECK(!postedAsync.empty() && postedAsync.back().find("\"delay\":1.4}") != std::string::npos);
+}
+
+// The rate of the arrival figures (frame_arrival.hpp): bits per microsecond, rounded, only from enough frames and time,
+// without a division by zero
+static void TheArrivalRateNeedsEnoughFramesAndTime() {
+  // 10 frames over 20 ms are enough: 687,500 bytes in 20 ms are 275 Mbps
+  CHECK_EQ(FrameArrivalMbps(687500, 20000, 10), 275u);
+  // Rounded to the nearest Mbps: 274.5 and 274.49
+  CHECK_EQ(FrameArrivalMbps(686250, 20000, 10), 275u);
+  CHECK_EQ(FrameArrivalMbps(686225, 20000, 10), 274u);
+  // A frame or a microsecond less gives no rate, nor do bytes without time or no bytes at all
+  CHECK_EQ(FrameArrivalMbps(687500, 20000, 9), 0u);
+  CHECK_EQ(FrameArrivalMbps(687500, 19999, 10), 0u);
+  CHECK_EQ(FrameArrivalMbps(687500, 0, 120), 0u);
+  CHECK_EQ(FrameArrivalMbps(0, 1000000, 120), 0u);
+  CHECK_EQ(FrameArrivalMbps(0, 0, 0), 0u);
+  // The totals of a long session don't overflow
+  CHECK_EQ(FrameArrivalMbps(1000000000000ull, 32000000000ull, 4000000u), 250u);
+}
+
+// The line 'Frames arrive at' of the full statistics and the rate of the report (2.3.2): the bytes over the time of the
+// frames with arrival figures in the two windows of the message, after the frame receive time. The case of the
+// research: a 4K60 frame at 150 Mbps takes 8.65 ms from its first to its last data packet (206 packets after the first,
+// 42 us apart), whose 1436 bytes at IP level (1392 of video packet, the RTP header and 28 bytes of IPv4 and UDP)
+// arrive at about 275 Mbps.
+static void TheFramesArriveAtTheirRateInTheFullStatistics() {
+  StartStream(kPerformanceStatsFull);
+  nextFrame = 1;
+  frameReceiveMs = 8;
+  frameReceiveExtraUs = 652;
+  frameArrivalUs = 206 * 42;
+  frameArrivalBytes = 206 * 1436;
+  SubmitFrames(200);
+  CHECK(!postedAsync.empty());
+  std::string last = postedAsync.empty() ? std::string() : postedAsync.back();
+  CHECK_EQ(LineAfter(last, "Frames arrive at: "), std::string("274 Mbps"));
+  // Right after the frame receive time, whose time it shows as a rate
+  CHECK(last.find("\nAverage frame receive time: 8.65 ms (52% of the frame time)\nFrames arrive at: 274 Mbps\n"
+                  "Average frame wait time: ") != std::string::npos);
+  if (LineAfter(last, "Frames arrive at: ").empty()) {
+    std::printf("  # got %s\n", last.c_str());
+  }
+  // The report of the session has the rate of the whole stream, with the window that was still open
+  MoonlightInstance::VidDecCleanup();
+  CHECK_EQ(JsonNumber(postedAsync.back(), "arrivalMbps"), 274L);
+  CHECK(postedAsync.back().find(",\"renderTimeMaxX10\":0,\"arrivalMbps\":274,\"audioChannels\":") != std::string::npos);
+
+  // Frames without arrival figures (no bytes: a frame of blocks of a single packet) don't count, not
+  // even a time, and a frame whose packets all came within one step of a coarse clock counts with its bytes and a time
+  // of 0. In each four frames: 14,360 bytes in 1 ms, 14,360 bytes in 0 ms, a time without bytes and nothing, so 28,720
+  // bytes arrive in 1 ms (230 Mbps). Leaving the frames of time 0 out, or counting the time without bytes, would make
+  // it 115 Mbps.
+  StartStream(kPerformanceStatsFull);
+  nextFrame = 1;
+  for (int i = 0; i < 200; i++) {
+    frameArrivalUs = i % 4 == 0 || i % 4 == 2 ? 1000 : 0;
+    frameArrivalBytes = i % 4 < 2 ? 14360 : 0;
+    SubmitFrames(1);
+  }
+  // (the windows of the message need not start at the first of four frames)
+  const long windowMbps = std::atol(LineAfter(postedAsync.back(), "Frames arrive at: ").c_str());
+  CHECK(windowMbps >= 225 && windowMbps <= 235);
+  MoonlightInstance::VidDecCleanup();
+  CHECK_EQ(JsonNumber(postedAsync.back(), "arrivalMbps"), 230L);
+
+  // A still picture whose frames have two packets 40 us apart: 120 frames take 4.8 ms in all, too little for the steps
+  // of the clock, so the line is left out rather than show a wild figure, and the report has none
+  StartStream(kPerformanceStatsFull);
+  nextFrame = 1;
+  frameArrivalUs = 40;
+  frameArrivalBytes = 1436;
+  SubmitFrames(200);
+  CHECK(!postedAsync.empty());
+  last = postedAsync.empty() ? std::string() : postedAsync.back();
+  CHECK(last.find("Average frame receive time: ") != std::string::npos);
+  CHECK(last.find("Frames arrive at") == std::string::npos);
+  MoonlightInstance::VidDecCleanup();
+  CHECK_EQ(JsonNumber(postedAsync.back(), "arrivalMbps"), 0L);
+
+  // Bytes without time (every frame within one step of the clock) give no figure either, and no division by zero
+  StartStream(kPerformanceStatsFull);
+  nextFrame = 1;
+  frameArrivalUs = 0;
+  frameArrivalBytes = 295816;
+  SubmitFrames(200);
+  CHECK(postedAsync.back().find("Frames arrive at") == std::string::npos);
+
+  // Too few frames with figures in the windows of a message: 5 slow frames of 8.65 ms among frames without figures
+  StartStream(kPerformanceStatsFull);
+  nextFrame = 1;
+  SubmitFramesToTheEndOfTheWindow();
+  SubmitFramesToTheEndOfTheWindow();
+  const size_t messages = postedAsync.size();
+  frameArrivalUs = 8652;
+  frameArrivalBytes = 295816;
+  SubmitFrames(5);
+  frameArrivalUs = 0;
+  frameArrivalBytes = 0;
+  SubmitFramesToTheEndOfTheWindow();
+  SubmitFramesToTheEndOfTheWindow();
+  CHECK_EQ(postedAsync.size(), messages + 1);
+  CHECK(postedAsync.back().find("Frames arrive at") == std::string::npos);
+  CHECK(postedAsync.back().find("Average frame receive time: ") != std::string::npos);
+
+  // The compact line stays as it was, without the rate
+  StartStream(kPerformanceStatsCompact);
+  nextFrame = 1;
+  frameArrivalUs = 8652;
+  frameArrivalBytes = 295816;
+  SubmitFrames(200);
+  CHECK(!postedAsync.empty() && StartsWith(postedAsync.back(), "StatCompactMsg: "));
+  CHECK(!postedAsync.empty() && postedAsync.back().find("rriv") == std::string::npos);
+}
+
 int main() {
   test_support::RunTest("each toggle steps one level and reports it", EachToggleStepsOneLevelAndReportsIt);
   test_support::RunTest("nothing is sent while the level is Off", NothingWhileTheLevelIsOff);
@@ -831,5 +1056,11 @@ int main() {
     TheSessionReportHasTheLowestHostFrameRate);
   test_support::RunTest("the frame receive time shows as a share of the frame time, and the report has its average and highest window",
     TheFrameReceiveTimeShowsAsAShareOfTheFrameTime);
+  test_support::RunTest("the frame times are finer than a millisecond, with the longest of the windows and of the session",
+                        TheFrameTimesAreFinerThanAMillisecondWithTheLongest);
+  test_support::RunTest("the arrival rate needs enough frames and time, and never divides by zero",
+                        TheArrivalRateNeedsEnoughFramesAndTime);
+  test_support::RunTest("the full statistics and the report show the rate at which the frames arrive",
+                        TheFramesArriveAtTheirRateInTheFullStatistics);
   return test_support::Summary();
 }

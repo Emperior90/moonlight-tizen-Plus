@@ -44,7 +44,11 @@ static uint16_t lastPacketPayloadLength;
 static bool strictIdrFrameWait;
 static uint64_t syntheticPtsBase;
 static uint16_t frameHostProcessingLatency;
-static uint64_t firstPacketReceiveTime;
+static uint64_t firstPacketReceiveTimeUs;
+// Moonlight Plus: the arrival figures of the frame (arrivalTimeUs and arrivalBytes of DECODE_UNIT), from its first
+// packet
+static uint32_t frameArrivalTimeUs;
+static uint32_t frameArrivalBytes;
 static unsigned int firstPacketPresentationTime;
 static bool dropStatePending;
 static bool idrFrameProcessed;
@@ -115,7 +119,9 @@ void initializeVideoDepacketizer(int pktSize) {
     decodingFrame = false;
     syntheticPtsBase = 0;
     frameHostProcessingLatency = 0;
-    firstPacketReceiveTime = 0;
+    firstPacketReceiveTimeUs = 0;
+    frameArrivalTimeUs = 0;
+    frameArrivalBytes = 0;
     firstPacketPresentationTime = 0;
     lastPacketPayloadLength = 0;
     dropStatePending = false;
@@ -546,9 +552,13 @@ static void reassembleFrame(int frameNumber) {
             qdu->decodeUnit.frameType = frameType;
             qdu->decodeUnit.frameNumber = frameNumber;
             qdu->decodeUnit.frameHostProcessingLatency = frameHostProcessingLatency;
-            qdu->decodeUnit.receiveTimeMs = firstPacketReceiveTime;
+            qdu->decodeUnit.receiveTimeUs = firstPacketReceiveTimeUs;
+            qdu->decodeUnit.receiveTimeMs = firstPacketReceiveTimeUs / 1000;
             qdu->decodeUnit.presentationTimeMs = firstPacketPresentationTime;
-            qdu->decodeUnit.enqueueTimeMs = LiGetMillis();
+            qdu->decodeUnit.enqueueTimeUs = PltGetMicroseconds();
+            qdu->decodeUnit.enqueueTimeMs = qdu->decodeUnit.enqueueTimeUs / 1000;
+            qdu->decodeUnit.arrivalTimeUs = frameArrivalTimeUs;
+            qdu->decodeUnit.arrivalBytes = frameArrivalBytes;
 
             // These might be wrong for a few frames during a transition between SDR and HDR,
             // but the effects shouldn't very noticable since that's an infrequent operation.
@@ -885,7 +895,8 @@ static void discardCorruptFrame(uint32_t frameIndex) {
 // Process an RTP Payload with stateLock held.
 // The caller will free *existingEntry unless we NULL it.
 static void processRtpPayloadLocked(PNV_VIDEO_PACKET videoPacket, int length,
-                             uint64_t receiveTimeMs, unsigned int presentationTimeMs,
+                             uint64_t receiveTimeUs, unsigned int presentationTimeMs,
+                             uint32_t arrivalTimeUs, uint32_t arrivalBytes,
                              PLENTRY_INTERNAL* existingEntry) {
     BUFFER_DESC currentPos;
     uint32_t frameIndex;
@@ -971,16 +982,19 @@ static void processRtpPayloadLocked(PNV_VIDEO_PACKET videoPacket, int length,
         // We're now decoding a frame
         decodingFrame = true;
         frameType = FRAME_TYPE_PFRAME;
-        firstPacketReceiveTime = receiveTimeMs;
+        firstPacketReceiveTimeUs = receiveTimeUs;
+        frameArrivalTimeUs = arrivalTimeUs;
+        frameArrivalBytes = arrivalBytes;
         
         // Some versions of Sunshine don't send a valid PTS, so we will
-        // synthesize one using the receive time as the time base.
+        // synthesize one using the receive time as the time base. (Moonlight Plus: in whole
+        // milliseconds of the receive time, as before the microsecond clock of 82ee2d6)
         if (!syntheticPtsBase) {
-            syntheticPtsBase = receiveTimeMs;
+            syntheticPtsBase = receiveTimeUs / 1000;
         }
         
         if (!presentationTimeMs && frameIndex > 0) {
-            firstPacketPresentationTime = (unsigned int)(receiveTimeMs - syntheticPtsBase);
+            firstPacketPresentationTime = (unsigned int)(receiveTimeUs / 1000 - syntheticPtsBase);
         }
         else {
             firstPacketPresentationTime = presentationTimeMs;
@@ -1299,10 +1313,12 @@ corruptFrame:
 // Process an RTP Payload
 // The caller will free *existingEntry unless we NULL it
 static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
-                       uint64_t receiveTimeMs, unsigned int presentationTimeMs,
+                       uint64_t receiveTimeUs, unsigned int presentationTimeMs,
+                       uint32_t arrivalTimeUs, uint32_t arrivalBytes,
                        PLENTRY_INTERNAL* existingEntry) {
     PltLockMutex(&stateLock);
-    processRtpPayloadLocked(videoPacket, length, receiveTimeMs, presentationTimeMs, existingEntry);
+    processRtpPayloadLocked(videoPacket, length, receiveTimeUs, presentationTimeMs, arrivalTimeUs, arrivalBytes,
+                            existingEntry);
     PltUnlockMutex(&stateLock);
 }
 
@@ -1346,7 +1362,7 @@ void queueRtpPacket(PRTPV_QUEUE_ENTRY queueEntryPtr) {
     RTPV_QUEUE_ENTRY queueEntry = *queueEntryPtr;
 
     LC_ASSERT(!queueEntry.isParity);
-    LC_ASSERT(queueEntry.receiveTimeMs != 0);
+    LC_ASSERT(queueEntry.receiveTimeUs != 0);
 
     dataOffset = sizeof(*queueEntry.packet);
     if (queueEntry.packet->header & FLAG_EXTENSION) {
@@ -1365,8 +1381,10 @@ void queueRtpPacket(PRTPV_QUEUE_ENTRY queueEntryPtr) {
 
     processRtpPayload((PNV_VIDEO_PACKET)(((char*)queueEntry.packet) + dataOffset),
                       queueEntry.length - dataOffset,
-                      queueEntry.receiveTimeMs,
+                      queueEntry.receiveTimeUs,
                       queueEntry.presentationTimeMs,
+                      queueEntry.frameArrivalTimeUs,
+                      queueEntry.frameArrivalBytes,
                       &existingEntry);
 
     if (existingEntry != NULL) {

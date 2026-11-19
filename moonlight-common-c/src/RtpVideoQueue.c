@@ -22,6 +22,12 @@ void RtpvInitializeQueue(PRTP_VIDEO_QUEUE queue) {
 
     queue->currentFrameNumber = 1;
     queue->multiFecCapable = APP_VERSION_AT_LEAST(7, 1, 431);
+
+    // Moonlight Plus: what a video packet carries on the network besides the RTP packet that the queue sees, for the
+    // arrival rate at IP level: the IP header without options (20 bytes for IPv4, 40 for IPv6), the UDP header and,
+    // with video encryption, the header of the encrypted packet (the ciphertext is as long as the RTP packet)
+    queue->packetOverheadBytes = (RemoteAddr.ss_family == AF_INET6 ? 40 : 20) + 8 +
+        ((EncryptionFeaturesEnabled & SS_ENC_VIDEO) ? (uint32_t)sizeof(ENC_VIDEO_HEADER) : 0);
 }
 
 static void purgeListEntries(PRTPV_QUEUE_LIST list) {
@@ -543,8 +549,8 @@ static void stageCompleteFecBlock(PRTP_VIDEO_QUEUE queue) {
                 // and use the first packet's receive time for all packets. This ends up
                 // actually being better for the measurements that the depacketizer does,
                 // since it properly handles out of order packets.
-                LC_ASSERT(queue->bufferFirstRecvTimeMs != 0);
-                entry->receiveTimeMs = queue->bufferFirstRecvTimeMs;
+                LC_ASSERT(queue->bufferFirstRecvTimeUs != 0);
+                entry->receiveTimeUs = queue->bufferFirstRecvTimeUs;
 
                 // Move this packet to the completed FEC block list
                 insertEntryIntoList(&queue->completedFecBlockList, entry);
@@ -568,12 +574,37 @@ static void stageCompleteFecBlock(PRTP_VIDEO_QUEUE queue) {
     }
 }
 
+// Moonlight Plus: add the FEC block that just completed to the arrival figures of its frame, for the rate at which
+// frames arrive in the statistics of the app (arrivalTimeUs and arrivalBytes of DECODE_UNIT): the time from the first
+// packet of the block to the packet that completed it (endUs, read before reconstructFrame() so that a recovery by FEC
+// doesn't count as time of arrival), and the bytes of the packets that arrived after the first one, at IP level. A
+// block that arrived complete is done at its last data packet, so its parity packets don't count (a later one of a
+// frame or block that is complete is rejected unseen). A block that needed parity packets to replace missing data
+// packets counts up to the parity packet that completed it: the parity packets come right after the data packets, and
+// the slot of a missing packet counts as time without bytes, so such a block reads as much too low as packets were
+// missing (e.g. 1 of 200), rather than leaving the frames out when the Wi-Fi loses packets. A block of a single packet
+// adds nothing (no time between two packets). RtpvAddPacket() reads the clock once more per block of more than one
+// packet, at the packet that can complete it (again at a later packet if the recovery fails), as it does at the first
+// packet of the block; this changes nothing else in the queue.
+static void addFecBlockArrival(PRTP_VIDEO_QUEUE queue, uint64_t endUs) {
+    if (queue->receivedDataPackets + queue->receivedParityPackets > 1) {
+        if (endUs > queue->bufferFirstRecvTimeUs) {
+            queue->frameArrivalTimeUs += (uint32_t)(endUs - queue->bufferFirstRecvTimeUs);
+        }
+        queue->frameArrivalBytes += queue->blockArrivalBytes;
+    }
+}
+
 static void submitCompletedFrame(PRTP_VIDEO_QUEUE queue) {
     while (queue->completedFecBlockList.count > 0) {
         PRTPV_QUEUE_ENTRY entry = queue->completedFecBlockList.head;
 
         // Parity packets should have been removed by stageCompleteFecBlock()
         LC_ASSERT(!entry->isParity);
+
+        // Moonlight Plus: hand the arrival figures of the frame over with each of its packets
+        entry->frameArrivalTimeUs = queue->frameArrivalTimeUs;
+        entry->frameArrivalBytes = queue->frameArrivalBytes;
 
         // Submit this packet for decoding. It will own freeing the entry now.
         removeEntryFromList(&queue->completedFecBlockList, entry);
@@ -741,7 +772,7 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         // being able to reconstruct a full frame from it.
         connectionSawFrame(queue->currentFrameNumber);
         
-        queue->bufferFirstRecvTimeMs = PltGetMillis();
+        queue->bufferFirstRecvTimeUs = PltGetMicroseconds();
         queue->bufferLowestSequenceNumber = U16(packet->sequenceNumber - fecIndex);
         queue->nextContiguousSequenceNumber = queue->bufferLowestSequenceNumber;
         queue->receivedDataPackets = 0;
@@ -758,6 +789,13 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         queue->bufferHighestSequenceNumber = U16(queue->bufferFirstParitySequenceNumber + queue->bufferParityPackets - 1);
         queue->multiFecCurrentBlockNumber = fecCurrentBlockNumber;
         queue->multiFecLastBlockNumber = (nvPacket->multiFecBlocks >> 6) & 0x3;
+
+        // Moonlight Plus: the arrival figures start again with each FEC block, and those of the frame with its first
+        queue->blockArrivalBytes = 0;
+        if (fecCurrentBlockNumber == 0) {
+            queue->frameArrivalTimeUs = 0;
+            queue->frameArrivalBytes = 0;
+        }
     }
 
     // Reject packets above our FEC queue valid sequence number range
@@ -814,10 +852,25 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
             queue->receivedParityPackets++;
             LC_ASSERT(queue->receivedParityPackets <= queue->bufferParityPackets);
         }
+
+        // Moonlight Plus: the bytes at IP level of the packets that arrived after the first one of the block, and the
+        // time of a packet that can complete the block, read before reconstructFrame() so that a recovery by FEC
+        // doesn't count as time of arrival (a block that arrived complete is done at its last data packet, so its
+        // parity packets never get here)
+        uint64_t arrivalEndUs = 0;
+        if (queue->receivedDataPackets + queue->receivedParityPackets > 1) {
+            queue->blockArrivalBytes += (uint32_t)length + queue->packetOverheadBytes;
+            if (queue->receivedDataPackets + queue->receivedParityPackets >= queue->bufferDataPackets) {
+                arrivalEndUs = PltGetMicroseconds();
+            }
+        }
         
         // Try to submit this frame. If we haven't received enough packets,
         // this will fail and we'll keep waiting.
         if (reconstructFrame(queue) == 0) {
+            // Moonlight Plus: count how fast the packets of the block arrived
+            addFecBlockArrival(queue, arrivalEndUs);
+
             // Stage the complete FEC block for use once reassembly is complete
             stageCompleteFecBlock(queue);
             

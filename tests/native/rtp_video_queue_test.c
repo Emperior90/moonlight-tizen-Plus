@@ -6,6 +6,8 @@
 //
 // The test includes RtpVideoQueue.c and feeds it packets the way VideoStream.c does (the queue entry sits behind the
 // packet in the same allocation), with RFI enabled and FEC off, so that a missing packet always loses its block.
+// It also checks the receive time that the queue hands over with each packet of a complete FEC block, in microseconds
+// since 2.3.2 (PltGetMicroseconds(), ported from upstream 82ee2d6): the time of the first packet of the block.
 
 #include "test_support_c.h"
 
@@ -20,6 +22,10 @@ STREAM_CONFIGURATION StreamConfig;
 // The listener of the connection, which the log lines of the queue go to in the release build (LC_LOG, see
 // limelog_test.c). This test sets none, so they go to the stand-in for the console.
 CONNECTION_LISTENER_CALLBACKS ListenerCallbacks;
+// The address of the host and the encryption of the stream, for the arrival figures of the frames (an IPv4 host without
+// video encryption; frame_arrival_test.c checks those figures)
+struct sockaddr_storage RemoteAddr;
+uint32_t EncryptionFeaturesEnabled;
 
 #define PAYLOAD_SIZE 32
 #define MAX_EVENTS 64
@@ -28,8 +34,12 @@ static unsigned int lostFrames[MAX_EVENTS];
 static bool lostFramesSpeculative[MAX_EVENTS];
 static int lostFrameCount;
 static unsigned int submittedFrames[MAX_EVENTS];
+static uint64_t submittedReceiveTimesUs[MAX_EVENTS];
 static int submittedPacketCount;
 static uint64_t fakeMillis;
+// The clock of PltGetMicroseconds(), which each call advances by fakeMicrosStep
+static uint64_t fakeMicros = 1000000;
+static uint64_t fakeMicrosStep = 250;
 
 void notifyFrameLost(unsigned int frameNumber, bool speculative) {
   if (lostFrameCount < MAX_EVENTS) {
@@ -42,6 +52,7 @@ void notifyFrameLost(unsigned int frameNumber, bool speculative) {
 void queueRtpPacket(PRTPV_QUEUE_ENTRY entry) {
   PNV_VIDEO_PACKET nvPacket = (PNV_VIDEO_PACKET)(((char*)entry->packet) + sizeof(RTP_PACKET) + 4);
   if (submittedPacketCount < MAX_EVENTS) {
+    submittedReceiveTimesUs[submittedPacketCount] = entry->receiveTimeUs;
     submittedFrames[submittedPacketCount++] = nvPacket->frameIndex;
   }
   free(entry->packet);
@@ -61,6 +72,11 @@ bool isReferenceFrameInvalidationEnabled(void) {
 
 uint64_t PltGetMillis(void) {
   return ++fakeMillis;
+}
+
+uint64_t PltGetMicroseconds(void) {
+  fakeMicros += fakeMicrosStep;
+  return fakeMicros;
 }
 
 // FEC recovery is never needed with FEC off; a call would mean that the test lost track of the queue
@@ -210,6 +226,32 @@ static void test_incomplete_block_does_not_hide_the_next_lost_frame(void) {
   RtpvCleanupQueue(&queue);
 }
 
+// Every packet of a complete FEC block reaches the depacketizer with the receive time of the first packet of its block,
+// in microseconds, so that the time from the first to the last packet of a frame is finer than a millisecond
+static void test_packets_carry_the_receive_time_of_their_block_in_microseconds(void) {
+  resetQueue();
+  fakeMicros = 5000999;
+  fakeMicrosStep = 300;
+  sendBlock(1, 0, 0, 3, 0);
+  const uint64_t secondBlockStartUs = fakeMicros + fakeMicrosStep;
+  sendBlock(2, 0, 1, 2, 0);
+  sendBlock(2, 1, 1, 2, 0);
+  CHECK_EQ_INT(submittedPacketCount, 7);
+  CHECK_EQ_INT(lostFrameCount, 0);
+  // The queue reads the clock at the first packet of each FEC block, and since 2.3.2 once more when a block of several
+  // data packets is complete, for the arrival figures of its frame (frame_arrival_test.c), so the second block of
+  // frame 2 starts two readings after its first
+  for (int i = 0; i < 3; i++) {
+    CHECK_EQ_INT(submittedReceiveTimesUs[i], 5001299);
+  }
+  CHECK_EQ_INT(submittedReceiveTimesUs[3], secondBlockStartUs);
+  CHECK_EQ_INT(submittedReceiveTimesUs[4], secondBlockStartUs);
+  CHECK_EQ_INT(submittedReceiveTimesUs[5], secondBlockStartUs + 600);
+  CHECK_EQ_INT(submittedReceiveTimesUs[6], secondBlockStartUs + 600);
+  RtpvCleanupQueue(&queue);
+  fakeMicrosStep = 250;
+}
+
 int main(void) {
   RUN_TEST("complete frames with one and two FEC blocks are submitted without a loss report",
            test_complete_frames_are_submitted_without_loss_reports);
@@ -219,5 +261,7 @@ int main(void) {
            test_lost_block_reports_the_frame_of_the_packet);
   RUN_TEST("an incomplete FEC block does not hide the loss of the next frame (upstream d85371c)",
            test_incomplete_block_does_not_hide_the_next_lost_frame);
+  RUN_TEST("the packets of a complete FEC block carry the receive time of its first packet in microseconds",
+           test_packets_carry_the_receive_time_of_their_block_in_microseconds);
   return test_summary();
 }

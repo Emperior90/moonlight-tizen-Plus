@@ -73,6 +73,9 @@ void enet_packet_destroy(ENetPacket* packet) {
 uint64_t PltGetMillis(void) {
   return 0;
 }
+uint64_t PltGetMicroseconds(void) {
+  return 0;
+}
 
 // The capabilities that the decoder callbacks of the app declare with the setting on (wasm/main.cpp)
 #define SETTING_ON (CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC | CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1)

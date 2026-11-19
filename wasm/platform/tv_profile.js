@@ -359,6 +359,187 @@ function detectWasmPlayerReport(tizentvwasmObject) {
   return report;
 }
 
+// The tiny modules with which probeWebAssemblyFeatures() asks WebAssembly.validate() whether the browser of the TV knows
+// a feature of WebAssembly, the same modules as the npm package wasm-feature-detect uses. Each is the header ('\0asm',
+// version 1), a type section with one function type, a function section, for two of them a memory section, and a code
+// section with one function that uses the feature:
+// - SIMD 128: a function that returns a v128 (type 0x7B) from i32.const 0, i8x16.splat (0xFD 15) and i8x16.popcnt
+//   (0xFD 98), the opcodes of the final proposal
+// - bulk memory: a memory of one page and memory.copy (0xFC 10) of 0 bytes
+// - threads: a shared memory (flags 3: shared, with a maximum) and i32.atomic.load (0xFE 16)
+// - sign extension: i32.const 0, i32.extend8_s (0xC0) and drop
+// The module of the app (Emscripten 1.39 fastcomp) uses only threads of these, for the threads of a stream.
+const WASM_FEATURE_PROBES = Object.freeze([
+  { name: 'SIMD 128', bytes: Object.freeze([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0,
+    65, 0, 253, 15, 253, 98, 11]) },
+  { name: 'bulk memory', bytes: Object.freeze([0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 5, 3, 1, 0, 1, 10,
+    14, 1, 12, 0, 65, 0, 65, 0, 65, 0, 252, 10, 0, 0, 11]) },
+  { name: 'threads', bytes: Object.freeze([0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 5, 4, 1, 3, 1, 1, 10,
+    11, 1, 9, 0, 65, 0, 254, 16, 2, 0, 26, 11]) },
+  { name: 'sign extension', bytes: Object.freeze([0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 10, 8, 1, 6, 0,
+    65, 0, 192, 26, 11]) },
+]);
+
+// The functions of tizentvwasm.SocketsHostBindings that the glue code of Samsung's Emscripten SDK (in the built
+// moonlight-wasm.js) takes as the socket calls of the module (library_tizen_socket_host.js of the SDK). Its createWasm()
+// uses these host bindings only when the TV has every one of them; otherwise it sets its flag USE_HOST_BINDINGS to false
+// and the sockets go through JavaScript (tizentvwasm.SocketsManager, library_tizen_sockfs.js).
+const SOCKET_HOST_BINDING_FUNCTIONS = Object.freeze(['accept', 'bind', 'close', 'connect', 'getPeerName', 'getSockName',
+  'getSockOpt', 'listen', 'poll', 'recv', 'recvFrom', 'recvMsg', 'select', 'send', 'sendMsg', 'sendTo', 'setSockOpt',
+  'shutdown', 'create']);
+
+// The names of tizentvwasm.supportedInstructions() that the log keeps: each one with at most this many characters (only
+// letters, digits and . _ + -), at most this many of them, and at most this many characters for all of them with the
+// spaces between them, so that the line of the log keeps its end (the socket host bindings) within the 400 characters
+// that the diagnostic log keeps of a line (MAX_LINE_LENGTH in diagnostics.js) in the worst case: every other value of
+// the line at its longest and '(+N more)' after the names
+const MAX_INSTRUCTION_NAME_LENGTH = 32;
+const MAX_INSTRUCTION_NAMES = 16;
+const MAX_INSTRUCTION_TEXT_LENGTH = 150;
+
+// The flag USE_HOST_BINDINGS of the glue code, a top-level 'let' of the built moonlight-wasm.js that the scripts of the
+// page share (the build keeps its names, see tools/patch-embind-string.js): true when the sockets of the module use the
+// host bindings of the TV. It is undefined where it can't be read: before the module loaded, or in a build without it,
+// e.g. the stub of the module in the browser tests.
+function readSocketHostBindingsFlag() {
+  try {
+    return typeof USE_HOST_BINDINGS === 'boolean' ? USE_HOST_BINDINGS : undefined;
+  } catch (error) {
+    return undefined;
+  }
+}
+
+// The text of an error for a line of the log: its message on one line, cut
+function shortErrorText(error) {
+  return String(error && error.message ? error.message : error).replace(/\s+/g, ' ').trim().slice(0, 60);
+}
+
+// What the browser of the TV supports of WebAssembly, and what Samsung's tizentvwasm says about the TV, for the
+// diagnostic log (logWebAssemblyFeatures()). It is only logged: no setting and no code path depends on it. The objects
+// can be passed in for the tests ({ webAssembly, tizentvwasm, socketHostBindingsFlag }, null for one that is missing),
+// otherwise the global ones of the page are used. Every call is guarded, so a missing API or one that throws only
+// gives 'unknown' or an error text. Returns:
+// - features: [{ name, supported }] in the order of WASM_FEATURE_PROBES, with supported 'yes', 'no', or 'unknown'
+//   without WebAssembly.validate() or when it threw or gave no boolean
+// - instructions: the names of tizentvwasm.supportedInstructions() (cleaned and limited, see above), or null when the
+//   TV doesn't offer the function; moreInstructions: how many names the limit left out; instructionsError: why the
+//   call gave no list (its error, or 'no list'), or null
+// - socketHostBindings: 'used' or 'not used' as the flag of the glue code says, or without the flag 'offered by the
+//   TV' or 'not offered by the TV' (whether tizentvwasm.SocketsHostBindings has every function that the glue code
+//   takes), or 'unknown' when reading it failed
+function probeWebAssemblyFeatures(apis) {
+  const given = apis || {};
+  const result = { features: [], instructions: null, moreInstructions: 0, instructionsError: null, socketHostBindings: 'unknown' };
+  const globalOf = function(key, name) {
+    try {
+      return given[key] !== undefined ? given[key] : getTvGlobal(name);
+    } catch (error) {
+      return null;
+    }
+  };
+
+  const webAssembly = globalOf('webAssembly', 'WebAssembly');
+  WASM_FEATURE_PROBES.forEach(function(probe) {
+    let supported = 'unknown';
+    try {
+      if (webAssembly && typeof webAssembly.validate === 'function') {
+        const answer = webAssembly.validate(new Uint8Array(probe.bytes));
+        supported = answer === true ? 'yes' : (answer === false ? 'no' : 'unknown');
+      }
+    } catch (error) {
+      supported = 'unknown';
+    }
+    result.features.push({ name: probe.name, supported: supported });
+  });
+
+  const wasmApi = globalOf('tizentvwasm', 'tizentvwasm');
+  const hasWasmApi = !!wasmApi && (typeof wasmApi === 'object' || typeof wasmApi === 'function');
+  if (hasWasmApi) {
+    try {
+      if (typeof wasmApi.supportedInstructions === 'function') {
+        const list = toArrayOrNull(wasmApi.supportedInstructions());
+        if (list) {
+          const names = list.map(function(entry) {
+            return String(entry).replace(/[^\w.+-]/g, '').slice(0, MAX_INSTRUCTION_NAME_LENGTH);
+          }).filter(function(name) {
+            return name !== '';
+          });
+          let kept = 0;
+          let textLength = 0;
+          while (kept < names.length && kept < MAX_INSTRUCTION_NAMES &&
+              textLength + (kept > 0 ? 1 : 0) + names[kept].length <= MAX_INSTRUCTION_TEXT_LENGTH) {
+            textLength += (kept > 0 ? 1 : 0) + names[kept].length;
+            kept++;
+          }
+          result.instructions = names.slice(0, kept);
+          result.moreInstructions = names.length - kept;
+        } else {
+          result.instructionsError = 'no list';
+        }
+      }
+    } catch (error) {
+      result.instructions = null;
+      result.instructionsError = shortErrorText(error);
+    }
+  }
+
+  const flag = given.socketHostBindingsFlag !== undefined ? given.socketHostBindingsFlag : readSocketHostBindingsFlag();
+  if (flag === true || flag === false) {
+    result.socketHostBindings = flag ? 'used' : 'not used';
+  } else {
+    try {
+      const bindings = hasWasmApi ? wasmApi.SocketsHostBindings : undefined;
+      const complete = !!bindings && (typeof bindings === 'object' || typeof bindings === 'function') &&
+        SOCKET_HOST_BINDING_FUNCTIONS.every(function(name) {
+          return bindings[name] !== undefined;
+        });
+      result.socketHostBindings = complete ? 'offered by the TV' : 'not offered by the TV';
+    } catch (error) {
+      result.socketHostBindings = 'unknown';
+    }
+  }
+  return result;
+}
+
+// The line of the diagnostic log about the probe (probeWebAssemblyFeatures()), e.g. 'WebAssembly features: SIMD 128
+// no, bulk memory no, threads yes, sign extension no; supportedInstructions of the TV: not offered; socket host
+// bindings: used'. It names no address, host or ID, so the redaction of the log has nothing to hide in it.
+function describeWebAssemblyFeatures(probe) {
+  const features = probe.features.map(function(feature) {
+    return feature.name + ' ' + feature.supported;
+  }).join(', ');
+  let instructions;
+  if (probe.instructionsError !== null) {
+    instructions = 'failed (' + probe.instructionsError + ')';
+  } else if (probe.instructions === null) {
+    instructions = 'not offered';
+  } else if (probe.instructions.length === 0) {
+    instructions = 'none';
+  } else {
+    instructions = probe.instructions.join(' ') + (probe.moreInstructions > 0 ? ' (+' + probe.moreInstructions + ' more)' : '');
+  }
+  return 'WebAssembly features: ' + features + '; supportedInstructions of the TV: ' + instructions +
+    '; socket host bindings: ' + probe.socketHostBindings;
+}
+
+// Log the probe of WebAssembly once per start of the app: moduleDidLoad() of index.js calls it when the runtime of the
+// module is up, so that the flag of its sockets is set, and onNativeModuleFailure() for a module that failed before
+// that, e.g. one that the browser of the TV couldn't start. Returns whether it logged now. It never throws, since the
+// log is only an aid.
+let webAssemblyFeaturesLogged = false;
+function logWebAssemblyFeatures(apis) {
+  if (webAssemblyFeaturesLogged) {
+    return false;
+  }
+  webAssemblyFeaturesLogged = true;
+  try {
+    console.log('%c[tv_profile.js, logWebAssemblyFeatures]', 'color: purple;', describeWebAssemblyFeatures(probeWebAssemblyFeatures(apis)));
+  } catch (error) {
+    // probeWebAssemblyFeatures() guards every call of an API, so only a broken console gets here
+  }
+  return true;
+}
+
 // The firmware version of the TV, so that System information and the diagnostic log tie a report to a software update
 // of Samsung (the Ultra Low Latency mode, freezes and picture faults differ between firmware versions of one model).
 // It comes from webapis.productinfo.getFirmware(), or, where that fails, from the build string of the Tizen platform
@@ -1105,6 +1286,11 @@ if (typeof module === 'object' && module && module.exports) {
     getModelYearHint: getModelYearHint,
     detectWasmPlayerFeatures: detectWasmPlayerFeatures,
     detectWasmPlayerReport: detectWasmPlayerReport,
+    WASM_FEATURE_PROBES: WASM_FEATURE_PROBES,
+    SOCKET_HOST_BINDING_FUNCTIONS: SOCKET_HOST_BINDING_FUNCTIONS,
+    probeWebAssemblyFeatures: probeWebAssemblyFeatures,
+    describeWebAssemblyFeatures: describeWebAssemblyFeatures,
+    logWebAssemblyFeatures: logWebAssemblyFeatures,
     detectFirmwareVersion: detectFirmwareVersion,
     probeVideoDecoders: probeVideoDecoders,
     getVideoDecoderSupport: getVideoDecoderSupport,

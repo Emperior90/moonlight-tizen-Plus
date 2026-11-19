@@ -159,6 +159,26 @@ test('the review of November 2026 moved each project to the upstream state it re
   // The skipped microsecond series carries the warning about its audio queue, and no decision says any more that the
   // commits after 5d3c0ec wait for a review
   assert.match(decisionsOf(byId['moonlight-common-c'], '82ee2d6')[0].why, /handleMissingPackets\(\) in RtpAudioQueue\.c compares an age in microseconds/);
+  // 2.3.2 took its microsecond clock and the microsecond times of a video frame: the decision says what was taken and
+  // stays skipped for the rest, and the note lists it with the local patches
+  const microseconds = decisionsOf(byId['moonlight-common-c'], '82ee2d6')[0];
+  assert.equal(microseconds.decision, 'skipped');
+  assert.match(microseconds.why, /^Microsecond timestamps and RTP audio and video statistics\. Partly ported by hand in 2\.3\.2, only what the times of a video frame need: PltGetMicroseconds\(\) and the public LiGetMicroseconds\(\)/);
+  assert.match(microseconds.why, /receiveTimeUs and enqueueTimeUs in DECODE_UNIT/);
+  assert.match(microseconds.why, /receiveTimeMs and enqueueTimeMs of DECODE_UNIT stay/);
+  assert.match(microseconds.why, /Skipped, so the decision stays: the RTP statistics \(LiGetRTPAudioStats\(\), LiGetRTPVideoStats\(\)\)/);
+  assert.match(byId['moonlight-common-c'].note, /since 2\.3\.2 the microsecond clock and the microsecond times of a video frame from 82ee2d6, see its decision/);
+  // The other two local patches of 2.3.2, which a port of an upstream change of the same files must keep: the arrival
+  // figures of a frame and the QoS line of each socket, with their functions and their tests, which exist
+  const note = byId['moonlight-common-c'].note;
+  assert.match(note, /since 2\.3\.2 also the arrival figures of a frame for the rate at which frames arrive, addFecBlockArrival\(\) and its call with the clock read before reconstructFrame\(\) in RtpvAddPacket\(\) of RtpVideoQueue\.c/);
+  assert.match(note, /since 2\.3\.2 also the QoS line of each socket in the diagnostic log, logSocketQos\(\) and the result of setSocketQos\(\) in PlatformSockets\.c and PlatformSockets\.h, called from bindUdpSocket\(\) and from startControlStream\(\) in ControlStream\.c/);
+  ['tests/native/frame_arrival_test.c', 'tests/native/socket_qos_test.c'].forEach((file) => {
+    assert.ok(note.indexOf(file) > 0, file);
+    assert.ok(fs.existsSync(path.join(REPO_ROOT, file)), file);
+  });
+  assert.match(fs.readFileSync(path.join(REPO_ROOT, 'moonlight-common-c/src/RtpVideoQueue.c'), 'utf8'), /static void addFecBlockArrival\(/);
+  assert.match(fs.readFileSync(path.join(REPO_ROOT, 'moonlight-common-c/src/ControlStream.c'), 'utf8'), /logSocketQos\(client->socket/);
   byId['moonlight-common-c'].decisions.forEach((decision) => assert.doesNotMatch(decision.why, /not reviewed yet/));
   // The termination change of the Nightjar client is listed with the local patches
   assert.match(byId['moonlight-common-c'].note, /from host-termination\.patch of the Nightjar client \(GPL-3\.0\), tests\/native\/connection_termination_test\.c/);

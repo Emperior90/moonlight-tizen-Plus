@@ -11,6 +11,9 @@
 //   for AV1 labels its menu entry, which stays selectable and keeps the label after a translation pass.
 // - A stream that ends with error -200 after the TV rejected its video track names the codec, resolution and frame
 //   rate (the format of the message is pinned in tests/unit/video-track-rejection.test.js).
+// - The start of the app logs one line about what the TV supports of WebAssembly once the module is up, with the
+//   flag of its sockets as a top-level let of the script of the module (browser/mocks/wasm-runtime.js), also with a
+//   tizentvwasm that throws (the rules are in tests/unit/wasm-feature-probe.test.js).
 // The rules themselves are tested in tests/unit/runtime-checks.test.js.
 
 const { after, before, test } = require('node:test');
@@ -286,6 +289,59 @@ test('on Tizen 5.5 with the Ultra Low Latency mode, the optimal settings say tha
     } finally {
       await other.context.close();
     }
+  }
+});
+
+test('the start of the app logs once what the TV supports of WebAssembly, whatever its tizentvwasm', async () => {
+  // Chromium of the tests knows all four features; the rules for a TV that doesn't are in tests/unit/wasm-feature-probe.test.js
+  const features = '[tv_profile.js, logWebAssemblyFeatures] WebAssembly features: SIMD 128 yes, bulk memory yes, threads yes, ' +
+    'sign extension yes; ';
+  const cases = [
+    { tv: { tv: 's90c', conn: 'wifi' }, rest: 'supportedInstructions of the TV: not offered; socket host bindings: not offered by the TV' },
+    { tv: { tv: 'uhd', wasmPlayer: 'ull' }, rest: 'supportedInstructions of the TV: not offered; socket host bindings: not offered by the TV' },
+    // The flag of the glue code as a top-level let of the script of the module, and a TV that names its instruction sets
+    { tv: { tv: 'uhd', wasmPlayer: 'ull' }, moduleScripts: ['wasm-runtime.js'],
+      rest: 'supportedInstructions of the TV: test-set-a test-set-b; socket host bindings: used' },
+    // A tizentvwasm whose list of APIs throws doesn't disturb the probe
+    { tv: { tv: 'fhd', wasmPlayer: 'throws' }, moduleScripts: ['wasm-runtime.js'],
+      rest: 'supportedInstructions of the TV: test-set-a test-set-b; socket host bindings: used' },
+  ];
+  for (const entry of cases) {
+    const label = JSON.stringify(entry);
+    const app = await openApp(harness, { tv: entry.tv, moduleScripts: entry.moduleScripts });
+    try {
+      const linesOf = () => app.page.evaluate(() => DiagnosticLog.getSessions().reduce((all, session) => all.concat(session.lines), [])
+        .filter((line) => line.indexOf('WebAssembly features') >= 0));
+      await app.page.waitForFunction(() => typeof isStartupUiShown !== 'undefined' && isStartupUiShown);
+      // Once per start: a second call logs nothing
+      assert.equal(await app.page.evaluate(() => logWebAssemblyFeatures()), false, label);
+      const lines = await linesOf();
+      assert.equal(lines.length, 1, label + '\n' + lines.join('\n'));
+      assert.ok(lines[0].endsWith(' app    ' + features + entry.rest), label + '\n' + lines[0]);
+      assert.deepEqual(app.errors, [], label);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
+test('a module that fails to start still logs what the TV supports of WebAssembly, before the error', async () => {
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, moduleScripts: ['wasm-start-abort.js'],
+    readySignals: ['The streaming engine failed'] });
+  try {
+    const lines = await app.page.evaluate(() => DiagnosticLog.getSessions().reduce((all, session) => all.concat(session.lines), []));
+    const features = lines.filter((line) => line.indexOf('WebAssembly features') >= 0);
+    assert.equal(features.length, 1, lines.join('\n'));
+    // Without the flag of a module that never started, the line tells what the TV offers
+    assert.ok(features[0].endsWith(' app    [tv_profile.js, logWebAssemblyFeatures] WebAssembly features: SIMD 128 yes, ' +
+      'bulk memory yes, threads yes, sign extension yes; supportedInstructions of the TV: not offered; ' +
+      'socket host bindings: not offered by the TV'), features[0]);
+    const failure = lines.findIndex((line) => line.indexOf('The streaming engine failed: abort(CompileError') >= 0);
+    assert.ok(failure > lines.indexOf(features[0]), lines.join('\n'));
+    assert.equal(await app.page.evaluate(() => logWebAssemblyFeatures()), false);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
   }
 });
 

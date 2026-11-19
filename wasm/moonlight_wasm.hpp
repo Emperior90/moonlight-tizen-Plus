@@ -58,10 +58,25 @@ typedef struct _VIDEO_STATS {
   uint16_t maxHostProcessingLatency;
   uint32_t totalHostProcessingLatency;
   uint32_t framesWithHostProcessingLatency;
-  uint32_t totalReassemblyTime;
-  uint32_t totalDecodeTime;
-  uint32_t totalPacerTime;
-  uint32_t totalRenderTime;
+  // The time a frame spends in each stage on the TV, summed over the frames of the stats window, in microseconds
+  // (LiGetMicroseconds() and the times of the decode unit in microseconds): from the first to the last packet of the
+  // frame and in the decode unit queue (per decoded frame), held back by the frame pacing (per decoded frame) and
+  // handed to the video player (per rendered frame). 64 bits, since the totals of a session pass 2^32 us.
+  uint64_t totalReassemblyTimeUs;
+  uint64_t totalDecodeTimeUs;
+  uint64_t totalPacerTimeUs;
+  uint64_t totalRenderTimeUs;
+  // The longest of these times of a single frame of the window, in microseconds
+  uint32_t maxReassemblyTimeUs;
+  uint32_t maxDecodeTimeUs;
+  uint32_t maxPacerTimeUs;
+  uint32_t maxRenderTimeUs;
+  // How fast the data packets of the frames arrived (arrivalTimeUs and arrivalBytes of the decode unit,
+  // frame_arrival.hpp): the time in microseconds and the bytes at IP level, summed over the frames of the window that
+  // have them, and the number of these frames
+  uint64_t totalArrivalTimeUs;
+  uint64_t totalArrivalBytes;
+  uint32_t arrivalFrames;
   uint32_t lastRtt;
   uint32_t lastRttVariance;
   float totalFps;

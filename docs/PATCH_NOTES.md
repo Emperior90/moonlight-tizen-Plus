@@ -2,6 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
+- [2.3.2](#232): pre-release, finer frame times, how fast frames arrive, more facts in the log and a fix for recovery keyframes
 - [2.3.1](#231): 2026-11-18, lighter sound and statistics, fewer double presses, a switch for sound on Wi-Fi, and fixes from a review and from other Moonlight clients
 - [2.3.0](#230): 2026-11-08, smoother motion, a picture refresh in the Stream Menu and a longer guide
 - [2.2.1](#221): 2026-11-05, no more 144 FPS, and controllers that work on 2020 TVs
@@ -16,6 +17,32 @@ What changed in each version of Moonlight Plus, in short, newest first.
 **Which file?** `Moonlight-ForceGM.wgt` on Tizen 9 and newer, `Moonlight.wgt` on Tizen 5.5 to 8.
 
 **TV refuses an update?** If the author certificate doesn't match, uninstall the old app first; this loses its settings and pairing.
+
+## 2.3.2
+
+*Pre-release, in testing.* Finer frame times with their longest values, how fast frames arrive, more facts in the log, and a fix for recovery keyframes.
+
+> **Install:** by hand over 2.3.1 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
+>
+> **Tested:** with simulated TVs and hosts only; the new figures, the log lines and the keyframe fix still need a test on a TV.
+
+### New
+
+- *Full* statistics and *Last session* show how fast frames arrive, e.g. *Frames arrive at: 275 Mbps*
+- It is how fast the TV receives a frame, not the bitrate; a TV's Wi-Fi usually stays well below its link rate
+- They also show the longest time a single frame took at each step on the TV
+- The diagnostic log names what the TV supports of WebAssembly and if its sockets take the network priority
+- These figures show where the delay comes from; they don't make the stream faster by themselves
+
+### Changed
+
+- The times of each step of a frame are finer than whole milliseconds (about 0.1 ms where the TV's browser allows)
+- Spanish: a shorter label for the frame receive time, so the statistics still fit the screen
+
+### Fixed
+
+- *Session recovery keyframes* no longer counts restarts of the PC's encoder as recoveries (a TV runtime defect)
+- *Average frame pacing delay* no longer rises a little with every frame that the TV's player rejects
 
 ## 2.3.1
 

@@ -1793,6 +1793,9 @@ int startControlStream(void) {
         // retransmission code to detect QoS-intolerant routes and disable QoS marking for those.
         enet_socket_set_option (client->socket, ENET_SOCKOPT_QOS, 1);
 
+        // Moonlight Plus: log whether the socket took the DSCP marking, which ENet sets without reporting it
+        logSocketQos(client->socket, RemoteAddr.ss_family, "Control", SOCK_QOS_NOT_SET_HERE);
+
         // Connect to the host
         peer = enet_host_connect(client, &remoteAddress, CTRL_CHANNEL_COUNT, ControlConnectData);
         if (peer == NULL) {

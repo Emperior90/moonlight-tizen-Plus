@@ -171,6 +171,24 @@ typedef struct _DECODE_UNIT {
     // can be calculated by LiGetMillis() - enqueueTimeMs.
     uint64_t enqueueTimeMs;
 
+    // The same two times in microseconds, with the epoch of LiGetMicroseconds() (Moonlight Plus, from
+    // upstream 82ee2d6, which replaced the two fields above with these). The millisecond fields are
+    // these divided by 1000, so both pairs come from the same reading of the clock.
+    uint64_t receiveTimeUs;
+    uint64_t enqueueTimeUs;
+
+    // How fast the data packets of this frame arrived (Moonlight Plus), for a rate in bytes per time: the time from
+    // the first packet to the last data packet of each FEC block of the frame, summed over its blocks, in
+    // microseconds, and the bytes of the data packets that arrived in that time (each block's after its first) with
+    // their IP and UDP headers, i.e. at IP level. Parity packets don't count: they follow the data of their block,
+    // and a block that arrived complete doesn't wait for them. A block that needed FEC recovery counts up to the
+    // parity packet that completed it, with the bytes of the parity packets it needed, so the slots of its missing
+    // packets count as time without bytes. Both are times when the receive thread read the packets. arrivalBytes is 0
+    // when the frame has no such figures: its blocks have a single packet each. arrivalTimeUs can be 0 with bytes
+    // (all its packets within one step of a coarse clock), and must then be added up all the same.
+    uint32_t arrivalTimeUs;
+    uint32_t arrivalBytes;
+
     // Presentation time in milliseconds with the epoch at the first captured frame.
     // This can be used to aid frame pacing or to drop old frames that were queued too
     // long prior to display.
@@ -848,6 +866,11 @@ int LiSendHighResHScrollEvent(short scrollAmount);
 
 // This function returns a time in milliseconds with an implementation-defined epoch.
 uint64_t LiGetMillis(void);
+
+// This function returns a time in microseconds with the same epoch as LiGetMillis(), so that
+// LiGetMicroseconds() / 1000 equals LiGetMillis() at the same moment (Moonlight Plus, from upstream 82ee2d6).
+// The resolution depends on the platform: in a browser, the clock may be rounded (e.g. to 0.1 ms).
+uint64_t LiGetMicroseconds(void);
 
 // This is a simplistic STUN function that can assist clients in getting the WAN address
 // for machines they find using mDNS over IPv4. This can be used to pre-populate the external

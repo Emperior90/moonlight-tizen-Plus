@@ -249,7 +249,10 @@ void closeSocket(SOCKET s) {
 
 // These set "safe" host or link-local QoS options that we can unconditionally
 // set without having to worry about routers blockholing the traffic.
-static void setSocketQos(SOCKET s, int socketQosType) {
+// Moonlight Plus: returns the outcome for the QoS line of the socket (logSocketQos()): 0 when the option was set, the
+// socket error when setsockopt() failed, or SOCK_QOS_NO_OPTION when this platform has none (or for an unknown type).
+static int setSocketQos(SOCKET s, int socketQosType) {
+    int result = SOCK_QOS_NO_OPTION;
 #ifdef SO_NET_SERVICE_TYPE
     int value;
     switch (socketQosType) {
@@ -264,12 +267,16 @@ static void setSocketQos(SOCKET s, int socketQosType) {
         break;
     default:
         Limelog("Unknown QoS type: %d\n", socketQosType);
-        return;
+        return SOCK_QOS_NO_OPTION;
     }
 
     // iOS/macOS
     if (setsockopt(s, SOL_SOCKET, SO_NET_SERVICE_TYPE, (char*)&value, sizeof(value)) < 0) {
-        Limelog("setsockopt(SO_NET_SERVICE_TYPE, %d) failed: %d\n", value, (int)LastSocketError());
+        result = (int)LastSocketError();
+        Limelog("setsockopt(SO_NET_SERVICE_TYPE, %d) failed: %d\n", value, result);
+    }
+    else {
+        result = 0;
     }
 #endif
 #ifdef SO_PRIORITY
@@ -286,20 +293,92 @@ static void setSocketQos(SOCKET s, int socketQosType) {
         break;
     default:
         Limelog("Unknown QoS type: %d\n", socketQosType);
-        return;
+        return SOCK_QOS_NO_OPTION;
     }
 
     // Linux
     if (setsockopt(s, SOL_SOCKET, SO_PRIORITY, (char*)&value, sizeof(value)) < 0) {
-        Limelog("setsockopt(SO_PRIORITY, %d) failed: %d\n", value, (int)LastSocketError());
+        result = (int)LastSocketError();
+        Limelog("setsockopt(SO_PRIORITY, %d) failed: %d\n", value, result);
+    }
+    else {
+        result = 0;
     }
 #endif
+    return result;
+}
+
+// Moonlight Plus: log what the QoS of a socket of the stream came to, as one line of the diagnostic log, e.g.
+// "Video socket QoS: priority set, IP_TOS 0x00" (bindUdpSocket(), next to the receive buffer size of the socket) or
+// "Control socket QoS: IP_TOS 0xB9" (the control stream, whose ENet sets the DSCP Expedited Forwarding). It only
+// reads and logs, and changes nothing on the socket:
+// - priorityResult: what setSocketQos() returned (0, the socket error, or SOCK_QOS_NO_OPTION), or SOCK_QOS_NOT_SET_HERE
+//   for a socket whose QoS another part set (ENet), which leaves the priority out of the line;
+// - the type of service (IP_TOS, or IPV6_TCLASS for IPv6: the DSCP and ECN bits of the packets that the TV sends on the
+//   socket) as the socket reports it, or the error when it can't (e.g. a platform whose sockets don't offer the
+//   option). What the host sends is tagged by the host, so this says nothing about the packets that the TV receives.
+// The line names no address or port, so the redaction of the log has nothing to hide in it.
+void logSocketQos(SOCKET s, int addressFamily, const char* name, int priorityResult) {
+    char priority[48];
+    char typeOfService[48];
+    int value = 0;
+    SOCKADDR_LEN len = sizeof(value);
+    int level = -1;
+    int option = -1;
+    const char* optionName = "IP_TOS";
+
+    if (priorityResult == SOCK_QOS_NOT_SET_HERE) {
+        priority[0] = 0;
+    }
+    else if (priorityResult == 0) {
+        snprintf(priority, sizeof(priority), "priority set, ");
+    }
+    else if (priorityResult == SOCK_QOS_NO_OPTION) {
+        snprintf(priority, sizeof(priority), "no priority option, ");
+    }
+    else {
+        snprintf(priority, sizeof(priority), "priority not set (error %d), ", priorityResult);
+    }
+
+#ifdef AF_INET6
+    if (addressFamily == AF_INET6) {
+        optionName = "IPV6_TCLASS";
+#ifdef IPV6_TCLASS
+        level = IPPROTO_IPV6;
+        option = IPV6_TCLASS;
+#endif
+    }
+    else
+#endif
+    {
+#ifdef IP_TOS
+        level = IPPROTO_IP;
+        option = IP_TOS;
+#endif
+    }
+
+    if (option < 0) {
+        snprintf(typeOfService, sizeof(typeOfService), "no %s option", optionName);
+    }
+    else if (getsockopt(s, level, option, (char*)&value, &len) == 0) {
+        // A platform may answer with a single byte
+        if (len == 1) {
+            value = *(unsigned char*)&value;
+        }
+        snprintf(typeOfService, sizeof(typeOfService), "%s 0x%02X", optionName, (unsigned int)value & 0xFF);
+    }
+    else {
+        snprintf(typeOfService, sizeof(typeOfService), "%s unknown (error %d)", optionName, (int)LastSocketError());
+    }
+
+    Limelog("%s socket QoS: %s%s\n", name, priority, typeOfService);
 }
 
 SOCKET bindUdpSocket(int addressFamily, struct sockaddr_storage* localAddr, SOCKADDR_LEN addrLen, int bufferSize, int socketQosType) {
     SOCKET s;
     LC_SOCKADDR bindAddr;
     int err;
+    int qosResult = SOCK_QOS_NO_OPTION;
 
     s = createSocket(addressFamily, SOCK_DGRAM, IPPROTO_UDP, false);
     if (s == INVALID_SOCKET) {
@@ -363,7 +442,7 @@ SOCKET bindUdpSocket(int addressFamily, struct sockaddr_storage* localAddr, SOCK
 
     // Enable QOS for the socket (best effort)
     if (socketQosType != SOCK_QOS_TYPE_BEST_EFFORT) {
-        setSocketQos(s, socketQosType);
+        qosResult = setSocketQos(s, socketQosType);
     }
 
 #ifdef __3DS__
@@ -409,6 +488,12 @@ SOCKET bindUdpSocket(int addressFamily, struct sockaddr_storage* localAddr, SOCK
                 Limelog("Actual receive buffer size: %d\n", bufferSize);
             }
         }
+    }
+
+    // Moonlight Plus: and what its QoS came to, for the sockets of the video and the audio
+    if (socketQosType != SOCK_QOS_TYPE_BEST_EFFORT) {
+        logSocketQos(s, addressFamily, socketQosType == SOCK_QOS_TYPE_VIDEO ? "Video" :
+                     (socketQosType == SOCK_QOS_TYPE_AUDIO ? "Audio" : "Other"), qosResult);
     }
 
     return s;

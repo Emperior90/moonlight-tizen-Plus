@@ -302,6 +302,8 @@
   "FEC repairs: %1$s blocks, %2$s failed": "FEC repairs: %1$s blocks, %2$s failed",
   "Average frame receive time: %1$s ms (%2$s% of the frame time), highest second: %3$s ms (%4$s%)": "Average frame receive time: %1$s ms (%2$s% of the frame time), highest second: %3$s ms (%4$s%)",
   "Average frame receive time: %1$s ms (%2$s% of the frame time)": "Average frame receive time: %1$s ms (%2$s% of the frame time)",
+  "Frames arrive at: %1$s Mbps": "Frames arrive at: %1$s Mbps",
+  "Longest frame times (ms): receive %1$s, wait %2$s, pacing %3$s, rendering %4$s": "Longest frame times (ms): receive %1$s, wait %2$s, pacing %3$s, rendering %4$s",
   "Host frame rate (best 30 s): %1$s, average host processing latency: %2$s": "Host frame rate (best 30 s): %1$s, average host processing latency: %2$s",
   "Host frame rate (lowest 30 s): %1$s FPS, below %2$s FPS in %3$s of %4$s half minutes": "Host frame rate (lowest 30 s): %1$s FPS, below %2$s FPS in %3$s of %4$s half minutes",
   "Sound received ahead of the TV clock: %1$s ms after the first minute, %2$s ms at the end, at most %3$s ms; drift %4$s ms per hour": "Sound received ahead of the TV clock: %1$s ms after the first minute, %2$s ms at the end, at most %3$s ms; drift %4$s ms per hour",

@@ -532,6 +532,29 @@ uint64_t PltGetMillis(void) {
 #endif
 }
 
+// Moonlight Plus: the microsecond clock of upstream 82ee2d6, ported for the times of a video frame only. It reads the
+// same clock with the same epoch as PltGetMillis(), so PltGetMicroseconds() / 1000 is what PltGetMillis() returns at
+// that moment and the millisecond times stay comparable with it; upstream counts from a start taken by PltTicksInit()
+// instead, state that this copy doesn't need. The unit is a microsecond, not the resolution: on the TV,
+// clock_gettime(CLOCK_MONOTONIC) of Emscripten reads performance.now(), which the browser may round (e.g. to 0.1 ms).
+uint64_t PltGetMicroseconds(void) {
+#if defined(LC_WINDOWS)
+    return GetTickCount64() * 1000;
+#elif defined(CLOCK_MONOTONIC) && !defined(NO_CLOCK_GETTIME)
+    struct timespec tv;
+
+    clock_gettime(CLOCK_MONOTONIC, &tv);
+
+    return ((uint64_t)tv.tv_sec * 1000000) + (tv.tv_nsec / 1000);
+#else
+    struct timeval tv;
+
+    gettimeofday(&tv, NULL);
+
+    return ((uint64_t)tv.tv_sec * 1000000) + tv.tv_usec;
+#endif
+}
+
 bool PltSafeStrcpy(char* dest, size_t dest_size, const char* src) {
     LC_ASSERT(dest_size > 0);
 

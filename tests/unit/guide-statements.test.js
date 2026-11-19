@@ -45,6 +45,10 @@
 //   Prioritize sound on Wi-Fi, continuous audio without a switch, the drift of the sound with its hint, the limit of the
 //   requests for a keyframe, the 7.1 correction that leaves a fixed host alone, the Sunshine versions that accept FEC 0,
 //   HDR10+ that never reaches the TV in HEVC, and the new name of the Sunshine repository
+// - the statistics and the log of 2.3.2: the times of a frame from the microsecond clock with their steps of about
+//   0.1 ms on the TV, the longest frame times, the arrival rate of the frames (at IP level, data packets only, with its
+//   minimum, neither the bitrate nor the Wi-Fi link rate) in the full statistics and Last session, the QoS line of each
+//   socket of a stream and the WebAssembly line at the start of the app
 // The release notes of a release (docs/RELEASE_NOTES.md) only give the essentials, so the statements that they
 // carried until 1.19.100 are checked in the guide and the patch notes (docs/PATCH_NOTES.md), where they are now.
 
@@ -892,4 +896,81 @@ test('the guide describes the changes of the fork package of 2.3.1 as the code m
   const controllers = read('docs/CONTROLLERS.md');
   assert.doesNotMatch(controllers, /github\.com\/LizardByte\/Sunshine/);
   assert.match(controllers, /\(https:\/\/github\.com\/SunshineStream\/Sunshine\/blob\/master\/docs\/configuration\.md\)/);
+});
+
+test('the guide describes the frame times, the arrival rate and the log lines of 2.3.2 as the code makes them', () => {
+  const player = read('wasm/wasmplayer.cpp');
+  const english = JSON.parse(read('wasm/static/locales/en-US.json'));
+  const stats = guideSection('## Performance statistics');
+  // The times of a frame come from the microsecond clock, which on the TV is performance.now() of the browser
+  assert.match(read('moonlight-common-c/src/Platform.c'), /uint64_t PltGetMicroseconds\(void\) \{[\s\S]*?clock_gettime\(CLOCK_MONOTONIC, &tv\);/);
+  assert.match(player, /AddFrameTime\(m_ActiveWndVideoStats\.totalReassemblyTimeUs, m_ActiveWndVideoStats\.maxReassemblyTimeUs,\s+decodeUnit->receiveTimeUs, decodeUnit->enqueueTimeUs\);/);
+  assert.ok(stats.indexOf('The times of a frame come from the clock of the browser of the TV, which may count in steps of about 0.1 ms, so a single time is not exact: the averages show hundredths of a millisecond and the longest times tenths') > 0);
+  // The longest frame times: one line after the averages, in tenths of a millisecond, and in Last session
+  assert.ok(player.indexOf('"Average rendering time: %.2f ms\\n"\n      "Longest frame times (ms): receive %.1f, wait %.1f, pacing %.1f, rendering %.1f\\n"') > 0);
+  assert.ok(english['Longest frame times (ms): receive %1$s, wait %2$s, pacing %3$s, rendering %4$s']);
+  const longest = tableRow('Longest frame times (ms)')[1];
+  assert.ok(longest.indexOf('The longest time of a single frame in the 2 seconds at each of the four steps above: *receive*, *wait*, *pacing* and *rendering*') === 0, longest);
+  // The arrival rate: right after the frame receive time, from the data packets at IP level, with its minimum
+  assert.ok(player.indexOf('"Average frame receive time: %.2f ms (%.0f%% of the frame time)\\n"\n      "%s"') > 0);
+  assert.ok(player.indexOf('snprintf(arrivalLine, sizeof(arrivalLine), "Frames arrive at: %u Mbps\\n", arrivalMbps);') > 0);
+  assert.ok(english['Frames arrive at: %1$s Mbps']);
+  const arrival = read('wasm/frame_arrival.hpp');
+  assert.match(arrival, /constexpr uint32_t kFrameArrivalMinFrames = 10;/);
+  assert.match(arrival, /constexpr uint64_t kFrameArrivalMinTimeUs = 20000;/);
+  const queue = read('moonlight-common-c/src/RtpVideoQueue.c');
+  assert.match(queue, /queue->packetOverheadBytes = \(RemoteAddr\.ss_family == AF_INET6 \? 40 : 20\) \+ 8 \+/);
+  // A block that needed parity packets counts up to the one that completed it; both ends of a span are times when the
+  // receive thread reads the packets (the first packet of the block, and the packet that can complete it)
+  assert.match(queue, /static void addFecBlockArrival\(PRTP_VIDEO_QUEUE queue, uint64_t endUs\) \{\s+if \(queue->receivedDataPackets \+ queue->receivedParityPackets > 1\) \{/);
+  assert.match(queue, /queue->bufferFirstRecvTimeUs = PltGetMicroseconds\(\);/);
+  assert.match(queue, /arrivalEndUs = PltGetMicroseconds\(\);\s+\}\s+\}\s+(\/\/.*\s+)*if \(reconstructFrame\(queue\) == 0\)/);
+  const rate = tableRow('Frames arrive at')[1];
+  ['for each frame the bytes of its data packets with their IP and UDP headers over the time from its first to its last data packet, summed over the 2 seconds',
+    'Parity packets of the error correction don\'t count, unless a frame needed them to replace lost packets: then its time runs to the last parity packet it needed, so a lost packet makes the figure a little lower',
+    'It is the speed at which the TV receives a frame, usually limited by the Wi-Fi of the TV',
+    'neither the bitrate nor the link rate of the Wi-Fi: a TV\'s Wi-Fi module usually stays well below the link rate that the router shows for it',
+    'The times are when the app reads the packets, not when they reach the TV: if the TV reads them more slowly than they come in, the figure shows that slower pace and the frame receive time rises with it, so a low figure can also mean that the TV can\'t keep up; if the app reads a backlog at once after a hold-up, the figure reads too high',
+    'The line is missing when there were too few frames to tell (fewer than 10, or less than 20 ms of arrival in all, e.g. on a still desktop)']
+    .forEach((text) => assert.ok(rate.indexOf(text) >= 0, text));
+  // The research's figure: 8.65 ms for a frame of 4K60 at 150 Mbps over Wi-Fi come to about 275 Mbps at IP level
+  // (207 data packets of 1392 bytes plus 44 bytes of headers, the first one not counted)
+  assert.equal(Math.round(206 * 1436 * 8 / 8650), 274);
+  assert.ok(guideSection('## Finding your bitrate').indexOf('*Frames arrive at* (since 2.3.2) gives the speed at which the TV receives a frame, e.g. about *275 Mbps* for the 8.65 ms above (computed from that measurement, not measured): usually the speed of the network path, but lower when the TV itself can\'t take the packets as fast as they come') > 0);
+  // Nowhere a claim that the arrival rate can only err high: when the receive thread falls behind within a frame, it
+  // reads too low (tests/native/frame_arrival_test.c)
+  [read('docs/GUIDE.md'), read('CHANGELOG.md'), read('docs/PATCH_NOTES.md'), read('wasm/frame_arrival.hpp')]
+    .forEach((text) => assert.doesNotMatch(text, /can only (read|be) too high/));
+  assert.ok(guideSection('## Finding your bitrate').indexOf('a TV\'s Wi-Fi module usually stays well below that link rate') > 0);
+  // Both lines in the report of the last session, as describeSessionReport() adds them after the frame receive time
+  const diagnostics = read('wasm/platform/diagnostics.js');
+  assert.match(diagnostics, /if \(report\.arrivalMbps > 0\) \{\s+lines\.push\(t\('Frames arrive at: %1\$s Mbps'/);
+  assert.ok(tableRow('Last session')[1].indexOf('how fast the frames of the stream arrived (*Frames arrive at*) and the longest time of a single frame of the stream at each step (*Longest frame times (ms)*, e.g. *receive 36.0, wait 3.1, pacing 11.8, rendering 4.2*)') > 0);
+  // The QoS line of each socket of a stream, which only reads the socket, and the marking that ENet asks for
+  const log = guideSection('### Diagnostic log');
+  const sockets = read('moonlight-common-c/src/PlatformSockets.c');
+  assert.ok(sockets.indexOf('Limelog("%s socket QoS: %s%s\\n", name, priority, typeOfService);') > 0);
+  assert.ok(sockets.indexOf('snprintf(priority, sizeof(priority), "priority set, ");') > 0);
+  assert.match(read('moonlight-common-c/src/ControlStream.c'), /logSocketQos\(client->socket, RemoteAddr\.ss_family, "Control", SOCK_QOS_NOT_SET_HERE\);/);
+  assert.match(read('moonlight-common-c/enet/unix.c'), /value = value \? \(46 << 2 \| 0x01\) : 0; \/\/ DSCP: Expedited Forwarding/);
+  assert.equal((46 << 2 | 0x01).toString(16).toUpperCase(), 'B9');
+  assert.ok(log.indexOf('*Video socket QoS: priority set, IP_TOS 0x00* after the receive buffer of the video socket, the same for the audio socket, and *Control socket QoS: IP_TOS 0xB9* for the control connection') > 0, log);
+  // The WebAssembly line at the start of the app, as tv_profile.js writes it
+  assert.match(read('wasm/platform/index.js'), /function moduleDidLoad\(\) \{[\s\S]{0,200}?logWebAssemblyFeatures\(\);/);
+  let call = 0;
+  const line = profile.describeWebAssemblyFeatures(profile.probeWebAssemblyFeatures({
+    webAssembly: { validate: () => call++ === 2 }, tizentvwasm: null, socketHostBindingsFlag: true,
+  }));
+  assert.equal(line, 'WebAssembly features: SIMD 128 no, bulk memory no, threads yes, sign extension no; supportedInstructions of the TV: not offered; socket host bindings: used');
+  assert.ok(log.indexOf('e.g. *' + line + '*') > 0, log);
+  // Every value that the line can show for the socket host bindings and the instruction sets is explained, and the
+  // line also comes when the module failed before moduleDidLoad()
+  assert.match(read('wasm/platform/index.js'), /function onNativeModuleFailure\(details\) \{[\s\S]{0,400}?logWebAssemblyFeatures\(\);/);
+  const values = profile.probeWebAssemblyFeatures({ webAssembly: null, tizentvwasm: null, socketHostBindingsFlag: null });
+  assert.equal(values.socketHostBindings, 'not offered by the TV');
+  ['*used*', '*not used*', '*offered by the TV*', '*not offered by the TV*', '*not offered*', '*unknown*', '*failed*',
+    'the app already uses threads', 'e.g. when it failed to start (the line then comes with its error)']
+    .forEach((text) => assert.ok(log.indexOf(text) > 0, text));
+  // The QoS lines tell nothing about the marking of what the PC sends
+  assert.ok(log.indexOf('The marking of what the PC sends, the picture and the sound, is set by the PC and doesn\'t show in these lines (*Prioritize sound on Wi-Fi* changes that marking, not these lines)') > 0);
 });

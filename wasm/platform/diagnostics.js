@@ -527,7 +527,10 @@ const DiagnosticLog = (function() {
 // while it waits for the keyframes, which the hints about the network and the TV name with their remedies. The
 // diagnostic log has them in a line of their own. How far the sound ran ahead of the clock of the TV (audioLeadMs,
 // audioLeadEndMs, audioLeadMaxMs, from 2.3.1 on) is 0 when it wasn't measured, and its drift (audioDriftMsPerHour) is
-// a signed number, or null for a session without one and for a report without it.
+// a signed number, or null for a session without one and for a report without it. The longest time of a single frame
+// in each stage on the TV (receiveTimeMaxX10, waitTimeMaxX10, pacingDelayMaxX10, renderTimeMaxX10, from 2.3.2 on) is 0
+// in a report without it, which leaves its line out, and so is the rate at which the frames arrived (arrivalMbps, from
+// 2.3.2 on).
 function parseSessionReport(json) {
   let data = null;
   try {
@@ -565,6 +568,11 @@ function parseSessionReport(json) {
     hostLowWindows: number('hostLowWindows'),
     receiveTimeX100: number('receiveTimeX100'),
     receiveTimePeakX100: number('receiveTimePeakX100'),
+    receiveTimeMaxX10: number('receiveTimeMaxX10'),
+    waitTimeMaxX10: number('waitTimeMaxX10'),
+    pacingDelayMaxX10: number('pacingDelayMaxX10'),
+    renderTimeMaxX10: number('renderTimeMaxX10'),
+    arrivalMbps: number('arrivalMbps'),
     audioChannels: number('audioChannels'),
     audioLoadMsPerS: number('audioLoadMsPerS'),
     audioLoadPeakMsPerS: number('audioLoadPeakMsPerS'),
@@ -774,6 +782,8 @@ function formatReportNumber(value, decimals) {
 //   Frames dropped by the TV: 0, video resets: 0, recovery keyframes: 0
 //   FEC repairs: 12 blocks, 0 failed
 //   Average frame receive time: 4.12 ms (25% of the frame time), highest second: 6.55 ms (39%)
+//   Frames arrive at: 264 Mbps
+//   Longest frame times (ms): receive 17.0, wait 3.1, pacing 11.8, rendering 4.2
 //   Host frame rate (best 30 s): 60.00 FPS, average host processing latency: 5.2 ms
 //   Host frame rate (lowest 30 s): 59.96 FPS, below 57 FPS in 0 of 24 half minutes
 //   Sound received ahead of the TV clock: 22 ms after the first minute, 23 ms at the end, at most 25 ms; drift +3 ms per hour
@@ -782,10 +792,17 @@ function formatReportNumber(value, decimals) {
 // The host line is left out when the host sent neither figure (e.g. a session without video). The frame receive time
 // shows what the bitrate costs: the time from the first to the last packet of a frame, as the full statistics show it,
 // also as a share of the time between two frames of the stream; its line is left out without a frame, and its highest
-// second without a stats window that counts. The line of the lowest host frame rate is left out without a 30 s window
-// that counts for it (a session of less than a minute, a paused host, or a report of 2.3.0). The line of the sound is
-// there only with a drift, i.e. after at least 10 minutes of sound with the TV media player: the leads of a shorter
-// session say little about a long one.
+// second without a stats window that counts. The rate at which the frames arrived is that of the whole session, as the
+// full statistics show it for their windows: the bytes of the data packets of a frame at IP level over the time from
+// its first to its last data packet, summed over the frames (wasm/frame_arrival.hpp), i.e. the speed of the network
+// path while a frame arrives, not the bitrate; its line is left out without enough frames to tell (and of a report of
+// 2.3.1 and before). The longest frame times are those of a single frame of the session in each stage on the TV, as the
+// full statistics show them for their windows: from its first to its last packet, waiting for the video thread, held
+// by the frame pacing and handed to the video player, in tenths of a millisecond from a clock whose steps on the TV may
+// be about 0.1 ms; their line is left out of a report without them (2.3.1 and before) or without a frame. The line of
+// the lowest host frame rate is left out without a 30 s window that counts for it (a session of less than a minute, a
+// paused host, or a report of 2.3.0). The line of the sound is there only with a drift, i.e. after at least 10 minutes
+// of sound with the TV media player: the leads of a shorter session say little about a long one.
 function describeSessionReport(report, options) {
   if (!report) {
     return [t('Last session: %1$s', t('None yet'))];
@@ -813,6 +830,14 @@ function describeSessionReport(report, options) {
         formatReportNumber(report.receiveTimePeakX100 / 100, 2), share(report.receiveTimePeakX100)) :
       t('Average frame receive time: %1$s ms (%2$s% of the frame time)',
         formatReportNumber(report.receiveTimeX100 / 100, 2), share(report.receiveTimeX100)));
+  }
+  if (report.arrivalMbps > 0) {
+    lines.push(t('Frames arrive at: %1$s Mbps', formatReportNumber(report.arrivalMbps)));
+  }
+  if (report.receiveTimeMaxX10 > 0 || report.waitTimeMaxX10 > 0 || report.pacingDelayMaxX10 > 0 || report.renderTimeMaxX10 > 0) {
+    lines.push(t('Longest frame times (ms): receive %1$s, wait %2$s, pacing %3$s, rendering %4$s',
+      formatReportNumber(report.receiveTimeMaxX10 / 10, 1), formatReportNumber(report.waitTimeMaxX10 / 10, 1),
+      formatReportNumber(report.pacingDelayMaxX10 / 10, 1), formatReportNumber(report.renderTimeMaxX10 / 10, 1)));
   }
   // A figure the host didn't give (e.g. no 30 s window in a shorter stream) is Unknown, without its unit
   if (report.hostFrameRateX100 > 0 || report.hostProcessingLatencyX10 > 0) {
