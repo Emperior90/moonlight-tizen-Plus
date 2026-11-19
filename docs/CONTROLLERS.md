@@ -42,7 +42,7 @@ The menus use the button positions (Xbox names first, PlayStation names in brack
 | Button | Action |
 |---|---|
 | A (Cross) | Select the current item, like OK on the remote |
-| B (Circle) | Back, like RETURN on the remote |
+| B (Circle) | Back, like RETURN on the remote (not on the launch screen *Starting…*, where RETURN or RED of the remote cancels the start) |
 | D-pad, left stick | Move. Holding them repeats the move after 350 ms, then every 100 ms. Small stick movements are ignored: a direction starts when the stick is pushed more than half way and holds until the stick is back below 30 %. |
 | Select / View (Share, Create) | Like CH+ on the remote: open the menu of the selected PC or app ([app menu](GUIDE.md#stream-menu-and-app-menu)) |
 | Start / Menu (Options) | Like CH- on the remote: set the focus on the current item |

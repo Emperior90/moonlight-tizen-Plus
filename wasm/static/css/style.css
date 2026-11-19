@@ -283,6 +283,31 @@ button, .mdl-button, .mdl-menu__item, .mdl-textfield__input, .mdl-switch__label,
 .ambient.is-painted {
   opacity: 1;
 }
+/* The keys that cancel the start, at the bottom of the start screen: RETURN and RED, whose keycap has the red dot of
+   the key */
+.launch-hints {
+  position: absolute;
+  right: 0;
+  bottom: 72px;
+  left: 0;
+  display: flex;
+  justify-content: center;
+  padding: 0 var(--safe-x);
+  color: var(--text-3);
+  font-size: 20px;
+  font-weight: 700;
+}
+.launch-hints .hint {
+  margin-right: 0;
+}
+.keycap-red::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--red);
+}
 .launch-backdrop {
   height: 100%;
   background:

@@ -10,6 +10,10 @@
 // Since 2.3.1 the box art download and the request that quits an app (/cancel) have a time limit of 30 seconds, which
 // the queue enforces like the limits of the server info and the app list: a host that accepted the connection and then
 // sent nothing held the one HTTP thread, and every request of every host behind it, for as long as the browser waited.
+// Since 2.3.2 the launch and resume requests have one of 120 seconds (as Moonlight for PC), and a start that no longer
+// waits for its request lets go of it (cancelStreamStartRequests()): one that waits is dropped unsent, and the one that
+// runs is canceled in the module after a grace, unless it was answered by then. The browser test
+// tests/browser/start-screen-hang.test.js checks the start that ends with them.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -277,9 +281,11 @@ function recordSentParameters(queue) {
   return () => plain(queue.platform.get('__sentParameters'));
 }
 
-test('the box art download and the quit of an app ask with a time limit of 30 seconds, the start of a stream with none', async () => {
+test('the box art download and the quit of an app ask with a time limit of 30 seconds, the start of a stream with 120 seconds', async () => {
   const queue = loadQueue({ utils: true });
   assert.deepEqual([queue.platform.get('BOX_ART_TIMEOUT_MS'), queue.platform.get('QUIT_APP_TIMEOUT_MS')], [30000, 30000]);
+  // As Moonlight for PC (LAUNCH_TIMEOUT_MS of app/backend/nvhttp.cpp, also for the resume request); before 2.3.2 none
+  assert.equal(queue.platform.get('STREAM_START_REQUEST_TIMEOUT_MS'), 120000);
   const sent = recordSentParameters(queue);
   const host = makeHost(queue);
   settled(host.getBoxArt(7, false));
@@ -294,8 +300,18 @@ test('the box art download and the quit of an app ask with a time limit of 30 se
   // [the pinned key, binary, the time limit in milliseconds]
   assert.deepEqual(byPath.appasset, ['PPK', true, 30000]);
   assert.deepEqual(byPath.cancel, ['PPK', false, 30000]);
-  assert.deepEqual(byPath.launch, ['PPK', false]);
-  assert.deepEqual(byPath.resume, ['PPK', false]);
+  assert.deepEqual(byPath.launch, ['PPK', false, 120000]);
+  assert.deepEqual(byPath.resume, ['PPK', false, 120000]);
+  // Fail them in the order they run, so that no time limit keeps the test running
+  for (let i = 0; i < 4; i++) {
+    await tick();
+    const running = queue.native.filter((entry) => entry.what !== 'cancelRequest' && !entry.answered);
+    assert.equal(running.length, 1, JSON.stringify(queue.native));
+    queue.answer(running[0].what, new Error('-1'));
+  }
+  await tick();
+  assert.deepEqual(queue.sent(), ['/cancel', '/launch', '/resume', 'boxart 7']);
+  assert.equal(queue.platform.get('_httpCurrent'), null);
 });
 
 test('a box art download that gets no answer is canceled after its time limit, and the requests behind it run', async () => {
@@ -366,4 +382,114 @@ test('a quit that gets no answer fails after its time limit without a refresh, a
   queue.answer('/cancel', '<root status_code="200"><cancel>1</cancel></root>');
   await tick();
   assert.deepEqual([quick.state, quick.value, refreshes], ['resolved', true, 1]);
+});
+
+test('a launch request that gets no answer is canceled after its time limit, and the requests behind it run', async () => {
+  const queue = loadQueue({ utils: true });
+  // The limit of the test: 40 ms instead of 120 seconds
+  queue.platform.run('STREAM_START_REQUEST_TIMEOUT_MS = 40;');
+  const host = makeHost(queue);
+  const launch = settled(host.launchApp(3, '3840x2160x60', 0, 'KEY', 1, 1, 0, 0x030002, 1, 1));
+  const refresh = settled(queue.send('openUrl', [url('/serverinfo'), 'PPK', false, 5000]));
+  await tick();
+  assert.deepEqual(queue.sent(), ['/launch']);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await tick();
+  // GS_FAILED, as for every request that runs out; startGame() ends the start before with its own message
+  assert.deepEqual([launch.state, launch.error], ['rejected', -1]);
+  assert.deepEqual(queue.sent(), ['/launch', 'cancelRequest', '/serverinfo']);
+  queue.answer('/serverinfo', '<root/>');
+  await tick();
+  assert.equal(refresh.value, '<root/>');
+  // Before 2.3.2 the refresh waited for as long as the host held the launch request
+  queue.answer('/launch', '<root status_code="200"/>');
+  await tick();
+  assert.equal(launch.state, 'rejected');
+});
+
+test('a launch request that the start lets go of is dropped while it waits, and never reaches the module', async () => {
+  const queue = loadQueue({ utils: true });
+  const host = makeHost(queue);
+  const poll = settled(queue.send('openUrl', [url('/serverinfo'), 'PPK', false, 5000]));
+  const launch = settled(host.launchApp(3, '3840x2160x60', 0, 'KEY', 1, 1, 0, 0x030002, 1, 1));
+  const boxArt = settled(queue.send('openUrl', [boxArtUrl(4), 'PPK', true]));
+  await tick();
+  assert.deepEqual(queue.sent(), ['/serverinfo']);
+  // Only the launch request goes: the request that runs and the box art download stay
+  assert.equal(queue.platform.get('cancelStreamStartRequests')(3000), 1);
+  await tick();
+  assert.deepEqual([launch.state, launch.error], ['rejected', 'STREAM_START_REQUEST_DROPPED']);
+  queue.answer('/serverinfo', '<root/>');
+  await tick();
+  queue.answer('boxart 4', 'PNG 4');
+  await tick();
+  assert.deepEqual([poll.value, boxArt.value], ['<root/>', 'PNG 4']);
+  assert.deepEqual(queue.sent(), ['/serverinfo', 'boxart 4']);
+  // Nothing to let go of any more
+  assert.equal(queue.platform.get('cancelStreamStartRequests')(0), 0);
+});
+
+test('a launch or resume request that runs is canceled after the grace, unless the host answers within it', async () => {
+  const queue = loadQueue({ utils: true });
+  const host = makeHost(queue);
+  const cancelStreamStartRequests = queue.platform.get('cancelStreamStartRequests');
+
+  // The host holds the request: canceled in the module once the grace ran out, and the refresh behind it runs
+  const held = settled(host.resumeApp('3840x2160x60', 0, 'KEY', 1, 1, 0, 0x030002, 1, 1));
+  const refresh = settled(queue.send('openUrl', [url('/serverinfo'), 'PPK', false, 5000]));
+  await tick();
+  assert.equal(cancelStreamStartRequests(40), 1);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  await tick();
+  assert.deepEqual([held.state, queue.sent()], ['pending', ['/resume']], 'the request keeps its grace');
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  await tick();
+  assert.deepEqual([held.state, held.error], ['rejected', 'STREAM_START_REQUEST_CANCELLED']);
+  assert.deepEqual(queue.sent(), ['/resume', 'cancelRequest', '/serverinfo']);
+  assert.ok(queue.platform.consoleMessages.some((entry) => /Canceling the launch or resume request that runs/.test(entry.text)));
+  queue.answer('/serverinfo', '<root/>');
+  await tick();
+  assert.equal(refresh.value, '<root/>');
+  // Its late answer changes nothing
+  queue.answer('/resume', '<root status_code="200"/>');
+  await tick();
+  assert.equal(held.state, 'rejected');
+
+  // The host answers within the grace: the start gets the answer, which tells whether the host took the start, and the
+  // request that runs when the grace is over is not canceled
+  const answered = settled(host.launchApp(3, '3840x2160x60', 0, 'KEY', 1, 1, 0, 0x030002, 1, 1));
+  const next = settled(queue.send('openUrl', [url('/applist'), 'PPK', false, 10000]));
+  await tick();
+  cancelStreamStartRequests(40);
+  queue.answer('/launch', '<root status_code="200"/>');
+  await tick();
+  assert.deepEqual(queue.sent().slice(3), ['/launch', '/applist']);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await tick();
+  assert.deepEqual([answered.state, answered.value], ['resolved', '<root status_code="200"/>']);
+  assert.equal(next.state, 'pending', 'the app list request is not canceled');
+  assert.equal(queue.sent().filter((what) => what === 'cancelRequest').length, 1);
+  queue.answer('/applist', '<root/>');
+  await tick();
+  assert.equal(next.value, '<root/>');
+
+  // Without a grace the request that runs is canceled at once (the end of a start after STREAM_START_REQUEST_TIMEOUT_MS)
+  const ended = settled(host.launchApp(3, '3840x2160x60', 0, 'KEY', 1, 1, 0, 0x030002, 1, 1));
+  await tick();
+  cancelStreamStartRequests(0);
+  await tick();
+  assert.deepEqual([ended.state, ended.error], ['rejected', 'STREAM_START_REQUEST_CANCELLED']);
+  assert.equal(queue.platform.get('_httpCurrent'), null);
+});
+
+test('a box art download or another request that runs is never let go of as a start request', async () => {
+  const queue = loadQueue({ utils: true });
+  const boxArt = settled(queue.send('openUrl', [boxArtUrl(5), 'PPK', true]));
+  await tick();
+  assert.equal(queue.platform.get('cancelStreamStartRequests')(0), 0);
+  await tick();
+  assert.equal(boxArt.state, 'pending');
+  assert.deepEqual(queue.sent(), ['boxart 5']);
+  assert.deepEqual(['/launch?', '/resume?', '/cancel?', '/applist?', '/appasset?'].map((path) =>
+    queue.platform.get('isStreamStartRequest')(['https://10.0.0.2:47984' + path + 'uniqueid=0'])), [true, true, false, false, false]);
 });

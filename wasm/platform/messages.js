@@ -507,9 +507,10 @@ function formatDialogText(text) {
 // once the one before it answered or timed out. A box art download waits behind every other request that comes in
 // while it waits: opening a host with a cold box art cache queues the box art of every app (at most two at once,
 // NvHTTP.getBoxArt() in utils.js), and the requests that start, resume or quit an app must not wait for them. Each
-// entry is { boxArt, start(finish), drop(reason), cancel(reason) }: start() sends the request and calls finish() once
-// it is settled, drop() settles a box art download that leaves the queue unsent, and cancel() cancels the one that
-// runs. The idea comes from the fork of mmadej20 (moonlight-tizen-modern, GPL-3.0, f4eff8e); the queue is new.
+// entry is { boxArt, streamStart, start(finish), drop(reason), cancel(reason) }: start() sends the request and calls
+// finish() once it is settled, drop() settles a box art download or a launch or resume request that leaves the queue
+// unsent, and cancel() cancels the one that runs. The idea comes from the fork of mmadej20 (moonlight-tizen-modern,
+// GPL-3.0, f4eff8e); the queue is new.
 var _httpQueue = [];
 // The entry of the request that runs, or null
 var _httpCurrent = null;
@@ -519,6 +520,11 @@ var _queuedPairing = null;
 // Whether a request downloads box art (NvHTTP.getBoxArt() in utils.js), the only one for /appasset
 function isBoxArtRequest(params) {
   return /\/appasset\?/.test(String(params[0]));
+}
+
+// Whether a request starts a stream: the launch or resume request of NvHTTP.launchApp() and resumeApp() in utils.js
+function isStreamStartRequest(params) {
+  return /\/(?:launch|resume)\?/.test(String(params[0]));
 }
 
 // Start the request at the front of the queue, unless one runs
@@ -562,6 +568,41 @@ function queueHttpRequest(entry) {
   }
   _httpQueue.splice(index, 0, entry);
   Promise.resolve().then(runNextHttpRequest);
+}
+
+// Let go of the launch or resume request of a start that no longer waits for it (startGame() and cancelStreamLaunch()
+// in index.js: RED, RETURN on the launch screen, the background, or the limit of STREAM_START_REQUEST_TIMEOUT_MS of
+// utils.js). One that still waits in the queue is dropped, so that the host never gets it (STREAM_START_REQUEST_DROPPED).
+// The one that runs is canceled in the module after graceMs (STREAM_START_REQUEST_CANCELLED), unless it was answered
+// by then: a host that answers within the grace still tells whether it took the start, which the start remembers
+// (rememberCancelledStartAnswer() in index.js), while a host that holds the request (e.g. for a command of the app that
+// waits on the PC) no longer holds the one HTTP thread of the module, and with it the refresh of the server info that
+// returns to the app list and every other request of every host. Returns how many requests it let go of.
+function cancelStreamStartRequests(graceMs) {
+  var dropped = _httpQueue.filter(function(entry) {
+    return entry.streamStart;
+  });
+  _httpQueue = _httpQueue.filter(function(entry) {
+    return !entry.streamStart;
+  });
+  dropped.forEach(function(entry) {
+    entry.drop(STREAM_START_REQUEST_DROPPED);
+  });
+  var running = _httpCurrent && _httpCurrent.streamStart ? _httpCurrent : null;
+  if (running) {
+    var cancelRunning = function() {
+      // Not once it was answered, or canceled by an earlier call
+      if (_httpCurrent === running) {
+        running.cancel(STREAM_START_REQUEST_CANCELLED);
+      }
+    };
+    if (graceMs > 0) {
+      setTimeout(cancelRunning, graceMs);
+    } else {
+      cancelRunning();
+    }
+  }
+  return dropped.length + (running ? 1 : 0);
 }
 
 // Drop the box art downloads that wait and cancel the one that runs, so that they reject with `reason`: when a stream
@@ -628,8 +669,10 @@ var sendMessage = function(method, params) {
         }
       };
 
+      var isBoxArt = isBoxArtRequest(params);
       queueHttpRequest({
-        boxArt: isBoxArtRequest(params),
+        boxArt: isBoxArt,
+        streamStart: isStreamStartRequest(params),
         start: function(finish) {
           finishRequest = finish;
           if (timeout_ms > 0) {
@@ -658,7 +701,8 @@ var sendMessage = function(method, params) {
           settle(reject, reason);
         },
         cancel: function(reason) {
-          console.log('%c[messages.js, sendMessage]', 'color: gray;', 'Canceling the box art download that runs.');
+          console.log('%c[messages.js, sendMessage]', 'color: gray;', isBoxArt ? 'Canceling the box art download that runs.' :
+            'Canceling the launch or resume request that runs, which the start no longer waits for.');
           SyncFunctions['cancelRequest']();
           settle(reject, reason);
         }
