@@ -14,6 +14,8 @@
 // the C++ standard fixes on every platform (the noise is drawn here, since std::normal_distribution isn't fixed).
 // VidDecSetup() waits for the media pipeline of the TV, so the test sets up the state of a stream the way it does
 // (StartStream() below), with its ResetFramePacer().
+// It also checks what the statistics report of the pacer and of the hand-over to the player since 2.3.2: their times in
+// microseconds (LiGetMicroseconds(), which follows the clock of the test), the average per frame and the longest.
 
 // The standard headers that wasm/wasmplayer.cpp and its headers use come first, so that the two macros below rename the
 // clock and usleep() only in the code of the app
@@ -149,6 +151,9 @@ static std::function<int()> appendResult;
 uint64_t LiGetMillis(void) {
   return (uint64_t)(100000.0 + simNow * 1000.0);
 }
+uint64_t LiGetMicroseconds(void) {
+  return (uint64_t)(100000000.0 + simNow * 1e6);
+}
 void LiRequestIdrFrame(void) {}
 bool LiGetHdrMetadata(PSS_HDR_METADATA) {
   return false;
@@ -270,15 +275,22 @@ static int Submit(int number, bool idr, uint32_t hostTimeMs, double arrival, boo
   unit.presentationTimeMs = hostTimeMs;
   unit.enqueueTimeMs = (uint64_t)(100000.0 + arrival * 1000.0);
   unit.receiveTimeMs = unit.enqueueTimeMs - 3;
+  unit.enqueueTimeUs = (uint64_t)(100000000.0 + arrival * 1e6);
+  unit.receiveTimeUs = unit.enqueueTimeUs - 3000;
   unit.fullLength = sizeof(data);
   unit.bufferList = &entry;
   return MoonlightInstance::VidDecSubmitDecodeUnit(&unit);
 }
 
-// Run the frames of a scenario through the decoder thread and return what happened to each one
-static std::vector<Outcome> Run(int fps, const std::vector<Frame>& frames, bool pacing = true) {
+// Run the frames of a scenario through the decoder thread and return what happened to each one, with the results of
+// the appends that a test gives (each append succeeds without them)
+static std::vector<Outcome> Run(int fps, const std::vector<Frame>& frames, bool pacing = true,
+                                const std::function<int()>& appendResults = nullptr) {
   simNow = frames.front().arrival;
   StartStream(fps, pacing);
+  if (appendResults) {
+    appendResult = appendResults;
+  }
   runningFrames = &frames;
   std::vector<Outcome> outcomes;
   double threadFree = simNow;
@@ -1748,6 +1760,82 @@ static void RetryStopsWhenTheTrackCloses() {
   CHECK_EQ(s_AppendKeyframeRequired, 1u);
 }
 
+// The statistics measure the time the pacer holds each frame and the hand-over to the player on the clock in
+// microseconds: the average per frame and the longest of the stream match the moments of the appends to a few
+// microseconds (the pacer reads the steady clock of the test, which moves 1 microsecond per reading), and the 0.3 ms of
+// each hand-over show as 0.3 ms, not as 0 or 1 ms steps of a clock in milliseconds. The full statistics show both.
+static void PacerAndHandOverTimesAreMeasuredInMicroseconds() {
+  const int fps = 60;
+  std::vector<Frame> frames = Host(20, [](int k) { return 1000.37 + k * 1000.0 / 60; });
+  Arrive(frames, fps, 4.0, 1);
+  const std::vector<Outcome> outcomes = Run(fps, frames);
+  // What the pacer held each frame: from the moment the thread took it to its append, less the readings of the clock
+  double heldTotalUs = 0;
+  double heldMaxUs = 0;
+  for (const Outcome& outcome : outcomes) {
+    CHECK(outcome.append >= 0);
+    const double heldUs = (outcome.append - outcome.dequeue) * 1e6;
+    heldTotalUs += heldUs;
+    heldMaxUs = std::max(heldMaxUs, heldUs);
+  }
+  VIDEO_STATS totals = m_GlobalVideoStats;
+  MoonlightInstance::AddVideoStats(m_ActiveWndVideoStats, totals);
+  CHECK_EQ(totals.decodedFrames, (uint32_t)outcomes.size());
+  CHECK_EQ(totals.renderedFrames, (uint32_t)outcomes.size());
+  const double pacerAverageUs = (double)totals.totalPacerTimeUs / totals.decodedFrames;
+  test_support::Check(std::abs(pacerAverageUs - heldTotalUs / outcomes.size()) < 10, "the average time held by the pacer",
+                      Describe(pacerAverageUs) + " us, appends " + Describe(heldTotalUs / outcomes.size()) + " us",
+                      __FILE__, __LINE__);
+  test_support::Check(heldMaxUs > 1000 && std::abs(totals.maxPacerTimeUs - heldMaxUs) < 10,
+                      "the longest time held by the pacer", std::to_string(totals.maxPacerTimeUs) + " us, appends " +
+                      Describe(heldMaxUs) + " us", __FILE__, __LINE__);
+  // Each hand-over takes 0.3 ms
+  const double renderAverageUs = (double)totals.totalRenderTimeUs / totals.renderedFrames;
+  test_support::Check(renderAverageUs > 299 && renderAverageUs < 301, "the average hand-over", Describe(renderAverageUs),
+                      __FILE__, __LINE__);
+  test_support::Check(totals.maxRenderTimeUs >= 299 && totals.maxRenderTimeUs <= 301, "the longest hand-over",
+                      std::to_string(totals.maxRenderTimeUs), __FILE__, __LINE__);
+  // The frames waited 3 ms for their last packet; the thread took each one when it arrived or when it was free
+  CHECK_EQ(totals.maxReassemblyTimeUs, 3000u);
+  CHECK_EQ(totals.totalReassemblyTimeUs, 3000ull * outcomes.size());
+  // The full statistics of these figures
+  std::vector<char> text(4096, 0);
+  MoonlightInstance::FormatVideoStats(totals, text.data(), (int)text.size());
+  const std::string full(text.data());
+  char expected[160];
+  std::snprintf(expected, sizeof(expected), "\nAverage frame pacing delay: %.2f ms\nAverage rendering time: 0.30 ms\n",
+                (float)totals.totalPacerTimeUs / totals.decodedFrames / 1000.0f);
+  test_support::Check(full.find(expected) != std::string::npos, "the averages of the pacer and the hand-over", full,
+                      __FILE__, __LINE__);
+  std::snprintf(expected, sizeof(expected), "\nLongest frame times (ms): receive 3.0, wait %.1f, pacing %.1f, rendering 0.3\n",
+                totals.maxDecodeTimeUs / 1000.0f, totals.maxPacerTimeUs / 1000.0f);
+  test_support::Check(full.find(expected) != std::string::npos, "the longest times", full, __FILE__, __LINE__);
+
+  // A frame that the player rejects went through the pacer as well: the pacing delay is an average per frame that
+  // reached the decoder thread, like the wait before it (it was divided by the frames that the player took, so each
+  // rejection raised it), and the hand-over an average per frame that the player took
+  frames = Host(20, [](int k) { return 1000.37 + k * 1000.0 / 60; });
+  Arrive(frames, fps, 4.0, 1);
+  const std::vector<Outcome> rejected = Run(fps, frames, true, [] {
+    return appendCalls % 10 == 0 ? kAppendResultExpectsKeyframe : 0;
+  });
+  totals = m_GlobalVideoStats;
+  MoonlightInstance::AddVideoStats(m_ActiveWndVideoStats, totals);
+  CHECK_EQ(totals.decodedFrames, (uint32_t)rejected.size());
+  CHECK(totals.renderedFrames < totals.decodedFrames * 0.95 && totals.renderedFrames > totals.decodedFrames * 0.85);
+  std::fill(text.begin(), text.end(), 0);
+  MoonlightInstance::FormatVideoStats(totals, text.data(), (int)text.size());
+  const std::string withRejections(text.data());
+  std::snprintf(expected, sizeof(expected), "\nAverage frame pacing delay: %.2f ms\n",
+                (float)totals.totalPacerTimeUs / totals.decodedFrames / 1000.0f);
+  test_support::Check(withRejections.find(expected) != std::string::npos, "the pacing delay per frame of the decoder thread",
+                      withRejections, __FILE__, __LINE__);
+  std::snprintf(expected, sizeof(expected), "\nAverage rendering time: %.2f ms\n",
+                (float)totals.totalRenderTimeUs / totals.renderedFrames / 1000.0f);
+  test_support::Check(withRejections.find(expected) != std::string::npos, "the hand-over per frame of the player",
+                      withRejections, __FILE__, __LINE__);
+}
+
 int main() {
   test_support::RunTest("a steady host keeps the timestamps and the pace of before", SteadyHostKeepsTheTimestampsAndThePace);
   test_support::RunTest("a host display off the grid of the stream rate keeps the pace",
@@ -1786,5 +1874,7 @@ int main() {
   test_support::RunTest("a full buffer of the player is retried for 16 ms", FullBufferIsRetriedFor16Ms);
   test_support::RunTest("the retry stops when the track closes, and other rejections aren't retried",
                         RetryStopsWhenTheTrackCloses);
+  test_support::RunTest("the times of the pacer and of the hand-over are measured in microseconds",
+                        PacerAndHandOverTimesAreMeasuredInMicroseconds);
   return test_support::Summary();
 }

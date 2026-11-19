@@ -10,6 +10,13 @@
 // and the video stream), so either can arrive first.
 //
 // The message side runs on the thread of the callbacks of the control stream, the keyframe side on the decoder thread.
+//
+// The times are kept as the lower 32 bits of the millisecond clock (LiGetMillis()), so that the message of a restart
+// can be claimed with a 4-byte compare-exchange. The runtime of Samsung's Emscripten 1.39 (fastcomp) gets the 8-byte
+// one wrong: it swaps the value, but reports the lowest bit of the old value instead of whether it swapped. With a
+// 64-bit time the keyframe of every restart whose message arrived at an even millisecond counted as a recovery
+// (tests/unit/native-atomics.test.js explains the defect and keeps it out of the native code). The differences of two
+// times are taken modulo 2^32, so they stay right when the lower 32 bits wrap (every 49.7 days of the clock).
 
 #include <atomic>
 #include <cstdint>
@@ -17,7 +24,7 @@
 class HostEncoderRestarts {
  public:
   // How far apart the message of a restart and its keyframe may arrive and still belong together
-  static constexpr uint64_t kKeyframeWindowMs = 1000;
+  static constexpr uint32_t kKeyframeWindowMs = 1000;
 
   // A new stream, before its control stream connects
   void Reset() {
@@ -34,8 +41,7 @@ class HostEncoderRestarts {
       return false;
     }
     m_Restarts.fetch_add(1);
-    // 0 stands for no restart
-    m_RestartMs.store(nowMs != 0 ? nowMs : 1);
+    m_RestartMs.store(Stamp(nowMs));
     return true;
   }
 
@@ -44,13 +50,14 @@ class HostEncoderRestarts {
   // keyframe was read). Otherwise the caller counts it as a recovery, and LateRestartKeyframe() reports it if the
   // message of a restart follows within kKeyframeWindowMs.
   bool IsRestartKeyframe(uint64_t nowMs) {
-    uint64_t restartMs = m_RestartMs.load();
-    const uint64_t apart = nowMs >= restartMs ? nowMs - restartMs : restartMs - nowMs;
-    if (restartMs != 0 && apart <= kKeyframeWindowMs && m_RestartMs.compare_exchange_strong(restartMs, 0)) {
+    const uint32_t keyframeMs = Stamp(nowMs);
+    uint32_t restartMs = m_RestartMs.load();
+    if (restartMs != 0 && Apart(keyframeMs, restartMs) <= kKeyframeWindowMs &&
+        m_RestartMs.compare_exchange_strong(restartMs, 0)) {
       m_RecoveryKeyframeMs = 0;
       return true;
     }
-    m_RecoveryKeyframeMs = nowMs != 0 ? nowMs : 1;
+    m_RecoveryKeyframeMs = keyframeMs;
     return false;
   }
 
@@ -64,15 +71,14 @@ class HostEncoderRestarts {
     if (m_RecoveryKeyframeMs == 0) {
       return false;
     }
-    uint64_t restartMs = m_RestartMs.load();
-    const uint64_t apart =
-      restartMs >= m_RecoveryKeyframeMs ? restartMs - m_RecoveryKeyframeMs : m_RecoveryKeyframeMs - restartMs;
-    if (restartMs != 0 && apart <= kKeyframeWindowMs && m_RestartMs.compare_exchange_strong(restartMs, 0)) {
+    uint32_t restartMs = m_RestartMs.load();
+    if (restartMs != 0 && Apart(restartMs, m_RecoveryKeyframeMs) <= kKeyframeWindowMs &&
+        m_RestartMs.compare_exchange_strong(restartMs, 0)) {
       m_RecoveryKeyframeMs = 0;
       return true;
     }
     // No message can belong to it any more
-    if (nowMs > m_RecoveryKeyframeMs + kKeyframeWindowMs) {
+    if (Apart(Stamp(nowMs), m_RecoveryKeyframeMs) > kKeyframeWindowMs) {
       m_RecoveryKeyframeMs = 0;
     }
     return false;
@@ -84,13 +90,26 @@ class HostEncoderRestarts {
   }
 
  private:
+  // The lower 32 bits of a time of the clock, where 0 stands for none: a time of 0 counts as 1
+  static uint32_t Stamp(uint64_t ms) {
+    const uint32_t stamp = static_cast<uint32_t>(ms);
+    return stamp != 0 ? stamp : 1;
+  }
+
+  // How far apart two such times are, either way, also when the lower 32 bits wrapped between them
+  static uint32_t Apart(uint32_t a, uint32_t b) {
+    const uint32_t forward = a - b;
+    const uint32_t backward = b - a;
+    return forward < backward ? forward : backward;
+  }
+
   std::atomic<uint32_t> m_Messages{0};
   std::atomic<uint32_t> m_Restarts{0};
   // When the message of a restart arrived that no keyframe answered yet, or 0
-  std::atomic<uint64_t> m_RestartMs{0};
+  std::atomic<uint32_t> m_RestartMs{0};
   // Decoder thread only: when the last keyframe that counted as a recovery arrived, while a later message of a restart
   // may still claim it, or 0
-  uint64_t m_RecoveryKeyframeMs = 0;
+  uint32_t m_RecoveryKeyframeMs = 0;
 };
 
 // The restarts of the encoder of the host in the current stream

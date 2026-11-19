@@ -30,6 +30,9 @@ static int stops = 0;
 uint64_t LiGetMillis(void) {
   return 0;
 }
+uint64_t LiGetMicroseconds(void) {
+  return 0;
+}
 void LiRequestIdrFrame(void) {}
 bool LiGetHdrMetadata(PSS_HDR_METADATA) {
   return false;

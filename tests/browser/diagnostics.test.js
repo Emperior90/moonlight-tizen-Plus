@@ -223,6 +223,8 @@ test('a stream starts a session of the log, keeps its report, and its heartbeat 
       'Vom TV verworfene Frames: 0, Video-Neustarts: 0, Keyframes zur Wiederherstellung: 0',
       'FEC-Reparaturen: 25 Blöcke, 0 fehlgeschlagen',
       'Durchschnittliche Empfangszeit pro Frame: 11,10 ms (67 % der Zeit zwischen zwei Frames), höchster Sekundenwert: 13,85 ms (83 %)',
+      'Ankunftsrate der Frames: 226 Mbps',
+      'Längste Zeiten pro Frame (ms): Empfang 36,0, Warten 3,1, Pacing 11,8, Rendern 4,2',
       'Bildrate des PCs (beste 30 s): 59,84 FPS, mittlere Verarbeitungslatenz des PCs: 8,4 ms',
       'Bildrate des PCs (schwächste 30 s): 50,90 FPS, unter 57 FPS in 12 von 39 halben Minuten',
       'Vorsprung des empfangenen Tons vor der Uhr des TVs: 24 ms nach der ersten Minute, 25 ms am Ende, höchstens 27 ms; Drift +1 ms pro Stunde',
@@ -348,11 +350,11 @@ test('System information with four controllers and a report with three hints fit
       });
       const first = await box();
       assert.equal(first.focus, 'systemInfoBtn', locale);
-      // Four controllers, an empty line, nine lines of the report (with the frame receive time, the two lines of the
-      // host and the line of the sound) and three hints
+      // Four controllers, an empty line, eleven lines of the report (with the frame receive time, the rate at which the
+      // frames arrived, the longest frame times, the two lines of the host and the line of the sound) and three hints
       const info = await app.page.evaluate(() => document.getElementById('systemInfoBtn').innerHTML.split(/<br\s*\/?>/));
       assert.equal(info.filter((line) => /: 8BitDo Ultimate 2C|: Pro Controller|: DualSense|: Xbox Wireless/.test(line)).length, 4, locale);
-      assert.equal(info.length - info.indexOf('') - 1, 12, locale + ': ' + info.join('\n'));
+      assert.equal(info.length - info.indexOf('') - 1, 14, locale + ': ' + info.join('\n'));
       // The whole box is on the screen, below the top of the pane
       assert.ok(first.top >= first.paneTop && first.bottom <= first.screen, locale + ': ' + JSON.stringify(first));
       if (first.maxScroll <= 0) {

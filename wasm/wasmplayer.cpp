@@ -2,6 +2,7 @@
 #include "audio_stream_stats.hpp"
 #include "av1_hdr_metadata.hpp"
 #include "compact_stats.hpp"
+#include "frame_arrival.hpp"
 #include "frame_intervals.hpp"
 #include "host_encoder_restart.hpp"
 #include "player_errors.hpp"
@@ -885,9 +886,30 @@ static void ResetHostFrameRate() {
   s_HostRateWindows = HostRateWindows();
 }
 
-// An average in hundredths, rounded, or 0 without a count: e.g. a total of milliseconds over the frames it covers
-static uint32_t AverageX100(uint32_t total, uint32_t count) {
-  return count > 0 ? (uint32_t)(((uint64_t)total * 100 + count / 2) / count) : 0;
+// An average in hundredths of a millisecond, rounded, or 0 without a count: a total of microseconds over the frames it
+// covers
+static uint32_t AverageUsX100(uint64_t totalUs, uint32_t count) {
+  if (count == 0) {
+    return 0;
+  }
+  return (uint32_t)std::min<uint64_t>(UINT32_MAX, (totalUs + (uint64_t)count * 5) / ((uint64_t)count * 10));
+}
+
+// A time in microseconds in tenths of a millisecond, rounded
+static uint32_t TenthsOfMs(uint32_t timeUs) {
+  return (uint32_t)(((uint64_t)timeUs + 50) / 100);
+}
+
+// Add the time a frame spent in a stage, from one reading of the microsecond clock (LiGetMicroseconds(), or a time of
+// the decode unit) to a later one, to the total of the stage and keep the longest. A later reading that is earlier
+// counts as 0: on the TV the clock of each thread is performance.now() of its worker, which Emscripten lines up with
+// the main thread when the thread starts, so the receive thread and this thread can read it a little apart. Its steps
+// are those of performance.now(), which the browser may round (e.g. to 0.1 ms), so a single time is not exact to the
+// microsecond; an average over many frames comes closer.
+static void AddFrameTime(uint64_t& totalUs, uint32_t& maxUs, uint64_t fromUs, uint64_t toUs) {
+  const uint32_t timeUs = toUs > fromUs ? (uint32_t)std::min<uint64_t>(toUs - fromUs, UINT32_MAX) : 0;
+  totalUs += timeUs;
+  maxUs = std::max(maxUs, timeUs);
 }
 
 // Name of a result of AppendPacket for the log, from EmssCommon.Result of the EMSS glue
@@ -1138,12 +1160,19 @@ void MoonlightInstance::VidDecCleanup(void) {
   report.hostLowWindows = s_HostRateWindows.low;
   // What the bitrate costs: the average time a frame took to arrive, over the stream (the figure of the line 'Average
   // frame receive time' of the full statistics) and in its highest stats window, with the window that was still open
-  report.receiveTimeX100 = AverageX100(totals.totalReassemblyTime, totals.decodedFrames);
+  report.receiveTimeX100 = AverageUsX100(totals.totalReassemblyTimeUs, totals.decodedFrames);
   report.receiveTimePeakX100 = s_ReceiveTimePeakX100;
   if (IsReceiveTimeWindowCounted(m_ActiveWndVideoStats.decodedFrames, s_Framerate)) {
     report.receiveTimePeakX100 = std::max(report.receiveTimePeakX100,
-      AverageX100(m_ActiveWndVideoStats.totalReassemblyTime, m_ActiveWndVideoStats.decodedFrames));
+      AverageUsX100(m_ActiveWndVideoStats.totalReassemblyTimeUs, m_ActiveWndVideoStats.decodedFrames));
   }
+  // The longest time of a single frame of the stream in each stage, as the full statistics show it for their windows
+  report.receiveTimeMaxX10 = TenthsOfMs(totals.maxReassemblyTimeUs);
+  report.waitTimeMaxX10 = TenthsOfMs(totals.maxDecodeTimeUs);
+  report.pacingDelayMaxX10 = TenthsOfMs(totals.maxPacerTimeUs);
+  report.renderTimeMaxX10 = TenthsOfMs(totals.maxRenderTimeUs);
+  // The rate at which the frames of the stream arrived, as the full statistics show it for their windows
+  report.arrivalMbps = FrameArrivalMbps(totals.totalArrivalBytes, totals.totalArrivalTimeUs, totals.arrivalFrames);
   // The load of the audio thread, which AudDecCleanup() stored when the audio stream ended before this (the audio
   // stream stops before the video stream, stopAudioStream() and stopVideoStream() in Connection.c). Taking it empties
   // it, so that a stream that ends before its audio starts doesn't report the figures of the stream before it.
@@ -1607,7 +1636,7 @@ static CompactVideoStats GetCompactVideoStats(const VIDEO_STATS& stats) {
   compact.rttMs = stats.lastRtt;
   compact.networkDropPercent = stats.totalFrames != 0 ? (float)stats.networkDroppedFrames / stats.totalFrames * 100 : -1.0f;
   compact.waitPacingMs = stats.renderedFrames != 0 && stats.decodedFrames != 0
-    ? (float)stats.totalDecodeTime / stats.decodedFrames + (float)stats.totalPacerTime / stats.renderedFrames
+    ? (float)(stats.totalDecodeTimeUs + stats.totalPacerTimeUs) / stats.decodedFrames / 1000.0f
     : -1.0f;
   return compact;
 }
@@ -1641,8 +1670,10 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     return DR_OK;
   }
 
-  // Record when this thread picked up the frame, which is the end of its wait in the decode unit queue
+  // Record when this thread picked up the frame, which is the end of its wait in the decode unit queue: in milliseconds
+  // for the timestamps, the pacer and the keyframe rules below, as before, and in microseconds for the statistics
   const uint64_t dequeueMs = LiGetMillis();
+  const uint64_t dequeueUs = LiGetMicroseconds();
 
   // Declare variables for entry data, offset, and total length
   PLENTRY entry;
@@ -1796,8 +1827,9 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     std::chrono::duration<double, std::milli>(now - s_firstAppend).count() - (double)queuedMs,
     s_HostReportsLatency && decodeUnit->frameHostProcessingLatency == 0, decodeUnit->frameType == FRAME_TYPE_IDR);
 
-  // Calculate the start of the pacing duration in milliseconds
-  uint32_t pacingStart = LiGetMillis();
+  // The start of the time the frame pacing holds the frame, for the statistics (the pacer itself follows the steady
+  // clock and the times in milliseconds above)
+  const uint64_t pacingStartUs = LiGetMicroseconds();
 
   // Check if the frame pacing is enabled. The video player of the TV shows a frame as soon as it is appended, in both
   // latency modes that the app uses: Samsung's elementary_media_stream_source.h says of kLow that packets "are rendered
@@ -1899,11 +1931,8 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     }
   }
 
-  // Calculate the end of the pacing duration in milliseconds
-  uint32_t pacingEnd = LiGetMillis();
-
-  // Measure total pacer time based on calculated pacing duration
-  m_ActiveWndVideoStats.totalPacerTime += pacingEnd - pacingStart;
+  // The end of that time, which counts in the stats window of the frame with its other times (below)
+  const uint64_t pacingEndUs = LiGetMicroseconds();
 
   // Update the timestamp of the last packet append
   s_lastTime = now;
@@ -2000,7 +2029,7 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     s_PendingFramesMax = 0;
     // Keep the highest average frame receive time of a window for the report of the session
     if (IsReceiveTimeWindowCounted(m_ActiveWndVideoStats.decodedFrames, s_Framerate)) {
-      s_ReceiveTimePeakX100 = std::max(s_ReceiveTimePeakX100, AverageX100(m_ActiveWndVideoStats.totalReassemblyTime,
+      s_ReceiveTimePeakX100 = std::max(s_ReceiveTimePeakX100, AverageUsX100(m_ActiveWndVideoStats.totalReassemblyTimeUs,
         m_ActiveWndVideoStats.decodedFrames));
     }
     // Move current active stats to last window stats and reset active window stats for new interval
@@ -2044,15 +2073,27 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     g_Instance->m_VideoSessionId.load() // session identifier
   };
 
-  // Track the time from the first to the last packet of this frame (its transfer over the network) and the
+  // Track the time from the first to the last packet of this frame (its transfer over the network), the
   // time the complete frame waited in the decode unit queue until this thread picked it up (with frame pacing
-  // on, that includes the time this thread was still holding the previous frame when this one arrived early)
-  m_ActiveWndVideoStats.totalReassemblyTime += (uint32_t)MAX(0, (int32_t)(decodeUnit->enqueueTimeMs - decodeUnit->receiveTimeMs));
-  m_ActiveWndVideoStats.totalDecodeTime += (uint32_t)MAX(0, (int32_t)(dequeueMs - decodeUnit->enqueueTimeMs));
+  // on, that includes the time this thread was still holding the previous frame when this one arrived early) and the
+  // time the frame pacing held it, each with the longest of the window, in microseconds
+  AddFrameTime(m_ActiveWndVideoStats.totalReassemblyTimeUs, m_ActiveWndVideoStats.maxReassemblyTimeUs,
+    decodeUnit->receiveTimeUs, decodeUnit->enqueueTimeUs);
+  AddFrameTime(m_ActiveWndVideoStats.totalDecodeTimeUs, m_ActiveWndVideoStats.maxDecodeTimeUs,
+    decodeUnit->enqueueTimeUs, dequeueUs);
+  AddFrameTime(m_ActiveWndVideoStats.totalPacerTimeUs, m_ActiveWndVideoStats.maxPacerTimeUs,
+    pacingStartUs, pacingEndUs);
   m_ActiveWndVideoStats.decodedFrames++;
+  // Add how fast the data packets of this frame arrived, when moonlight-common-c measured it (frame_arrival.hpp): a
+  // time of 0 with bytes counts as well, since a coarse clock rounds some frames down and others up
+  if (decodeUnit->arrivalBytes > 0) {
+    m_ActiveWndVideoStats.totalArrivalTimeUs += decodeUnit->arrivalTimeUs;
+    m_ActiveWndVideoStats.totalArrivalBytes += decodeUnit->arrivalBytes;
+    m_ActiveWndVideoStats.arrivalFrames++;
+  }
 
   // Calculate time before rendering
-  uint32_t beforeRender = LiGetMillis();
+  const uint64_t beforeRenderUs = LiGetMicroseconds();
 
   // Attempt to append the packet to the video track for rendering
   auto appendPacket = [&pkt]() {
@@ -2080,10 +2121,10 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
   }
 
   if (appendResult == kAppendSuccess) {
-    // Calculate time after rendering
-    uint32_t afterRender = LiGetMillis();
-    // Track total render time and count rendered frames
-    m_ActiveWndVideoStats.totalRenderTime += afterRender - beforeRender;
+    // Track the time of the hand-over (the retries of a full buffer included) with the longest of the window, and
+    // count rendered frames
+    AddFrameTime(m_ActiveWndVideoStats.totalRenderTimeUs, m_ActiveWndVideoStats.maxRenderTimeUs, beforeRenderUs,
+      LiGetMicroseconds());
     m_ActiveWndVideoStats.renderedFrames++;
     // Record the interval at which the frames reach the video player
     RecordPlayerFrameInterval(s_PlayerIntervalClock, s_PlayerIntervals[s_FrameIntervalWindow],
@@ -2121,10 +2162,17 @@ void MoonlightInstance::AddVideoStats(VIDEO_STATS& src, VIDEO_STATS& dst) {
   dst.renderedFrames += src.renderedFrames;
   dst.totalFrames += src.totalFrames;
   dst.networkDroppedFrames += src.networkDroppedFrames;
-  dst.totalReassemblyTime += src.totalReassemblyTime;
-  dst.totalDecodeTime += src.totalDecodeTime;
-  dst.totalPacerTime += src.totalPacerTime;
-  dst.totalRenderTime += src.totalRenderTime;
+  dst.totalReassemblyTimeUs += src.totalReassemblyTimeUs;
+  dst.totalDecodeTimeUs += src.totalDecodeTimeUs;
+  dst.totalPacerTimeUs += src.totalPacerTimeUs;
+  dst.totalRenderTimeUs += src.totalRenderTimeUs;
+  dst.maxReassemblyTimeUs = std::max(dst.maxReassemblyTimeUs, src.maxReassemblyTimeUs);
+  dst.maxDecodeTimeUs = std::max(dst.maxDecodeTimeUs, src.maxDecodeTimeUs);
+  dst.maxPacerTimeUs = std::max(dst.maxPacerTimeUs, src.maxPacerTimeUs);
+  dst.maxRenderTimeUs = std::max(dst.maxRenderTimeUs, src.maxRenderTimeUs);
+  dst.totalArrivalTimeUs += src.totalArrivalTimeUs;
+  dst.totalArrivalBytes += src.totalArrivalBytes;
+  dst.arrivalFrames += src.arrivalFrames;
 
   // Update minimum host processing latency if it's not set or if the source has a valid smaller value
   if (dst.minHostProcessingLatency == 0) {
@@ -2295,23 +2343,38 @@ void MoonlightInstance::FormatVideoStats(VIDEO_STATS& stats, char* output, int l
     // Print detailed drop rates and the time a frame spends in each stage on the TV: the transfer of its
     // packets, the wait for the video thread, the frame pacing and the hand-over to the hardware decoder. The transfer
     // also shows as a share of the time between two frames of the stream (1000 ms / frame rate), which is what the
-    // bitrate costs: bigger frames take longer to arrive.
-    const float receiveTimeMs = (float)stats.totalReassemblyTime / stats.decodedFrames;
+    // bitrate costs: bigger frames take longer to arrive. The times come from a clock in microseconds whose steps on
+    // the TV may be about 0.1 ms, so the averages show hundredths of a millisecond and the longest time of a single
+    // frame in these windows tenths. The pacing and the wait count per frame that reached this thread, the hand-over
+    // per frame that the player took. After the frame receive time comes the rate at which the data packets of these
+    // frames arrived (frame_arrival.hpp), when there were enough of them to tell.
+    const float receiveTimeMs = (float)stats.totalReassemblyTimeUs / stats.decodedFrames / 1000.0f;
+    char arrivalLine[48] = "";
+    const uint32_t arrivalMbps =
+      FrameArrivalMbps(stats.totalArrivalBytes, stats.totalArrivalTimeUs, stats.arrivalFrames);
+    if (arrivalMbps > 0) {
+      snprintf(arrivalLine, sizeof(arrivalLine), "Frames arrive at: %u Mbps\n", arrivalMbps);
+    }
     ret = snprintf(
       &output[offset], length - offset,
       "Frames dropped by your network connection: %.2f%%\n"
       "Average network latency: %s\n"
       "Average frame receive time: %.2f ms (%.0f%% of the frame time)\n"
+      "%s"
       "Average frame wait time: %.2f ms\n"
       "Average frame pacing delay: %.2f ms\n"
       "Average rendering time: %.2f ms\n"
+      "Longest frame times (ms): receive %.1f, wait %.1f, pacing %.1f, rendering %.1f\n"
       "Pending frames: %d (max %d)\n",
       (float)stats.networkDroppedFrames / stats.totalFrames * 100,
       rttString,
       receiveTimeMs, receiveTimeMs * s_Framerate / 10.0f,
-      (float)stats.totalDecodeTime / stats.decodedFrames,
-      (float)stats.totalPacerTime / stats.renderedFrames,
-      (float)stats.totalRenderTime / stats.renderedFrames,
+      arrivalLine,
+      (float)stats.totalDecodeTimeUs / stats.decodedFrames / 1000.0f,
+      (float)stats.totalPacerTimeUs / stats.decodedFrames / 1000.0f,
+      (float)stats.totalRenderTimeUs / stats.renderedFrames / 1000.0f,
+      stats.maxReassemblyTimeUs / 1000.0f, stats.maxDecodeTimeUs / 1000.0f, stats.maxPacerTimeUs / 1000.0f,
+      stats.maxRenderTimeUs / 1000.0f,
       LiGetPendingVideoFrames(), std::max(s_PendingFramesMax, s_LastWndPendingFramesMax)
     );
     // Abort if string formatting failed or buffer overflowed

@@ -550,6 +550,9 @@ function changeUiModeForWasmLoad() {
 }
 
 function moduleDidLoad() {
+  // Log once what the TV supports of WebAssembly, now that the runtime of the module has set up its sockets
+  // (tv_profile.js)
+  logWebAssemblyFeatures();
   loadHTTPCerts();
 }
 
@@ -3146,6 +3149,9 @@ function onNativeModuleFailure(details) {
     return;
   }
   isNativeModuleFailed = true;
+  // What the TV supports of WebAssembly, for a module that failed before moduleDidLoad() logged it, e.g. one that the
+  // browser of the TV couldn't start (logged once per start, see tv_profile.js)
+  logWebAssemblyFeatures();
   console.error('%c[index.js, onNativeModuleFailure]', 'color: green;', 'Error: The streaming engine failed: ' + details);
 
   try {

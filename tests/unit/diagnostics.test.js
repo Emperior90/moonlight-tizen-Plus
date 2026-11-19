@@ -519,7 +519,7 @@ function readReports() {
   return fs.readFileSync(path.join(REPO_ROOT, 'tests/fixtures/session-reports.tsv'), 'utf8')
     .split('\n').filter((line) => line && line[0] !== '#').map((line) => {
       const fields = line.split('\t');
-      return { name: fields[0], fields, message: fields[35], hints: fields[36].split(',') };
+      return { name: fields[0], fields, message: fields[40], hints: fields[41].split(',') };
     });
 }
 
@@ -530,7 +530,7 @@ test('the report of each message of the fixture, with its hints', () => {
   const reports = readReports();
   assert.equal(reports.length, 36);
   reports.forEach((entry) => {
-    assert.equal(entry.fields.length, 37, entry.name);
+    assert.equal(entry.fields.length, 42, entry.name);
     assert.ok(entry.message.indexOf('SessionReportMsg: ') === 0, entry.name);
     const report = plain(parse(entry.message.slice('SessionReportMsg: '.length)));
     assert.equal(report.durationMs, Number(entry.fields[1]), entry.name);
@@ -548,6 +548,9 @@ test('the report of each message of the fixture, with its hints', () => {
     assert.deepEqual([report.audioLeadMs, report.audioLeadEndMs, report.audioLeadMaxMs], entry.fields.slice(31, 34).map(Number),
       entry.name);
     assert.equal(report.audioDriftMsPerHour, entry.fields[34] === 'null' ? null : Number(entry.fields[34]), entry.name);
+    assert.deepEqual([report.receiveTimeMaxX10, report.waitTimeMaxX10, report.pacingDelayMaxX10, report.renderTimeMaxX10],
+      entry.fields.slice(35, 39).map(Number), entry.name);
+    assert.equal(report.arrivalMbps, Number(entry.fields[39]), entry.name);
     assert.deepEqual(plain(hints(report, { refFrameInvalidation: false })), entry.hints, entry.name);
   });
   // The fixture has a PC that delivered too few frames, with and without the other hints that go before it
@@ -662,6 +665,8 @@ test('the report shows the frame receive time as a share of the frame time, and 
     'Frames dropped by the TV: 0, video resets: 0, recovery keyframes: 0',
     'FEC repairs: 25 blocks, 0 failed',
     'Average frame receive time: 11.10 ms (67% of the frame time), highest second: 13.85 ms (83%)',
+    'Frames arrive at: 226 Mbps',
+    'Longest frame times (ms): receive 36.0, wait 3.1, pacing 11.8, rendering 4.2',
     'Host frame rate (best 30 s): 59.84 FPS, average host processing latency: 8.4 ms',
     'Host frame rate (lowest 30 s): 50.90 FPS, below 57 FPS in 12 of 39 half minutes',
     'Sound received ahead of the TV clock: 24 ms after the first minute, 25 ms at the end, at most 27 ms; drift +1 ms per hour',
@@ -672,13 +677,13 @@ test('the report shows the frame receive time as a share of the frame time, and 
   ]);
   // With too few low windows for the hint, the figures still show
   const few = plain(describe(byName('host-frames-few'), {}));
-  assert.equal(few[6], 'Host frame rate (lowest 30 s): 50.90 FPS, below 57 FPS in 7 of 39 half minutes');
+  assert.equal(few[8], 'Host frame rate (lowest 30 s): 50.90 FPS, below 57 FPS in 7 of 39 half minutes');
   assert.equal(few[few.length - 1], 'Hint: No problems found in this session.');
   // The share follows the frame rate of the stream: 6.02 ms are 72 % of the 8.3 ms between two frames at 120 FPS,
   // and the limit of a low window is 114 FPS there
   const fast = plain(describe(byName('host-frames-120'), {}));
   assert.equal(fast[4], 'Average frame receive time: 6.02 ms (72% of the frame time), highest second: 7.31 ms (88%)');
-  assert.equal(fast[6], 'Host frame rate (lowest 30 s): 98.50 FPS, below 114 FPS in 8 of 19 half minutes');
+  assert.equal(fast[8], 'Host frame rate (lowest 30 s): 98.50 FPS, below 114 FPS in 8 of 19 half minutes');
   const report = plain(byName('clean'));
   const receiveLine = (extra) => plain(describe(Object.assign({}, report, extra), {})).filter((line) => line.indexOf('Average frame receive time') === 0);
   assert.deepEqual(receiveLine({}), ['Average frame receive time: 4.12 ms (25% of the frame time), highest second: 6.55 ms (39%)']);
@@ -958,6 +963,8 @@ test('the lines of the report in System information', () => {
     'Frames dropped by the TV: 0, video resets: 1, recovery keyframes: 4',
     'FEC repairs: 900 blocks, 6 failed',
     'Average frame receive time: 5.48 ms (33% of the frame time), highest second: 19.20 ms (115%)',
+    'Frames arrive at: 254 Mbps',
+    'Longest frame times (ms): receive 49.9, wait 5.8, pacing 11.8, rendering 4.2',
     'Host frame rate (best 30 s): 60.00 FPS, average host processing latency: 6.1 ms',
     'Host frame rate (lowest 30 s): 59.90 FPS, below 57 FPS in 0 of 19 half minutes',
     'WASM heap at the end: 62 of 128 MB (+1 MB in this session)',
@@ -975,14 +982,14 @@ test('the lines of the report in System information', () => {
   assert.equal(lines[lines.length - 1], 'Hint: No video arrived from the PC in this session.');
   // Without either figure of the host its line is left out, and a missing one is Unknown
   assert.equal(lines.filter((line) => line.indexOf('Host frame rate') === 0).length, 0);
-  assert.equal(plain(describe(Object.assign({}, report, { hostFrameRateX100: 0 }), {}))[5],
+  assert.equal(plain(describe(Object.assign({}, report, { hostFrameRateX100: 0 }), {}))[7],
     'Host frame rate (best 30 s): Unknown, average host processing latency: 6.1 ms');
-  assert.equal(plain(describe(Object.assign({}, report, { hostProcessingLatencyX10: 0 }), {}))[5],
+  assert.equal(plain(describe(Object.assign({}, report, { hostProcessingLatencyX10: 0 }), {}))[7],
     'Host frame rate (best 30 s): 60.00 FPS, average host processing latency: Unknown');
   // The hint of a host display at 59.94 Hz with its figures
   const refresh = readReports().filter((entry) => entry.name === 'host-refresh')[0];
   const refreshLines = plain(describe(app.platform.get('parseSessionReport')(refresh.message.slice(18)), {}));
-  assert.deepEqual(refreshLines.slice(5), [
+  assert.deepEqual(refreshLines.slice(7), [
     'Host frame rate (best 30 s): 59.94 FPS, average host processing latency: 4.7 ms',
     'Host frame rate (lowest 30 s): 59.93 FPS, below 57 FPS in 0 of 59 half minutes',
     'Sound received ahead of the TV clock: 22 ms after the first minute, 21 ms at the end, at most 24 ms; drift -1 ms per hour',

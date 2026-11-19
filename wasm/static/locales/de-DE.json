@@ -302,6 +302,8 @@
   "FEC repairs: %1$s blocks, %2$s failed": "FEC-Reparaturen: %1$s Blöcke, %2$s fehlgeschlagen",
   "Average frame receive time: %1$s ms (%2$s% of the frame time), highest second: %3$s ms (%4$s%)": "Durchschnittliche Empfangszeit pro Frame: %1$s ms (%2$s % der Zeit zwischen zwei Frames), höchster Sekundenwert: %3$s ms (%4$s %)",
   "Average frame receive time: %1$s ms (%2$s% of the frame time)": "Durchschnittliche Empfangszeit pro Frame: %1$s ms (%2$s % der Zeit zwischen zwei Frames)",
+  "Frames arrive at: %1$s Mbps": "Ankunftsrate der Frames: %1$s Mbps",
+  "Longest frame times (ms): receive %1$s, wait %2$s, pacing %3$s, rendering %4$s": "Längste Zeiten pro Frame (ms): Empfang %1$s, Warten %2$s, Pacing %3$s, Rendern %4$s",
   "Host frame rate (best 30 s): %1$s, average host processing latency: %2$s": "Bildrate des PCs (beste 30 s): %1$s, mittlere Verarbeitungslatenz des PCs: %2$s",
   "Host frame rate (lowest 30 s): %1$s FPS, below %2$s FPS in %3$s of %4$s half minutes": "Bildrate des PCs (schwächste 30 s): %1$s FPS, unter %2$s FPS in %3$s von %4$s halben Minuten",
   "Sound received ahead of the TV clock: %1$s ms after the first minute, %2$s ms at the end, at most %3$s ms; drift %4$s ms per hour": "Vorsprung des empfangenen Tons vor der Uhr des TVs: %1$s ms nach der ersten Minute, %2$s ms am Ende, höchstens %3$s ms; Drift %4$s ms pro Stunde",

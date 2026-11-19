@@ -71,6 +71,9 @@ void enet_packet_destroy(ENetPacket* packet) {
 uint64_t PltGetMillis(void) {
   return 0;
 }
+uint64_t PltGetMicroseconds(void) {
+  return 0;
+}
 
 // The QoS types of one SDP: video, audio, and how often each attribute appears
 typedef struct {

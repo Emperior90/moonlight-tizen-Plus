@@ -51,6 +51,9 @@ static std::vector<std::string> logged;
 uint64_t LiGetMillis(void) {
   return nowMs;
 }
+uint64_t LiGetMicroseconds(void) {
+  return nowMs * 1000;
+}
 void LiRequestIdrFrame(void) {
   idrRequests++;
 }
@@ -205,6 +208,8 @@ static int Submit(int frameNumber, bool idr, const std::vector<std::pair<int, By
   nowMs = 100000 + unit.presentationTimeMs;
   unit.receiveTimeMs = nowMs - 3;
   unit.enqueueTimeMs = nowMs - 2;
+  unit.receiveTimeUs = unit.receiveTimeMs * 1000;
+  unit.enqueueTimeUs = unit.enqueueTimeMs * 1000;
   unit.fullLength = fullLength;
   unit.bufferList = entries.data();
   return MoonlightInstance::VidDecSubmitDecodeUnit(&unit);

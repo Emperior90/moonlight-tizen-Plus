@@ -6,10 +6,14 @@ typedef struct _RTPV_QUEUE_ENTRY {
     struct _RTPV_QUEUE_ENTRY* next;
     struct _RTPV_QUEUE_ENTRY* prev;
     PRTP_PACKET packet;
-    uint64_t receiveTimeMs;
+    uint64_t receiveTimeUs;
     uint32_t presentationTimeMs;
     int length;
     bool isParity;
+    // Moonlight Plus: the arrival figures of the frame of this packet (frameArrival* of RTP_VIDEO_QUEUE), set on each
+    // packet of a complete frame that the queue hands to the depacketizer, which takes them from the first packet
+    uint32_t frameArrivalTimeUs;
+    uint32_t frameArrivalBytes;
 } RTPV_QUEUE_ENTRY, *PRTPV_QUEUE_ENTRY;
 
 typedef struct _RTPV_QUEUE_LIST {
@@ -22,7 +26,7 @@ typedef struct _RTP_VIDEO_QUEUE {
     RTPV_QUEUE_LIST pendingFecBlockList;
     RTPV_QUEUE_LIST completedFecBlockList;
 
-    uint64_t bufferFirstRecvTimeMs;
+    uint64_t bufferFirstRecvTimeUs;
     uint32_t bufferLowestSequenceNumber;
     uint32_t bufferHighestSequenceNumber;
     uint32_t bufferFirstParitySequenceNumber;
@@ -55,6 +59,18 @@ typedef struct _RTP_VIDEO_QUEUE {
     uint32_t statWorstMissingPackets;
     uint32_t statWorstParityPackets;
     bool statBlockRecorded; // the recovery of the current FEC block was already counted
+
+    // Moonlight Plus: how fast the packets of the current frame arrive, for the arrival rate of the statistics
+    // (arrivalTimeUs and arrivalBytes of DECODE_UNIT), written only by the video receive thread. Per FEC block: the
+    // bytes at IP level of its packets after the first one until it is complete (its data packets, and the parity
+    // packets that a block with missing data packets needed); per frame: the time from the first packet of each
+    // block to the packet that completed it and those bytes, summed over its blocks. packetOverheadBytes is what a
+    // video packet carries on the network besides the RTP packet that the queue sees (IP and UDP headers, the header
+    // of an encrypted packet).
+    uint32_t blockArrivalBytes;
+    uint32_t frameArrivalTimeUs;
+    uint32_t frameArrivalBytes;
+    uint32_t packetOverheadBytes;
 } RTP_VIDEO_QUEUE, *PRTP_VIDEO_QUEUE;
 
 #define RTPF_RET_QUEUED    0

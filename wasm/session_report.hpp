@@ -6,9 +6,10 @@
 // so the front end never parses the text of the performance statistics, which only exists while they are shown. The
 // figures are those of the session lines of the full statistics, the load of the audio thread (audio_load.hpp), how far
 // the sound ran ahead of the clock of the TV (audio_lead.hpp), the frame rate of the host in its best and its lowest
-// 30 s window, and the time a frame took to arrive. The idea of a report at the end of a stream comes from the fork of
-// samirmartins (moonlight-tizen, 1d8f2e3 and bcdcda5, diagnostics.js). The header has no other dependencies, so the
-// native tests can check it on its own (tests/native/session_report_test.cpp).
+// 30 s window, the time a frame took to arrive, the longest time of a single frame in each stage on the TV, and the
+// rate at which the frames arrived. The idea of a report at the end of a stream comes from the fork of samirmartins
+// (moonlight-tizen, 1d8f2e3 and bcdcda5, diagnostics.js). The header has no other dependencies, so the native tests can
+// check it on its own (tests/native/session_report_test.cpp).
 
 #include <cstddef>
 #include <cstdint>
@@ -56,6 +57,18 @@ struct SessionReport {
   // bitrate, and the front end shows it as a share of the time between two frames.
   uint32_t receiveTimeX100 = 0;
   uint32_t receiveTimePeakX100 = 0;
+  // The longest time of a single frame of the stream in each stage on the TV, in tenths of a millisecond, as the line
+  // 'Longest frame times' of the full statistics shows them for its windows: from the first to the last packet, waiting
+  // in the decode unit queue for the video thread, held back by the frame pacing, and handed to the video player (0
+  // without a frame). They come from a clock in microseconds whose steps on the TV may be about 0.1 ms.
+  uint32_t receiveTimeMaxX10 = 0;
+  uint32_t waitTimeMaxX10 = 0;
+  uint32_t pacingDelayMaxX10 = 0;
+  uint32_t renderTimeMaxX10 = 0;
+  // The rate at which the frames of the stream arrived in megabits per second, from their first to their last data
+  // packet with the bytes at IP level, as the line 'Frames arrive at' of the full statistics shows it for its windows
+  // (frame_arrival.hpp; 0 without enough frames with arrival figures to tell)
+  uint32_t arrivalMbps = 0;
   // The audio stream: its channels (0 when no audio was decoded), and the work of the audio thread on it in
   // milliseconds per second of audio, decoding plus hand-over to the player, over the whole stream and in its busiest
   // window of 10 seconds (0 for a stream that ended before one), with the number of windows above the limit of an
@@ -80,7 +93,7 @@ struct SessionReport {
   bool hostRfi = false;
 };
 
-// The size of the buffer that the message is built in. The longest message, with every figure at its largest, has 944
+// The size of the buffer that the message is built in. The longest message, with every figure at its largest, has 1089
 // characters (tests/native/session_report_test.cpp checks that it fits with room for three more figures): a message that
 // doesn't fit is not sent at all.
 constexpr size_t kSessionReportMessageSize = 1280;
@@ -154,7 +167,8 @@ inline std::string FormatSessionReportMessage(const SessionReport& report) {
     "\"idrRequestsSent\":%u,\"idrRequestsHeld\":%u,"
     "\"fecRecoveredBlocks\":%u,\"fecFailures\":%u,\"heapTopMb\":%u,\"heapTotalMb\":%u,\"heapGrowthMb\":%u,"
     "\"hostFrameRateX100\":%u,\"hostProcessingLatencyX10\":%u,\"hostFrameRateLowX100\":%u,\"hostWindows\":%u,"
-    "\"hostLowWindows\":%u,\"receiveTimeX100\":%u,\"receiveTimePeakX100\":%u,\"audioChannels\":%u,"
+    "\"hostLowWindows\":%u,\"receiveTimeX100\":%u,\"receiveTimePeakX100\":%u,\"receiveTimeMaxX10\":%u,"
+    "\"waitTimeMaxX10\":%u,\"pacingDelayMaxX10\":%u,\"renderTimeMaxX10\":%u,\"arrivalMbps\":%u,\"audioChannels\":%u,"
     "\"audioLoadMsPerS\":%u,\"audioLoadPeakMsPerS\":%u,\"audioOverloadedWindows\":%u,\"audioLeadMs\":%u,"
     "\"audioLeadEndMs\":%u,\"audioLeadMaxMs\":%u,\"audioDriftMsPerHour\":%s,\"hostRfi\":%u}",
     durationMs, report.codec ? report.codec : "", report.width, report.height,
@@ -162,8 +176,9 @@ inline std::string FormatSessionReportMessage(const SessionReport& report) {
     report.recoveryKeyframes, report.idrRequestsSent, report.idrRequestsHeld, report.fecRecoveredBlocks, report.fecFailures,
     report.heapTopMb, report.heapTotalMb, report.heapGrowthMb, report.hostFrameRateX100, report.hostProcessingLatencyX10,
     report.hostFrameRateLowX100, report.hostWindows, report.hostLowWindows, report.receiveTimeX100,
-    report.receiveTimePeakX100, report.audioChannels, report.audioLoadMsPerS, report.audioLoadPeakMsPerS,
-    report.audioOverloadedWindows, report.audioLeadMs, report.audioLeadEndMs, report.audioLeadMaxMs, drift,
+    report.receiveTimePeakX100, report.receiveTimeMaxX10, report.waitTimeMaxX10, report.pacingDelayMaxX10,
+    report.renderTimeMaxX10, report.arrivalMbps, report.audioChannels, report.audioLoadMsPerS,
+    report.audioLoadPeakMsPerS, report.audioOverloadedWindows, report.audioLeadMs, report.audioLeadEndMs, report.audioLeadMaxMs, drift,
     report.hostRfi ? 1u : 0u);
   return length > 0 && length < static_cast<int>(sizeof(json)) ? std::string(json) : std::string();
 }

@@ -99,10 +99,16 @@ void addrToUrlSafeString(struct sockaddr_storage* addr, char* string, size_t str
 #define SOCK_QOS_TYPE_AUDIO 1
 #define SOCK_QOS_TYPE_VIDEO 2
 
+// Moonlight Plus: the outcomes of the priority of a socket for logSocketQos() besides 0 (set) and a socket error: the
+// platform has no priority option, or another part set the QoS of the socket (ENet for the control stream)
+#define SOCK_QOS_NO_OPTION -1
+#define SOCK_QOS_NOT_SET_HERE -2
+
 SOCKET createSocket(int addressFamily, int socketType, int protocol, bool nonBlocking);
 SOCKET connectTcpSocket(struct sockaddr_storage* dstaddr, SOCKADDR_LEN addrlen, unsigned short port, int timeoutSec);
 int sendMtuSafe(SOCKET s, char* buffer, int size);
 SOCKET bindUdpSocket(int addressFamily, struct sockaddr_storage* localAddr, SOCKADDR_LEN addrLen, int bufferSize, int socketQosType);
+void logSocketQos(SOCKET s, int addressFamily, const char* name, int priorityResult);
 int enableNoDelay(SOCKET s);
 int setSocketNonBlocking(SOCKET s, bool enabled);
 int recvUdpSocket(SOCKET s, char* buffer, int size, bool useSelect,

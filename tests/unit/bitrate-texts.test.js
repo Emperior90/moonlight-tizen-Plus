@@ -146,7 +146,8 @@ test('the sample lines of the bitrate and of the frame receive time are those of
   assert.ok(native.includes('"Bitrate: %.2f Mbps video received, %.1f Mbps configured (with FEC and audio)\\n"'));
   assert.ok(native.includes('"Average frame receive time: %.2f ms (%.0f%% of the frame time)\\n"'));
   // The share is the receive time over the time between two frames of the stream: ms * FPS / 10 in percent
-  assert.match(native, /const float receiveTimeMs = \(float\)stats\.totalReassemblyTime \/ stats\.decodedFrames;/);
+  // (since 2.3.2 from a total in microseconds)
+  assert.match(native, /const float receiveTimeMs = \(float\)stats\.totalReassemblyTimeUs \/ stats\.decodedFrames \/ 1000\.0f;/);
   assert.match(native, /receiveTimeMs, receiveTimeMs \* s_Framerate \/ 10\.0f,/);
   assert.equal(Math.round(8.65 * 60 / 10), 52);
   // The received figure adds up the video frames alone

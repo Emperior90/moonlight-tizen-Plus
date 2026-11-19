@@ -4,7 +4,9 @@
 // message has room for the largest figures and for three more, with those of the audio thread and what the host
 // offered for reference frame invalidation at its end, the requests for an IDR frame that moonlight-common-c sent and
 // held after the recovery keyframes (2.3.1), how far the sound ran ahead of the clock of the TV with its drift, a signed
-// number or null, after the figures of the audio thread (2.3.1), and the names of the video formats. Also the two rules of the
+// number or null, after the figures of the audio thread (2.3.1), the longest time of a single frame in each stage
+// after the frame receive time and the rate at which the frames arrived after them (2.3.2), and the names of the video
+// formats. Also the two rules of the
 // figures that 2.3.1 added: which 30 s windows of the host frame rate count for its lowest window (not the first of a
 // stream and not one of a paused host) and which of them are low, and which stats windows count for the highest
 // average frame receive time. That VidDecCleanup() sends the message with the totals of the stream, and that the
@@ -53,8 +55,8 @@ static void TestFixtureMessages() {
       continue;
     }
     const std::vector<std::string> fields = SplitTabs(line);
-    if (fields.size() != 37) {
-      test_support::Check(false, "fixture line \"" + line + "\"", "expected 37 fields", __FILE__, __LINE__);
+    if (fields.size() != 42) {
+      test_support::Check(false, "fixture line \"" + line + "\"", "expected 42 fields", __FILE__, __LINE__);
       continue;
     }
     SessionReport report;
@@ -94,8 +96,13 @@ static void TestFixtureMessages() {
     report.audioLeadMaxMs = Number(fields[33]);
     report.hasAudioDrift = fields[34] != "null";
     report.audioDriftMsPerHour = static_cast<int32_t>(std::strtol(fields[34].c_str(), nullptr, 10));
+    report.receiveTimeMaxX10 = Number(fields[35]);
+    report.waitTimeMaxX10 = Number(fields[36]);
+    report.pacingDelayMaxX10 = Number(fields[37]);
+    report.renderTimeMaxX10 = Number(fields[38]);
+    report.arrivalMbps = Number(fields[39]);
     const std::string message = FormatSessionReportMessage(report);
-    CHECK_EQ(message, fields[35]);
+    CHECK_EQ(message, fields[40]);
     checked++;
     hostsWithRfi += report.hostRfi ? 1 : 0;
     hostsWithLowWindows += report.hostLowWindows > 0 ? 1 : 0;
@@ -158,21 +165,32 @@ static void TestIdrRequests() {
 }
 
 // The new figures sit between those of the host and those of the audio thread, each under its own name, and a report
-// that nobody filled in has them at 0
+// that nobody filled in has them at 0. The longest times of a single frame (2.3.2) follow the frame receive time, and
+// the rate at which the frames arrived (2.3.2) follows them.
 static void TestHostWindowsAndReceiveTime() {
   SessionReport report;
   report.codec = "HEVC";
   const std::string empty = FormatSessionReportMessage(report);
   CHECK(empty.find(",\"hostProcessingLatencyX10\":0,\"hostFrameRateLowX100\":0,\"hostWindows\":0,\"hostLowWindows\":0,"
-                   "\"receiveTimeX100\":0,\"receiveTimePeakX100\":0,\"audioChannels\":0,") != std::string::npos);
+                   "\"receiveTimeX100\":0,\"receiveTimePeakX100\":0,\"receiveTimeMaxX10\":0,\"waitTimeMaxX10\":0,"
+                   "\"pacingDelayMaxX10\":0,\"renderTimeMaxX10\":0,\"arrivalMbps\":0,\"audioChannels\":0,") !=
+    std::string::npos);
   report.hostFrameRateLowX100 = 5090;
   report.hostWindows = 40;
   report.hostLowWindows = 6;
   report.receiveTimeX100 = 865;
   report.receiveTimePeakX100 = 1110;
+  report.receiveTimeMaxX10 = 362;
+  report.waitTimeMaxX10 = 31;
+  report.pacingDelayMaxX10 = 118;
+  report.renderTimeMaxX10 = 42;
+  report.arrivalMbps = 275;
   const std::string filled = FormatSessionReportMessage(report);
   CHECK(filled.find(",\"hostProcessingLatencyX10\":0,\"hostFrameRateLowX100\":5090,\"hostWindows\":40,\"hostLowWindows\":6,"
-                    "\"receiveTimeX100\":865,\"receiveTimePeakX100\":1110,\"audioChannels\":0,") != std::string::npos);
+                    "\"receiveTimeX100\":865,\"receiveTimePeakX100\":1110,\"receiveTimeMaxX10\":362,"
+                    "\"waitTimeMaxX10\":31,\"pacingDelayMaxX10\":118,\"renderTimeMaxX10\":42,\"arrivalMbps\":275,"
+                    "\"audioChannels\":0,") !=
+    std::string::npos);
 }
 
 // Which 30 s windows of the host frame rate count for the report, for a 60 FPS stream: a window has 1800 frames at the
@@ -299,8 +317,9 @@ static void TestLargestFiguresFit() {
     report.idrRequestsHeld = report.fecRecoveredBlocks =
     report.fecFailures = report.heapTopMb = report.heapTotalMb = report.heapGrowthMb = report.hostFrameRateX100 =
     report.hostProcessingLatencyX10 = report.hostFrameRateLowX100 = report.hostWindows = report.hostLowWindows =
-    report.receiveTimeX100 = report.receiveTimePeakX100 = report.audioChannels = report.audioLoadMsPerS =
-    report.audioLoadPeakMsPerS = report.audioOverloadedWindows = report.audioLeadMs = report.audioLeadEndMs =
+    report.receiveTimeX100 = report.receiveTimePeakX100 = report.receiveTimeMaxX10 = report.waitTimeMaxX10 =
+    report.pacingDelayMaxX10 = report.renderTimeMaxX10 = report.arrivalMbps = report.audioChannels =
+    report.audioLoadMsPerS = report.audioLoadPeakMsPerS = report.audioOverloadedWindows = report.audioLeadMs = report.audioLeadEndMs =
     report.audioLeadMaxMs = UINT32_MAX;
   report.hasAudioDrift = true;
   report.audioDriftMsPerHour = INT32_MIN;
@@ -310,20 +329,22 @@ static void TestLargestFiguresFit() {
   CHECK(message.find(",\"recoveryKeyframes\":4294967295,\"idrRequestsSent\":4294967295,"
                      "\"idrRequestsHeld\":4294967295,") != std::string::npos);
   CHECK(message.find(",\"hostFrameRateLowX100\":4294967295,\"hostWindows\":4294967295,\"hostLowWindows\":4294967295,"
-                     "\"receiveTimeX100\":4294967295,\"receiveTimePeakX100\":4294967295,") != std::string::npos);
+                     "\"receiveTimeX100\":4294967295,\"receiveTimePeakX100\":4294967295,\"receiveTimeMaxX10\":4294967295,"
+                     "\"waitTimeMaxX10\":4294967295,\"pacingDelayMaxX10\":4294967295,\"renderTimeMaxX10\":4294967295,"
+                     "\"arrivalMbps\":4294967295,\"audioChannels\":4294967295,") != std::string::npos);
   CHECK(message.find(",\"audioChannels\":4294967295,\"audioLoadMsPerS\":4294967295,\"audioLoadPeakMsPerS\":4294967295,"
                      "\"audioOverloadedWindows\":4294967295,\"audioLeadMs\":4294967295,\"audioLeadEndMs\":4294967295,"
                      "\"audioLeadMaxMs\":4294967295,\"audioDriftMsPerHour\":-2147483648,\"hostRfi\":1}") !=
     std::string::npos);
   CHECK_EQ(message.back(), '}');
-  // Every number of the report is in it at its largest: the 30 that are set above, and the duration
+  // Every number of the report is in it at its largest: the 35 that are set above, and the duration
   size_t largest = 0;
   for (size_t at = message.find(":4294967295"); at != std::string::npos; at = message.find(":4294967295", at + 1)) {
     largest++;
   }
-  CHECK_EQ(largest, static_cast<size_t>(31));
+  CHECK_EQ(largest, static_cast<size_t>(36));
   // The longest message of today
-  CHECK_EQ(message.size(), static_cast<size_t>(944));
+  CHECK_EQ(message.size(), static_cast<size_t>(1089));
   const size_t largestFigure = std::string(",\"hostProcessingLatencyX10\":4294967295").size();
   CHECK(message.size() + 3 * largestFigure < kSessionReportMessageSize);
 }

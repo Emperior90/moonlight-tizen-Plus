@@ -34,6 +34,9 @@ static int idrRequests = 0;
 uint64_t LiGetMillis(void) {
   return 0;
 }
+uint64_t LiGetMicroseconds(void) {
+  return 0;
+}
 void LiRequestIdrFrame(void) {
   idrRequests++;
 }

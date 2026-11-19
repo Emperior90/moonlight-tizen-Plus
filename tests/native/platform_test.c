@@ -16,6 +16,9 @@
 // (IdrRequestLimit.h): the wait ends at its timeout without the event, and at once when the event is set before or
 // during it.
 
+// And PltGetMicroseconds(), which Moonlight Plus ported from upstream 82ee2d6 in 2.3.2 for the frame times of the
+// statistics: the same clock with the same epoch as PltGetMillis(), in steps finer than a millisecond.
+
 // The socket code of moonlight-common-c needs the GNU extensions of the C library (in6_pktinfo)
 #define _GNU_SOURCE
 
@@ -152,6 +155,33 @@ static void ATimedWaitEndsAtTheTimeoutOrWhenTheEventIsSet(void) {
   PltCloseEvent(&event);
 }
 
+// ---- PltGetMicroseconds() (Moonlight Plus 2.3.2, from upstream 82ee2d6) ----
+
+static void TheMicrosecondClockHasTheEpochOfTheMillisecondClockInFinerSteps(void) {
+  // A reading in microseconds, divided by 1000, lies between the readings in milliseconds around it, so that the
+  // millisecond times of a decode unit (its microsecond times divided by 1000) compare with LiGetMillis() as before
+  for (int i = 0; i < 1000; i++) {
+    const uint64_t beforeMs = PltGetMillis();
+    const uint64_t us = PltGetMicroseconds();
+    const uint64_t afterMs = PltGetMillis();
+    CHECK(beforeMs <= us / 1000 && us / 1000 <= afterMs);
+  }
+  // It never goes back, and takes more than one value within a millisecond (CLOCK_MONOTONIC of this machine; the TV
+  // reads performance.now() of the browser, which may round to 0.1 ms)
+  int finerSteps = 0;
+  uint64_t previous = PltGetMicroseconds();
+  const uint64_t endUs = previous + 3000;
+  while (previous < endUs) {
+    const uint64_t now = PltGetMicroseconds();
+    CHECK(now >= previous);
+    if (now != previous && now / 1000 == previous / 1000) {
+      finerSteps++;
+    }
+    previous = now;
+  }
+  CHECK(finerSteps > 0);
+}
+
 // ---- dc09c9f: private IPv6 addresses ----
 
 static bool isPrivate(const char* text) {
@@ -230,6 +260,8 @@ int main(void) {
   RUN_TEST("set, wait and clear of an event work as before", SetWaitAndClearWorkAsBefore);
   RUN_TEST("a timed wait for an event ends at its timeout or when the event is set",
            ATimedWaitEndsAtTheTimeoutOrWhenTheEventIsSet);
+  RUN_TEST("the microsecond clock has the epoch of the millisecond clock, in finer steps",
+           TheMicrosecondClockHasTheEpochOfTheMillisecondClockInFinerSteps);
   RUN_TEST("link-local IPv6 addresses (fe80::/10, fec0::/10) are local (upstream dc09c9f)", LinkLocalAddressesAreLocal);
   RUN_TEST("unique local IPv6 addresses (fc00::/7, fd00::/8) are local (upstream dc09c9f)", UniqueLocalAddressesAreLocal);
   RUN_TEST("global, reserved and multicast IPv6 addresses are remote (upstream dc09c9f)", GlobalAndOtherAddressesAreRemote);

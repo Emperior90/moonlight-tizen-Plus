@@ -16,6 +16,12 @@
 //    drop count at zero.
 // It also checks where the depacketizer tells the limit of the IDR frame requests of Moonlight Plus (IdrRequestLimit.h,
 // tests/native/idr_request_limit_test.c) that an IDR frame arrived: once, at the first packet of the keyframe.
+// And the times of a decode unit in microseconds (receiveTimeUs, enqueueTimeUs) that 2.3.2 ported from upstream 82ee2d6
+// for the frame times of the statistics, next to the millisecond fields that stay: the receive time of the first packet
+// of the frame and the time it was queued, each pair from one reading of the clock, and a presentation time that the
+// depacketizer makes up for a host without one still in whole milliseconds of the receive time, as before. Also the
+// arrival figures of a frame (arrivalTimeUs, arrivalBytes, 2.3.2), which the RTP video queue hands over with each packet
+// of a complete frame (frame_arrival_test.c) and the decode unit takes from the first packet of its frame.
 // The test feeds packets the way RtpVideoQueue.c hands them over (the queue entry behind the packet in the same
 // allocation, which the depacketizer takes over) for an AV1 stream of Sunshine, whose frames pass through unparsed with
 // the frame type in the header, and counts the allocations of VideoDepacketizer.c and of the packets, so that a decode
@@ -86,7 +92,14 @@ void enet_deinitialize(void) {}
 void enterLowLatencyMode(void) {}
 void exitLowLatencyMode(void) {}
 
-static uint64_t fakeMillis;
+// The receive time of the next packet in microseconds, which RtpVideoQueue.c sets from PltGetMicroseconds(): a
+// millisecond after the packet before unless a test sets it, on a clock of the test
+static uint64_t fakeReceiveUs;
+// The arrival figures of the frame that the queue hands over with the next packet (none unless a test sets them)
+static uint32_t fakeArrivalUs;
+static uint32_t fakeArrivalBytes;
+// Packets without a presentation time, as some versions of Sunshine send them
+static bool noPresentationTime;
 static bool rfiEnabled;
 static int idrRequests;
 static int rfiRequests;
@@ -96,9 +109,6 @@ static char logLines[8192];
 
 bool isReferenceFrameInvalidationEnabled(void) {
   return rfiEnabled;
-}
-uint64_t LiGetMillis(void) {
-  return fakeMillis;
 }
 void LiRequestIdrFrame(void) {
   idrRequests++;
@@ -180,8 +190,11 @@ static void feedPacket(uint32_t frameIndex, uint8_t flags, const uint8_t* payloa
   PRTPV_QUEUE_ENTRY entry = (PRTPV_QUEUE_ENTRY)(buffer + entryOffset);
   entry->packet = (PRTP_PACKET)buffer;
   entry->length = length;
-  entry->receiveTimeMs = ++fakeMillis;
-  entry->presentationTimeMs = frameIndex * 16;
+  fakeReceiveUs += 1000;
+  entry->receiveTimeUs = fakeReceiveUs;
+  entry->frameArrivalTimeUs = fakeArrivalUs;
+  entry->frameArrivalBytes = fakeArrivalBytes;
+  entry->presentationTimeMs = noPresentationTime ? 0 : frameIndex * 16;
   queueRtpPacket(entry);
 }
 
@@ -590,6 +603,98 @@ static void AnIdrFrameTellsTheLimitOfTheRequestsAtItsFirstPacket(void) {
   NegotiatedVideoFormat = VIDEO_FORMAT_AV1_MAIN8;
 }
 
+// Take the next decode unit from the queue for a test of its times, or NULL without one
+static PDECODE_UNIT pollFrame(VIDEO_FRAME_HANDLE* handle) {
+  PDECODE_UNIT decodeUnit = NULL;
+  if (!LiPollNextVideoFrame(handle, &decodeUnit)) {
+    CHECK(!"a decode unit in the queue");
+    return NULL;
+  }
+  return decodeUnit;
+}
+
+static void ADecodeUnitCarriesItsTimesInMicrosecondsAndMilliseconds(void) {
+  startWithAKeyframe(false);
+  // The first packet of frame 2 arrives at 5,000,999 us, its last one 1.5 ms later: the frame keeps the time of its
+  // first packet, in microseconds and in whole milliseconds
+  fakeReceiveUs = 5000999 - 1000;
+  feedFramePacket(2, FRAME_TYPE_HEADER_P, 0, 2, 100);
+  fakeReceiveUs = 5002499 - 1000;
+  const uint64_t beforeUs = PltGetMicroseconds();
+  feedFramePacket(2, FRAME_TYPE_HEADER_P, 1, 2, 100);
+  const uint64_t afterUs = PltGetMicroseconds();
+  VIDEO_FRAME_HANDLE handle;
+  PDECODE_UNIT decodeUnit = pollFrame(&handle);
+  if (decodeUnit != NULL) {
+    CHECK_EQ_INT(decodeUnit->frameNumber, 2);
+    CHECK_EQ_INT(decodeUnit->receiveTimeUs, 5000999);
+    CHECK_EQ_INT(decodeUnit->receiveTimeMs, 5000);
+    // The time it was queued, from the clock of the platform, and the same reading in milliseconds, which is what
+    // LiGetMillis() returns at that moment
+    CHECK(decodeUnit->enqueueTimeUs >= beforeUs && decodeUnit->enqueueTimeUs <= afterUs);
+    CHECK_EQ_INT(decodeUnit->enqueueTimeMs, decodeUnit->enqueueTimeUs / 1000);
+    CHECK(decodeUnit->enqueueTimeMs >= beforeUs / 1000 && decodeUnit->enqueueTimeMs <= PltGetMillis());
+    LiCompleteVideoFrame(handle, DR_OK);
+  }
+  endStream();
+}
+
+static void AMadeUpPresentationTimeStaysInWholeMilliseconds(void) {
+  // A host without presentation times: the depacketizer makes them up from the receive time of the first packet of
+  // each frame since the first frame of the stream, in whole milliseconds of the clock as before 2.3.2
+  startStream(false);
+  noPresentationTime = true;
+  const uint64_t receiveUs[] = {7000999, 7016000, 7032999, 7049001};
+  const unsigned int expectedMs[] = {0, 16, 32, 49};
+  for (int i = 0; i < 4; i++) {
+    fakeReceiveUs = receiveUs[i] - 1000;
+    feedFrame((uint32_t)(i + 1), i == 0 ? FRAME_TYPE_HEADER_IDR : FRAME_TYPE_HEADER_P, 1, 100);
+    VIDEO_FRAME_HANDLE handle;
+    PDECODE_UNIT decodeUnit = pollFrame(&handle);
+    if (decodeUnit != NULL) {
+      CHECK_EQ_INT(decodeUnit->frameNumber, i + 1);
+      CHECK_EQ_INT(decodeUnit->receiveTimeUs, receiveUs[i]);
+      // 7016 - 7000 ms, not the 15 ms of 7,016,000 - 7,000,999 us
+      CHECK_EQ_INT(decodeUnit->presentationTimeMs, expectedMs[i]);
+      LiCompleteVideoFrame(handle, DR_OK);
+    }
+  }
+  noPresentationTime = false;
+  endStream();
+}
+
+// The arrival figures of a frame reach its decode unit from its first packet (the queue sets the same on every packet
+// of the frame; here the later packets carry others to tell them apart), and a frame without them has none
+static void ADecodeUnitCarriesTheArrivalFiguresOfItsFirstPacket(void) {
+  startWithAKeyframe(false);
+  fakeArrivalUs = 8652;
+  fakeArrivalBytes = 295816;
+  feedFramePacket(2, FRAME_TYPE_HEADER_P, 0, 3, 100);
+  fakeArrivalUs = 1;
+  fakeArrivalBytes = 2;
+  feedFramePacket(2, FRAME_TYPE_HEADER_P, 1, 3, 100);
+  feedFramePacket(2, FRAME_TYPE_HEADER_P, 2, 3, 100);
+  fakeArrivalUs = 0;
+  fakeArrivalBytes = 0;
+  feedFrame(3, FRAME_TYPE_HEADER_P, 2, 100);
+  VIDEO_FRAME_HANDLE handle;
+  PDECODE_UNIT decodeUnit = pollFrame(&handle);
+  if (decodeUnit != NULL) {
+    CHECK_EQ_INT(decodeUnit->frameNumber, 2);
+    CHECK_EQ_INT(decodeUnit->arrivalTimeUs, 8652);
+    CHECK_EQ_INT(decodeUnit->arrivalBytes, 295816);
+    LiCompleteVideoFrame(handle, DR_OK);
+  }
+  decodeUnit = pollFrame(&handle);
+  if (decodeUnit != NULL) {
+    CHECK_EQ_INT(decodeUnit->frameNumber, 3);
+    CHECK_EQ_INT(decodeUnit->arrivalTimeUs, 0);
+    CHECK_EQ_INT(decodeUnit->arrivalBytes, 0);
+    LiCompleteVideoFrame(handle, DR_OK);
+  }
+  endStream();
+}
+
 int main(void) {
   RUN_TEST("a frame over 32 MiB is dropped with a keyframe request", AFrameOver32MiBIsDroppedWithAKeyframeRequest);
   RUN_TEST("a frame of more than 65,536 fragments is dropped", AFrameOf65537FragmentsIsDropped);
@@ -607,5 +712,11 @@ int main(void) {
   RUN_TEST("a second stream starts with the consecutive drop count at zero", ASecondStreamStartsWithTheDropCountAtZero);
   RUN_TEST("an IDR frame tells the limit of the IDR frame requests at its first packet",
            AnIdrFrameTellsTheLimitOfTheRequestsAtItsFirstPacket);
+  RUN_TEST("a decode unit carries the receive time of its first packet and the time it was queued, in microseconds "
+           "and milliseconds", ADecodeUnitCarriesItsTimesInMicrosecondsAndMilliseconds);
+  RUN_TEST("a made-up presentation time stays in whole milliseconds of the receive time",
+           AMadeUpPresentationTimeStaysInWholeMilliseconds);
+  RUN_TEST("a decode unit carries the arrival figures of the first packet of its frame",
+           ADecodeUnitCarriesTheArrivalFiguresOfItsFirstPacket);
   return test_summary();
 }

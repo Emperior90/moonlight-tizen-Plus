@@ -42,6 +42,9 @@ static std::vector<std::string> logged;
 uint64_t LiGetMillis(void) {
   return nowMs;
 }
+uint64_t LiGetMicroseconds(void) {
+  return nowMs * 1000;
+}
 void LiRequestIdrFrame(void) {}
 bool LiGetHdrMetadata(PSS_HDR_METADATA) {
   return false;
@@ -157,6 +160,8 @@ static int Submit(int frameNumber, bool idr, size_t length) {
   nowMs = 100000 + unit.presentationTimeMs;
   unit.receiveTimeMs = nowMs - 3;
   unit.enqueueTimeMs = nowMs - 2;
+  unit.receiveTimeUs = unit.receiveTimeMs * 1000;
+  unit.enqueueTimeUs = unit.enqueueTimeMs * 1000;
   unit.fullLength = (int)length;
   unit.bufferList = &picture;
   if (idr) {
