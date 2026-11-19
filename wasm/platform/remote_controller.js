@@ -39,6 +39,23 @@ function noteArrowStep() {
   });
 }
 
+// Whether the RETURN that is held cancelled the start of a stream: the app list shows within a moment, where its
+// auto-repeat would go back on to the PC list, so the repeats are ignored until RETURN is pressed again
+let returnCancelledStart = false;
+
+// End the stream that starts or runs (RED, and RETURN on the launch screen): a start whose start request the module
+// hasn't got yet is cancelled (cancelStreamLaunch() in index.js), and the module stops a connection that it sets up or
+// runs, which it reports with 'streamTerminated: 0' (handleMessage() in messages.js)
+function endStartingOrRunningStream() {
+  if (isInGame === true && !wasmSessionStarted) {
+    // The stream is still starting, so cancel its start instead of stopping a session that doesn't exist yet
+    cancelStreamLaunch();
+  } else if (isInGame === true) {
+    // Terminate the connection
+    Module.stopStream();
+  }
+}
+
 function remoteControllerHandler(e) {
   const keyCode = e.keyCode;
   const target = e.target || {};
@@ -86,6 +103,22 @@ function remoteControllerHandler(e) {
       Navigation.accept();
       break;
     case tvKey.KEY_RETURN:
+      // On the launch screen of a stream, RETURN cancels the start like RED (the hint at its bottom names both): the menus
+      // are stopped there, so before 2.3.2 it did nothing. Not once the stream connected, when RETURN goes to the PC as
+      // Esc (initSpecialKeys() in index.js), nor for the auto-repeat of a held key, e.g. of the RETURN that closed the
+      // Stream Menu. The auto-repeat of the RETURN that cancelled the start is ignored after it as well, in the app list.
+      if (!e.repeat) {
+        returnCancelledStart = false;
+      } else if (returnCancelledStart) {
+        break;
+      }
+      if (isInGame === true && !isStreamConnected) {
+        if (!e.repeat) {
+          endStartingOrRunningStream();
+          returnCancelledStart = true;
+        }
+        break;
+      }
       // Go back or cancel the operation
       Navigation.back();
       break;
@@ -114,13 +147,7 @@ function remoteControllerHandler(e) {
       if (e.repeat) {
         break;
       }
-      if (isInGame === true && !wasmSessionStarted) {
-        // The stream is still starting, so cancel its start instead of stopping a session that doesn't exist yet
-        cancelStreamLaunch();
-      } else if (isInGame === true) {
-        // Terminate the connection
-        Module.stopStream();
-      }
+      endStartingOrRunningStream();
       break;
     case tvKey.KEY_YELLOW:
       // Step the performance stats overlay to its next level: Off, Compact, Full, Off

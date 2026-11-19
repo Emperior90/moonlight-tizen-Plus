@@ -237,6 +237,43 @@ test('RED stops a running stream, cancels a starting one and ignores the auto-re
   assert.deepEqual(remote.moduleCalls, ['cancelStreamLaunch', 'stopStream']);
 });
 
+test('RETURN on the launch screen cancels the start once, and the auto-repeat of that RETURN doesn\'t go back in the app list', () => {
+  const remote = loadRemoteController({
+    isStreamConnected: false,
+    // As in index.js: the start ends, so the app list shows (with the menus) within a moment
+    cancelStreamLaunch: () => {
+      remote.moduleCalls.push('cancelStreamLaunch');
+      remote.platform.run('isInGame = false;');
+    },
+  });
+  remote.platform.run('isInGame = true; wasmSessionStarted = false;');
+  // The auto-repeat of a RETURN that was held before the launch screen (e.g. the one that closed the Stream Menu)
+  remote.press('KEY_RETURN', { repeat: true });
+  assert.deepEqual([remote.moduleCalls, remote.recorder.operations], [[], []]);
+  remote.press('KEY_RETURN');
+  assert.deepEqual(remote.moduleCalls, ['cancelStreamLaunch']);
+  // Its auto-repeat, which before reached the app list and went back to the PC list
+  remote.press('KEY_RETURN', { repeat: true });
+  remote.press('KEY_RETURN', { repeat: true });
+  assert.deepEqual([remote.moduleCalls, remote.recorder.operations], [['cancelStreamLaunch'], []]);
+  // The next press goes back, and a RETURN held in the menus repeats as before
+  remote.press('KEY_RETURN');
+  remote.press('KEY_RETURN', { repeat: true });
+  assert.deepEqual(remote.recorder.operations, ['back', 'back']);
+  // After the start request, the module stops the connection that it sets up
+  remote.platform.run('isInGame = true; wasmSessionStarted = true;');
+  remote.press('KEY_RETURN');
+  remote.press('KEY_RETURN', { repeat: true });
+  assert.deepEqual(remote.moduleCalls, ['cancelStreamLaunch', 'stopStream']);
+  remote.platform.run('isInGame = false; wasmSessionStarted = false;');
+  remote.press('KEY_RETURN', { repeat: true });
+  assert.deepEqual(remote.recorder.operations, ['back', 'back']);
+  // Once the stream connected, RETURN goes to the PC as Esc (index.js) and doesn't stop the stream
+  remote.platform.run('isInGame = true; wasmSessionStarted = true; isStreamConnected = true;');
+  remote.press('KEY_RETURN');
+  assert.deepEqual(remote.moduleCalls, ['cancelStreamLaunch', 'stopStream']);
+});
+
 test('YELLOW toggles the performance statistics only while streaming, and steps the setting while the stream starts', () => {
   const remote = loadRemoteController();
   remote.press('KEY_YELLOW');

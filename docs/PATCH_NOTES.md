@@ -20,11 +20,11 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ## 2.3.2
 
-*Pre-release, in testing.* Finer frame times with their longest values, how fast frames arrive, more facts in the log, and a fix for recovery keyframes.
+*Pre-release, in testing.* Finer frame times with their longest values, how fast frames arrive, more log facts, and fixes for a stuck start and keyframe counts.
 
 > **Install:** by hand over 2.3.1 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >
-> **Tested:** with simulated TVs and hosts only; the new figures, the log lines and the keyframe fix still need a test on a TV.
+> **Tested:** with simulated TVs and hosts only; the new figures, the log lines and the fixes still need a test on a TV.
 
 ### New
 
@@ -33,6 +33,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 - They also show the longest time a single frame took at each step on the TV
 - The diagnostic log names what the TV supports of WebAssembly and if its sockets take the network priority
 - These figures show where the delay comes from; they don't make the stream faster by themselves
+- The start screen names the keys that cancel a start: RETURN or RED (RETURN did nothing there before)
 
 ### Changed
 
@@ -41,6 +42,10 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ### Fixed
 
+- A start that the PC doesn't answer, or answers with something unreadable, no longer hangs on *Starting…*
+- The TV waits at most 120 seconds for that answer (as Moonlight for PC), then a message says what to check
+- An unreadable answer, e.g. from Sunshine after an error, ends the start at once with a message
+- RED during *Starting…* returns to the app list within seconds, also while the PC holds the start
 - *Session recovery keyframes* no longer counts restarts of the PC's encoder as recoveries (a TV runtime defect)
 - *Average frame pacing delay* no longer rises a little with every frame that the TV's player rejects
 

@@ -12,10 +12,27 @@ var QUIT_APP_STILL_RUNNING_ERROR = 599;
 // art, in milliseconds: 30 seconds, as Moonlight for PC waits for a quit. The request queue enforces the limit
 // (sendMessage('openUrl', ...) in messages.js cancels the request in the module and rejects it with -1). Without one, a
 // host that accepts the connection and then sends nothing held the one HTTP thread of the module, and with it every
-// request of every host, for as long as the browser waited. The requests that start a stream (/launch and /resume) have
-// no limit here: the start has its own waits and retries.
+// request of every host, for as long as the browser waited.
 var QUIT_APP_TIMEOUT_MS = 30000;
 var BOX_ART_TIMEOUT_MS = 30000;
+
+// How long the app waits for the answer of a host to the requests that start a stream (/launch and /resume), in
+// milliseconds: 120 seconds, as Moonlight for PC waits for both (LAUNCH_TIMEOUT_MS of app/backend/nvhttp.cpp, which it
+// passes for the resume request as well). A host answers them only once it ran the commands that come before the app
+// (the prep commands of the app and the global ones, which Sunshine, Apollo, Vibepollo and Vibeshine wait for without a
+// limit), switched its display (up to 8 seconds in Vibepollo and Vibeshine) and probed its encoders, which takes seconds
+// and sometimes tens of seconds; a command that waits, e.g. for input or a confirmation on the PC, holds the answer for
+// good. Before 2.3.2 there was no limit: the launch screen stayed for as long as the host held the request, and every
+// other request waited behind it in the one HTTP thread of the module, also the refresh of the server info after RED.
+// startGame() in index.js ends the start with a message once the limit runs out (and cancels the request with
+// cancelStreamStartRequests() of messages.js, also when RED cancels the start), and the request queue enforces the same
+// limit for any other caller.
+var STREAM_START_REQUEST_TIMEOUT_MS = 120000;
+// The errors of a launch or resume request that the start no longer waited for (cancelStreamStartRequests() in
+// messages.js): one that was dropped before it reached the module, which the host never got, and one that the module
+// canceled while it ran, which the host may have taken
+var STREAM_START_REQUEST_DROPPED = 'STREAM_START_REQUEST_DROPPED';
+var STREAM_START_REQUEST_CANCELLED = 'STREAM_START_REQUEST_CANCELLED';
 
 // Box art shares the one HTTP thread of the module with every other request, where it waits behind them (sendMessage()
 // in messages.js). Opening a host with a cold cache asks for the box art of every app, so at most two downloads are on
@@ -1652,7 +1669,7 @@ NvHTTP.prototype = {
       '&additionalStates=1&sops=' + sops + '&rikey=' + rikey + '&rikeyid=' + rikeyid + '&hdrMode=' + enableHdr +
       '&localAudioPlayMode=' + localAudio + '&surroundAudioInfo=' + surroundAudioInfo +
       '&remoteControllersBitmap=' + gamepadMask + '&gcmap=' + gamepadMask + (continuousAudio ? '&continuousAudio=1' : ''),
-      this.ppkstr, false
+      this.ppkstr, false, STREAM_START_REQUEST_TIMEOUT_MS
     ]);
   },
 
@@ -1662,7 +1679,7 @@ NvHTTP.prototype = {
       '&additionalStates=1&sops=' + sops + '&rikey=' + rikey + '&rikeyid=' + rikeyid + '&hdrMode=' + enableHdr +
       '&localAudioPlayMode=' + localAudio + '&surroundAudioInfo=' + surroundAudioInfo +
       '&remoteControllersBitmap=' + gamepadMask + '&gcmap=' + gamepadMask + (continuousAudio ? '&continuousAudio=1' : ''),
-      this.ppkstr, false
+      this.ppkstr, false, STREAM_START_REQUEST_TIMEOUT_MS
     ]);
   },
 

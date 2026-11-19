@@ -4009,6 +4009,100 @@ function stopHeartbeatOfFailedStart(reason) {
   }
 }
 
+// Read the answer of a host to a launch or resume request: { statusCode, statusMessage, sessionUrl }, or { problem } for
+// an answer that no GameStream host sends, which says what it is for the log (but not the answer itself, which can hold
+// anything): an empty one, only the XML declaration, which Sunshine answers with HTTP 200 when an error interrupted the
+// request (src/nvhttp.cpp of Sunshine, 'Property tree is empty' in its log; e.g. issue 5234 of Sunshine on Linux), one
+// that isn't XML ($.parseXML() throws, e.g. for the 'Bad Request' of other software on the port), or XML without a root
+// element with a status code. Before 2.3.2 the parse threw inside the handler of the answer, which left the launch
+// screen up until RED, and an answer without a status code showed 'Error : '.
+function readStreamStartAnswer(answer) {
+  var text = answer === undefined || answer === null ? '' : String(answer);
+  if (text.trim() === '') {
+    return { problem: 'an empty answer' };
+  }
+  if (/^\s*<\?xml[^>]*\?>\s*$/.test(text)) {
+    return { problem: 'only the XML declaration, which Sunshine sends when an error interrupted the request ("Property tree is empty" in its log)' };
+  }
+  var xml = null;
+  try {
+    xml = $.parseXML(text);
+  } catch (error) {
+    xml = null;
+  }
+  if (!xml) {
+    return { problem: 'no XML (' + text.length + ' characters)' };
+  }
+  var root = $(xml).find('root').first();
+  if (root.length === 0) {
+    return { problem: 'XML without a root element' };
+  }
+  var statusCode = root.attr('status_code');
+  if (statusCode === undefined || String(statusCode).trim() === '') {
+    return { problem: 'a root element without a status code' };
+  }
+  return {
+    statusCode: statusCode,
+    statusMessage: root.attr('status_message'),
+    sessionUrl: root.find('sessionUrl0').text().trim(),
+  };
+}
+
+// End the start of a stream whose launch or resume request brought no stream, back to the app list: the launch screen
+// goes at once (leaveStreamView() in messages.js), and the app list shows once the server info was refreshed. A request
+// that is still on its way is let go of (cancelStreamStartRequests() in messages.js), since the refresh would wait
+// behind it on the one HTTP thread of the module. reason goes to the heartbeat of the diagnostic log.
+function endStreamStart(host, reason) {
+  streamLaunchId++;
+  isInGame = false;
+  wasmSessionStarted = false;
+  if (typeof cancelStreamStartRequests === 'function') {
+    cancelStreamStartRequests(0);
+  }
+  leaveStreamView(host);
+  stopHeartbeatOfFailedStart(reason);
+}
+
+// Watch the launch or resume request of the start launchId: if the host doesn't answer it within
+// STREAM_START_REQUEST_TIMEOUT_MS (utils.js), the start ends with a message (endStreamStartWithoutAnswer()). Returns the
+// function that ends the watch, which the handlers of the answer and of the failure call.
+function limitStreamStartRequest(host, launchId, isResume, title) {
+  var timer = setTimeout(function() {
+    endStreamStartWithoutAnswer(host, launchId, isResume, title);
+  }, STREAM_START_REQUEST_TIMEOUT_MS);
+  return function() {
+    clearTimeout(timer);
+  };
+}
+
+// End a start whose launch or resume request the host didn't answer within STREAM_START_REQUEST_TIMEOUT_MS: a command
+// that the host runs before the app (a prep command of the app or a global one, for which Sunshine, Apollo, Vibepollo
+// and Vibeshine wait without a limit) may wait on the PC, e.g. for input or a confirmation, or the PC went away during
+// the request. The request is canceled in the module, so the refresh of the server info and the requests of the app
+// list can go out. The host may still start the app, as with a start cancelled with RED, so the next start waits for
+// its hold (the handler of the canceled request remembers it). Not when the start ended meanwhile, e.g. with RED.
+function endStreamStartWithoutAnswer(host, launchId, isResume, title) {
+  if (launchId !== streamLaunchId || isInGame !== true) {
+    return;
+  }
+  var seconds = Math.round(STREAM_START_REQUEST_TIMEOUT_MS / 1000);
+  console.warn('%c[index.js, endStreamStartWithoutAnswer]', 'color: green;', 'Warning: ' + host.hostname + ' didn\'t answer the ' + (isResume ? 'resume' : 'launch') +
+    ' request within ' + seconds + ' s (e.g. since a command of the app waits on the PC), ending the start.');
+  endStreamStart(host, 'the host didn\'t answer the ' + (isResume ? 'resume' : 'launch') + ' request');
+  snackbarLogLong('%1$s didn\'t answer the start of %2$s within %3$s seconds. A command that Sunshine (or another GameStream host) runs before the app, e.g. to switch the display, may be waiting on the PC. End it or restart Sunshine, then start the app again.',
+    host.hostname, title, seconds);
+}
+
+// End a start whose launch or resume request the host answered with something that no host sends (readStreamStartAnswer()),
+// e.g. Sunshine after an error inside the request. No hold is remembered: a host that took the start answers it.
+function endStreamStartWithInvalidAnswer(host, isResume, title, problem) {
+  console.error('%c[index.js, endStreamStartWithInvalidAnswer]', 'color: green;', 'Error: The answer of ' + host.hostname + ' to the ' + (isResume ? 'resume' : 'launch') +
+    ' request is ' + problem + ', ending the start.');
+  endStreamStart(host, 'the host answered the ' + (isResume ? 'resume' : 'launch') + ' request with an invalid answer');
+  snackbarLogLong('%1$s answered the start of %2$s with an invalid reply, e.g. after an error in Sunshine (or another GameStream host). Check the log of Sunshine (or the other host) on the PC, then start the app again.',
+    host.hostname, title);
+}
+
 // Start the given appID. If another app is running, offer to quit it. Otherwise, if the given app is already running, just resume it.
 // restartKind marks the start of the same app once more, which the launch screen of the stream before it still shows
 // for: STREAM_RESTART_NO_VIDEO after no video arrived and STREAM_RESTART_HELD_START after the host still held an earlier
@@ -4020,12 +4114,20 @@ function startGame(host, appID, restartKind, restartChange) {
   var isRestart = !!restartKind;
   if (!host || !host.paired) {
     console.error('%c[index.js, startGame]', 'color: green;', 'Error: Attempted to start a game, but the host was not initialized properly! Host object: ', host);
+    // The launch screen of a start once more still shows, which nothing else would end
+    if (isRestart) {
+      endStreamRestart(restartKind, 'the host is not paired', restartChange);
+    }
     return;
   }
   // Don't start a stream while the app is in the background (e.g. the delayed start after quitting another app, or a
   // deep link that arrives while hidden), see the visibilitychange listener
   if (document.visibilityState === 'hidden') {
     console.warn('%c[index.js, startGame]', 'color: green;', 'Warning: Not starting app ' + appID + ' while Moonlight is in the background.');
+    // A start once more ends as the visibilitychange listener ends a start (endStreamInBackground())
+    if (isRestart && isInGame === true) {
+      cancelStreamLaunch();
+    }
     return;
   }
   // Ignore a second start (e.g. from a Smart Hub deep link) while a stream is starting or running
@@ -4080,6 +4182,24 @@ function startGame(host, appID, restartKind, restartChange) {
   if (!isRestart) {
     startWebAudio();
   }
+
+  // The app list of the host couldn't be read: getAppById() asks the host for it when the cache of the host is empty
+  // (e.g. after a failed poll), and fails with that request. A start once more ends, since its launch screen still
+  // shows, which stayed for good before 2.3.2. A start from the app list, where OK otherwise seemed to do nothing, says
+  // so and closes the audio scheduler that its key press opened.
+  var endWithoutAppList = function() {
+    if (launchId !== streamLaunchId) {
+      return;
+    }
+    if (isRestart) {
+      endStreamRestart(restartKind, 'the app list of the host could not be read', restartChange);
+      return;
+    }
+    snackbarLogLong('Unable to retrieve your list of apps at this time. Please refresh the list of apps or try again later!');
+    if (isWebAudioBackendSelected() && typeof stopAudioScheduler === 'function') {
+      stopAudioScheduler();
+    }
+  };
 
   // Refresh the server info, because the user might have quit the game
   host.refreshServerInfo().then(function(ret) {
@@ -4155,6 +4275,7 @@ function startGame(host, appID, restartKind, restartChange) {
           return;
         }, function(failedCurrentApp) {
           console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to get the current running app from ' + host.hostname + '\n Returned error was: ' + failedCurrentApp + '!', '\n Host object: ' + '\n', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
+          endWithoutAppList();
           return;
         });
         return;
@@ -4285,6 +4406,8 @@ function startGame(host, appID, restartKind, restartChange) {
         }
         // Check if user wants to resume the already-running app
         if (host.currentGame == appID) {
+          // The start ends with a message if the host doesn't answer within STREAM_START_REQUEST_TIMEOUT_MS
+          var stopResumeLimit = limitStreamStartRequest(host, launchId, true, appToStart.title);
           // If the app is already running, we can just resume it
           return host.resumeApp(
             streamWidth + 'x' + streamHeight + 'x' + frameRate, // Resolution and frame rate
@@ -4296,15 +4419,20 @@ function startGame(host, appID, restartKind, restartChange) {
             gamepadMask, // Connect gamepad mask
             continuousAudio // Audio packets also during silence
           ).then(function(launchResult) {
+            stopResumeLimit();
             if (launchId !== streamLaunchId) {
               console.log('%c[index.js, startGame]', 'color: green;', 'Ignoring the reply to a cancelled resume request.');
               rememberCancelledStartAnswer(host, launchResult);
               return;
             }
-            $xml = $($.parseXML(launchResult.toString()));
-            $root = $xml.find('root');
-            var status_code = $root.attr('status_code');
-            var status_message = $root.attr('status_message');
+            // An answer that isn't one of a host ended nowhere before 2.3.2 (readStreamStartAnswer())
+            var answer = readStreamStartAnswer(launchResult);
+            if (answer.problem) {
+              endStreamStartWithInvalidAnswer(host, true, appToStart.title, answer.problem);
+              return;
+            }
+            var status_code = answer.statusCode;
+            var status_message = answer.statusMessage;
             if (status_code != 200) {
               $('#loadingSpinnerMessage').text('');
               endLaunchWithAnswer(host, status_code, status_message);
@@ -4312,8 +4440,7 @@ function startGame(host, appID, restartKind, restartChange) {
             }
             // The host holds this start from now on until its stream connects (rememberHeldHostStart())
             streamLaunchAnsweredAt = performance.now();
-            // Read the session URL now, because refreshing the server info replaces the global $root
-            var sessionUrl = $root.find('sessionUrl0').text().trim();
+            var sessionUrl = answer.sessionUrl;
             // Start stream request with the codec modes from the encoder probe of this resume request
             refreshCodecModesBeforeStream(host).then(function(codecModes) {
               if (launchId !== streamLaunchId) {
@@ -4342,9 +4469,13 @@ function startGame(host, appID, restartKind, restartChange) {
               }
             });
           }, function(failedResumeApp) {
-            // The request may have reached the host before it failed (e.g. when the connection broke during it), which the
-            // TV can't tell from the error, so the host may hold this start as well
-            rememberHeldHostStart(host, performance.now(), 'its resume request failed');
+            stopResumeLimit();
+            // The request may have reached the host before it failed (e.g. when the connection broke during it) or was
+            // canceled (cancelStreamStartRequests() in messages.js), which the TV can't tell from the error, so the host
+            // may hold this start as well; one that was dropped before it left the TV can't
+            if (failedResumeApp !== STREAM_START_REQUEST_DROPPED) {
+              rememberHeldHostStart(host, performance.now(), failedResumeApp === STREAM_START_REQUEST_CANCELLED ? 'its resume request was cancelled' : 'its resume request failed');
+            }
             if (launchId !== streamLaunchId) {
               return;
             }
@@ -4361,6 +4492,8 @@ function startGame(host, appID, restartKind, restartChange) {
           });
         }
 
+        // The start ends with a message if the host doesn't answer within STREAM_START_REQUEST_TIMEOUT_MS
+        var stopLaunchLimit = limitStreamStartRequest(host, launchId, false, appToStart.title);
         // If the user wants to launch the app, then we start launching it
         host.launchApp(
           appID, // App ID
@@ -4373,15 +4506,20 @@ function startGame(host, appID, restartKind, restartChange) {
           gamepadMask, // Connect gamepad mask
           continuousAudio // Audio packets also during silence
         ).then(function(launchResult) {
+          stopLaunchLimit();
           if (launchId !== streamLaunchId) {
             console.log('%c[index.js, startGame]', 'color: green;', 'Ignoring the reply to a cancelled launch request.');
             rememberCancelledStartAnswer(host, launchResult);
             return;
           }
-          $xml = $($.parseXML(launchResult.toString()));
-          $root = $xml.find('root');
-          var status_code = $root.attr('status_code');
-          var status_message = $root.attr('status_message');
+          // An answer that isn't one of a host ended nowhere before 2.3.2 (readStreamStartAnswer())
+          var answer = readStreamStartAnswer(launchResult);
+          if (answer.problem) {
+            endStreamStartWithInvalidAnswer(host, false, appToStart.title, answer.problem);
+            return;
+          }
+          var status_code = answer.statusCode;
+          var status_message = answer.statusMessage;
           if (status_code != 200) {
             if (status_code == 4294967295 && status_message == 'Invalid') {
               // Special case handling an audio capture error which GFE doesn't provide any useful status message
@@ -4394,8 +4532,7 @@ function startGame(host, appID, restartKind, restartChange) {
           }
           // The host holds this start from now on until its stream connects (rememberHeldHostStart())
           streamLaunchAnsweredAt = performance.now();
-          // Read the session URL now, because refreshing the server info replaces the global $root
-          var sessionUrl = $root.find('sessionUrl0').text().trim();
+          var sessionUrl = answer.sessionUrl;
           // Start stream request with the codec modes from the encoder probe of this launch request
           refreshCodecModesBeforeStream(host).then(function(codecModes) {
             if (launchId !== streamLaunchId) {
@@ -4424,9 +4561,13 @@ function startGame(host, appID, restartKind, restartChange) {
             }
           });
         }, function(failedLaunchApp) {
-          // The request may have reached the host before it failed (e.g. when the connection broke during it), which the
-          // TV can't tell from the error, so the host may hold this start as well
-          rememberHeldHostStart(host, performance.now(), 'its launch request failed');
+          stopLaunchLimit();
+          // The request may have reached the host before it failed (e.g. when the connection broke during it) or was
+          // canceled (cancelStreamStartRequests() in messages.js), which the TV can't tell from the error, so the host may
+          // hold this start as well; one that was dropped before it left the TV can't
+          if (failedLaunchApp !== STREAM_START_REQUEST_DROPPED) {
+            rememberHeldHostStart(host, performance.now(), failedLaunchApp === STREAM_START_REQUEST_CANCELLED ? 'its launch request was cancelled' : 'its launch request failed');
+          }
           if (launchId !== streamLaunchId) {
             return;
           }
@@ -4442,6 +4583,9 @@ function startGame(host, appID, restartKind, restartChange) {
           return;
         });
       });
+    }, function(failedAppList) {
+      console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to read the app list of ' + host.hostname + ' for app ' + appID + '! Returned error was: ' + failedAppList + '!');
+      endWithoutAppList();
     });
   }, function(failedRefreshInfo) {
     console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to refresh server info! Returned error was: ' + failedRefreshInfo + ' and failed server was: ' + '\n', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
@@ -4710,9 +4854,18 @@ function resumeStreamAfterSettingsChange(errorCode) {
   return true;
 }
 
+// How long the launch or resume request of a start that was cancelled may still run before the module cancels it
+// (cancelStreamStartRequests() in messages.js), in milliseconds: an answer within it still tells whether the host took
+// the start (rememberCancelledStartAnswer()), and a host that holds the request no longer holds the return to the app
+// list for longer than this
+var STREAM_START_REQUEST_CANCEL_GRACE_MS = 3000;
+
 // Cancel a stream that is still starting, i.e. whose start request hasn't reached the WASM module yet, and return to
-// the app list. The launch or resume request that is in flight can't be aborted: the host may still start the app,
-// which the app list then shows as running, and the reply is ignored (see startGame).
+// the app list (RED, RETURN on the launch screen, the background, a failed start request). The host may still start the
+// app, which the app list then shows as running, and its reply is ignored (see startGame). The launch or resume request
+// that is in flight gets STREAM_START_REQUEST_CANCEL_GRACE_MS to answer; then the module cancels it, so that the refresh
+// of the server info for the app list doesn't wait behind it: before 2.3.2 it waited for as long as the host held the
+// request, on 'Loading Apps...'. One that hasn't left the TV yet never does.
 function cancelStreamLaunch() {
   console.log('%c[index.js, cancelStreamLaunch]', 'color: green;', 'Cancelling the start of the stream.');
   // The host may already hold this start, which no request can call back (rememberHeldHostStart())
@@ -4723,6 +4876,9 @@ function cancelStreamLaunch() {
   streamLaunchId++;
   isInGame = false;
   wasmSessionStarted = false;
+  if (typeof cancelStreamStartRequests === 'function') {
+    cancelStreamStartRequests(STREAM_START_REQUEST_CANCEL_GRACE_MS);
+  }
   leaveStreamView(streamLaunchHost || api);
 }
 
