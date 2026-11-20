@@ -2,7 +2,7 @@
 
 All notable changes to Moonlight Plus, by version, newest first. Each version lists what is new since the version before it; the [patch notes](docs/PATCH_NOTES.md) sum them up for users.
 
-## 2.3.2 (unreleased)
+## 2.3.2 (2026-11-20)
 
 ### Added
 - Added *Function keys…* to the Stream Menu: F1 to F12 as a block of keys, 4 in a row like the three blocks of a PC keyboard (`#streamFKeysPanel` in `index.html`, `STREAM_FUNCTION_KEYS` in `menus.js`). Each key goes down and up on its own (Windows virtual-key codes 0x70 to 0x7B, which every host types with the same scan code on every keyboard layout), and OK sends it and returns to the game. LEFT and RIGHT step by one key and run on into the row before or after it, UP and DOWN jump a row, nothing wraps, and the panel always opens on F1 (`Views.StreamFKeys` in `navigation.js`). The remote has no F keys, so this is the way to send them without a keyboard.
