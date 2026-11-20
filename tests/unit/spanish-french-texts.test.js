@@ -200,3 +200,38 @@ test('a line without an entry says "none" in the gender of its noun, as a text o
   assert.equal((sources.match(/t\('None'\)/g) || []).length, 1);
   assert.match(sources, /return target === MAPPED_BUTTON_NONE \? t\('None'\) :/);
 });
+
+test('the panels of the Stream Menu and the power command: the no-break space of French, the colour key in a sentence, comando in Spanish', () => {
+  const k11 = 'Only for a Windows PC that shows its desktop or a game, not the lock screen. Moonlight Plus opens Run (Windows key + R) and types the command. If an app has unsaved work, Windows asks first. Some games block the Windows key: switch to the desktop first (Alt + Tab).';
+  const countdowns = ['%1$s shuts down in a few seconds. To cancel (e.g. on the lock screen): RETURN or RED',
+    '%1$s restarts in a few seconds. To cancel (e.g. on the lock screen): RETURN or RED',
+    'The PC shuts down in a few seconds. To cancel (e.g. on the lock screen): RETURN or RED',
+    'The PC restarts in a few seconds. To cancel (e.g. on the lock screen): RETURN or RED'];
+  ['RETURN or B: back to the Stream Menu', 'Shut down or restart the PC?', k11].concat(countdowns).forEach((key) => {
+    assert.ok(!/[^ ][:?]/.test(french[key]) && / [:?]/.test(french[key]), 'fr: ' + french[key]);
+  });
+  countdowns.forEach((key) => {
+    assert.ok(spanish[key].endsWith('Para cancelar (p. ej., en la pantalla de bloqueo): RETURN o botón rojo'), key);
+    assert.ok(french[key].endsWith('Pour annuler (par exemple sur l’écran de verrouillage) : RETURN ou touche rouge'), key);
+  });
+  assert.equal(spanish['Shut down or restart the PC?'], '¿Apagar o reiniciar el PC?');
+  // Unsaved work comes first, so that the sentence can't be read as 'Windows asks whether …'
+  assert.ok(spanish[k11].indexOf('Si una aplicación tiene cambios sin guardar, Windows pregunta antes.') > 0, spanish[k11]);
+  assert.ok(french[k11].indexOf('Si une application a des modifications non enregistrées, Windows demande d’abord confirmation.') > 0, french[k11]);
+  // A host without a name: a sentence of its own that starts with a capital letter
+  assert.equal(spanish['The PC is shutting down.'], 'El PC se está apagando.');
+  assert.equal(french['The PC is shutting down.'], 'Le PC s’éteint.');
+  // The menu entry of the app list in its name of each language, quoted as the language does
+  const notListed = '%1$s runs an app that isn\'t in its app list. Quit it first with "Quit app on the PC", then try again.';
+  assert.ok(spanish[notListed].indexOf('«' + spanish['Quit app on the PC'] + '»') > 0, spanish[notListed]);
+  assert.ok(french[notListed].indexOf('«\u00a0' + french['Quit app on the PC'] + '\u00a0»') > 0, french[notListed]);
+  // "command" is "comando", as in the other Spanish texts, never "orden"
+  [k11, 'Shutdown command sent to the PC', 'Restart command sent to the PC', 'The command couldn\'t be sent to the PC. Try again.'].forEach((key) => {
+    assert.ok(/comando/i.test(spanish[key]) && !/\borden\b/i.test(spanish[key]), 'es: ' + spanish[key]);
+  });
+  [['es-ES', spanish], ['fr-FR', french]].forEach(([locale, texts]) => {
+    assert.ok(texts[k11].toLowerCase().indexOf(texts['Windows key'].toLowerCase() + ' + r') > 0, locale + ': ' + texts[k11]);
+    assert.ok(texts['RETURN or B: back to the Stream Menu'].endsWith(texts['Stream Menu']), locale);
+    assert.ok(texts['%1$s has no Desktop app to stream for this. Stream one of its apps and use the Stream Menu instead.'].indexOf(texts['Stream Menu']) > 0, locale);
+  });
+});

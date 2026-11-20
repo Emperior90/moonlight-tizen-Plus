@@ -389,7 +389,7 @@ test('running is mint on the hosts screen too: the chips of the hero and the car
   }
 });
 
-test('the host menu is a list like the app menu: an icon per entry, only the entries that can run, Delete PC in red after them and Close as the last entry', async () => {
+test('the host menu is a list like the app menu: an icon per entry, only the entries that can run, Shut down or restart the PC and Delete PC in red after them and Close as the last entry', async () => {
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
   try {
     await installHosts(app.page);
@@ -405,6 +405,8 @@ test('the host menu is a list like the app menu: an icon per entry, only the ent
           button.querySelector('use').getAttribute('xlink:href'), button.textContent, getComputedStyle(button).textAlign]),
         deleteColour: [getComputedStyle(document.getElementById('deleteHost-GAMING-PC')).color,
           getComputedStyle(document.querySelector('#deleteHost-GAMING-PC .overlay-menu-icon')).color],
+        powerColour: [getComputedStyle(document.getElementById('powerHost-GAMING-PC')).color,
+          getComputedStyle(document.querySelector('#powerHost-GAMING-PC .overlay-menu-icon')).color],
         disabled: dialog.querySelectorAll('button:disabled').length,
         focused: document.activeElement.id,
         focus: [getComputedStyle(document.activeElement).backgroundColor, getComputedStyle(document.activeElement).color],
@@ -412,16 +414,21 @@ test('the host menu is a list like the app menu: an icon per entry, only the ent
     });
     assert.deepEqual(menu, {
       likeAppMenu: true, title: 'GAMING-PC',
-      // An online host can't be woken, so Wake PC isn't there, and nothing shows disabled
+      // An online host can't be woken, so Wake PC isn't there, and nothing shows disabled. An online, paired PC can be
+      // shut down or restarted (since 2.3.2, pc-power.test.js), in red before Delete PC.
       entries: [['refreshApps-GAMING-PC', '#i-refresh', 'Refresh apps', 'left'], ['viewDetails-GAMING-PC', '#i-info', 'View Details', 'left'],
+        ['powerHost-GAMING-PC', '#i-power', 'Shut down or restart the PC…', 'left'],
         ['deleteHost-GAMING-PC', '#i-trash', 'Delete PC', 'left'], ['closeHostMenu', '#i-close', 'Close', 'left']],
-      deleteColour: ['rgb(255, 141, 161)', 'rgb(255, 92, 122)'], disabled: 0,
+      deleteColour: ['rgb(255, 141, 161)', 'rgb(255, 92, 122)'], powerColour: ['rgb(255, 141, 161)', 'rgb(255, 92, 122)'], disabled: 0,
       focused: 'refreshApps-GAMING-PC', focus: ['rgb(255, 255, 255)', 'rgb(10, 13, 26)'],
     });
     // DOWN moves through the entries that show, and Close closes the menu (Views.HostMenuDialog)
     assert.deepEqual(await app.page.evaluate(() => Views.HostMenuDialog.view.func()),
-      ['refreshApps-GAMING-PC', 'viewDetails-GAMING-PC', 'deleteHost-GAMING-PC', 'closeHostMenu']);
+      ['refreshApps-GAMING-PC', 'viewDetails-GAMING-PC', 'powerHost-GAMING-PC', 'deleteHost-GAMING-PC', 'closeHostMenu']);
     await app.page.keyboard.press('ArrowDown');
+    await app.page.keyboard.press('ArrowDown');
+    await app.page.waitForTimeout(200);
+    assert.equal(await app.page.evaluate(() => document.activeElement.id), 'powerHost-GAMING-PC');
     await app.page.keyboard.press('ArrowDown');
     await app.page.waitForTimeout(200);
     assert.equal(await app.page.evaluate(() => document.activeElement.id), 'deleteHost-GAMING-PC');

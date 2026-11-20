@@ -86,7 +86,7 @@ X means the left face button (Square on PlayStation controllers), whatever the b
 - If one of them was held alone for longer than 0.1 seconds first, the game has it already: it sees that button held until the menu opens.
 - Pressing LB + RB as well within the second ends the stream instead (the stop combo). The hold of Start for the mouse emulation never counts a hold of Select + Start.
 
-**While the Stream Menu is open**, the PC gets every controller released (no buttons, sticks centered, triggers at 0) and no mouse buttons, and the controllers move through the menu like through the other menus (D-pad or left stick, A to choose, B back to the game). Buttons that are still held when the menu closes, e.g. A on *Resume*, reach the game only after you release them and press them again. Mouse emulation stays as it was.
+**While the Stream Menu is open**, the PC gets every controller released (no buttons, sticks centered, triggers at 0) and no mouse buttons, and the controllers move through the menu like through the other menus (D-pad or left stick, A to choose, B back one level: from a panel such as *Shortcuts…* or *Function keys…* to the menu, from the menu to the game). After *Shut down or restart the PC*, the PC gets no controller input either until the command is typed (about 3 seconds; from the PC list about 8, counted from the picture). Buttons that are still held when the menu closes, e.g. A on *Resume*, reach the game only after you release them and press them again. Mouse emulation stays as it was.
 
 ## Controller type sent to the PC
 

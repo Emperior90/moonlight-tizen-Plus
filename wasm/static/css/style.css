@@ -2124,8 +2124,9 @@ dialog::backdrop {
   margin-right: var(--safe-x);
 }
 /* The Stream Menu has the most entries: a little tighter, so that all of them and the hint fit the safe area of the
-   screen with the mouse emulation entry of a controller and the surround quality entry of a 5.1 or 7.1 stream (14
-   entries), and with the notes of a changed bitrate and a changed quality at the same time */
+   screen with the mouse emulation entry of a controller and the surround quality entry of a 5.1 or 7.1 stream (12
+   entries since 2.3.2, which put the keys for the PC into panels of their own), and with the notes of a changed bitrate
+   and a changed quality at the same time */
 .stream-menu .overlay-menu-header {
   padding-bottom: 8px;
 }
@@ -2151,6 +2152,53 @@ dialog::backdrop {
   margin-top: 54px;
 }
 #streamTextPanel .overlay-menu-subtitle {
+  white-space: normal;
+}
+/* The arrow of an entry that opens a list of further entries in its place ('Shortcuts…', 'Function keys…'): the arrow
+   of the steppers, flipped */
+.overlay-menu-more {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-left: 12px;
+  color: var(--text-3);
+  transform: scaleX(-1);
+}
+.overlay-menu-item.hovered .overlay-menu-more, .overlay-menu-item:hover .overlay-menu-more,
+.overlay-menu-item:focus .overlay-menu-more {
+  color: var(--text-on-focus);
+}
+/* The function keys of 'Function keys…' as a block of keys: 4 in a row, like the 3 blocks of F1 to F12 of a PC keyboard.
+   After the tighter entries of the Stream Menu above, which have the same specificity otherwise. */
+.stream-key-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-gap: 8px;
+  margin: 4px 0 2px;
+}
+.stream-menu .stream-key-grid .overlay-menu-item {
+  justify-content: center;
+  min-height: 56px;
+  margin: 0;
+  padding: 6px 8px;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+.stream-key-grid .overlay-menu-label {
+  flex: 0 1 auto;
+  white-space: nowrap;
+  text-align: center;
+}
+/* The explanation of the question 'Shut down or restart the PC?', which wraps */
+.overlay-menu-text {
+  margin: 10px 0 6px;
+  color: var(--text-2);
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: normal;
+}
+/* That question may take two lines on a TV that draws text wider, instead of being cut */
+#streamPowerTitle, #pcPowerDialogTitle {
   white-space: normal;
 }
 .overlay-menu-header {
@@ -2258,6 +2306,11 @@ dialog::backdrop {
   line-height: 1.2;
   letter-spacing: 2.5px;
   text-transform: uppercase;
+}
+/* A group right under the header (the panel of 'Shortcuts…') draws no line there, like the first entries of the other
+   menus */
+.overlay-menu-header + .overlay-menu-group {
+  border-top: 0;
 }
 .overlay-menu-separator {
   margin: 12px 18px 16px;

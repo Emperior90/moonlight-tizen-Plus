@@ -2,7 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
-- [2.3.2](#232): pre-release, finer frame times, how fast frames arrive, more facts in the log and a fix for recovery keyframes
+- [2.3.2](#232): pre-release, a tidier Stream Menu with F keys and PC shutdown, finer frame times, how fast frames arrive, more facts in the log and a fix for recovery keyframes
 - [2.3.1](#231): 2026-11-18, lighter sound and statistics, fewer double presses, a switch for sound on Wi-Fi, and fixes from a review and from other Moonlight clients
 - [2.3.0](#230): 2026-11-08, smoother motion, a picture refresh in the Stream Menu and a longer guide
 - [2.2.1](#221): 2026-11-05, no more 144 FPS, and controllers that work on 2020 TVs
@@ -20,19 +20,20 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ## 2.3.2
 
-*Pre-release, in testing.* Finer frame times with their longest values, how fast frames arrive, more log facts, and fixes for a stuck start and keyframe counts.
+*Pre-release, in testing.* A tidier Stream Menu with F keys and PC shutdown, finer frame times, how fast frames arrive, more log facts and fixes.
 
 > **Install:** by hand over 2.3.1 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >
-> **Tested:** with simulated TVs and hosts only; the new figures, the log lines and the fixes still need a test on a TV.
+> **Tested:** with simulated TVs and hosts only; the new figures, the log lines and the fixes still need a test on a TV, and the PC commands on a Windows PC.
 
 ### New
 
+- A tidier Stream Menu: *Shortcuts…* groups the keys for the PC, and *Function keys…* sends F1 to F12
+- *Shut down or restart the PC…* in the Stream Menu and in a PC's menu, for a Windows PC, asks first
 - *Full* statistics and *Last session* show how fast frames arrive, e.g. *Frames arrive at: 275 Mbps*
 - It is how fast the TV receives a frame, not the bitrate; a TV's Wi-Fi usually stays well below its link rate
 - They also show the longest time a single frame took at each step on the TV
 - The diagnostic log names what the TV supports of WebAssembly and if its sockets take the network priority
-- These figures show where the delay comes from; they don't make the stream faster by themselves
 - The start screen names the keys that cancel a start: RETURN or RED (RETURN did nothing there before)
 
 ### Changed

@@ -883,6 +883,28 @@
       </div>
     </dialog>
   </div>
+  <!-- 'Shut down or restart the PC…' in the menu of a PC (index.js, pcPowerDialog()): the question, in the list style of
+       the menu of the PC and of the same question in the Stream Menu, since its three choices don't fit the buttons of
+       a dialog side by side; it opens on Cancel -->
+  <div id="pcPowerDialogOverlay" class="dialog-overlay">
+    <dialog id="pcPowerDialog" class="overlay-menu host-menu-dialog" aria-labelledby="pcPowerDialogTitle" aria-describedby="pcPowerDialogText pcPowerDialogSession">
+      <div class="overlay-menu-header">
+        <h3 id="pcPowerDialogTitle" class="overlay-menu-title" data-i18n="Shut down or restart the PC?">Shut down or restart the PC?</h3>
+        <div id="pcPowerDialogSubtitle" class="overlay-menu-subtitle"></div>
+        <p id="pcPowerDialogText" class="overlay-menu-text" data-i18n="Only for a Windows PC that shows its desktop or a game, not the lock screen. Moonlight Plus opens Run (Windows key + R) and types the command. If an app has unsaved work, Windows asks first. Some games block the Windows key: switch to the desktop first (Alt + Tab).">Only for a Windows PC that shows its desktop or a game, not the lock screen. Moonlight Plus opens Run (Windows key + R) and types the command. If an app has unsaved work, Windows asks first. Some games block the Windows key: switch to the desktop first (Alt + Tab).</p>
+        <p id="pcPowerDialogSession" class="overlay-menu-text" data-i18n="For this, Moonlight Plus first streams the app that runs on the PC, or else its Desktop app, for a few seconds.">For this, Moonlight Plus first streams the app that runs on the PC, or else its Desktop app, for a few seconds.</p>
+      </div>
+      <button type="button" id="cancelPcPower" class="overlay-menu-item">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-close"/></svg><span class="overlay-menu-label" data-i18n="Cancel">Cancel</span>
+      </button>
+      <button type="button" id="restartPcPower" class="overlay-menu-item is-danger">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-refresh"/></svg><span class="overlay-menu-label" data-i18n="Restart the PC">Restart the PC</span>
+      </button>
+      <button type="button" id="shutdownPcPower" class="overlay-menu-item is-danger">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-power"/></svg><span class="overlay-menu-label" data-i18n="Shut down the PC">Shut down the PC</span>
+      </button>
+    </dialog>
+  </div>
   <div id="appSupportDialogOverlay" class="dialog-overlay">
     <dialog id="appSupportDialog" class="mdl-dialog">
       <span class="dialog-badge" aria-hidden="true"><svg class="icon"><use xlink:href="#i-help"/></svg></span>
@@ -1094,27 +1116,21 @@
       <button type="button" id="streamMenuText" class="overlay-menu-item" role="menuitem">
         <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-keyboard"/></svg><span class="overlay-menu-label" data-i18n="Type text…">Type text…</span>
       </button>
-      <button type="button" id="streamMenuKeyWin" class="overlay-menu-item" role="menuitem">
-        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-keyboard"/></svg><span class="overlay-menu-label" data-i18n="Windows key">Windows key</span>
+      <button type="button" id="streamMenuShortcuts" class="overlay-menu-item" role="menuitem" aria-haspopup="menu">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-layout"/></svg><span class="overlay-menu-label" data-i18n="Shortcuts…">Shortcuts…</span><svg class="overlay-menu-more icon" aria-hidden="true"><use xlink:href="#i-back"/></svg>
       </button>
-      <button type="button" id="streamMenuKeyAltTab" class="overlay-menu-item" role="menuitem">
-        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-keyboard"/></svg><span class="overlay-menu-label">Alt + Tab</span>
-      </button>
-      <button type="button" id="streamMenuKeyAltF4" class="overlay-menu-item" role="menuitem">
-        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-keyboard"/></svg><span class="overlay-menu-label">Alt + F4</span>
-      </button>
-      <button type="button" id="streamMenuKeyEsc" class="overlay-menu-item" role="menuitem">
-        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-keyboard"/></svg><span class="overlay-menu-label">Esc</span>
-      </button>
-      <button type="button" id="streamMenuKeyAltEnter" class="overlay-menu-item" role="menuitem">
-        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-keyboard"/></svg><span class="overlay-menu-label">Alt + Enter</span>
+      <button type="button" id="streamMenuFKeys" class="overlay-menu-item" role="menuitem" aria-haspopup="menu">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-apps"/></svg><span class="overlay-menu-label" data-i18n="Function keys…">Function keys…</span><svg class="overlay-menu-more icon" aria-hidden="true"><use xlink:href="#i-back"/></svg>
       </button>
       <div class="overlay-menu-separator"></div>
       <button type="button" id="streamMenuDisconnect" class="overlay-menu-item" role="menuitem">
         <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-stop"/></svg><span class="overlay-menu-label" data-i18n="Disconnect">Disconnect</span>
       </button>
       <button type="button" id="streamMenuQuit" class="overlay-menu-item is-danger" role="menuitem">
-        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-power"/></svg><span class="overlay-menu-label" data-i18n="Quit app on the PC">Quit app on the PC</span>
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-quit"/></svg><span class="overlay-menu-label" data-i18n="Quit app on the PC">Quit app on the PC</span>
+      </button>
+      <button type="button" id="streamMenuPower" class="overlay-menu-item is-danger" role="menuitem" aria-haspopup="dialog">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-power"/></svg><span class="overlay-menu-label" data-i18n="Shut down or restart the PC…">Shut down or restart the PC…</span>
       </button>
       <div class="overlay-menu-hint" data-i18n="RETURN, Play/Pause or B: back to the game">RETURN, Play/Pause or B: back to the game</div>
     </div>
@@ -1133,6 +1149,72 @@
         <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-close"/></svg><span class="overlay-menu-label" data-i18n="Cancel">Cancel</span>
       </button>
       <div class="overlay-menu-hint" data-i18n="OK on the field opens the keyboard of the TV, whose Done key sends the text. RETURN or B: back to the Stream Menu">OK on the field opens the keyboard of the TV, whose Done key sends the text. RETURN or B: back to the Stream Menu</div>
+    </div>
+    <!-- 'Shortcuts…' of the Stream Menu (platform/menus.js): the key combinations for the PC, in two groups -->
+    <div id="streamShortcutsPanel" class="overlay-menu stream-menu" role="menu" aria-labelledby="streamShortcutsTitle" hidden>
+      <div class="overlay-menu-header">
+        <h3 id="streamShortcutsTitle" class="overlay-menu-title" data-i18n="Shortcuts">Shortcuts</h3>
+        <div id="streamShortcutsSubtitle" class="overlay-menu-subtitle"></div>
+      </div>
+      <div class="overlay-menu-group" data-i18n="In the game">In the game</div>
+      <button type="button" id="streamMenuKeyAltEnter" class="overlay-menu-item" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-keyboard"/></svg><span class="overlay-menu-label">Alt + Enter</span>
+      </button>
+      <button type="button" id="streamMenuKeyEsc" class="overlay-menu-item" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-keyboard"/></svg><span class="overlay-menu-label">Esc</span>
+      </button>
+      <button type="button" id="streamMenuKeyAltF4" class="overlay-menu-item" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-keyboard"/></svg><span class="overlay-menu-label">Alt + F4</span>
+      </button>
+      <!-- The name of the group is the same in every language -->
+      <div class="overlay-menu-group">Windows</div>
+      <button type="button" id="streamMenuKeyWin" class="overlay-menu-item" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-keyboard"/></svg><span class="overlay-menu-label" data-i18n="Windows key">Windows key</span>
+      </button>
+      <button type="button" id="streamMenuKeyAltTab" class="overlay-menu-item" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-keyboard"/></svg><span class="overlay-menu-label">Alt + Tab</span>
+      </button>
+      <div class="overlay-menu-hint" data-i18n="RETURN or B: back to the Stream Menu">RETURN or B: back to the Stream Menu</div>
+    </div>
+    <!-- 'Function keys…' of the Stream Menu (platform/menus.js): F1 to F12 in rows of 4, like the blocks of a PC keyboard -->
+    <div id="streamFKeysPanel" class="overlay-menu stream-menu" role="menu" aria-labelledby="streamFKeysTitle" hidden>
+      <div class="overlay-menu-header">
+        <h3 id="streamFKeysTitle" class="overlay-menu-title" data-i18n="Function keys">Function keys</h3>
+        <div id="streamFKeysSubtitle" class="overlay-menu-subtitle"></div>
+      </div>
+      <div class="stream-key-grid" role="group" aria-labelledby="streamFKeysTitle">
+        <button type="button" id="streamMenuKeyF1" class="overlay-menu-item" role="menuitem"><span class="overlay-menu-label">F1</span></button>
+        <button type="button" id="streamMenuKeyF2" class="overlay-menu-item" role="menuitem"><span class="overlay-menu-label">F2</span></button>
+        <button type="button" id="streamMenuKeyF3" class="overlay-menu-item" role="menuitem"><span class="overlay-menu-label">F3</span></button>
+        <button type="button" id="streamMenuKeyF4" class="overlay-menu-item" role="menuitem"><span class="overlay-menu-label">F4</span></button>
+        <button type="button" id="streamMenuKeyF5" class="overlay-menu-item" role="menuitem"><span class="overlay-menu-label">F5</span></button>
+        <button type="button" id="streamMenuKeyF6" class="overlay-menu-item" role="menuitem"><span class="overlay-menu-label">F6</span></button>
+        <button type="button" id="streamMenuKeyF7" class="overlay-menu-item" role="menuitem"><span class="overlay-menu-label">F7</span></button>
+        <button type="button" id="streamMenuKeyF8" class="overlay-menu-item" role="menuitem"><span class="overlay-menu-label">F8</span></button>
+        <button type="button" id="streamMenuKeyF9" class="overlay-menu-item" role="menuitem"><span class="overlay-menu-label">F9</span></button>
+        <button type="button" id="streamMenuKeyF10" class="overlay-menu-item" role="menuitem"><span class="overlay-menu-label">F10</span></button>
+        <button type="button" id="streamMenuKeyF11" class="overlay-menu-item" role="menuitem"><span class="overlay-menu-label">F11</span></button>
+        <button type="button" id="streamMenuKeyF12" class="overlay-menu-item" role="menuitem"><span class="overlay-menu-label">F12</span></button>
+      </div>
+      <div class="overlay-menu-hint" data-i18n="RETURN or B: back to the Stream Menu">RETURN or B: back to the Stream Menu</div>
+    </div>
+    <!-- 'Shut down or restart the PC…' of the Stream Menu (platform/menus.js): the question, which opens on Cancel -->
+    <div id="streamPowerPanel" class="overlay-menu stream-menu" role="dialog" aria-labelledby="streamPowerTitle" aria-describedby="streamPowerText" hidden>
+      <div class="overlay-menu-header">
+        <h3 id="streamPowerTitle" class="overlay-menu-title" data-i18n="Shut down or restart the PC?">Shut down or restart the PC?</h3>
+        <div id="streamPowerSubtitle" class="overlay-menu-subtitle"></div>
+        <p id="streamPowerText" class="overlay-menu-text" data-i18n="Only for a Windows PC that shows its desktop or a game, not the lock screen. Moonlight Plus opens Run (Windows key + R) and types the command. If an app has unsaved work, Windows asks first. Some games block the Windows key: switch to the desktop first (Alt + Tab).">Only for a Windows PC that shows its desktop or a game, not the lock screen. Moonlight Plus opens Run (Windows key + R) and types the command. If an app has unsaved work, Windows asks first. Some games block the Windows key: switch to the desktop first (Alt + Tab).</p>
+      </div>
+      <button type="button" id="streamPowerCancel" class="overlay-menu-item" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-close"/></svg><span class="overlay-menu-label" data-i18n="Cancel">Cancel</span>
+      </button>
+      <button type="button" id="streamPowerRestart" class="overlay-menu-item is-danger" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-refresh"/></svg><span class="overlay-menu-label" data-i18n="Restart the PC">Restart the PC</span>
+      </button>
+      <button type="button" id="streamPowerShutdown" class="overlay-menu-item is-danger" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-power"/></svg><span class="overlay-menu-label" data-i18n="Shut down the PC">Shut down the PC</span>
+      </button>
+      <div class="overlay-menu-hint" data-i18n="RETURN or B: back to the Stream Menu">RETURN or B: back to the Stream Menu</div>
     </div>
   </div>
   <!-- Menu of an app tile (platform/menus.js) -->

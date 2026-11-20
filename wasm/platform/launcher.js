@@ -610,8 +610,16 @@ const Launcher = (function() {
           escapeHTML(tile[1]) + '</span><span class="value-unit">' + escapeHTML(tile[2]) + '</span></div>';
       }).join('');
     },
-    // Fill the start screen of a stream: the box art as a poster, the title and the host (startGame())
-    prepareStart: function(host, appId, title) {
+    // Fill the start screen of a stream: the box art as a poster, the title and the host (startGame()), and over them
+    // what the start is for: the key of a text (overlineKey, e.g. 'Shut down the PC' for a session of the menu of a PC),
+    // or 'Starting'. The key stays on the element, so that a change of the language translates it.
+    prepareStart: function(host, appId, title, overlineKey) {
+      const overline = document.querySelector('.launch-overline');
+      if (overline) {
+        const key = overlineKey || 'Starting';
+        overline.setAttribute('data-i18n', key);
+        overline.textContent = t(key);
+      }
       const art = artOf(byId('game-container-' + appId));
       const poster = byId('launch-poster');
       if (poster) {

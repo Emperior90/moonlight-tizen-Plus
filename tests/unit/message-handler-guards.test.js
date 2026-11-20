@@ -110,3 +110,75 @@ test('handlePromiseMessage() settles a request once, and only logs an answer tha
   assert.equal(app.errors().length, 1);
   assert.match(app.errors()[0], /Error: handlePromiseMessage failed: Error: broken callback/);
 });
+
+test('an error in endPcPowerCommand() at the end of a stream still leaves the stream view and shows the message', () => {
+  const app = loadMessages([]);
+  app.platform.context.endPcPowerCommand = () => {
+    app.steps.push('endPcPowerCommand');
+    throw new Error('endPcPowerCommand is broken');
+  };
+  assert.doesNotThrow(() => app.platform.get('handleMessage')('streamTerminated: -101'));
+  assert.deepEqual(app.steps, ['closeStreamMenu', 'endPcPowerCommand', 'Rumble.stopAll', 'setTvScreenSaver', 'stopAudioScheduler',
+    '#connection-warnings, #performance-stats display none', '#loadingSpinner display none', '#wasm_module display none',
+    'message: Your network connection isn\'t performing well. Reduce your video bitrate setting or try a faster connection.']);
+  assert.equal(app.errors().length, 1);
+  assert.match(app.errors()[0], /Error: endPcPowerCommand failed: Error: endPcPowerCommand is broken/);
+});
+
+test('the end of a stream after the power command of the PC goes to the PC list without the error, the retry or the reconnect', () => {
+  for (const [ending, code, message] of [['pc', -100, 'message: %1$s is shutting down.'], ['pc', 0, 'message: %1$s is restarting.'], ['tv', -1, null]]) {
+    const app = loadMessages([]);
+    const context = app.platform.context;
+    context.endPcPowerCommand = (errorCode) => {
+      app.steps.push('endPcPowerCommand ' + errorCode);
+      return { ending, kind: message && message.indexOf('restarting') >= 0 ? 'restart' : 'shutdown', host: { hostname: 'GAMING-PC' } };
+    };
+    context.showHosts = () => app.steps.push('showHosts');
+    context.retryStreamStart = () => app.steps.push('retryStreamStart');
+    context.resumeStreamAfterSettingsChange = () => app.steps.push('resumeStreamAfterSettingsChange');
+    context.pendingStreamRestart = { bitrateMbps: 20 };
+    app.platform.get('handleMessage')('streamTerminated: ' + code);
+    assert.deepEqual(app.steps, ['closeStreamMenu', 'endPcPowerCommand ' + code, 'Rumble.stopAll', 'setTvScreenSaver', 'stopAudioScheduler',
+      '#connection-warnings, #performance-stats display none', '#loadingSpinner display none', '#wasm_module display none', 'showHosts']
+      .concat(message ? [message] : []), ending + ' ' + code);
+    assert.equal(context.pendingStreamRestart, null);
+    assert.deepEqual(app.errors(), []);
+  }
+});
+
+test('the PC list says at once that the PC shuts down or restarts, in a sentence of its own for a PC without a name', () => {
+  for (const [hostname, kind, message] of [['GAMING-PC', 'shutdown', 'message: %1$s is shutting down.'], ['', 'shutdown', 'message: The PC is shutting down.'],
+    ['', 'restart', 'message: The PC is restarting.']]) {
+    const app = loadMessages([]);
+    const context = app.platform.context;
+    context.streamLaunchHost = { hostname: '' };
+    context.endPcPowerCommand = () => ({ ending: 'pc', kind, host: { hostname } });
+    context.showHosts = () => app.steps.push('showHosts');
+    // The message that still shows (the command sent, the hint) ends first
+    context.dismissSnackbar = () => app.steps.push('dismissSnackbar');
+    app.platform.get('handleMessage')('streamTerminated: 0');
+    assert.deepEqual(app.steps.slice(-3), ['showHosts', 'dismissSnackbar', message], hostname + ' ' + kind);
+    assert.deepEqual(app.errors(), []);
+  }
+});
+
+test('a session of the PC list that launched its app quits it at an end before the command, unless the stream starts once more', () => {
+  for (const retried of [true, false]) {
+    const app = loadMessages([]);
+    const context = app.platform.context;
+    context.streamLaunchHost = { hostname: 'GAMING-PC', toString: () => 'GAMING-PC' };
+    context.endPcPowerCommand = () => ({ ending: 'quit', mayRetry: true, kind: 'shutdown', host: context.streamLaunchHost });
+    context.retryStreamStart = (kind) => {
+      app.steps.push('retryStreamStart ' + kind);
+      return retried;
+    };
+    context.stopGame = () => app.steps.push('stopGame');
+    app.platform.get('handleMessage')('streamTerminated: -100');
+    // Without the start once more, the app is quit (stopGame()) and the message of no video follows as usual
+    const end = app.steps.filter((entry) => /^(retryStreamStart|stopGame)/.test(entry));
+    assert.deepEqual(end, retried ? ['retryStreamStart noVideo'] : ['retryStreamStart noVideo', 'stopGame'], String(retried));
+    assert.equal(app.steps.some((entry) => entry.indexOf('message: No video received') === 0), !retried, String(retried));
+    // The stream view goes once (removeStreamView() of leaveStreamView()), or not at all for the start once more
+    assert.equal(app.steps.filter((entry) => entry === 'setTvScreenSaver').length, retried ? 0 : 1, String(retried));
+  }
+});

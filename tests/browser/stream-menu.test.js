@@ -6,11 +6,13 @@
 // through it while no key reaches the stream (a listener on the video element stands in for the keyboard handler of the
 // module), RETURN and B close it and resume the stream, and its entries run: the performance statistics, the mouse
 // emulation (its entry shows for a controller that reports a timestamp of 0 once its input changed, Tizen 5.5, before
-// that input moves the selection), the keys for the PC (every key released again), Disconnect and 'Quit app on the PC'. It
+// that input moves the selection), the keys for the PC (every key released again; since 2.3.2 in the panel of
+// 'Shortcuts…', whose buttons still run with a click), Disconnect and 'Quit app on the PC'. It
 // stays inside the safe area of the screen with every entry showing without scrolling and every label on one line in
 // every language, also with text 10 % wider than this machine draws it (tests/browser/text-stress.js), and the video
 // keeps showing, also with the surround quality entry of a 5.1 stream and the notes of a changed bitrate and quality.
-// The bitrate and surround quality entries and 'Type text…' are checked by stream-menu-entries.test.js. The controller
+// The bitrate and surround quality entries and 'Type text…' are checked by stream-menu-entries.test.js, the panels of
+// 'Shortcuts…', 'Function keys…' and 'Shut down or restart the PC…' by stream-menu-panels.test.js. The controller
 // side (the
 // combo and the controller input while the menu is open) is pinned by tests/native/stream_menu_combo_test.cpp.
 // A stick that snaps back past its centre when it is let go steps once in the menu (it used to step back, e.g. from the
@@ -173,8 +175,10 @@ test('Play/Pause opens the Stream Menu over the stream, the remote moves in it, 
     let state = await menuState(app.page);
     assert.deepEqual(state, {
       open: true, shown: 'flex', focused: 'streamMenuResume', subtitle: 'Game 8 · GAMING-PC',
-      entries: ['streamMenuResume', 'streamMenuStats', 'streamMenuBitrate', 'streamMenuRefresh', 'streamMenuText', 'streamMenuKeyWin', 'streamMenuKeyAltTab',
-        'streamMenuKeyAltF4', 'streamMenuKeyEsc', 'streamMenuKeyAltEnter', 'streamMenuDisconnect', 'streamMenuQuit'],
+      // Since 2.3.2 the keys for the PC are in the panels of 'Shortcuts…' and 'Function keys…' (stream-menu-panels.test.js),
+      // and 'Shut down or restart the PC…' is the last entry
+      entries: ['streamMenuResume', 'streamMenuStats', 'streamMenuBitrate', 'streamMenuRefresh', 'streamMenuText', 'streamMenuShortcuts',
+        'streamMenuFKeys', 'streamMenuDisconnect', 'streamMenuQuit', 'streamMenuPower'],
     });
     assert.deepEqual(await moduleCalls(app.page), ['setStreamMenuOpen true'], 'the module stops the controller input of the PC');
     // The video keeps playing behind the menu
@@ -188,7 +192,7 @@ test('Play/Pause opens the Stream Menu over the stream, the remote moves in it, 
     await remoteKey(app.page, ...DOWN);
     await remoteKey(app.page, ...DOWN);
     await remoteKey(app.page, ...DOWN);
-    assert.equal((await menuState(app.page)).focused, 'streamMenuKeyAltTab');
+    assert.equal((await menuState(app.page)).focused, 'streamMenuFKeys');
 
     // RETURN closes it and gives the stream the focus back
     await remoteKey(app.page, ...RETURN);
@@ -235,13 +239,13 @@ test('Play/Pause opens the Stream Menu over the stream, the remote moves in it, 
   }
 });
 
-test('UP and DOWN stop at the ends of the Stream Menu, so one UP from Resume never selects the entry that quits the app', async () => {
+test('UP and DOWN stop at the ends of the Stream Menu, so one UP from Resume never selects the entries that quit the app or shut down the PC', async () => {
   const app = await openStreaming({ gamepad: true });
   try {
     await remoteKey(app.page, ...PLAY_PAUSE);
     const entries = (await menuState(app.page)).entries;
     assert.equal(entries[0], 'streamMenuResume');
-    assert.equal(entries[entries.length - 1], 'streamMenuQuit');
+    assert.deepEqual(entries.slice(-2), ['streamMenuQuit', 'streamMenuPower']);
     // UP on the first entry stays there, with the remote and with the D-pad of a gamepad
     await remoteKey(app.page, ...UP);
     assert.equal((await menuState(app.page)).focused, 'streamMenuResume');
@@ -266,9 +270,9 @@ test('UP and DOWN stop at the ends of the Stream Menu, so one UP from Resume nev
     for (let i = 0; i < entries.length + 2; i++) {
       await remoteKey(app.page, ...DOWN);
     }
-    assert.equal((await menuState(app.page)).focused, 'streamMenuQuit');
+    assert.equal((await menuState(app.page)).focused, 'streamMenuPower');
     await remoteKey(app.page, ...UP);
-    assert.equal((await menuState(app.page)).focused, 'streamMenuDisconnect');
+    assert.equal((await menuState(app.page)).focused, 'streamMenuQuit');
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
@@ -340,7 +344,8 @@ test('the Stream Menu stays inside the safe area of the screen', async () => {
       return { entries: getOverlayMenuItems('streamMenu').length, note: $('#streamMenuBitrateNote').text() !== '',
         surroundNote: $('#streamMenuSurroundNote').text() !== '', scrollHeight: menu.scrollHeight, clientHeight: menu.clientHeight };
     });
-    assert.equal(fit.entries, 14);
+    // 12 since 2.3.2, which put the keys for the PC into panels (14 before)
+    assert.equal(fit.entries, 12);
     assert.equal(fit.note, true);
     assert.equal(fit.surroundNote, true);
     assert.ok(fit.scrollHeight <= fit.clientHeight, JSON.stringify(fit));
@@ -707,7 +712,7 @@ test('the mouse emulation entry asks the module and shows its answer, the key en
   }
 });
 
-test('when the mouse emulation entry goes under the selection, the entry before it is selected, not the Windows key', async () => {
+test('when the mouse emulation entry goes under the selection, the entry before it is selected, not the one after it', async () => {
   const app = await openStreaming({ gamepad: true });
   try {
     // The controller turned the mouse emulation on and then dropped out (e.g. an empty battery), so the entry shows
@@ -739,26 +744,26 @@ test('when the mouse emulation entry goes under the selection, the entry before 
     assert.deepEqual(await selection(), { focused: 'streamMenuStats', current: 'streamMenuStats', marked: ['streamMenuStats'] });
     assert.equal((await menuState(app.page)).entries.includes('streamMenuMouse'), false);
 
-    // The next OK toggles the statistics instead of pressing the Windows key on the PC
+    // The next OK toggles the statistics instead of running the entry after it
     await app.page.evaluate(() => window.__wasmCalls.splice(0));
     await remoteKey(app.page, ...ENTER);
     assert.deepEqual(await moduleCalls(app.page), ['toggleStats']);
     assert.equal((await menuState(app.page)).open, true);
-    // DOWN goes on to the bitrate entry, the entry after the statistics now, and on to the Windows key
+    // DOWN goes on to the bitrate entry, the entry after the statistics now, and on to 'Shortcuts…'
     await remoteKey(app.page, ...DOWN);
     assert.deepEqual(await selection(), { focused: 'streamMenuBitrate', current: 'streamMenuBitrate', marked: ['streamMenuBitrate'] });
     await remoteKey(app.page, ...DOWN);
     await remoteKey(app.page, ...DOWN);
     await remoteKey(app.page, ...DOWN);
-    assert.deepEqual(await selection(), { focused: 'streamMenuKeyWin', current: 'streamMenuKeyWin', marked: ['streamMenuKeyWin'] });
+    assert.deepEqual(await selection(), { focused: 'streamMenuShortcuts', current: 'streamMenuShortcuts', marked: ['streamMenuShortcuts'] });
 
-    // An entry that stays keeps the selection when the entries change: on the Windows key, a controller that connects
+    // An entry that stays keeps the selection when the entries change: on 'Shortcuts…', a controller that connects
     // brings the mouse emulation entry back before it
     await app.page.evaluate(() => {
       window.__connectPad(0, 'Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)');
       updateStreamMenu();
     });
-    assert.deepEqual(await selection(), { focused: 'streamMenuKeyWin', current: 'streamMenuKeyWin', marked: ['streamMenuKeyWin'] });
+    assert.deepEqual(await selection(), { focused: 'streamMenuShortcuts', current: 'streamMenuShortcuts', marked: ['streamMenuShortcuts'] });
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

@@ -23,6 +23,13 @@
 // asks the host for a keyframe (requestStreamKeyframe()), like 'Reset Decoder' of the stream page of moonlight-xbox.
 // 'Type text…' opens a text field for the keyboard of the TV, whose text goes to the PC as Unicode (sendText() of
 // wasm/input.cpp), like the keyboard of the game menu of Artemis and of StreamLight 8.0.0.
+//
+// Since 2.3.2 the keys for the PC have panels of their own, which take the place of the entries like the text panel:
+// 'Shortcuts…' (the key combinations in two named groups) and 'Function keys…' (F1 to F12 as a block of keys, 4 in a
+// row). 'Shut down or restart the PC…' asks first, with the focus on Cancel, and then types the shutdown command of
+// Windows into its Run dialog (the power sequence below), which the menu of a PC in the PC list does as well
+// (pcPowerDialog() in index.js): Windows key + R, the command as text (independent of the keyboard layout of the PC),
+// and Enter. GameStream has no command for it.
 
 // Whether the Stream Menu is open
 var isStreamMenuOpen = false;
@@ -47,6 +54,12 @@ var streamMenuBitrateMbps = 0;
 var streamMenuSurroundQuality = 'High';
 // Whether the text panel of 'Type text…' shows in place of the entries of the Stream Menu
 var isStreamTextOpen = false;
+// The entry of the Stream Menu whose panel shows in place of its entries ('Shortcuts…', 'Function keys…' or 'Shut down or
+// restart the PC…'), or null; the text panel of 'Type text…' has isStreamTextOpen
+var streamMenuPanel = null;
+// Whether the key that opened the panel may still be held: the auto-repeat of a held RIGHT, which opens 'Shortcuts…' and
+// 'Function keys…', doesn't move on in the panel (remoteControllerHandler() in remote_controller.js)
+var streamMenuPanelKeyHeld = false;
 
 // Keys that the Stream Menu sends to the PC: Windows virtual-key codes, pressed in this order and released in reverse
 const STREAM_MENU_KEYS = {
@@ -58,6 +71,56 @@ const STREAM_MENU_KEYS = {
   // Diogo8500 (brightcraft/moonlight-tizen pull request 177, 973a61b) offers F11 for this.
   streamMenuKeyAltEnter: [0xA4, 0x0D], // Left Alt + Enter
 };
+// The function keys F1 to F12 that the Stream Menu sends to the PC, each a key of its own (Windows virtual-key codes 0x70
+// to 0x7B): every host types them with the same scan code on every keyboard layout of the PC
+const STREAM_FUNCTION_KEYS = {};
+for (let n = 1; n <= 12; n++) {
+  STREAM_FUNCTION_KEYS['streamMenuKeyF' + n] = [0x6F + n];
+}
+// The function keys in a row of their panel (.stream-key-grid in style.css), which UP and DOWN step by (Views.StreamFKeys)
+const STREAM_FUNCTION_KEY_COLUMNS = 4;
+// The entries of the Stream Menu that open a panel in place of its entries, and the panel of each
+const STREAM_MENU_PANELS = { streamMenuShortcuts: 'streamShortcutsPanel', streamMenuFKeys: 'streamFKeysPanel', streamMenuPower: 'streamPowerPanel' };
+// The power commands of the PC that 'Shut down or restart the PC…' types into the Run dialog of Windows: a full shutdown
+// or a restart, without /f, so that Windows asks before it closes an app with unsaved work. They go to the PC as text
+// (sendText() of the module), the only input that doesn't depend on its keyboard layout: typed as keys, '/' would
+// arrive as '-' on a German layout, since every host types keys with the scan codes of a US keyboard.
+const PC_POWER_COMMANDS = { shutdown: 'shutdown /s /t 0', restart: 'shutdown /r /t 0' };
+const PC_POWER_RUN_KEYS = [0x5B, 0x52]; // Left Windows + R: the Run dialog of Windows
+const PC_POWER_ENTER_KEYS = [0x0D]; // Enter runs the command
+const PC_POWER_ESC_KEYS = [0x1B]; // Esc closes Run when the command stops before Enter
+// The waits of the power sequence in ms (variables, so that the browser tests can shorten them):
+// - from the Stream Menu, the picture shows again before Windows key + R;
+var PC_POWER_MENU_DELAY_MS = 300;
+// - from the PC list, the countdown after the picture of the PC showed, to see its screen (the lock screen, say) and to
+//   cancel with RETURN or RED;
+var PC_POWER_LIST_DELAY_MS = 5000;
+// - from the PC list, the longest wait for the video to play after 'Connection Established', which comes before the
+//   first frame: a stream that gets no video ends within this time (ML_ERROR_NO_VIDEO_TRAFFIC after 10 s without a
+//   packet), so the countdown starts then at the latest, also on a TV whose video element tells nothing;
+var PC_POWER_PICTURE_WAIT_MS = 10000;
+// - for Run to open and take the focus (longer when a game leaves exclusive fullscreen), and to keep the text behind the
+//   keys on hosts that type text and keys on different paths (the virtual keyboard of Sunshine and SendInput);
+var PC_POWER_TYPE_DELAY_MS = 2000;
+// - after the text, before Enter, for the same reasons; neither wait may be shortened;
+var PC_POWER_ENTER_DELAY_MS = 500;
+// - after a text the module couldn't queue, before the Esc that closes Run;
+var PC_POWER_ESC_DELAY_MS = 500;
+// - still streaming this long after Enter: say once that the PC hasn't shut down or restarted;
+var PC_POWER_HINT_MS = 30000;
+// - an end of the stream with an error this long after Enter is still the PC going off.
+var PC_POWER_END_MS = 120000;
+// The power command that is being typed or was sent to the PC, or null: { kind ('shutdown' or 'restart'), origin
+// ('menu', the Stream Menu, or 'list', the menu of a PC), launchedApp (a PC-list session that launched its app), launchId
+// and host (of the stream), timer and hintTimer, runSentAt and sentAt (performance.now() of Windows key + R and of
+// Enter, or 0), stoppedByTv (the TV ended the stream), stopped (no step follows), escPending (the Esc after a refused
+// text waits), countdownShown (its countdown message shows), inputPaused and pointerWasLocked }
+var pcPowerCommand = null;
+// The power request of the stream of a session that the menu of a PC started ({ kind, launchedApp }), which the stream
+// carries until Enter, also into a start once more (retryStreamStart() in index.js), or null
+var streamPcPower = null;
+// The power request for the start that is about to begin (startPcPowerSession() in index.js), which startGame() takes
+var pcPowerOfNextStart = null;
 // The modifier flag of each modifier key (MODIFIER_SHIFT, MODIFIER_CTRL, MODIFIER_ALT and MODIFIER_META of
 // moonlight-common-c), for the keys that are held while the next ones go down
 const KEYBOARD_MODIFIER_FLAGS = { 0xA0: 0x01, 0xA1: 0x01, 0xA2: 0x02, 0xA3: 0x02, 0xA4: 0x04, 0xA5: 0x04, 0x5B: 0x08, 0x5C: 0x08 };
@@ -311,15 +374,18 @@ function applyStreamMenuSurround() {
 function updateStreamMenu() {
   const host = streamLaunchHost || api;
   const subtitle = [streamLaunchAppTitle, host && host.hostname ? host.hostname : ''].filter((text) => !!text).join(' · ');
-  $('#streamMenuSubtitle').text(subtitle);
+  // The panels name the app and the PC as well, the question 'Shut down or restart the PC?' above all
+  $('#streamMenuSubtitle, #streamShortcutsSubtitle, #streamFKeysSubtitle, #streamPowerSubtitle').text(subtitle);
   const statsLevel = getPerformanceStatsLevel();
   setOverlayMenuText('streamMenuStatsValue', getPerformanceStatsLevelName(statsLevel), statsLevel !== 0);
   setOverlayMenuValue('streamMenuMouseValue', streamMouseEmulationActive);
   const mouseEntry = document.getElementById('streamMenuMouse');
   if (mouseEntry) {
     // The selected entry while the menu shows; openStreamMenu() selects the first entry after this, and the text panel
-    // of 'Type text…' keeps the focus in its field (cancelStreamText() selects the entry again)
-    const selected = $('#streamMenuOverlay').is(':visible') && !isStreamTextOpen ? Views.StreamMenu.view.current() : null;
+    // of 'Type text…' and the other panels keep the focus (cancelStreamText() and closeStreamMenuPanel() select the
+    // entry that opened them again)
+    const selected = $('#streamMenuOverlay').is(':visible') && !isStreamTextOpen && streamMenuPanel === null ?
+      Views.StreamMenu.view.current() : null;
     mouseEntry.hidden = !(streamMouseEmulationActive || Controller.getConnectedGamepads().length > 0);
     const surroundEntry = document.getElementById('streamMenuSurround');
     if (surroundEntry) {
@@ -358,6 +424,11 @@ function openStreamMenu() {
     console.log('%c[menus.js, openStreamMenu]', 'color: teal;', 'Not opening the Stream Menu without a running stream.');
     return;
   }
+  // The keys of the menu would go between the keys of the power command, which RETURN cancels
+  if (isPcPowerSequenceRunning()) {
+    console.log('%c[menus.js, openStreamMenu]', 'color: teal;', 'Not opening the Stream Menu while the power command is sent.');
+    return;
+  }
   console.log('%c[menus.js, openStreamMenu]', 'color: teal;', 'Opening the Stream Menu.');
   isStreamMenuOpen = true;
   streamMenuBitrateMbps = streamBitrateMbps;
@@ -387,17 +458,44 @@ function openStreamMenu() {
   Controller.startWatching();
 }
 
+// Give the stream the focus again after the Stream Menu or the power command, and lock the pointer again if it was
+// locked before
+function resumeStreamFocus(pointerWasLocked) {
+  if (isInGame !== true) {
+    return;
+  }
+  const videoElement = document.getElementById('wasm_module');
+  if (!videoElement) {
+    return;
+  }
+  videoElement.focus();
+  // Lock the pointer again like the Back key does (initSpecialKeys() in index.js): a mouse button press on an unlocked
+  // pointer only locks it
+  if (pointerWasLocked && !document.pointerLockElement) {
+    videoElement.dispatchEvent(new MouseEvent('mousedown', {
+      bubbles: true, cancelable: true, view: window, clientX: 0, clientY: 0
+    }));
+  }
+}
+
 // Close the Stream Menu. With resume, the stream gets the focus back (and the pointer, if it had it); without, the
-// stream ends or ended anyway.
-function closeStreamMenu(resume) {
+// stream ends or ended anyway. keepInputPaused keeps the controllers and the mouse away from the PC, for the power
+// command that follows (confirmStreamMenuPower()).
+function closeStreamMenu(resume, keepInputPaused) {
   if (!isStreamMenuOpen) {
     return;
   }
   console.log('%c[menus.js, closeStreamMenu]', 'color: teal;', resume ? 'Closing the Stream Menu and resuming the stream.' : 'Closing the Stream Menu.');
   isStreamMenuOpen = false;
+  streamMenuPanelKeyHeld = false;
   // The text panel of 'Type text…' belongs to the menu, and its text is dropped
   if (isStreamTextOpen) {
     hideStreamText();
+    Navigation.pop();
+  }
+  // So do the other panels, whose views go first, before the one of the menu below
+  if (streamMenuPanel !== null) {
+    hideStreamMenuPanel();
     Navigation.pop();
   }
   // The WebAssembly module reads the gamepads again
@@ -410,18 +508,12 @@ function closeStreamMenu(resume) {
   STREAM_MENU_POINTER_EVENTS.forEach((type) => window.removeEventListener(type, stopStreamMenuPointerInput, true));
   $('#streamMenuOverlay').css('display', 'none');
   // The buttons that are still held reach the PC only once they were released (wasm/gamepad.cpp)
-  setStreamMenuInputPaused(false);
+  if (!keepInputPaused) {
+    setStreamMenuInputPaused(false);
+  }
 
-  if (resume && isInGame === true) {
-    const videoElement = document.getElementById('wasm_module');
-    videoElement.focus();
-    // Lock the pointer again like the Back key does (initSpecialKeys() in index.js): a mouse button press on an
-    // unlocked pointer only locks it
-    if (streamMenuPointerWasLocked && !document.pointerLockElement) {
-      videoElement.dispatchEvent(new MouseEvent('mousedown', {
-        bubbles: true, cancelable: true, view: window, clientX: 0, clientY: 0
-      }));
-    }
+  if (resume) {
+    resumeStreamFocus(streamMenuPointerWasLocked);
   }
   streamMenuPointerWasLocked = false;
 }
@@ -474,15 +566,502 @@ function runStreamMenuAction(id) {
     requestStreamKeyframe();
   } else if (id === 'streamMenuText') {
     openStreamText();
-  } else if (STREAM_MENU_KEYS[id]) {
-    // Back to the stream, where the result of the keys shows
+  } else if (STREAM_MENU_PANELS[id]) {
+    openStreamMenuPanel(id);
+  } else if (STREAM_MENU_KEYS[id] || STREAM_FUNCTION_KEYS[id]) {
+    // Back to the stream, where the result of the keys shows (closeStreamMenu() closes the panel of the key first)
     closeStreamMenu(true);
-    sendKeyComboToHost(STREAM_MENU_KEYS[id]);
+    sendKeyComboToHost(STREAM_MENU_KEYS[id] || STREAM_FUNCTION_KEYS[id]);
+  } else if (id === 'streamPowerCancel') {
+    closeStreamMenuPanel();
+  } else if (id === 'streamPowerRestart' || id === 'streamPowerShutdown') {
+    confirmStreamMenuPower(id === 'streamPowerRestart' ? 'restart' : 'shutdown');
   } else if (id === 'streamMenuDisconnect' || id === 'streamMenuQuit') {
     quitAppAfterStream = id === 'streamMenuQuit';
     closeStreamMenu(false);
+    // A power command whose Enter went out a moment ago belongs to this end (endPcPowerCommand())
+    stopPcPowerCommandForTvStop();
     Module.stopStream();
   }
+}
+
+// The view of the panel that an entry of the Stream Menu opens (navigation.js)
+function getStreamMenuPanelView(entryId) {
+  if (entryId === 'streamMenuShortcuts') {
+    return Views.StreamShortcuts;
+  }
+  return entryId === 'streamMenuFKeys' ? Views.StreamFKeys : Views.StreamPower;
+}
+
+// Open the panel of an entry of the Stream Menu in place of its entries, on its first item: Alt + Enter, F1 or Cancel.
+// OK is ignored for a moment, so that the second press of a double OK doesn't press the key under the selection (or the
+// power question, which opens on Cancel anyway); a key that moves the selection ends that at once
+// (Navigation.guardAccept()).
+function openStreamMenuPanel(entryId) {
+  const panelId = STREAM_MENU_PANELS[entryId];
+  if (!panelId || !isStreamMenuOpen || isStreamTextOpen || streamMenuPanel !== null) {
+    return;
+  }
+  console.log('%c[menus.js, openStreamMenuPanel]', 'color: teal;', 'Stream Menu panel: ' + entryId);
+  const view = getStreamMenuPanelView(entryId);
+  streamMenuPanel = entryId;
+  document.getElementById('streamMenu').hidden = true;
+  document.getElementById(panelId).hidden = false;
+  view.view.index = 0;
+  Navigation.guardAccept(view);
+  Navigation.push(view);
+  // A held key doesn't move on in the panel: the auto-repeat of the remote (streamMenuPanelKeyHeld), and the repeat of a
+  // held D-pad or stick, which starts after the step that opened the panel (startRepeatAction() in index.js)
+  streamMenuPanelKeyHeld = true;
+  setTimeout(() => {
+    if (streamMenuPanel === entryId && typeof stopRepeatAction === 'function') {
+      stopRepeatAction();
+    }
+  }, 0);
+}
+
+// Hide the panel that shows in place of the entries of the Stream Menu, and show its entries again
+function hideStreamMenuPanel() {
+  if (streamMenuPanel === null) {
+    return;
+  }
+  document.getElementById(STREAM_MENU_PANELS[streamMenuPanel]).hidden = true;
+  document.getElementById('streamMenu').hidden = false;
+  streamMenuPanel = null;
+}
+
+// Leave a panel without sending anything (RETURN, B, Cancel of the power question): back to the entries of the Stream
+// Menu, on the entry that opened it, also when the entries before it changed meanwhile, like cancelStreamText()
+function closeStreamMenuPanel() {
+  const entryId = streamMenuPanel;
+  if (entryId === null) {
+    return;
+  }
+  hideStreamMenuPanel();
+  Views.StreamMenu.view.index = Math.max(0, getOverlayMenuItems('streamMenu').indexOf(document.getElementById(entryId)));
+  Navigation.pop();
+  Navigation.switch();
+}
+
+// 'Restart the PC' or 'Shut down the PC' of the power question of the Stream Menu: the menu closes, the controllers and
+// the mouse stay away from the PC, and the power sequence starts (startPcPowerCommand())
+function confirmStreamMenuPower(kind) {
+  const pointerWasLocked = streamMenuPointerWasLocked;
+  closeStreamMenu(false, true);
+  const cmd = startPcPowerCommand(kind, 'menu', false, pointerWasLocked);
+  if (!cmd) {
+    setStreamMenuInputPaused(false);
+    resumeStreamFocus(pointerWasLocked);
+    return;
+  }
+  announcePcPowerCountdown(cmd, PC_POWER_MENU_DELAY_MS + PC_POWER_TYPE_DELAY_MS + PC_POWER_ENTER_DELAY_MS);
+  schedulePcPowerStep(cmd, 'run', PC_POWER_MENU_DELAY_MS);
+}
+
+// The power sequence: 'Shut down or restart the PC…' of the Stream Menu and of the menu of a PC (startPcPowerSession()
+// in index.js) open the Run dialog of Windows with Windows key + R, type the command into it as text and run it with
+// Enter, with the waits above in between. Each step first checks that its stream still runs (isPcPowerCommandCurrent()),
+// so that no key of it goes into another stream. Until Enter the keys of the remote stay in the UI (initSpecialKeys() in
+// index.js), where RETURN cancels, and the controllers and the mouse stay away from the PC (setStreamMenuOpen() of the
+// module), so that nothing takes the focus from Run. A sequence that stops after Windows key + R closes Run with Esc
+// while the stream still runs, since Run preselects the last command it ran: the next OK of a stream would run it.
+// Only step names go to the log, never the text.
+
+// Whether a power command is being typed: from its start until Enter or a stop
+function isPcPowerSequenceRunning() {
+  return pcPowerCommand !== null && pcPowerCommand.sentAt === 0 && !pcPowerCommand.stopped;
+}
+
+// Whether the power command that is being typed comes from the menu of a PC, whose RETURN ends its stream
+function isPcPowerListSequenceRunning() {
+  return isPcPowerSequenceRunning() && pcPowerCommand.origin === 'list';
+}
+
+// Whether the stream of a power command still runs
+function isPcPowerStreamRunning(cmd) {
+  return isInGame === true && !!wasmSessionStarted && !!isStreamConnected && streamLaunchId === cmd.launchId;
+}
+
+// Whether a step of a power command may send: it is the current command, its stream still runs, and Moonlight shows
+function isPcPowerCommandCurrent(cmd) {
+  return pcPowerCommand === cmd && !cmd.stopped && isPcPowerStreamRunning(cmd) && document.visibilityState !== 'hidden';
+}
+
+// Log a step of a power command: its kind and where it comes from, never the text
+function logPcPower(cmd, text) {
+  console.log('%c[menus.js, PC power]', 'color: teal;', 'PC power (' + cmd.kind + ', from the ' +
+    (cmd.origin === 'list' ? 'PC list' : 'Stream Menu') + '): ' + text);
+}
+
+// Stop the timers of a power command, and its wait for the picture
+function clearPcPowerTimers(cmd) {
+  clearTimeout(cmd.timer);
+  cmd.timer = null;
+  clearTimeout(cmd.hintTimer);
+  cmd.hintTimer = null;
+  stopWaitingForPcPowerPicture(cmd);
+}
+
+// Keep the controllers, the mouse emulation and the mouse away from the PC while a power command is typed
+// (setStreamMenuOpen() of the module), so that none of them takes the focus from Run. A locked pointer is released, and
+// locked again afterwards; the buttons of a mouse stay away from the video meanwhile, as in the Stream Menu.
+function pausePcPowerInput(cmd, pointerWasLocked) {
+  cmd.inputPaused = true;
+  cmd.pointerWasLocked = !!pointerWasLocked;
+  setStreamMenuInputPaused(true);
+  if (document.pointerLockElement && typeof document.exitPointerLock === 'function') {
+    cmd.pointerWasLocked = true;
+    document.exitPointerLock();
+  }
+  STREAM_MENU_POINTER_EVENTS.forEach((type) => window.addEventListener(type, stopStreamMenuPointerInput, true));
+}
+
+// Give the controllers and the mouse back to the PC after a power command, and with focus the stream the focus
+function releasePcPowerInput(cmd, focus) {
+  if (!cmd.inputPaused) {
+    return;
+  }
+  cmd.inputPaused = false;
+  // The Stream Menu, which can open again after Enter, adds the listeners of its own
+  if (!isStreamMenuOpen) {
+    STREAM_MENU_POINTER_EVENTS.forEach((type) => window.removeEventListener(type, stopStreamMenuPointerInput, true));
+  }
+  setStreamMenuInputPaused(false);
+  if (focus) {
+    resumeStreamFocus(cmd.pointerWasLocked);
+  }
+}
+
+// Start a power command in the running stream: kind 'shutdown' or 'restart', origin 'menu' (the Stream Menu, which
+// closed with the input kept paused) or 'list' (the menu of a PC, armPcPowerCommand()). Returns the command, or null
+// without a running stream or while another command is being typed. A command that was sent before (whose PC didn't
+// shut down) is replaced.
+function startPcPowerCommand(kind, origin, launchedApp, pointerWasLocked) {
+  if (!PC_POWER_COMMANDS[kind] || isInGame !== true || !wasmSessionStarted || !isStreamConnected || isPcPowerSequenceRunning()) {
+    console.log('%c[menus.js, startPcPowerCommand]', 'color: teal;', 'Not starting the ' + kind + ' command without a running stream or while one is sent.');
+    return null;
+  }
+  if (pcPowerCommand) {
+    clearPcPowerTimers(pcPowerCommand);
+  }
+  const cmd = {
+    kind: kind, origin: origin, launchedApp: !!launchedApp, launchId: streamLaunchId, host: streamLaunchHost || api,
+    timer: null, hintTimer: null, runSentAt: 0, sentAt: 0, stoppedByTv: false, stopped: false, escPending: false,
+    countdownShown: false, inputPaused: false, pointerWasLocked: false, waitingForPicture: false, video: null, onPicture: null,
+  };
+  pcPowerCommand = cmd;
+  pausePcPowerInput(cmd, pointerWasLocked);
+  return cmd;
+}
+
+// Say that the PC shuts down or restarts in a moment, and how to stop it, until Enter, which is untilEnterMs from now:
+// at once, in place of the message that shows (dismissSnackbar() in index.js). The message ends early when the command
+// stops or is sent (endPcPowerCountdownMessage()), so that it never says what is no longer true.
+function announcePcPowerCountdown(cmd, untilEnterMs) {
+  const name = cmd.host && cmd.host.hostname ? cmd.host.hostname : '';
+  if (typeof dismissSnackbar === 'function') {
+    dismissSnackbar();
+  }
+  cmd.countdownShown = true;
+  if (cmd.kind === 'restart') {
+    if (name) {
+      snackbarLogFor(untilEnterMs, '%1$s restarts in a few seconds. To cancel (e.g. on the lock screen): RETURN or RED', name);
+    } else {
+      snackbarLogFor(untilEnterMs, 'The PC restarts in a few seconds. To cancel (e.g. on the lock screen): RETURN or RED');
+    }
+  } else if (name) {
+    snackbarLogFor(untilEnterMs, '%1$s shuts down in a few seconds. To cancel (e.g. on the lock screen): RETURN or RED', name);
+  } else {
+    snackbarLogFor(untilEnterMs, 'The PC shuts down in a few seconds. To cancel (e.g. on the lock screen): RETURN or RED');
+  }
+}
+
+// End the countdown message of a power command, and the messages that wait behind it, once it is no longer true: the
+// command was sent, cancelled or stopped
+function endPcPowerCountdownMessage(cmd) {
+  if (!cmd.countdownShown) {
+    return;
+  }
+  cmd.countdownShown = false;
+  if (typeof dismissSnackbar === 'function') {
+    dismissSnackbar();
+  }
+}
+
+// Run a step of a power command after a wait
+function schedulePcPowerStep(cmd, step, delayMs) {
+  clearTimeout(cmd.timer);
+  cmd.timer = setTimeout(() => {
+    cmd.timer = null;
+    runPcPowerStep(cmd, step);
+  }, delayMs);
+}
+
+// A step of a power command: 'run' (Windows key + R), 'type' (the command as text) and 'enter'
+function runPcPowerStep(cmd, step) {
+  if (!isPcPowerCommandCurrent(cmd)) {
+    failPcPowerStep(cmd, step);
+    return;
+  }
+  if (step === 'run') {
+    // Windows key and R go down and up in one call, so that no stop of the stream can split them
+    sendKeyComboToHost(PC_POWER_RUN_KEYS);
+    cmd.runSentAt = performance.now();
+    logPcPower(cmd, 'Windows key + R sent');
+    schedulePcPowerStep(cmd, 'type', PC_POWER_TYPE_DELAY_MS);
+  } else if (step === 'type') {
+    const result = typeof Module.sendText === 'function' ? Module.sendText(PC_POWER_COMMANDS[cmd.kind]) : TEXT_INPUT_NOT_SENT;
+    logPcPower(cmd, 'answer to the command: ' + result);
+    if (result !== TEXT_INPUT_OK) {
+      // No Enter: Run would run the command it holds. It is closed a moment later (the queue of the module was full).
+      // The command stays until the end of its stream, like a stopped one (failPcPowerStep()).
+      clearPcPowerTimers(cmd);
+      cmd.stopped = true;
+      streamPcPower = null;
+      // The timer of the command, which an end of the stream or a new command clears; a stop by the TV sends the Esc at
+      // once (stopPcPowerCommandForTvStop())
+      cmd.escPending = true;
+      cmd.timer = setTimeout(() => {
+        cmd.timer = null;
+        cmd.escPending = false;
+        if (isPcPowerStreamRunning(cmd)) {
+          sendKeyComboToHost(PC_POWER_ESC_KEYS);
+          logPcPower(cmd, 'Run closed with Esc');
+        }
+        releasePcPowerInput(cmd, true);
+      }, PC_POWER_ESC_DELAY_MS);
+      endPcPowerCountdownMessage(cmd);
+      if (result !== TEXT_INPUT_NO_STREAM) {
+        snackbarLogLong('The command couldn\'t be sent to the PC. Try again.');
+      }
+      return;
+    }
+    schedulePcPowerStep(cmd, 'enter', PC_POWER_ENTER_DELAY_MS);
+  } else if (step === 'enter') {
+    sendKeyComboToHost(PC_POWER_ENTER_KEYS);
+    cmd.sentAt = performance.now();
+    streamPcPower = null;
+    logPcPower(cmd, 'Enter sent');
+    // The stream goes on, so that Windows can be answered if it asks about an app with unsaved work
+    releasePcPowerInput(cmd, true);
+    endPcPowerCountdownMessage(cmd);
+    if (cmd.kind === 'restart') {
+      snackbarLog('Restart command sent to the PC');
+    } else {
+      snackbarLog('Shutdown command sent to the PC');
+    }
+    cmd.hintTimer = setTimeout(() => showPcPowerHint(cmd), PC_POWER_HINT_MS);
+  }
+}
+
+// A step of a power command found its stream gone, another stream running or Moonlight in the background: nothing more is
+// sent, and Run is closed if the stream still runs. The command stays until the end of its stream, which it may still
+// explain (endPcPowerCommand()).
+function failPcPowerStep(cmd, step) {
+  if (pcPowerCommand !== cmd || cmd.stopped) {
+    return;
+  }
+  clearPcPowerTimers(cmd);
+  cmd.stopped = true;
+  endPcPowerCountdownMessage(cmd);
+  const running = isPcPowerStreamRunning(cmd);
+  logPcPower(cmd, 'stopped before ' + step + (running ? ', since Moonlight is in the background' : ', since the stream ended'));
+  if (running && cmd.runSentAt) {
+    sendKeyComboToHost(PC_POWER_ESC_KEYS);
+    logPcPower(cmd, 'Run closed with Esc');
+  }
+  // A stream that goes on (Moonlight came back from the background within BACKGROUND_STREAM_STOP_DELAY_MS) gets the focus
+  // back, which the Stream Menu took when it closed for the command: the remote would reach neither the PC nor RETURN
+  releasePcPowerInput(cmd, running);
+}
+
+// Still streaming PC_POWER_HINT_MS after Enter: the PC didn't shut down or restart, and the user may answer Windows or
+// try again
+function showPcPowerHint(cmd) {
+  cmd.hintTimer = null;
+  if (pcPowerCommand !== cmd || !isPcPowerStreamRunning(cmd)) {
+    return;
+  }
+  logPcPower(cmd, 'hint shown');
+  if (cmd.kind === 'restart') {
+    snackbarLogLong('The PC hasn\'t restarted. If Windows asks about open apps, answer on the PC. If nothing happened, switch to the desktop and try again.');
+  } else {
+    snackbarLogLong('The PC hasn\'t shut down. If Windows asks about open apps, answer on the PC. If nothing happened, switch to the desktop and try again.');
+  }
+}
+
+// The TV ends the stream (RED, RETURN of a PC-list session, Disconnect, Quit, the background), right before
+// Module.stopStream(): a command that is still being typed stops, and Run is closed with Esc, which the module still
+// sends before the connection closes (LiStopConnection() drains the queue of the input). The end of the stream knows
+// that the TV ended it (endPcPowerCommand()).
+function stopPcPowerCommandForTvStop() {
+  streamPcPower = null;
+  const cmd = pcPowerCommand;
+  if (!cmd) {
+    return;
+  }
+  cmd.stoppedByTv = true;
+  if (cmd.sentAt !== 0) {
+    return;
+  }
+  if (cmd.stopped) {
+    // A text that the module refused, whose Esc still waits (runPcPowerStep()): Run is closed now
+    if (cmd.escPending) {
+      clearPcPowerTimers(cmd);
+      cmd.escPending = false;
+      if (isPcPowerStreamRunning(cmd)) {
+        sendKeyComboToHost(PC_POWER_ESC_KEYS);
+        logPcPower(cmd, 'stopped, since the TV ends the stream: Run closed with Esc');
+      }
+      releasePcPowerInput(cmd, false);
+    }
+    return;
+  }
+  clearPcPowerTimers(cmd);
+  cmd.stopped = true;
+  endPcPowerCountdownMessage(cmd);
+  if (cmd.runSentAt && isPcPowerStreamRunning(cmd)) {
+    sendKeyComboToHost(PC_POWER_ESC_KEYS);
+    logPcPower(cmd, 'stopped, since the TV ends the stream: Run closed with Esc');
+  } else {
+    logPcPower(cmd, 'stopped, since the TV ends the stream');
+  }
+  releasePcPowerInput(cmd, false);
+}
+
+// Drop the power command without ending the stream: RETURN while it is typed from the Stream Menu (Run is closed with
+// Esc), or a reconnect for new settings after Enter (restartStreamWithSettings() in index.js), which isn't the PC going
+// off. Returns whether there was one.
+function cancelPcPowerCommand(reason) {
+  const cmd = pcPowerCommand;
+  streamPcPower = null;
+  if (!cmd) {
+    return false;
+  }
+  clearPcPowerTimers(cmd);
+  pcPowerCommand = null;
+  endPcPowerCountdownMessage(cmd);
+  // Also for a refused text whose Esc still waits
+  if (cmd.sentAt === 0 && (!cmd.stopped || cmd.escPending) && cmd.runSentAt && isPcPowerStreamRunning(cmd)) {
+    sendKeyComboToHost(PC_POWER_ESC_KEYS);
+    logPcPower(cmd, reason + ': Run closed with Esc');
+  } else {
+    logPcPower(cmd, reason);
+  }
+  cmd.stopped = true;
+  cmd.escPending = false;
+  releasePcPowerInput(cmd, true);
+  return true;
+}
+
+// RETURN while a power command is typed (remoteControllerHandler() in remote_controller.js): from the menu of a PC it ends
+// the stream of the session as on its launch screen, from the Stream Menu it cancels the command and the stream goes on
+function cancelPcPowerSequenceWithReturn() {
+  if (!isPcPowerSequenceRunning()) {
+    return;
+  }
+  if (pcPowerCommand.origin === 'list') {
+    endStartingOrRunningStream();
+  } else if (cancelPcPowerCommand('cancelled with RETURN')) {
+    snackbarLog('Cancelled');
+  }
+}
+
+// From the menu of a PC: the stream of the session connected ('Connection Established' in messages.js), which comes
+// before its first frame. The countdown starts once the video plays (its first 'playing' or 'timeupdate'), so that the
+// screen of the PC shows for the whole countdown, or after PC_POWER_PICTURE_WAIT_MS at the latest. The controllers and
+// the keys stay away from the PC from now on.
+function armPcPowerCommand(request) {
+  const cmd = startPcPowerCommand(request.kind, 'list', request.launchedApp, false);
+  if (!cmd) {
+    return;
+  }
+  logPcPower(cmd, 'waiting for the picture of the PC');
+  cmd.waitingForPicture = true;
+  cmd.onPicture = function(e) {
+    onPcPowerPicture(cmd, e && e.type ? 'the video plays (' + e.type + ')' : 'no answer of the video within ' + PC_POWER_PICTURE_WAIT_MS + ' ms');
+  };
+  const video = document.getElementById('wasm_module');
+  if (video && typeof video.addEventListener === 'function') {
+    cmd.video = video;
+    video.addEventListener('playing', cmd.onPicture);
+    video.addEventListener('timeupdate', cmd.onPicture);
+  }
+  cmd.timer = setTimeout(() => cmd.onPicture(null), PC_POWER_PICTURE_WAIT_MS);
+}
+
+// Stop waiting for the picture of a PC-list session
+function stopWaitingForPcPowerPicture(cmd) {
+  if (!cmd.waitingForPicture) {
+    return;
+  }
+  cmd.waitingForPicture = false;
+  if (cmd.video) {
+    cmd.video.removeEventListener('playing', cmd.onPicture);
+    cmd.video.removeEventListener('timeupdate', cmd.onPicture);
+    cmd.video = null;
+  }
+}
+
+// The picture of the PC of a PC-list session shows: the countdown starts
+function onPcPowerPicture(cmd, why) {
+  if (!cmd.waitingForPicture) {
+    return;
+  }
+  stopWaitingForPcPowerPicture(cmd);
+  clearTimeout(cmd.timer);
+  cmd.timer = null;
+  if (!isPcPowerCommandCurrent(cmd)) {
+    failPcPowerStep(cmd, 'the countdown');
+    return;
+  }
+  logPcPower(cmd, 'the picture shows (' + why + '), ' + PC_POWER_LIST_DELAY_MS + ' ms until Windows key + R');
+  announcePcPowerCountdown(cmd, PC_POWER_LIST_DELAY_MS + PC_POWER_TYPE_DELAY_MS + PC_POWER_ENTER_DELAY_MS);
+  schedulePcPowerStep(cmd, 'run', PC_POWER_LIST_DELAY_MS);
+}
+
+// The stream ended (handleMessage() in messages.js, before the reconnect and the retry): what its power command makes of
+// the end, and the command is over. Returns null for an ordinary end, or { ending, kind, host }:
+// - 'pc': the PC ended the stream after Enter, within PC_POWER_HINT_MS with any code, or within PC_POWER_END_MS with an
+//   error (an end with code 0 later is a game that closed, e.g. after the hint, not the PC going off). The app goes to
+//   the PC list and says that the PC shuts down or restarts, instead of an error. Codes of the player of the TV (-200
+//   and below) are no end by the PC.
+// - 'tv': the TV ended it (RED, Disconnect) within PC_POWER_HINT_MS after Enter: the PC list without a message.
+// - 'quit': a PC-list session that launched its app (the Desktop app) ended before Enter: the app is quit again, so that
+//   the PC is as before. Not for an end without video at the start (-100) or with a held start (-300), whose start once
+//   more keeps the request (retry), and which quits it only if it doesn't start again.
+function endPcPowerCommand(errorCode, quitApp) {
+  const cmd = pcPowerCommand;
+  pcPowerCommand = null;
+  const mayRetry = errorCode === -100 || errorCode === -300;
+  if (!mayRetry) {
+    streamPcPower = null;
+  }
+  if (!cmd) {
+    return null;
+  }
+  clearPcPowerTimers(cmd);
+  cmd.stopped = true;
+  endPcPowerCountdownMessage(cmd);
+  releasePcPowerInput(cmd, false);
+  if (cmd.sentAt === 0) {
+    if (cmd.origin === 'list' && cmd.launchedApp) {
+      logPcPower(cmd, 'the stream ended (code ' + errorCode + ') before Enter: quitting the app that the session launched' +
+        (mayRetry ? ', unless the stream starts once more' : ''));
+      return { ending: 'quit', mayRetry: mayRetry, kind: cmd.kind, host: cmd.host };
+    }
+    return null;
+  }
+  const since = performance.now() - cmd.sentAt;
+  let ending = null;
+  if (since < PC_POWER_END_MS && !cmd.stoppedByTv && errorCode > -200 && (since < PC_POWER_HINT_MS || errorCode !== 0)) {
+    ending = 'pc';
+  } else if (since < PC_POWER_HINT_MS && cmd.stoppedByTv && !quitApp) {
+    ending = 'tv';
+  }
+  logPcPower(cmd, 'the stream ended ' + Math.round(since / 1000) + ' s after the command (code ' + errorCode + ', ended by the ' +
+    (cmd.stoppedByTv ? 'TV' : 'PC') + '): ' + (ending ? 'back to the PC list' : 'as usual'));
+  return ending ? { ending: ending, kind: cmd.kind, host: cmd.host } : null;
 }
 
 // Check a text for the PC as sendText() of the WebAssembly module does (CheckTextInput() of wasm/text_input.hpp), so that
@@ -1006,7 +1585,8 @@ function forgetHiddenApps(serverUid) {
 
 // Connect the entries of both menus to their actions
 function attachOverlayMenuListeners() {
-  $('#streamMenu .overlay-menu-item').on('click', function() {
+  $('#streamMenu .overlay-menu-item, #streamShortcutsPanel .overlay-menu-item, #streamFKeysPanel .overlay-menu-item, ' +
+    '#streamPowerPanel .overlay-menu-item').on('click', function() {
     runStreamMenuAction(this.id);
   });
   $('#streamTextSend').on('click', sendStreamText);

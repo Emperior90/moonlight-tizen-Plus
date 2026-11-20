@@ -53,6 +53,10 @@ The German texts address the user with the informal *du* and use the words of th
 | On, Off | An, Aus | |
 | stream, streaming | Stream, streamen | *beim Streamen*, *Streaming-Einstellungen* |
 | Stream Menu | Stream-Menü | |
+| shortcuts, function keys | Tastenkürzel, F-Tasten | key names such as *Alt + Tab* and *F1* stay |
+| shut down, restart (the PC) | herunterfahren, neu starten | the noun *Neustart* |
+| Run (the dialog of Windows) | „Ausführen“ | the name in German Windows; the Sunshine app *Desktop* stays, quoted: „Desktop“ |
+| command | Befehl | |
 | resume, quit | fortsetzen, beenden | |
 | hide, hidden | ausblenden, ausgeblendet | |
 | favorite | Favorit | *Zu Favoriten hinzufügen*, *Aus Favoriten entfernen* |
@@ -103,6 +107,10 @@ The Spanish texts address the user with the informal *tú* (*Selecciona*, *Pulsa
 | On, Off | Activado, Desactivado | |
 | stream, streaming | transmisión | not *retransmisión* |
 | Stream Menu | Menú de transmisión | |
+| shortcuts, function keys | atajos de teclado, teclas de función | key names such as *Alt + Tab* and *F1* stay |
+| shut down, restart (the PC) | apagar, reiniciar | |
+| Run (the dialog of Windows) | Ejecutar | the Sunshine app *Desktop* stays |
+| command | comando | not *orden* |
 | resume, quit | reanudar, cerrar | |
 | hide, hidden | ocultar, oculta | |
 | favorite | favorita (an app), favoritos | *Añadir a favoritos*, *Quitar de favoritos* |
@@ -142,6 +150,10 @@ The French texts address the user with *vous*, as the menus of French TVs do (*S
 | On, Off | Activé, Désactivé | |
 | stream, streaming | streaming | *pendant le streaming* |
 | Stream Menu | Menu de streaming | |
+| shortcuts, function keys | raccourcis clavier, touches de fonction | key names such as *Alt + Tab* and *F1* stay |
+| shut down, restart (the PC) | éteindre, redémarrer | *arrêt* as a noun |
+| Run (the dialog of Windows) | Exécuter | the Sunshine app *Desktop* stays |
+| command | commande | |
 | resume, quit | reprendre, quitter | |
 | hide, hidden | masquer, masquée | |
 | favorite | favori | *Ajouter aux favoris*, *Retirer des favoris* |
