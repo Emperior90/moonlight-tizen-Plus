@@ -43,14 +43,18 @@ function noteArrowStep() {
 // auto-repeat would go back on to the PC list, so the repeats are ignored until RETURN is pressed again
 let returnCancelledStart = false;
 
-// End the stream that starts or runs (RED, and RETURN on the launch screen): a start whose start request the module
-// hasn't got yet is cancelled (cancelStreamLaunch() in index.js), and the module stops a connection that it sets up or
-// runs, which it reports with 'streamTerminated: 0' (handleMessage() in messages.js)
+// End the stream that starts or runs (RED, and RETURN on the launch screen and while the menu of a PC shuts it down): a
+// start whose start request the module hasn't got yet is cancelled (cancelStreamLaunch() in index.js), and the module
+// stops a connection that it sets up or runs, which it reports with 'streamTerminated: 0' (handleMessage() in
+// messages.js). A power command that is being typed stops first, and closes the Run dialog on the PC (menus.js).
 function endStartingOrRunningStream() {
   if (isInGame === true && !wasmSessionStarted) {
     // The stream is still starting, so cancel its start instead of stopping a session that doesn't exist yet
     cancelStreamLaunch();
   } else if (isInGame === true) {
+    if (typeof stopPcPowerCommandForTvStop === 'function') {
+      stopPcPowerCommandForTvStop();
+    }
     // Terminate the connection
     Module.stopStream();
   }
@@ -72,6 +76,15 @@ function remoteControllerHandler(e) {
       return;
     }
     noteArrowStep();
+  }
+  // The auto-repeat of the arrow key that opened a panel of the Stream Menu (RIGHT on 'Shortcuts…' or 'Function
+  // keys…') doesn't move its selection, which stays on its first key until a key is pressed anew (menus.js)
+  if (typeof streamMenuPanelKeyHeld !== 'undefined' && streamMenuPanelKeyHeld) {
+    if (!e.repeat) {
+      streamMenuPanelKeyHeld = false;
+    } else if (isArrowKey) {
+      return;
+    }
   }
 
   switch (keyCode) {
@@ -117,6 +130,21 @@ function remoteControllerHandler(e) {
           endStartingOrRunningStream();
           returnCancelledStart = true;
         }
+        break;
+      }
+      // While 'Shut down or restart the PC' types its command (menus.js), whose keys stay away from the PC until Enter:
+      // from the menu of a PC RETURN ends the stream of the session as on its launch screen (and its auto-repeat goes no
+      // further in the app list), from the Stream Menu it cancels the command, and the stream goes on
+      if (isInGame === true && typeof isPcPowerSequenceRunning === 'function' && isPcPowerSequenceRunning()) {
+        if (!e.repeat) {
+          returnCancelledStart = isPcPowerListSequenceRunning();
+          cancelPcPowerSequenceWithReturn();
+        }
+        break;
+      }
+      // In the Stream Menu RETURN goes back one level per press: the auto-repeat of the RETURN that closed a panel would
+      // close the menu as well
+      if (e.repeat && typeof isStreamMenuOpen !== 'undefined' && isStreamMenuOpen) {
         break;
       }
       // Go back or cancel the operation

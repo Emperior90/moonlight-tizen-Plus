@@ -974,3 +974,26 @@ test('the guide describes the frame times, the arrival rate and the log lines of
   // The QoS lines tell nothing about the marking of what the PC sends
   assert.ok(log.indexOf('The marking of what the PC sends, the picture and the sound, is set by the PC and doesn\'t show in these lines (*Prioritize sound on Wi-Fi* changes that marking, not these lines)') > 0);
 });
+
+test('the guide describes Shut down or restart the PC as menus.js does it, and the panels of the Stream Menu', () => {
+  const menus = read('wasm/platform/menus.js');
+  const start = GUIDE.indexOf('### Shut down or restart the PC');
+  assert.ok(start > GUIDE.indexOf('## Stream Menu and app menu') && start < GUIDE.indexOf('## Finding your bitrate'), 'the section is part of the Stream Menu chapter');
+  const section = GUIDE.slice(start, GUIDE.indexOf('## Finding your bitrate'));
+  // The commands, the way they are typed, the waits and the cases where it can't work
+  ['`shutdown /s /t 0`', '`shutdown /r /t 0`', 'Windows key + R', '2 seconds later', 'half a second later it presses Enter', 'lock screen',
+    'Without `/f`', 'its app named *Desktop*', 'the countdown runs for 5 seconds', 'RETURN cancels', 'closes *Run* with Esc'].forEach((text) => {
+    assert.ok(section.indexOf(text) > 0, text);
+  });
+  assert.ok(menus.indexOf("const PC_POWER_COMMANDS = { shutdown: 'shutdown /s /t 0', restart: 'shutdown /r /t 0' };") > 0);
+  assert.ok(menus.indexOf('const PC_POWER_RUN_KEYS = [0x5B, 0x52];') > 0);
+  assert.match(menus, /var PC_POWER_TYPE_DELAY_MS = 2000;[\s\S]*var PC_POWER_ENTER_DELAY_MS = 500;[\s\S]*var PC_POWER_HINT_MS = 30000;/);
+  assert.match(menus, /var PC_POWER_LIST_DELAY_MS = 5000;/);
+  // The troubleshooting names what keeps it from working, and the Stream Menu table the panels
+  assert.ok(GUIDE.indexOf('- **Shut down or restart the PC does nothing:** the game blocks the Windows key') > 0);
+  assert.ok(GUIDE.indexOf('| Shortcuts… | Opens a panel with the keys for the PC in two groups: *In the game* (Alt + Enter, Esc, Alt + F4) and *Windows* (Windows key, Alt + Tab).') > 0);
+  assert.ok(GUIDE.indexOf('| Function keys… | Opens F1 to F12 as a block of keys, 4 in a row') > 0);
+  assert.ok(GUIDE.indexOf('RETURN or B go back one level') > 0);
+  // B goes back one level in CONTROLLERS.md as well
+  assert.ok(read('docs/CONTROLLERS.md').indexOf('B back one level: from a panel such as *Shortcuts…* or *Function keys…* to the menu, from the menu to the game') > 0);
+});

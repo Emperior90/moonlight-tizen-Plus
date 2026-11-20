@@ -787,16 +787,10 @@ var handlePromiseMessage = function(callbackId, type, msg) {
   });
 }
 
-/**
- * leaveStreamView - Leaves the stream view and returns to the app list, after a stream ended or its start was cancelled
- *
- * @param  {Object} host The host of the stream
- * @param  {boolean} quitApp Whether to quit the app on the host first ('Quit app on the PC' of the
- *     Stream Menu)
- * @return {void}
- */
-function leaveStreamView(host, quitApp) {
-  // Each of these steps on its own, so that the video is removed and the app list shows also when one of them fails
+// Remove the stream from the screen at its end (leaveStreamView(), leaveStreamViewToHosts()): its heartbeat, the rumble,
+// the screensaver, the audio scheduler, the overlays and the video. Each of these steps on its own, so that the video is
+// removed and the next view shows also when one of them fails.
+function removeStreamView() {
   // The stream ended in a way the app saw, which its heartbeat notes (diagnostics.js)
   if (typeof StreamHeartbeat !== 'undefined') {
     runGuarded('StreamHeartbeat.stop', function() { StreamHeartbeat.stop('the stream ended'); });
@@ -815,6 +809,49 @@ function leaveStreamView(host, quitApp) {
   $('#loadingSpinnerMessage').text('');
   $('body').css('backgroundColor', '');
   $('#wasm_module').css('display', 'none');
+}
+
+// Leave the stream view for the PC list after 'Shut down or restart the PC' (end, from endPcPowerCommand() in menus.js):
+// the app list of a PC that goes off would only wait for it. The polling of the PC list shows the PC offline once it is
+// down, and online again after a restart. The PC ended the stream ('pc'): say that it shuts down or restarts, instead
+// of an error. The TV ended it ('tv'): no message. With a dialog over the stream, the app list shows as usual.
+function leaveStreamViewToHosts(host, end) {
+  if (window.isDialogOpen) {
+    leaveStreamView(host, false);
+  } else {
+    removeStreamView();
+    showHosts();
+  }
+  if (end.ending === 'pc') {
+    // At once, not after the message of the command or the hint of the stream that still shows
+    if (typeof dismissSnackbar === 'function') {
+      runGuarded('dismissSnackbar', function() { dismissSnackbar(); });
+    }
+    var name = end.host && end.host.hostname ? end.host.hostname : host && host.hostname ? host.hostname : '';
+    if (end.kind === 'restart') {
+      if (name) {
+        snackbarLogLong('%1$s is restarting.', name);
+      } else {
+        snackbarLogLong('The PC is restarting.');
+      }
+    } else if (name) {
+      snackbarLogLong('%1$s is shutting down.', name);
+    } else {
+      snackbarLogLong('The PC is shutting down.');
+    }
+  }
+}
+
+/**
+ * leaveStreamView - Leaves the stream view and returns to the app list, after a stream ended or its start was cancelled
+ *
+ * @param  {Object} host The host of the stream
+ * @param  {boolean} quitApp Whether to quit the app on the host first ('Quit app on the PC' of the
+ *     Stream Menu)
+ * @return {void}
+ */
+function leaveStreamView(host, quitApp) {
+  removeStreamView();
   if (!host) {
     return;
   }
@@ -1069,6 +1106,20 @@ function dispatchMessage(msg) {
     // Each step on its own (runGuarded()), so that an error in one of them can't leave the app in the stream view.
     // The Stream Menu belongs to the stream, and 'Quit app on the PC' to this end of it (menus.js)
     runGuarded('closeStreamMenu', function() { closeStreamMenu(false); });
+    // 'Shut down or restart the PC' sent its command a moment ago: the PC went off (or the TV ended the stream), so the
+    // app goes to the PC list without an error, a retry or a reconnect. A session of the menu of a PC that launched its
+    // app and ended before the command quits that app again (endPcPowerCommand() in menus.js, which tests may leave out).
+    var pcPowerEnd = typeof endPcPowerCommand === 'function' ?
+      runGuarded('endPcPowerCommand', function() { return endPcPowerCommand(errorCode, quitApp); }) : null;
+    if (pcPowerEnd && (pcPowerEnd.ending === 'pc' || pcPowerEnd.ending === 'tv')) {
+      pendingStreamRestart = null;
+      runGuarded('leaveStreamViewToHosts', function() { leaveStreamViewToHosts(streamLaunchHost || api, pcPowerEnd); });
+      return;
+    }
+    var quitAfterPcPower = !!(pcPowerEnd && pcPowerEnd.ending === 'quit');
+    if (quitAfterPcPower && !pcPowerEnd.mayRetry) {
+      quitApp = true;
+    }
     // The bitrate or the surround quality entry of the Stream Menu ended the stream to resume it with new settings: the
     // launch screen shows until it reconnects (resumeStreamAfterSettingsChange() in index.js)
     if (!quitApp && typeof resumeStreamAfterSettingsChange === 'function' && runGuarded('resumeStreamAfterSettingsChange', function() {
@@ -1090,6 +1141,10 @@ function dispatchMessage(msg) {
       // session with a new controller, for which the host sends no 0, and the rumble of this one is ignored from now on
       runGuarded('Rumble.stopAll', function() { Rumble.stopAll(); });
       return;
+    }
+    // The app that a session of the menu of a PC launched for its command, which didn't start once more
+    if (quitAfterPcPower) {
+      quitApp = true;
     }
     runGuarded('leaveStreamView', function() { leaveStreamView(streamLaunchHost || api, quitApp); });
     // Show a termination snackbar message if the termination was unexpected
@@ -1120,6 +1175,11 @@ function dispatchMessage(msg) {
     $('body').css('backgroundColor', 'transparent');
     $('#wasm_module').css('display', '');
     $('#wasm_module').focus();
+    // A session of the menu of a PC types its power command once the picture of the PC shows (menus.js)
+    if (typeof streamPcPower !== 'undefined' && streamPcPower) {
+      var powerRequest = streamPcPower;
+      runGuarded('armPcPowerCommand', function() { armPcPowerCommand(powerRequest); });
+    }
   } else if (msg.indexOf('ProgressMsg: ') === 0) {
     // Show progress message under loading spinner
     $('#loadingSpinnerMessage').text(translateBackendMessage(msg.replace('ProgressMsg: ', '')));

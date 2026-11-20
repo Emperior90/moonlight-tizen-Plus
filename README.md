@@ -14,7 +14,7 @@ Moonlight Plus is an unofficial fork of [Moonlight Tizen](https://github.com/bri
 - **Optimal settings for this TV** in one button, and warnings that match its panel, decoder and network ([optimal settings](docs/GUIDE.md#optimal-settings-for-this-tv)).
 - **Smoother video:** reworked frame pacing, faster error correction and fixes for freezes after packet loss.
 - **Clear messages** instead of frozen or black pictures, e.g. which video format the TV rejected ([troubleshooting](docs/GUIDE.md#troubleshooting)).
-- **Stream Menu** on Play/Pause or Select + Start: change the bitrate in a game, type text on the PC, send Alt + Tab ([Stream Menu](docs/GUIDE.md#stream-menu-and-app-menu)).
+- **Stream Menu** on Play/Pause or Select + Start: change the bitrate in a game, type text, send shortcuts and F1 to F12 to the PC, or shut it down ([Stream Menu](docs/GUIDE.md#stream-menu-and-app-menu)).
 - **Statistics and diagnostics** that show whether the host, the network or the TV causes a problem ([statistics](docs/GUIDE.md#performance-statistics)).
 - **Controllers:** Select and Start in the menus, rumble, mouse emulation, a button mapping and an input test ([controllers](docs/CONTROLLERS.md)).
 - **Audio and languages:** 5.1 through a soundbar, and English, German, Spanish, French or Brazilian Portuguese ([audio](docs/GUIDE.md#audio), [languages](docs/GUIDE.md#language)).

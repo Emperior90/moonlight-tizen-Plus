@@ -104,3 +104,29 @@ test('a line without an entry says "keine" or "keines" in lower case, as a text 
   // The value of its own (the target of a button in the button mapping) is capitalised
   assert.equal(german['None'], 'Keine');
 });
+
+test('the panels of the Stream Menu and the power command use the German names, the colour key in a sentence and quoted names', () => {
+  const k11 = 'Only for a Windows PC that shows its desktop or a game, not the lock screen. Moonlight Plus opens Run (Windows key + R) and types the command. If an app has unsaved work, Windows asks first. Some games block the Windows key: switch to the desktop first (Alt + Tab).';
+  const noDesktop = '%1$s has no Desktop app to stream for this. Stream one of its apps and use the Stream Menu instead.';
+  assert.equal(german['Shortcuts…'], 'Tastenkürzel …');
+  assert.equal(german['Function keys…'], 'F-Tasten …');
+  assert.equal(german['Shut down or restart the PC…'], 'PC herunterfahren oder neu starten …');
+  // Two verbs, not a verb and a noun
+  assert.equal(german['Shut down or restart the PC?'], 'Herunterfahren oder neu starten?');
+  ['%1$s shuts down in a few seconds. To cancel (e.g. on the lock screen): RETURN or RED',
+    '%1$s restarts in a few seconds. To cancel (e.g. on the lock screen): RETURN or RED',
+    'The PC shuts down in a few seconds. To cancel (e.g. on the lock screen): RETURN or RED',
+    'The PC restarts in a few seconds. To cancel (e.g. on the lock screen): RETURN or RED'].forEach((key) => {
+    assert.ok(german[key].endsWith('Abbrechen (z. B. beim Sperrbildschirm): RETURN oder rote Taste'), key);
+  });
+  // A host without a name: a sentence of its own with the PC as its subject, not the dative of 'the PC'
+  assert.equal(german['The PC shuts down in a few seconds. To cancel (e.g. on the lock screen): RETURN or RED'].indexOf('Der PC wird gleich heruntergefahren.'), 0);
+  assert.equal(german['The PC is shutting down.'], 'Der PC wird heruntergefahren.');
+  assert.equal(german['The PC is restarting.'], 'Der PC wird neu gestartet.');
+  // The menu entry of the app list in its German name, quoted
+  const notListed = german['%1$s runs an app that isn\'t in its app list. Quit it first with "Quit app on the PC", then try again.'];
+  assert.ok(notListed.indexOf('„' + german['Quit app on the PC'] + '“') > 0 && /Beende /.test(notListed), notListed);
+  assert.ok(german[k11].indexOf('„Ausführen“ (' + german['Windows key'] + ' + R)') > 0, german[k11]);
+  assert.ok(german[noDesktop].indexOf('„Desktop“') > 0 && german[noDesktop].indexOf(german['Stream Menu']) > 0, german[noDesktop]);
+  assert.ok(german['RETURN or B: back to the Stream Menu'].endsWith(german['Stream Menu']));
+});

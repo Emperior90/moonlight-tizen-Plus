@@ -880,6 +880,40 @@ const Views = {
       setTimeout(() => blurElement(this.view.current()), 100);
     },
   },
+  PcPowerDialog: {
+    // The question 'Shut down or restart the PC?' of the menu of a PC (pcPowerDialog() in index.js): Cancel, Restart the
+    // PC, Shut down the PC, like the same question of the Stream Menu. It opens on Cancel, ignores OK for a moment after
+    // it opened, and UP and DOWN stop at the ends. Back is Cancel.
+    view: new ListView(() => ['cancelPcPower', 'restartPcPower', 'shutdownPcPower']),
+    up: function() {
+      this.view.prev();
+      focusElement(this.view.current());
+    },
+    down: function() {
+      this.view.next();
+      focusElement(this.view.current());
+    },
+    left: function() {},
+    right: function() {},
+    accept: function() {
+      clickElement(this.view.current());
+    },
+    back: function() {
+      resolveElement('cancelPcPower').click();
+    },
+    press: function() {},
+    switch: function() {
+      focusElement(this.view.current());
+    },
+    enter: function() {
+      mark(this.view.current());
+      setTimeout(() => focusElement(this.view.current()), 100);
+    },
+    leave: function() {
+      unmark(this.view.current());
+      setTimeout(() => blurElement(this.view.current()), 100);
+    },
+  },
   DeleteHostDialog: {
     view: new ListView(() => [
       'continueDeleteHost',
@@ -1980,6 +2014,11 @@ const Views = {
       resolveElement('goBackBtn').click();
     },
     press: function() {
+      // Not while a session of the menu of a PC prepares its stream to shut it down or restart it, whose start the app
+      // menu could replace (startPcPowerSession() in index.js); OK starts nothing meanwhile either (startGame())
+      if (typeof isPcPowerSessionStarting === 'function' && isPcPowerSessionStarting()) {
+        return;
+      }
       // Open the menu of the current app (CH+ or Play/Pause on the remote, Select on a gamepad)
       openAppMenu(resolveElement(this.view.current()));
     },
@@ -2146,9 +2185,10 @@ const Views = {
   StreamMenu: {
     // The entries of the Stream Menu that show (menus.js). Back closes it and resumes the stream, LEFT and RIGHT change
     // the bitrate of the bitrate entry and set the quality of the surround quality entry (LEFT Efficient, RIGHT High,
-    // so that a held key stays at its end). UP and DOWN stop at the first and the last entry instead of wrapping around
-    // like the other menus: the menu opens on Resume, and the last entry quits the app on the PC without a question,
-    // so one UP too many must not select it.
+    // so that a held key stays at its end), and RIGHT opens the panel of 'Shortcuts…' and 'Function keys…' as OK does,
+    // like the arrow they show (not the power question, which has none). UP and DOWN stop at the first and the last
+    // entry instead of wrapping around like the other menus: the menu opens on Resume, and the last entries quit the app
+    // on the PC without a question and ask to shut it down, so one UP too many must not select them.
     view: new ListView(() => getOverlayMenuItems('streamMenu')),
     up: function() {
       this.view.prev();
@@ -2166,10 +2206,13 @@ const Views = {
       }
     },
     right: function() {
-      if (elementId(this.view.current()) === 'streamMenuBitrate') {
+      const id = elementId(this.view.current());
+      if (id === 'streamMenuBitrate') {
         changeStreamMenuBitrate(1);
-      } else if (elementId(this.view.current()) === 'streamMenuSurround') {
+      } else if (id === 'streamMenuSurround') {
         changeStreamMenuSurround(1);
+      } else if (id === 'streamMenuShortcuts' || id === 'streamMenuFKeys') {
+        clickElement(this.view.current());
       }
     },
     accept: function() {
@@ -2177,6 +2220,117 @@ const Views = {
     },
     back: function() {
       closeStreamMenu(true);
+    },
+    press: function() {},
+    switch: function() {
+      focusElement(this.view.current());
+    },
+    enter: function() {
+      mark(this.view.current());
+      focusElement(this.view.current());
+    },
+    leave: function() {
+      unmark(this.view.current());
+      blurElement(this.view.current());
+    },
+  },
+  StreamShortcuts: {
+    // The panel of 'Shortcuts…' in the Stream Menu (menus.js): the key combinations for the PC. UP and DOWN stop at the
+    // ends, OK sends the keys and resumes the stream, and back returns to the entries of the Stream Menu, on
+    // 'Shortcuts…'.
+    view: new ListView(() => getOverlayMenuItems('streamShortcutsPanel')),
+    up: function() {
+      this.view.prev();
+      focusElement(this.view.current());
+    },
+    down: function() {
+      this.view.next();
+      focusElement(this.view.current());
+    },
+    left: function() {},
+    right: function() {},
+    accept: function() {
+      clickElement(this.view.current());
+    },
+    back: function() {
+      closeStreamMenuPanel();
+    },
+    press: function() {},
+    switch: function() {
+      focusElement(this.view.current());
+    },
+    enter: function() {
+      mark(this.view.current());
+      focusElement(this.view.current());
+    },
+    leave: function() {
+      unmark(this.view.current());
+      blurElement(this.view.current());
+    },
+  },
+  StreamFKeys: {
+    // The panel of 'Function keys…' in the Stream Menu (menus.js): F1 to F12 in rows of 4 (STREAM_FUNCTION_KEY_COLUMNS).
+    // LEFT and RIGHT step by one key and go on into the row before or after it, UP and DOWN step by a row, and nothing
+    // wraps: F1, F12 and the top and bottom rows are the ends (ListView.select() ignores a key beyond them). It always
+    // opens on F1. OK sends the key and resumes the stream, and back returns to the entries of the Stream Menu, on
+    // 'Function keys…'.
+    view: new ListView(() => getOverlayMenuItems('streamFKeysPanel')),
+    up: function() {
+      this.view.select(this.view.index - STREAM_FUNCTION_KEY_COLUMNS);
+      focusElement(this.view.current());
+    },
+    down: function() {
+      this.view.select(this.view.index + STREAM_FUNCTION_KEY_COLUMNS);
+      focusElement(this.view.current());
+    },
+    left: function() {
+      this.view.select(this.view.index - 1);
+      focusElement(this.view.current());
+    },
+    right: function() {
+      this.view.select(this.view.index + 1);
+      focusElement(this.view.current());
+    },
+    accept: function() {
+      clickElement(this.view.current());
+    },
+    back: function() {
+      closeStreamMenuPanel();
+    },
+    press: function() {},
+    switch: function() {
+      focusElement(this.view.current());
+    },
+    enter: function() {
+      mark(this.view.current());
+      focusElement(this.view.current());
+    },
+    leave: function() {
+      unmark(this.view.current());
+      blurElement(this.view.current());
+    },
+  },
+  StreamPower: {
+    // The question 'Shut down or restart the PC?' of the Stream Menu (menus.js): Cancel, Restart the PC, Shut down the
+    // PC. It opens on Cancel, OK is ignored for a moment after it opened (Navigation.guardAccept()), and UP and DOWN stop
+    // at the ends, so that neither a double OK nor a held key confirms it. Back and Cancel return to the entries of the
+    // Stream Menu, on 'Shut down or restart the PC…'.
+    view: new ListView(() => getOverlayMenuItems('streamPowerPanel')),
+    up: function() {
+      this.view.prev();
+      focusElement(this.view.current());
+    },
+    down: function() {
+      this.view.next();
+      focusElement(this.view.current());
+    },
+    left: function() {},
+    right: function() {},
+    accept: function() {
+      clickElement(this.view.current());
+    },
+    back: function() {
+      closeStreamMenuPanel();
     },
     press: function() {},
     switch: function() {

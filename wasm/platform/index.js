@@ -822,21 +822,82 @@ function rescanNetwork() {
 function snackbarLog(...args) {
   const translatedMessage = t(...args);
   console.log('%c[index.js, snackbarLog]', 'color: green;', ...args);
-  var data = {
-    message: translatedMessage,
-    timeout: 2500
-  };
-  document.querySelector('#snackbar').MaterialSnackbar.showSnackbar(data);
+  showSnackbarMessage(translatedMessage, 2500);
 }
 
 function snackbarLogLong(...args) {
   const translatedMessage = t(...args);
   console.log('%c[index.js, snackbarLogLong]', 'color: green;', ...args);
-  var data = {
-    message: translatedMessage,
-    timeout: 5000
+  showSnackbarMessage(translatedMessage, 5000);
+}
+
+// Show a message for timeoutMs, e.g. one that is true only until a moment that is known in advance: the countdown of
+// 'Shut down or restart the PC' ends when Enter goes to the PC (menus.js)
+function snackbarLogFor(timeoutMs, ...args) {
+  const translatedMessage = t(...args);
+  console.log('%c[index.js, snackbarLogFor]', 'color: green;', ...args);
+  showSnackbarMessage(translatedMessage, timeoutMs);
+}
+
+// Show a message in the snackbar of MDL, after the one that shows and those that wait (its queue)
+function showSnackbarMessage(message, timeoutMs) {
+  var snackbar = document.querySelector('#snackbar').MaterialSnackbar;
+  guardSnackbarTimers(snackbar);
+  snackbar.showSnackbar({ message: message, timeout: timeoutMs });
+}
+
+// End the message of the snackbar that shows, and drop the ones that wait behind it, for a message that is no longer
+// true, e.g. the countdown of 'Shut down or restart the PC' after RETURN: the next message then shows at once (after the
+// fade of 250 ms) instead of after the timeout of the one before it. The snackbar of MDL queues every message that comes
+// while one shows and has no way to end one early: its timer of each message (displaySnackbar_()) can't be cleared, so
+// guardSnackbarTimers(), which showSnackbarMessage() runs, lets the timer of a message that was ended early do nothing.
+function dismissSnackbar() {
+  var element = document.querySelector('#snackbar');
+  var snackbar = element && element.MaterialSnackbar;
+  if (!snackbar || !guardSnackbarTimers(snackbar)) {
+    return;
+  }
+  snackbar.queuedNotifications_ = [];
+  snackbar.endShownMessage_();
+}
+
+// Wrap the timers of the snackbar of MDL once (dismissSnackbar()): each shown message gets a cleanup of its own, which
+// does nothing once the message ended otherwise, and a message ends once. Returns whether the snackbar is wrapped.
+function guardSnackbarTimers(snackbar) {
+  if (!snackbar) {
+    return false;
+  }
+  if (snackbar.endShownMessage_) {
+    return true;
+  }
+  if (typeof snackbar.displaySnackbar_ !== 'function' || typeof snackbar.cleanup_ !== 'function' ||
+    !Array.isArray(snackbar.queuedNotifications_)) {
+    return false;
+  }
+  var display = snackbar.displaySnackbar_;
+  var cleanup = snackbar.cleanup_;
+  // The message that shows: its number, and whether it ends (fades out) already
+  var shown = { id: 0, ending: true };
+  var end = function(id) {
+    if (id !== shown.id || shown.ending || !snackbar.active) {
+      return;
+    }
+    shown.ending = true;
+    cleanup.call(snackbar);
   };
-  document.querySelector('#snackbar').MaterialSnackbar.showSnackbar(data);
+  snackbar.displaySnackbar_ = function() {
+    var id = shown.id + 1;
+    shown = { id: id, ending: false };
+    // displaySnackbar_() of MDL binds this.cleanup_ to its timer
+    this.cleanup_ = function() {
+      end(id);
+    };
+    display.call(this);
+  };
+  snackbar.endShownMessage_ = function() {
+    end(shown.id);
+  };
+  return true;
 }
 
 // Handle layout elements when displaying the Hosts view
@@ -881,6 +942,8 @@ function showHostsMode() {
 function showHosts() {
   // Stop navigation while the views change
   Navigation.stop();
+  // Back on the PC list, a session of the menu of a PC that still reads its app starts nothing (startPcPowerSession())
+  endPcPowerSessionStart();
 
   // Hide the other views and show the main header of the hosts
   $('#main-header').children().hide();
@@ -1059,17 +1122,23 @@ function hostChosen(host, onSuccessCallback) {
     });
   } else {
     // But if the host is already paired and online, then we show the apps and navigate to the Apps view as usual.
-    Navigation.push(Views.Apps);
-    showApps(host).then(() => {
-      // Scroll to the current game row
-      Navigation.switch();
-      // Switch to Apps view
-      Navigation.change(Views.Apps);
-    }).catch(console.error).finally(() => {
-      // Reset the flag to indicate that a host failed to show apps list
-      isHostOpening = false;
-    });
+    return openPairedHost(host);
   }
+}
+
+// Show the apps of a paired host that is online and navigate to the Apps view (hostChosen()). Resolves once the app list
+// shows, or failed to.
+function openPairedHost(host) {
+  Navigation.push(Views.Apps);
+  return showApps(host).then(() => {
+    // Scroll to the current game row
+    Navigation.switch();
+    // Switch to Apps view
+    Navigation.change(Views.Apps);
+  }).catch(console.error).finally(() => {
+    // Reset the flag to indicate that a host failed to show apps list
+    isHostOpening = false;
+  });
 }
 
 // Handles the change of input mode based on the state of the IP address field mode switch
@@ -2051,6 +2120,18 @@ function hostMenuDialog(host) {
       }
     },
     {
+      // Shut down or restart the PC through a short stream of its own (pcPowerDialog()), only for a PC that is online
+      // and paired: GameStream has no command for it without a stream
+      id: 'powerHost-' + host.hostname,
+      icon: 'power',
+      class: 'is-danger',
+      text: t('Shut down or restart the PC…'),
+      shown: host.online === true && host.paired === true,
+      action: function() {
+        setTimeout(() => pcPowerDialog(host), 100);
+      }
+    },
+    {
       id: 'deleteHost-' + host.hostname,
       icon: 'trash',
       // Destructive, in red
@@ -2113,6 +2194,175 @@ function hostMenuDialog(host) {
   Views.HostMenuDialog.view.index = 0;
   Navigation.push(Views.HostMenuDialog, host.hostname);
   setTimeout(() => Navigation.switch(), 5);
+}
+
+// Ask whether to shut down or restart a PC, from its menu in the PC list (hostMenuDialog()): the question opens on
+// Cancel and ignores OK for a moment, like the same question of the Stream Menu (menus.js). Restart and Shut down start
+// a short session that types the command (startPcPowerSession()).
+function pcPowerDialog(host) {
+  var overlay = document.getElementById('pcPowerDialogOverlay');
+  var dialog = document.getElementById('pcPowerDialog');
+  if (!overlay || !dialog || isDialogOpen || isInGame) {
+    return;
+  }
+  $('#pcPowerDialogSubtitle').text(host.hostname);
+  // The question closes once: a second click (a double click of a mouse) would pop the view below it, the app list that
+  // the first one opened. Returns whether it closed now.
+  var closed = false;
+  var close = function() {
+    if (closed) {
+      return false;
+    }
+    closed = true;
+    overlay.style.display = 'none';
+    if (dialog.open) {
+      dialog.close();
+    }
+    isDialogOpen = false;
+    // Back to the card of the PC, with the focus where the other questions of the menu of a PC leave it (Views.Hosts)
+    Navigation.pop();
+    return true;
+  };
+  $('#cancelPcPower').off('click').on('click', function() {
+    if (close()) {
+      console.log('%c[index.js, pcPowerDialog]', 'color: green;', 'Not shutting down or restarting ' + host.hostname + '.');
+    }
+  });
+  $('#restartPcPower').off('click').on('click', function() {
+    if (close()) {
+      startPcPowerSession(host, 'restart');
+    }
+  });
+  $('#shutdownPcPower').off('click').on('click', function() {
+    if (close()) {
+      startPcPowerSession(host, 'shutdown');
+    }
+  });
+  if (!dialog.showModal) {
+    dialogPolyfill.registerDialog(dialog);
+  }
+  overlay.style.display = 'flex';
+  dialog.showModal();
+  isDialogOpen = true;
+  Views.PcPowerDialog.view.index = 0;
+  Navigation.guardAccept(Views.PcPowerDialog);
+  Navigation.push(Views.PcPowerDialog, host.hostname);
+}
+
+// The app that a PC-list session for 'Shut down or restart the PC' streams (startPcPowerSession()): the app that runs on
+// the PC, resumed ({ app, launched: false }), or else the app named Desktop, launched ({ app, launched: true }), which
+// Sunshine, Apollo, Vibepollo and Vibeshine list by default (apps.json of each). Never the Permission Denied or the
+// Terminate tile of Apollo and Vibepollo. null when there is none, or when the app that runs isn't in the list.
+function choosePcPowerApp(appList, currentGame) {
+  var apps = Array.isArray(appList) ? appList : [];
+  var usable = function(app) {
+    return !!app && !isHostPermissionTile(app) && !isHostTerminateTile(app);
+  };
+  if (currentGame && currentGame != 0) {
+    var running = apps.filter(function(app) {
+      return String(app.id) === String(currentGame);
+    })[0];
+    return usable(running) ? { app: running, launched: false } : null;
+  }
+  var desktop = apps.filter(function(app) {
+    return usable(app) && typeof app.title === 'string' && app.title.trim().toLowerCase() === 'desktop';
+  })[0];
+  return desktop ? { app: desktop, launched: true } : null;
+}
+
+// Read which app a PC-list session streams, after a refresh of the server info (choosePcPowerApp())
+function pickPcPowerApp(host) {
+  return host.refreshServerInfo().then(function() {
+    return host.getAppList();
+  }).then(function(appList) {
+    return choosePcPowerApp(appList, host.currentGame);
+  });
+}
+
+// The session of the menu of a PC that prepares its stream (startPcPowerSession()), from the question until startGame()
+// read the app from the PC (its launch screen shows then), or null: { host, kind, launchId (of its startGame(), 0 while
+// the app is picked) }. Meanwhile the app list of the PC shows and takes OK, whose start of the app under the selection
+// (e.g. the second press of a double OK) would replace the shutdown: startGame() ignores it, and Views.Apps opens no app
+// menu. RETURN to the PC list ends the session (showHosts()).
+var pcPowerSessionStart = null;
+
+// Whether a session of the menu of a PC prepares its stream (pcPowerSessionStart)
+function isPcPowerSessionStarting() {
+  return pcPowerSessionStart !== null;
+}
+
+// The session of the menu of a PC is no longer prepared: with launchId only the session of that start of startGame()
+function endPcPowerSessionStart(launchId) {
+  if (pcPowerSessionStart !== null && (launchId === undefined || pcPowerSessionStart.launchId === launchId)) {
+    pcPowerSessionStart = null;
+  }
+}
+
+// Shut down or restart a PC from its menu in the PC list: GameStream has no command for it, so the TV opens the PC as OK
+// does (its app list), streams the app that runs on it or else its Desktop app, and once the picture of the stream shows,
+// types the command as the Stream Menu does (armPcPowerCommand() in menus.js, from 'Connection Established' in
+// messages.js). The launch screen names what happens, and RETURN or RED cancel until Enter. The end of the stream goes to
+// the PC list with the message that the PC shuts down or restarts (endPcPowerCommand() in menus.js). Only for a PC that
+// is online and paired.
+function startPcPowerSession(host, kind) {
+  if (isInGame || isHostOpening || !host || !host.paired || host.online !== true) {
+    console.warn('%c[index.js, startPcPowerSession]', 'color: green;', 'Warning: Not starting the ' + kind + ' of ' + (host && host.hostname) +
+      (isInGame ? ' during a stream.' : isHostOpening ? ' while a PC opens.' : ', since it is not online and paired.'));
+    if (host && host.online !== true) {
+      snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', host.hostname || t('the PC'));
+    }
+    return;
+  }
+  console.log('%c[index.js, startPcPowerSession]', 'color: green;', 'PC power: ' + kind + ' of ' + host.hostname + ': opening it.');
+  var session = { host: host, kind: kind, launchId: 0 };
+  pcPowerSessionStart = session;
+  var opened = hostChosen(host);
+  if (!opened || typeof opened.then !== 'function') {
+    endPcPowerSessionStart();
+    return;
+  }
+  opened.then(function() {
+    return pickPcPowerApp(host).then(function(choice) {
+      // Only while the app list of this PC still shows for this session, e.g. not after RETURN to the PC list meanwhile
+      if (pcPowerSessionStart !== session || api !== host || !$('#game-grid').is(':visible') || isDialogOpen || isInGame) {
+        console.log('%c[index.js, startPcPowerSession]', 'color: green;', 'PC power: ' + kind + ' of ' + host.hostname + ': the app list no longer shows, nothing started.');
+        if (pcPowerSessionStart === session) {
+          endPcPowerSessionStart();
+        }
+        return;
+      }
+      if (!choice) {
+        endPcPowerSessionStart();
+        // An app runs that the app list doesn't have (e.g. one that another device started from its own list of Apollo),
+        // or nothing runs and the PC has no Desktop app
+        if (host.currentGame && host.currentGame != 0) {
+          console.warn('%c[index.js, startPcPowerSession]', 'color: green;', 'Warning: PC power: ' + kind + ' of ' + host.hostname + ': the app that runs is not in the app list.');
+          snackbarLogLong('%1$s runs an app that isn\'t in its app list. Quit it first with "Quit app on the PC", then try again.', host.hostname);
+        } else {
+          console.warn('%c[index.js, startPcPowerSession]', 'color: green;', 'Warning: PC power: ' + kind + ' of ' + host.hostname + ': no Desktop app to stream.');
+          snackbarLogLong('%1$s has no Desktop app to stream for this. Stream one of its apps and use the Stream Menu instead.', host.hostname);
+        }
+        return;
+      }
+      console.log('%c[index.js, startPcPowerSession]', 'color: green;', 'PC power: ' + kind + ' of ' + host.hostname + ': streaming app ' +
+        choice.app.id + ' (' + (choice.launched ? 'launch' : 'resume') + ').');
+      // startGame() takes the request synchronously, before its first wait, and gives the session its launch number
+      pcPowerOfNextStart = { kind: kind, launchedApp: choice.launched };
+      try {
+        startGame(host, choice.app.id);
+      } finally {
+        pcPowerOfNextStart = null;
+        // A start that didn't begin (e.g. Moonlight went to the background) prepares nothing
+        if (pcPowerSessionStart === session && session.launchId === 0) {
+          endPcPowerSessionStart();
+        }
+      }
+    }, function(failed) {
+      endPcPowerSessionStart();
+      console.error('%c[index.js, startPcPowerSession]', 'color: green;', 'Error: PC power: ' + kind + ' of ' + host.hostname + ': failed to read its apps: ' + failed);
+      snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', host.hostname || t('the PC'));
+    });
+  });
 }
 
 // Show a confirmation with the Delete Host dialog before removing the host object
@@ -4135,11 +4385,28 @@ function startGame(host, appID, restartKind, restartChange) {
     console.warn('%c[index.js, startGame]', 'color: green;', 'Warning: Ignoring the start of app ' + appID + ' while a stream is active.');
     return;
   }
-  localStorage.setItem('lastOpenedApp_' + host.serverUid, appID);
+  // The power request of a session of the menu of a PC (startPcPowerSession()) for this start: a new start takes it from
+  // pcPowerOfNextStart, and a start once more keeps the one of its stream (menus.js)
+  var powerRequest = typeof streamPcPower === 'undefined' ? null :
+    (!isRestart || restartKind === STREAM_RESTART_SETTINGS) ? pcPowerOfNextStart : streamPcPower;
+  // Nor any other start while such a session prepares its own, e.g. of the app under the selection of its app list by
+  // the second press of a double OK, which would replace the shutdown
+  if (!isRestart && !powerRequest && isPcPowerSessionStarting()) {
+    console.warn('%c[index.js, startGame]', 'color: green;', 'Warning: Ignoring the start of app ' + appID + ' while the PC is about to be shut down or restarted.');
+    return;
+  }
+  // A session that shuts down or restarts the PC isn't the app that the user played: the app list of the PC keeps its
+  // selection, and the order 'Recently played' doesn't put it first
+  if (!powerRequest) {
+    localStorage.setItem('lastOpenedApp_' + host.serverUid, appID);
+  }
 
   // Number this launch, so that the replies of the host are ignored once the launch was cancelled or a newer one
   // started (see cancelStreamLaunch)
   var launchId = ++streamLaunchId;
+  if (!isRestart && powerRequest && pcPowerSessionStart !== null) {
+    pcPowerSessionStart.launchId = launchId;
+  }
   streamLaunchHost = host;
   streamLaunchAppId = appID;
   streamLaunchAnsweredAt = 0;
@@ -4160,6 +4427,11 @@ function startGame(host, appID, restartKind, restartChange) {
   // The Stream Menu state of an earlier stream doesn't belong to this one (menus.js)
   streamMouseEmulationActive = false;
   quitAppAfterStream = false;
+  // The power request of a session of the menu of a PC (startPcPowerSession()) goes with its start, and with a start once
+  // more of it (retryStreamStart()); every other start, also the reconnect for new settings, has none (menus.js)
+  if (typeof streamPcPower !== 'undefined' && (!isRestart || restartKind === STREAM_RESTART_SETTINGS)) {
+    streamPcPower = powerRequest;
+  }
   // The graph of the full statistics starts with this stream (messages.js)
   resetStatsGraph();
   isStreamVideoTrackClosed = false;
@@ -4188,6 +4460,7 @@ function startGame(host, appID, restartKind, restartChange) {
   // shows, which stayed for good before 2.3.2. A start from the app list, where OK otherwise seemed to do nothing, says
   // so and closes the audio scheduler that its key press opened.
   var endWithoutAppList = function() {
+    endPcPowerSessionStart(launchId);
     if (launchId !== streamLaunchId) {
       return;
     }
@@ -4204,6 +4477,8 @@ function startGame(host, appID, restartKind, restartChange) {
   // Refresh the server info, because the user might have quit the game
   host.refreshServerInfo().then(function(ret) {
     host.getAppById(appID).then(function(appToStart) {
+      // A session of the menu of a PC shows its launch screen from here on, or a dialog
+      endPcPowerSessionStart(launchId);
       if (launchId !== streamLaunchId) {
         return;
       }
@@ -4378,13 +4653,14 @@ function startGame(host, appID, restartKind, restartChange) {
       // The order 'Recently played' of the app list puts the app first once the host accepted its start, but never the
       // Terminate tile of Apollo or Vibepollo, which ends an app instead of streaming one (menus.js)
       var rememberStartedApp = function() {
-        if (typeof rememberRecentApp === 'function' && !isHostTerminateTile(appToStart)) {
+        if (typeof rememberRecentApp === 'function' && !isHostTerminateTile(appToStart) && !powerRequest) {
           rememberRecentApp(host.serverUid, appToStart, getAppGridApps(host.serverUid));
         }
       };
       // Show the app and its box art on the launch screen (launcher.js)
+      // A session of the menu of a PC says over the title what it is for
       if (typeof Launcher !== 'undefined') {
-        Launcher.prepareStart(host, appID, appToStart.title);
+        Launcher.prepareStart(host, appID, appToStart.title, powerRequest ? (powerRequest.kind === 'restart' ? 'Restart the PC' : 'Shut down the PC') : null);
       }
       // A new stream starts a new session of the diagnostic log and its heartbeat; a start once more of the same stream
       // stays in its session (diagnostics.js)
@@ -4589,6 +4865,7 @@ function startGame(host, appID, restartKind, restartChange) {
     });
   }, function(failedRefreshInfo) {
     console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to refresh server info! Returned error was: ' + failedRefreshInfo + ' and failed server was: ' + '\n', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
+    endPcPowerSessionStart(launchId);
     if (launchId !== streamLaunchId) {
       return;
     }
@@ -4817,6 +5094,10 @@ function restartStreamWithSettings(change) {
     (change.surroundQuality !== undefined ? ' the surround audio quality ' + change.surroundQuality : '') + '.');
   pendingStreamRestart = change;
   quitAppAfterStream = false;
+  // A power command sent a moment ago doesn't explain this end, which reconnects (menus.js)
+  if (typeof cancelPcPowerCommand === 'function') {
+    cancelPcPowerCommand('dropped for a reconnect with new settings');
+  }
   closeStreamMenu(false);
   // The module ends the stream and reports it with 'streamTerminated: 0' (handleMessage() in messages.js)
   Module.stopStream();
@@ -4876,6 +5157,10 @@ function cancelStreamLaunch() {
   streamLaunchId++;
   isInGame = false;
   wasmSessionStarted = false;
+  // A session of the menu of a PC that is cancelled shuts nothing down
+  if (typeof streamPcPower !== 'undefined') {
+    streamPcPower = null;
+  }
   if (typeof cancelStreamStartRequests === 'function') {
     cancelStreamStartRequests(STREAM_START_REQUEST_CANCEL_GRACE_MS);
   }
@@ -6518,7 +6803,8 @@ function initSpecialKeys() {
   // Find the video element that displays the streaming session
   var videoElement = document.getElementById('wasm_module');
 
-  // During a stream, keep the keys that open the Stream Menu, and every key while it is open, away from the PC: this
+  // During a stream, keep the keys that open the Stream Menu, and every key while it is open or while 'Shut down or
+  // restart the PC' types its command (the keys would go into the Run dialog of the PC), away from the PC: this
   // listener runs before the keyboard handler of the stream on the video element, which sends the keys to the PC while
   // the pointer is locked. The key handler of the remote gets them instead (menus.js, remote_controller.js). The last
   // key that went to the menu stays away from the PC until it is released, also once it closed the menu, e.g. RETURN
@@ -6531,7 +6817,8 @@ function initSpecialKeys() {
         streamMenuKeyCode = null;
         return;
       }
-      var isMenuKey = isStreamMenuOpen || isMenuKeyEvent(e);
+      var isMenuKey = isStreamMenuOpen || (typeof isPcPowerSequenceRunning === 'function' && isPcPowerSequenceRunning()) ||
+        isMenuKeyEvent(e);
       var isHeldMenuKey = streamMenuKeyCode !== null && e.keyCode === streamMenuKeyCode;
       if (!(isMenuKey || isHeldMenuKey)) {
         return;
@@ -7962,6 +8249,10 @@ function endStreamInBackground(reason) {
   isStreamStoppedInBackground = true;
   try {
     if (wasmSessionStarted) {
+      // A power command that is being typed stops, and closes the Run dialog of the PC (menus.js)
+      if (typeof stopPcPowerCommandForTvStop === 'function') {
+        stopPcPowerCommandForTvStop();
+      }
       Module.stopStream();
     } else {
       cancelStreamLaunch();
