@@ -2,7 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
-- [2.3.2](#232): pre-release, a tidier Stream Menu with F keys and PC shutdown, finer frame times, how fast frames arrive, more facts in the log and a fix for recovery keyframes
+- [2.3.2](#232): 2026-11-20, a tidier Stream Menu with F keys and PC shutdown, finer frame times, how fast frames arrive, more facts in the log and a fix for recovery keyframes
 - [2.3.1](#231): 2026-11-18, lighter sound and statistics, fewer double presses, a switch for sound on Wi-Fi, and fixes from a review and from other Moonlight clients
 - [2.3.0](#230): 2026-11-08, smoother motion, a picture refresh in the Stream Menu and a longer guide
 - [2.2.1](#221): 2026-11-05, no more 144 FPS, and controllers that work on 2020 TVs
@@ -20,7 +20,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ## 2.3.2
 
-*Pre-release, in testing.* A tidier Stream Menu with F keys and PC shutdown, finer frame times, how fast frames arrive, more log facts and fixes.
+*2026-11-20.* A tidier Stream Menu with F keys and PC shutdown, finer frame times, how fast frames arrive, more log facts and fixes.
 
 > **Install:** by hand over 2.3.1 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >
