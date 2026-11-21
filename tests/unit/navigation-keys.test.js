@@ -2,6 +2,7 @@
 
 // Pins the key handling of the menus: the Navigation API of wasm/platform/navigation.js, the TV keys that
 // initSamsungKeys() registers, and what remoteControllerHandler() (wasm/platform/remote_controller.js) does for each key.
+// Also which keys a stream sends to the PC (isPcKeyEvent() of index.js, since 2.3.3), which none of those TV keys is.
 // The gamepad mapping of the menus is in tests/unit/gamepad-menu-handler.test.js and tests/browser/gamepad-menu.test.js.
 
 const test = require('node:test');
@@ -318,6 +319,44 @@ test('the Pause/Break key of a keyboard, which has the key code of Pause, opens 
   assert.equal(isMenuKeyEvent({ keyCode: 19, key: 'MediaPause' }), true);
   assert.equal(isMenuKeyEvent({ keyCode: 10252, key: 'MediaPlayPause' }), true);
   assert.equal(isMenuKeyEvent({ keyCode: 403, key: 'ColorF0Red' }), false);
+});
+
+test('the keys of a PC keyboard go to the PC in a stream, the keys that only a TV has don\'t', () => {
+  // isPcKeyEvent() of index.js is the rule of IsPcKeyCode() of wasm/input.cpp: the Windows virtual-key codes from 1 to
+  // 0xFF, of which the host reads only the low byte. The first such key of a stream locks the pointer (initSpecialKeys())
+  const isPcKeyEvent = loadPlatformScripts(INDEX_SCRIPTS).get('isPcKeyEvent');
+  [8, 9, 13, 16, 17, 18, 27, 32, 37, 38, 39, 40, 87, 112, 123, 0xFF].forEach((keyCode) => {
+    assert.equal(isPcKeyEvent({ keyCode }), true, String(keyCode));
+  });
+  [0, 256, 403, 404, 405, 406, 427, 428, 10009, 10072, 10073, 10252, 415, 65376, 65385].forEach((keyCode) => {
+    assert.equal(isPcKeyEvent({ keyCode }), false, String(keyCode));
+  });
+  assert.match(fs.readFileSync(path.join(REPO_ROOT, 'wasm', 'input.cpp'), 'utf8'), /return keyCode != 0 && keyCode <= 0xFF;/);
+
+  // Every key that initSamsungKeys() registers has a code above 0xFF, which the stream never sends, except the Pause key
+  // of the remote, whose code is that of the Pause/Break key of a keyboard (19): isMenuKeyEvent() keeps it in the app
+  // during a stream (the window listener of initSpecialKeys()), so it never reaches the stream, while the Pause/Break
+  // key of a keyboard goes to the PC
+  const { tvKey } = loadRemoteController();
+  const remote = loadPlatformScripts(['res/platform.js', 'wasm/platform/remote_controller.js'].concat(INDEX_SCRIPTS));
+  remote.run('initSamsungKeys()');
+  const registered = remote.tvCalls.filter((call) => call.name === 'tizen.tvinputdevice.registerKey').map((call) => call.args[0]);
+  const CODES = {
+    ColorF0Red: tvKey.KEY_RED, ColorF1Green: tvKey.KEY_GREEN, ColorF2Yellow: tvKey.KEY_YELLOW, ColorF3Blue: tvKey.KEY_BLUE,
+    Source: tvKey.KEY_SOURCE, ChannelList: tvKey.KEY_CHANNEL_LIST, ChannelDown: tvKey.KEY_CHANNEL_DOWN,
+    ChannelUp: tvKey.KEY_CHANNEL_UP, MediaPlayPause: tvKey.KEY_PLAY_PAUSE, MediaPlay: tvKey.KEY_PLAY, MediaPause: tvKey.KEY_PAUSE,
+  };
+  assert.deepEqual(registered, Object.keys(CODES));
+  registered.forEach((name) => {
+    assert.equal(typeof CODES[name], 'number', name);
+    assert.equal(isPcKeyEvent({ keyCode: CODES[name], key: name }), name === 'MediaPause', name);
+  });
+  assert.equal(CODES.MediaPause, 19);
+  const isMenuKeyEvent = remote.get('isMenuKeyEvent');
+  assert.equal(isMenuKeyEvent({ keyCode: 19, key: 'MediaPause' }), true);
+  assert.equal(isMenuKeyEvent({ keyCode: 19, key: 'Pause' }), false);
+  // RETURN, which sends Esc in a stream through sendEscapeKeyToHost(), isn't one either
+  assert.equal(isPcKeyEvent({ keyCode: tvKey.KEY_RETURN, key: 'XF86Back' }), false);
 });
 
 test('other keys do nothing', () => {

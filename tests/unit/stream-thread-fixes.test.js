@@ -1,7 +1,9 @@
 'use strict';
 
-// Pins four fixes of the native stream code in the code, next to the native tests that run them: the mouse movement and
-// wheel that the main and the input thread share go through atomic exchanges (native/mouse_input_test.cpp), a stop
+// Pins five fixes of the native stream code in the code, next to the native tests that run them: the mouse movement and
+// wheel that the main and the input thread share go through atomic exchanges (native/mouse_input_test.cpp), a mouse
+// button sends the movement before it first, from the main thread, while the wheel stays on the input thread (since
+// 2.3.3, the same native test), a stop
 // during the start of a stream interrupts the connection setup, also when it came before LiStartConnection cleared its
 // interrupt flag (native/connection_interrupt_test.cpp), and the RTSP parser of moonlight-common-c stays within its
 // buffer for an answer cut off inside a header (native/rtsp_parser_test.c). That was a local fix of the parser with
@@ -33,17 +35,33 @@ function functionBody(source, signature) {
 test('the mouse movement and wheel pass between the threads through atomic exchanges', () => {
   const header = read('wasm/moonlight_wasm.hpp');
   assert.match(header, /std::atomic<int32_t> m_AccumulatedMilliTicks;/);
+  assert.match(header, /std::atomic<int32_t> m_AccumulatedMilliTicksX;/);
   assert.match(header, /std::atomic<int32_t> m_MouseDeltaX, m_MouseDeltaY;/);
   const input = read('wasm/input.cpp');
   const move = functionBody(input, 'EM_BOOL MoonlightInstance::HandleMouseMove(');
   assert.match(move, /m_MouseDeltaX\.fetch_add\(/);
   assert.match(move, /m_MouseDeltaY\.fetch_add\(/);
-  assert.match(functionBody(input, 'EM_BOOL MoonlightInstance::HandleWheel('), /m_AccumulatedMilliTicks\.fetch_add\(/);
+  const wheel = functionBody(input, 'EM_BOOL MoonlightInstance::HandleWheel(');
+  assert.match(wheel, /m_AccumulatedMilliTicks\.fetch_add\(/);
+  assert.match(wheel, /m_AccumulatedMilliTicksX\.fetch_add\(/);
+  // The movement goes out from both threads through the same exchanges (since 2.3.3)
+  const flush = functionBody(input, 'void MoonlightInstance::FlushMouseMovement(');
+  assert.match(flush, /int32_t deltaX = m_MouseDeltaX\.exchange\(0\);\s+int32_t deltaY = m_MouseDeltaY\.exchange\(0\);/);
   const report = functionBody(input, 'void MoonlightInstance::ReportMouseMovement(');
-  assert.match(report, /int32_t deltaX = m_MouseDeltaX\.exchange\(0\);\s+int32_t deltaY = m_MouseDeltaY\.exchange\(0\);/);
-  assert.match(report, /const int32_t milliTicks = m_AccumulatedMilliTicks\.exchange\(0\);/);
+  assert.match(report, /FlushMouseMovement\(\);/);
+  assert.match(report, /SendScroll\(m_AccumulatedMilliTicks\.exchange\(0\), LiSendHighResScrollEvent\);/);
+  assert.match(report, /SendScroll\(m_AccumulatedMilliTicksX\.exchange\(0\), LiSendHighResHScrollEvent\);/);
   // No read and separate reset any more
+  assert.doesNotMatch(flush, /= 0;/);
   assert.doesNotMatch(report, /= 0;/);
+  // A mouse button sends the movement before it first; the wheel stays on the input thread, since the batching of
+  // LiSendHighResScrollEvent() for GeForce Experience takes no lock
+  ['EM_BOOL MoonlightInstance::HandleMouseDown(', 'EM_BOOL MoonlightInstance::HandleMouseUp('].forEach((signature) => {
+    const body = functionBody(input, signature);
+    assert.match(body, /FlushMouseMovement\(\);\s+const int button = ConvertButtonToLiButton\(event\.button\);\s+LiSendMouseButtonEvent\(/, signature);
+    assert.doesNotMatch(body, /Scroll|ReportMouseMovement/, signature);
+  });
+  assert.match(read('wasm/main.cpp'), /me->ReportMouseMovement\(\);/);
   assert.match(read('tests/native/mouse_input_test.cpp'), /#include "\.\.\/\.\.\/wasm\/input\.cpp"/);
 });
 

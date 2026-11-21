@@ -5267,6 +5267,13 @@ function sendEscapeKeyToHost() {
   Module.sendKeyboardEvent(0x80 << 8 | 0x1B, 0x04, 0); // Key up
 }
 
+// Whether a key event comes from a key of a PC keyboard, which the stream sends to the PC: a Windows virtual-key code
+// from 1 to 0xFF, as IsPcKeyCode() of wasm/input.cpp. The keys that only a TV has (RETURN, the color keys, CH+ and CH-,
+// Source, ...) never reach the PC.
+function isPcKeyEvent(e) {
+  return e.keyCode > 0 && e.keyCode <= 0xFF;
+}
+
 let indexedDB = null;
 const dbVersion = 1.0;
 let db = null;
@@ -6856,20 +6863,33 @@ function initSpecialKeys() {
     streamMenuKeyCode = null;
   });
 
+  // Lock the pointer for the stream, which sends keys and mouse buttons to the PC only while it is locked: a mouse button
+  // press on the unlocked pointer only locks it (HandleMouseDown() in wasm/input.cpp). Only while the pointer isn't locked
+  // yet, because the stream sends a mouse button press without a release for a click on the locked pointer, which would
+  // leave the left mouse button of the host held down.
+  function lockStreamPointer() {
+    if (!document.pointerLockElement) {
+      videoElement.dispatchEvent(new MouseEvent('mousedown', {
+        bubbles: true, cancelable: true, view: window, clientX: 0, clientY: 0
+      }));
+    }
+  }
+
   // Listen for keydown events on the video element
   videoElement.addEventListener('keydown', function(e) {
-    // Check if the 'Back' key has been pressed and the streaming is currently active
-    if (e.key === 'XF86Back' && isInGame === true) {
-      // Send the Escape key (ESC) to the host while streaming
+    if (isInGame !== true) {
+      return;
+    }
+    if (e.key === 'XF86Back') {
+      // RETURN sends the Escape key (ESC) to the host while streaming, and gives the stream the keys
       sendEscapeKeyToHost();
-      // Simulate mouse to move focus back to the streaming session. Only while the pointer isn't locked yet,
-      // because the stream sends a mouse button press without a release for a click on the locked pointer,
-      // which would leave the left mouse button of the host held down.
-      if (!document.pointerLockElement) {
-        videoElement.dispatchEvent(new MouseEvent('mousedown', {
-          bubbles: true, cancelable: true, view: window, clientX: 0, clientY: 0
-        }));
-      }
+      lockStreamPointer();
+    } else if (isStreamConnected && isPcKeyEvent(e)) {
+      // The first key of the PC while the pointer isn't locked (at the start of a stream, after the background, after the
+      // Stream Menu or a power command that found it unlocked) gives the stream the keys. It doesn't reach the PC itself:
+      // the module sends nothing before the lock, which comes after this event (pointerlockchange), and its release,
+      // which can come after the lock, isn't sent alone (HandleKeyUp() in wasm/input.cpp).
+      lockStreamPointer();
     }
   });
 }

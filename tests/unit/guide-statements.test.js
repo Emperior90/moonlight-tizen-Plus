@@ -49,6 +49,8 @@
 //   0.1 ms on the TV, the longest frame times, the arrival rate of the frames (at IP level, data packets only, with its
 //   minimum, neither the bitrate nor the Wi-Fi link rate) in the full statistics and Last session, the QoS line of each
 //   socket of a stream and the WebAssembly line at the start of the app
+// - the keys of a stream (2.3.3): the first key of a PC keyboard only gives the stream the keys, RETURN sends Esc, the
+//   keys of a TV never reach the PC, Ctrl + Alt + Shift with Q, S or another key, and the horizontal wheel
 // The release notes of a release (docs/RELEASE_NOTES.md) only give the essentials, so the statements that they
 // carried until 1.19.100 are checked in the guide and the patch notes (docs/PATCH_NOTES.md), where they are now.
 
@@ -700,10 +702,12 @@ test('the guide describes the wait after an abandoned start, the held start mess
   assert.ok(player.indexOf('ClLogMessage("The PC restarted its video encoder (e.g. after a display, HDR or desktop change on the PC)\\n");') > 0);
   assert.ok(GUIDE.indexOf('the diagnostic log shows "The PC restarted its video encoder":** Sunshine rebuilt its screen capture and its encoder during the stream') > 0);
   // The app never asks for it, but the keys of the Stream Menu and of a keyboard reach the PC: Alt + Enter switches a
-  // game between fullscreen and a window, and Ctrl + Alt + Shift with a key other than Q and S goes to the PC as well
+  // game between fullscreen and a window, and Ctrl + Alt + Shift with a key other than Q and S goes to the PC as well,
+  // and since 2.3.3 no longer ends the pointer lock
   assert.ok(GUIDE.indexOf('No request of the app causes it, but keys sent to the PC can: e.g. *Alt + Enter* or *Alt + Tab* from the Stream Menu') > 0);
   assert.match(read('wasm/platform/menus.js'), /streamMenuKeyAltEnter: \[0xA4, 0x0D\]/);
-  assert.match(read('wasm/input.cpp'), /\} else \{\s+\/\/ Wait until these keys come up to unlock the mouse\s+m_WaitingForAllModifiersUp = true;\s+\}\s+\}\s+LiSendKeyboardEvent\(/);
+  assert.equal(read('wasm/input.cpp').indexOf('m_WaitingForAllModifiersUp'), -1);
+  assert.match(read('wasm/input.cpp'), /keyCode == 0x53\) \{ \/\/ S key[\s\S]{0,120}toggleStats\(\);\s+return EM_TRUE;\s+\}\s+\}\s+LiSendKeyboardEvent\(/);
   assert.equal(GUIDE.indexOf('Nothing on the TV causes it'), -1);
   // A new controller type takes effect once Sunshine creates a new virtual controller, which the guide and
   // CONTROLLERS.md list the same ways (input.cpp and process.cpp of Sunshine 2026.914)
@@ -973,6 +977,33 @@ test('the guide describes the frame times, the arrival rate and the log lines of
     .forEach((text) => assert.ok(log.indexOf(text) > 0, text));
   // The QoS lines tell nothing about the marking of what the PC sends
   assert.ok(log.indexOf('The marking of what the PC sends, the picture and the sound, is set by the PC and doesn\'t show in these lines (*Prioritize sound on Wi-Fi* changes that marking, not these lines)') > 0);
+});
+
+test('the guide describes the keys of a stream as the code handles them', () => {
+  // The first key of a PC keyboard locks the pointer once the stream connected, without reaching the PC; RETURN sends
+  // Esc first (initSpecialKeys() in index.js), the keys of a TV never reach the PC, and the same range of key codes holds
+  // in the page and in the module (isPcKeyEvent(), IsPcKeyCode())
+  const section = guideSection('## Stream Menu and app menu');
+  assert.ok(section.indexOf('**Keys in a stream.** The arrows and OK of the remote and the keys of a USB keyboard go to the PC. ' +
+    'The first key of a stream only gives the stream the keys and doesn\'t reach the PC, so press it again; the same after Moonlight was in the background.') === 1,
+  'the paragraph opens the section');
+  ['RETURN sends Esc to the PC, also as the first key.', 'CH+, CH-, GREEN, BLUE and Source do nothing there.',
+    'Ctrl + Alt + Shift + Q ends the stream and Ctrl + Alt + Shift + S steps the statistics; other combinations with Ctrl + Alt + Shift go to the PC.',
+    'A USB mouse gets the stream with its first click, and its wheel also scrolls sideways'].forEach((text) => {
+    assert.ok(section.indexOf(text) > 0, text);
+  });
+  // After a command of Shut down or restart the PC from the PC list, the stream has no lock yet
+  assert.ok(GUIDE.indexOf('If the first key does nothing on the PC, it gave the stream the keys (see [Stream Menu and app menu](#stream-menu-and-app-menu)): press it again. ' +
+    'Avoid RETURN there: it sends Esc, which can cancel the question.') > 0);
+  const index = read('wasm/platform/index.js');
+  assert.match(index, /function isPcKeyEvent\(e\) \{\s+return e\.keyCode > 0 && e\.keyCode <= 0xFF;\s+\}/);
+  assert.match(index, /if \(e\.key === 'XF86Back'\) \{[\s\S]{0,200}sendEscapeKeyToHost\(\);\s+lockStreamPointer\(\);/);
+  assert.match(index, /\} else if \(isStreamConnected && isPcKeyEvent\(e\)\) \{[\s\S]{0,700}lockStreamPointer\(\);/);
+  const input = read('wasm/input.cpp');
+  assert.match(input, /return keyCode != 0 && keyCode <= 0xFF;/);
+  assert.match(input, /if \(heldKeys\.erase\(keyCode\) == 0\) \{\s+return EM_TRUE;\s+\}/);
+  // The horizontal wheel
+  assert.match(input, /LiSendHighResHScrollEvent/);
 });
 
 test('the guide describes Shut down or restart the PC as menus.js does it, and the panels of the Stream Menu', () => {

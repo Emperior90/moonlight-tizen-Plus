@@ -246,6 +246,7 @@ class MoonlightInstance {
 
   void LockMouse();
   void UnlockMouse();
+  void FlushMouseMovement();
 
   static CONNECTION_LISTENER_CALLBACKS s_ClCallbacks;
   static DECODER_RENDERER_CALLBACKS s_DrCallbacks;
@@ -292,12 +293,13 @@ class MoonlightInstance {
   bool m_MouseLocked;
   long m_MouseLastPosX;
   long m_MouseLastPosY;
-  bool m_WaitingForAllModifiersUp;
   // The mouse movement and wheel ticks that the main thread adds up (HandleMouseMove(), HandleWheel()) and the input
-  // thread sends and resets (ReportMouseMovement()). Atomic, so that a movement that arrives while the input thread
-  // sends isn't lost between its read and its reset. The wheel ticks are thousandths, since there is no atomic add for
-  // a float before C++20.
+  // thread sends and resets (ReportMouseMovement()); the main thread also sends the movement before a mouse button
+  // (FlushMouseMovement()). Atomic, so that a movement that arrives while the input thread sends isn't lost between its
+  // read and its reset. The wheel ticks (vertical and horizontal) are thousandths, since there is no atomic add for a
+  // float before C++20.
   std::atomic<int32_t> m_AccumulatedMilliTicks;
+  std::atomic<int32_t> m_AccumulatedMilliTicksX;
   std::atomic<int32_t> m_MouseDeltaX, m_MouseDeltaY;
   uint32_t m_HttpThreadPoolSequence;
 

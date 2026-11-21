@@ -92,7 +92,7 @@
         {
           "commits": ["99aada9", "8b3049a"],
           "decision": "skipped",
-          "why": "A setting that swaps the left and right mouse buttons during a stream (pull request #194, merged on 11 November). Not taken in 2.3.1, which leaves the mouse for a later version; take it with the next work on the mouse and record it as taken then."
+          "why": "A setting that swaps the left and right mouse buttons during a stream (pull request #194, merged on 11 November). Not taken in 2.3.1, which left the mouse for a later version, and not in 2.3.3 either, whose mouse fixes (a click after the movement before it, the horizontal wheel) add no setting; take it when a setting for it is wanted and record it as taken then."
         }
       ]
     },

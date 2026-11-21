@@ -7,7 +7,8 @@
 // module), RETURN and B close it and resume the stream, and its entries run: the performance statistics, the mouse
 // emulation (its entry shows for a controller that reports a timestamp of 0 once its input changed, Tizen 5.5, before
 // that input moves the selection), the keys for the PC (every key released again; since 2.3.2 in the panel of
-// 'Shortcuts…', whose buttons still run with a click), Disconnect and 'Quit app on the PC'. It
+// 'Shortcuts…', whose buttons still run with a click), Disconnect and 'Quit app on the PC'. Since 2.3.3 the first key of
+// a PC keyboard in a running stream asks for the pointer lock, as RETURN does, while the keys of the TV don't. It
 // stays inside the safe area of the screen with every entry showing without scrolling and every label on one line in
 // every language, also with text 10 % wider than this machine draws it (tests/browser/text-stress.js), and the video
 // keeps showing, also with the surround quality entry of a 5.1 stream and the notes of a changed bitrate and quality.
@@ -69,8 +70,11 @@ function simulatedGamepads() {
 
 // Open the app with a simulated host and start a stream of app 8 that reaches 'Connection Established'. The host
 // records its calls in window.__hostCalls, showApps() and the snackbar are recorded, and a listener on the video
-// element records the keys that would reach the keyboard handler of the stream (window.__videoKeys). The settings of
-// options.stored go into the storage before the app starts, e.g. the audio configuration 5.1.
+// element records the keys that would reach the keyboard handler of the stream (window.__videoKeys). The mouse button
+// presses on the video, with which the page asks the module for the pointer lock, are counted from before 'Connection
+// Established' on (window.__videoMouseDowns), and a RIGHT on the video before it counts its presses in
+// window.__mouseDownsBeforeConnected. The settings of options.stored go into the storage before the app starts, e.g.
+// the audio configuration 5.1.
 async function openStreaming(options) {
   const opts = options || {};
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, initScripts: [simulatedGamepads], stored: opts.stored });
@@ -116,6 +120,15 @@ async function openStreaming(options) {
     await new Promise((resolve) => setTimeout(resolve, 300));
     // The host runs app 8 from now on
     host.currentGame = 8;
+    window.__videoMouseDowns = 0;
+    const streamVideo = document.getElementById('wasm_module');
+    streamVideo.addEventListener('mousedown', () => window.__videoMouseDowns++, true);
+    ['keydown', 'keyup'].forEach((type) => {
+      const event = new KeyboardEvent(type, { key: 'ArrowRight', bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'keyCode', { value: 39 });
+      streamVideo.dispatchEvent(event);
+    });
+    window.__mouseDownsBeforeConnected = window.__videoMouseDowns;
     handleMessage('Connection Established');
 
     window.__videoKeys = [];
@@ -233,6 +246,71 @@ test('Play/Pause opens the Stream Menu over the stream, the remote moves in it, 
       return { whileOpen, afterClose: seen.slice() };
     });
     assert.deepEqual(mouse, { whileOpen: [], afterClose: ['mousedown', 'mouseup'] });
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+// The mouse button presses on the video since the last call, with which the page asked the module for the pointer lock
+const lockRequests = (page) => page.evaluate(() => {
+  const count = window.__videoMouseDowns;
+  window.__videoMouseDowns = 0;
+  return count;
+});
+
+test('the first key of a PC keyboard in a running stream asks for the pointer lock; the keys of the TV, a locked pointer and the Stream Menu don\'t', async () => {
+  // The stream sends keys to the PC only while the pointer is locked (wasm/input.cpp), which a mouse button press on the
+  // video asks for. Since 2.3.3 the first key of the remote or a keyboard does that once the stream connected, as RETURN
+  // does, not only RETURN, which sends Esc first (initSpecialKeys() in index.js)
+  const app = await openStreaming();
+  try {
+    assert.equal(await app.page.evaluate(() => window.__mouseDownsBeforeConnected), 0, 'not before the stream connected');
+    assert.equal(await app.page.evaluate(() => document.activeElement.id), 'wasm_module');
+    // RIGHT, OK and W of a keyboard: each asks while the pointer isn't locked (this page never locks it) and still
+    // reaches the keyboard handler of the stream, which sends nothing without the lock
+    await remoteKey(app.page, 39, 'ArrowRight');
+    assert.equal(await lockRequests(app.page), 1, 'RIGHT');
+    await remoteKey(app.page, ...ENTER);
+    assert.equal(await lockRequests(app.page), 1, 'OK');
+    await remoteKey(app.page, 87, 'w');
+    assert.equal(await lockRequests(app.page), 1, 'W');
+    assert.deepEqual(await app.page.evaluate(() => window.__videoKeys.splice(0)),
+      ['keydown 39', 'keyup 39', 'keydown 13', 'keyup 13', 'keydown 87', 'keyup 87']);
+    // The keys that only a TV has never reach the PC, so they don't ask for it: CH+, CH-, Source, Channel list, GREEN,
+    // BLUE, and YELLOW, which steps the statistics
+    for (const [code, name] of [[427, 'ChannelUp'], [428, 'ChannelDown'], [10072, 'Source'], [10073, 'ChannelList'],
+      [404, 'ColorF1Green'], [406, 'ColorF3Blue'], [405, 'ColorF2Yellow']]) {
+      await remoteKey(app.page, code, name);
+      assert.equal(await lockRequests(app.page), 0, name);
+    }
+    // RETURN sends Esc to the PC and asks for the lock, as before
+    await app.page.evaluate(() => window.__wasmCalls.splice(0));
+    await remoteKey(app.page, ...RETURN);
+    assert.equal(await lockRequests(app.page), 1, 'RETURN');
+    assert.deepEqual(await moduleCalls(app.page), ['sendKeyboardEvent 32795,3,0', 'sendKeyboardEvent 32795,4,0']);
+    // With the pointer locked, no key asks again: a click on the locked pointer would press the left mouse button of
+    // the PC without releasing it
+    await app.page.evaluate(() => {
+      Object.defineProperty(document, 'pointerLockElement', { get: () => document.getElementById('wasm_module'), configurable: true });
+    });
+    await remoteKey(app.page, 39, 'ArrowRight');
+    await remoteKey(app.page, ...RETURN);
+    assert.equal(await lockRequests(app.page), 0, 'locked');
+    await app.page.evaluate(() => {
+      delete document.pointerLockElement;
+    });
+    // The keys of the Stream Menu stay in it: Play/Pause opens it, DOWN and UP move in it, Play/Pause closes it
+    await remoteKey(app.page, ...PLAY_PAUSE);
+    assert.equal((await menuState(app.page)).open, true);
+    await remoteKey(app.page, ...DOWN);
+    await remoteKey(app.page, ...UP);
+    await remoteKey(app.page, ...PLAY_PAUSE);
+    assert.equal((await menuState(app.page)).open, false);
+    assert.equal(await lockRequests(app.page), 0, 'Stream Menu');
+    // The next key after it asks again, since the menu released the pointer
+    await remoteKey(app.page, ...DOWN);
+    assert.equal(await lockRequests(app.page), 1, 'after the Stream Menu');
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

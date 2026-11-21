@@ -7,7 +7,8 @@
 // - the question opens on Cancel, ignores a double OK, and Cancel or RETURN close it without a request to the PC
 // - a session launches the Desktop app (or resumes the app that runs), names its purpose on the launch screen, waits for
 //   the picture, counts down, types the command (the same sequence as the Stream Menu, tests/unit/pc-power.test.js) and
-//   ends on the PC list with "… is shutting down." when the PC ends the stream
+//   ends on the PC list with "… is shutting down." when the PC ends the stream; meanwhile the first key of the remote
+//   gives the stream the keys (since 2.3.3), so that the question of Windows can be answered
 // - a PC without a Desktop app gets a message and nothing starts; RETURN during the countdown ends the stream and quits
 //   the Desktop app that the session launched, but not a game it resumed; no picture, no command; a stream without video
 //   starts once more and counts down again; a start that the PC refuses leaves nothing for the next start
@@ -180,6 +181,17 @@ test('Shut down from the PC list launches Desktop, waits for the picture, counts
     const firstKeyAt = await app.page.evaluate(() => window.__wasmCalls.find((call) => call.name === 'sendKeyboardEvent').at);
     assert.ok(firstKeyAt - shownAt >= 990, 'the countdown lasts PC_POWER_LIST_DELAY_MS: ' + Math.round(firstKeyAt - shownAt) + ' ms');
     assert.deepEqual(await takeSnackbars(app.page), ['Shutdown command sent to the PC']);
+    // The stream goes on, so that the question of Windows about open apps can be answered with the remote: its video has
+    // the focus, and the first key asks for the pointer lock, which gives the stream the keys (since 2.3.3; before, only
+    // RETURN did, which sends Esc to the PC first and can cancel that question)
+    assert.equal(await app.page.evaluate(() => document.activeElement && document.activeElement.id), 'wasm_module');
+    await app.page.evaluate(() => {
+      window.__videoMouseDowns = 0;
+      document.getElementById('wasm_module').addEventListener('mousedown', () => window.__videoMouseDowns++, true);
+    });
+    await key(app.page, 'right', 100);
+    assert.equal(await app.page.evaluate(() => window.__videoMouseDowns), 1, 'the first key asks for the pointer lock');
+    assert.deepEqual(await sentToPc(app.page), [...WIN_R, 'sendText shutdown /s /t 0', ...ENTER_KEY], 'no Esc');
     // The PC goes off and ends the stream
     await app.page.evaluate(() => handleMessage('streamTerminated: 0'));
     await app.page.waitForTimeout(600);
