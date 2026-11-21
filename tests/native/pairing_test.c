@@ -4,11 +4,12 @@
 // challenge response must match the PIN (a wrong PIN is GS_PIN_WRONG, and a host that doesn't know the PIN never gets
 // the signed secret of the client, only one of random bytes that ends its pairing session); that a wrong PIN leaves no
 // stale session on a host that keeps the session of a client like Sunshine v2025.924, which would fail the next
-// attempt; that the fields of the answers are only read with their exact length (a longer one
-// would overflow the buffers on the stack, which the address sanitizer catches); and, through the leak check of the
-// address sanitizer at exit, that the signature of the client is freed; and that every pairing request names the TV
-// with the device name that the app passes (devicename=..., "roth" for none or one that isn't a valid URL-encoded name
-// of at most 64 bytes). http_request() is replaced by the simulated host, so no network is needed.
+// attempt; that the fields of the answers are only read with their exact length, and the signature in the pairing
+// secret of the host with 64 to 512 bytes, so that a host with a 4096-bit RSA or an ECDSA key can pair as well (a
+// longer field would overflow the buffers on the stack, which the address sanitizer catches); and, through the leak
+// check of the address sanitizer at exit, that the signature of the client is freed; and that every pairing request
+// names the TV with the device name that the app passes (devicename=..., "roth" for none or one that isn't a valid
+// URL-encoded name of at most 64 bytes). http_request() is replaced by the simulated host, so no network is needed.
 //
 // Build with: -ftrivial-auto-var-init=pattern -lcrypto
 // (the pattern fills the variables on the stack that the code leaves unset, so that sending one shows in the test)
@@ -22,6 +23,8 @@
 
 #include <openssl/aes.h>
 #include <openssl/bn.h>
+#include <openssl/ec.h>
+#include <openssl/obj_mac.h>
 #include <openssl/rsa.h>
 
 X509* g_Cert;
@@ -29,18 +32,23 @@ EVP_PKEY* g_PrivateKey;
 char* g_UniqueId;
 char* g_CertHex;
 
-// A key and a self-signed certificate like the ones of mkcert.c (2048-bit RSA, SHA-256)
+// A key and a self-signed certificate like the ones of mkcert.c (2048-bit RSA, SHA-256), or with another key
 typedef struct {
   EVP_PKEY* key;
   X509* cert;
   char* pem;
 } IDENTITY;
 
-static IDENTITY create_identity(const char* name) {
+// bits: the size of an RSA key, or 0 for an ECDSA key on P-256
+static IDENTITY create_identity_of(const char* name, int bits) {
   IDENTITY identity = { NULL, NULL, NULL };
-  EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
+  EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_id(bits ? EVP_PKEY_RSA : EVP_PKEY_EC, NULL);
   EVP_PKEY_keygen_init(ctx);
-  EVP_PKEY_CTX_set_rsa_keygen_bits(ctx, 2048);
+  if (bits) {
+    EVP_PKEY_CTX_set_rsa_keygen_bits(ctx, bits);
+  } else {
+    EVP_PKEY_CTX_set_ec_paramgen_curve_nid(ctx, NID_X9_62_prime256v1);
+  }
   EVP_PKEY_keygen(ctx, &identity.key);
   EVP_PKEY_CTX_free(ctx);
 
@@ -64,6 +72,10 @@ static IDENTITY create_identity(const char* name) {
   identity.pem[mem->length] = 0;
   BIO_free(bio);
   return identity;
+}
+
+static IDENTITY create_identity(const char* name) {
+  return create_identity_of(name, 2048);
 }
 
 static void free_identity(IDENTITY* identity) {
@@ -138,6 +150,7 @@ static struct {
   int requests;
   int unpairs;
   int pairRequests;          // the /pair requests
+  size_t signatureLength;    // the length of the signature of the last pairing secret
   int pairRequestsNamed;     // those whose devicename was expectedDeviceName
   char lastDeviceName[256];  // the devicename of the last /pair request, "(none)" without one
   const char* expectedDeviceName;
@@ -292,16 +305,17 @@ static void handle_server_challenge_response(const char* url, PHTTP_DATA data) {
   }
 
   // The server secret and its signature with the key of the host
-  unsigned char pairingSecret[16 + 256];
+  unsigned char pairingSecret[16 + 1024];
   memcpy(pairingSecret, host.serverSecret, 16);
   EVP_MD_CTX* ctx = EVP_MD_CTX_create();
-  size_t signatureLength = 256;
+  size_t signatureLength = sizeof(pairingSecret) - 16;
   EVP_DigestSignInit(ctx, NULL, EVP_sha256(), NULL, host.signer->key);
   EVP_DigestSignUpdate(ctx, host.serverSecret, 16);
   EVP_DigestSignFinal(ctx, pairingSecret + 16, &signatureLength);
   EVP_MD_CTX_destroy(ctx);
+  host.signatureLength = signatureLength;
 
-  char* hex = host.pairingSecretHex ? strdup(host.pairingSecretHex) : to_hex(pairingSecret, sizeof(pairingSecret));
+  char* hex = host.pairingSecretHex ? strdup(host.pairingSecretHex) : to_hex(pairingSecret, 16 + signatureLength);
   answer_paired(data, "1", "pairingsecret", hex);
   free(hex);
 }
@@ -506,14 +520,41 @@ static void test_challenge_response_is_read_with_its_exact_length(void) {
   free(hex);
 }
 
-static void test_pairing_secret_is_read_with_its_exact_length(void) {
-  // 272 bytes are 544 hex digits
-  size_t lengths[] = { 8192, 546, 542, 32, 0 };
-  for (size_t i = 0; i < sizeof(lengths) / sizeof(lengths[0]); i++) {
-    char* hex = repeat_hex('0', lengths[i]);
+static IDENTITY rsa4096Host;
+static IDENTITY ecdsaHost;
+
+static void test_hosts_with_other_keys_pair(void) {
+  reset_host(7, "1234");
+  host.identity = rsa4096Host;
+  host.signer = &rsa4096Host;
+  CHECK_EQ_INT(pair("1234"), GS_OK);
+  CHECK_EQ_INT((int)host.signatureLength, 512);
+  CHECK(host.clientProvedPin);
+  reset_host(7, "1234");
+  host.identity = ecdsaHost;
+  host.signer = &ecdsaHost;
+  CHECK_EQ_INT(pair("1234"), GS_OK);
+  CHECK(host.signatureLength >= 64 && host.signatureLength <= 72);
+  CHECK(host.clientProvedPin);
+}
+
+static void test_pairing_secret_signature_bounds(void) {
+  // A whole number of bytes, 16 for the secret and 64 to 512 for the signature, and nothing else is decoded
+  size_t invalid[] = { 8192, (16 + 513) * 2, 545, (16 + 63) * 2, 32, 0 };
+  for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++) {
+    char* hex = repeat_hex('0', invalid[i]);
     reset_host(7, "1234");
     host.pairingSecretHex = hex;
     CHECK_EQ_INT(pair("1234"), GS_INVALID);
+    CHECK(!host.gotClientPairingSecret);
+    free(hex);
+  }
+  size_t decoded[] = { (16 + 64) * 2, (16 + 256) * 2 + 2, (16 + 512) * 2 };
+  for (size_t i = 0; i < sizeof(decoded) / sizeof(decoded[0]); i++) {
+    char* hex = repeat_hex('0', decoded[i]);
+    reset_host(7, "1234");
+    host.pairingSecretHex = hex;
+    CHECK_EQ_INT(pair("1234"), GS_FAILED);
     CHECK(!host.gotClientPairingSecret);
     free(hex);
   }
@@ -629,6 +670,8 @@ int main(void) {
   client = create_identity("NVIDIA GameStream Client");
   realHost = create_identity("Sunshine Gamestream Host");
   otherKey = create_identity("Someone else");
+  rsa4096Host = create_identity_of("Sunshine Gamestream Host 4096", 4096);
+  ecdsaHost = create_identity_of("Sunshine Gamestream Host ECDSA", 0);
   g_Cert = client.cert;
   g_PrivateKey = client.key;
   g_UniqueId = "0123456789ABCDEF";
@@ -646,8 +689,8 @@ int main(void) {
            test_pairing_secret_of_another_key_is_rejected);
   RUN_TEST("the challenge response is read only with its exact length of 48 bytes",
            test_challenge_response_is_read_with_its_exact_length);
-  RUN_TEST("the pairing secret is read only with its exact length of 272 bytes",
-           test_pairing_secret_is_read_with_its_exact_length);
+  RUN_TEST("hosts with a 4096-bit RSA or a P-256 ECDSA key pair", test_hosts_with_other_keys_pair);
+  RUN_TEST("the pairing secret is read only with a signature of 64 to 512 bytes", test_pairing_secret_signature_bounds);
   RUN_TEST("the certificate of the host must be a whole hex string", test_certificate_must_be_hex);
   RUN_TEST("the PIN must have 4 digits", test_pin_must_have_four_digits);
   RUN_TEST("hex fields are decoded only with their exact length and hex digits", test_hex_to_bytes);
@@ -661,5 +704,7 @@ int main(void) {
   free_identity(&client);
   free_identity(&realHost);
   free_identity(&otherKey);
+  free_identity(&rsa4096Host);
+  free_identity(&ecdsaHost);
   return test_summary();
 }

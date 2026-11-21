@@ -687,12 +687,26 @@ function beginBackgroundPollingOfHost(host) {
     // The fast-path ping succeeded! Mark the host online instantly to prevent the UI from
     // flashing offline in the .finally block, and to skip the redundant 0-delay poll.
     host.online = true;
+    host.pinnedKeyMismatch = false;
   }).catch(function(failedRefreshInfo) {
+    // The PC answered with its pinned key that it no longer accepts this TV (HOST_REFUSED_TV_ERROR of utils.js): it is
+    // online and not paired, so its card shows Unpaired and OK pairs it again, as after pollServer(). Its app list is
+    // of no use until then.
+    if (failedRefreshInfo === HOST_REFUSED_TV_ERROR) {
+      console.warn('%c[index.js, beginBackgroundPollingOfHost]', 'color: green;', 'Warning: ' + host.hostname + ' no longer accepts this TV.');
+      host.markRefusedByHost();
+      host.online = true;
+      host.pinnedKeyMismatch = false;
+      host._memCachedApplist = null;
+      return;
+    }
     console.error('%c[index.js, beginBackgroundPollingOfHost]', 'color: green;', 'Error: Failed to refresh server info! Returned error was: ' + failedRefreshInfo + '! Failed server was: ' + '\n', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
 
     // Set host to offline and clear the app list cache
     host.online = false;
     host._memCachedApplist = null;
+    // A device answered at the address of the PC with another key than the pinned one: only the message differs
+    host.pinnedKeyMismatch = isPinnedKeyMismatchError(failedRefreshInfo);
   }).finally(function() {
     // Update the UI after the network finishes
     onBackgroundPollResult(host);
@@ -1075,6 +1089,14 @@ function hostChosen(host, onSuccessCallback) {
   if (!host.online) {
     // Set the flag to indicate that a host is unable to be opened due to being offline or failing to connect
     isHostOpening = false;
+    // A device answered at the address of the PC with another key than the pinned one: waking can't help, and only the
+    // user can tell whether it is the PC with new keys (delete it and add it again) or another PC with its address. The
+    // app never pairs it again by itself, since such an answer doesn't prove that it comes from the PC.
+    if (host.pinnedKeyMismatch === true) {
+      console.error('%c[index.js, hostChosen]', 'color: green;', 'Error: ' + host.hostname + ' answers with another key than the one pinned at its pairing.');
+      snackbarPinnedKeyMismatch(host);
+      return;
+    }
     // Only show the Wake PC dialog if the user has explicitly enabled per-host Auto WOL toggle
     if (host.autoWolEnabled === true) {
       autoWolDialog(host, function() {
@@ -1089,7 +1111,7 @@ function hostChosen(host, onSuccessCallback) {
     } else {
       // Let the user know what to do to bring the host back online and until then, we'll be back to the previous view.
       console.error('%c[index.js, hostChosen]', 'color: green;', 'Error: Connection to host failed or host is offline!');
-      snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', t('the PC'));
+      snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', host.hostname || t('the PC'));
     }
     return;
   }
@@ -1124,6 +1146,19 @@ function hostChosen(host, onSuccessCallback) {
     // But if the host is already paired and online, then we show the apps and navigate to the Apps view as usual.
     return openPairedHost(host);
   }
+}
+
+// Say that a paired PC no longer accepts this TV (HOST_REFUSED_TV_ERROR in utils.js): its pairing was removed or turned
+// off on the PC, so it has to be paired again from the PC list, where it shows Unpaired after its next check
+function snackbarHostRefusedTv(host) {
+  snackbarLogLong('%1$s no longer accepts this TV: its pairing was removed or turned off on the PC. Select it in the list of PCs to pair it again.', host.hostname);
+}
+
+// Say that a device answered at the address of a paired PC with another key than the one pinned at its pairing
+// (pinnedKeyMismatch of the host): another PC that got its address, or the PC with new keys, which only the user can
+// tell apart
+function snackbarPinnedKeyMismatch(host) {
+  snackbarLogLong('%1$s answers with a different key than at its pairing: another PC may have its address now, or Sunshine was set up anew on it. Try "Rescan network", and if that doesn\'t help, delete the PC and add it again.', host.hostname);
 }
 
 // Show the apps of a paired host that is online and navigate to the Apps view (hostChosen()). Resolves once the app list
@@ -1639,7 +1674,13 @@ function pairingDialog(nvhttpHost, onSuccess, onFailure) {
   nvhttpHost.pollServer(function(returnedNvHTTPHost) {
     if (!returnedNvHTTPHost.online) {
       console.error('%c[index.js, pairingDialog]', 'color: green;', 'Error: Failed to connect to ' + nvhttpHost.hostname + '. Ensure your host PC is online!', nvhttpHost, '\n' + nvhttpHost.toString()); // Logging both object (for console) and toString-ed object (for text logs)
-      snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', nvhttpHost.hostname || t('the PC'));
+      // A device answered with another key than the pinned one (e.g. Add PC of a known PC that got new keys): no pairing
+      // with it, and its own message
+      if (returnedNvHTTPHost.pinnedKeyMismatch === true) {
+        snackbarPinnedKeyMismatch(nvhttpHost);
+      } else {
+        snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', nvhttpHost.hostname || t('the PC'));
+      }
       onFailure();
       return;
     }
@@ -1649,11 +1690,9 @@ function pairingDialog(nvhttpHost, onSuccess, onFailure) {
       return;
     }
 
-    if (nvhttpHost.currentGame != 0) {
-      snackbarLogLong('%1$s is currently in a game session. Please quit the running app or restart the computer, then try again.', nvhttpHost.hostname);
-      onFailure();
-      return;
-    }
+    // A PC that runs an app is paired as well: Sunshine pairs while it streams, as moonlight-embedded (f021439),
+    // moonlight-qt and moonlight-android try it. Up to 2.3.2 the dialog refused before any request, with a message that
+    // asked to quit the app, which a TV that isn't paired can't do. A failure below still names the running app.
 
     // Find the existing overlay and dialog elements
     var pairingOverlay = document.querySelector('#pairingDialogOverlay');
@@ -1716,13 +1755,14 @@ function pairingDialog(nvhttpHost, onSuccess, onFailure) {
       // Keep the modal opened, but change the button for "Close" (also for the translation pass of a change of the language)
       $('#cancelPairing').attr('data-i18n', 'Close').text(t('Close'));
 
-      // If the host is already in a streaming session or failed during pairing,
-      // change the dialog text element to include the hostname and display the returned error message
-      if (nvhttpHost.currentGame != 0) {
-        $('#pairingDialogText').html(t('Error: %1$s is currently busy!<br><br>You must stop the running app in order to pair with the PC.', escapeHTML(nvhttpHost.hostname)));
-      } else if (String(failedPairing) === '-7') {
+      // Change the dialog text element to include the hostname and display why the pairing failed: a wrong PIN first,
+      // then, on a PC that runs an app, that app (GeForce Experience can't pair while it streams, Sunshine can), else
+      // the general text, also for a pairing that the PC didn't confirm (PAIRING_NOT_CONFIRMED_ERROR of utils.js)
+      if (String(failedPairing) === '-7') {
         // GS_PIN_WRONG of libgamestream/errors.h: the host answered with a hash that doesn't match the PIN (gs_pair())
         $('#pairingDialogText').html(t('Error: The PIN entered on %1$s was wrong.<br><br>Please, try pairing with the PC again and enter the new PIN.', escapeHTML(nvhttpHost.hostname)));
+      } else if (nvhttpHost.currentGame != 0) {
+        $('#pairingDialogText').html(t('Error: %1$s is currently busy!<br><br>You must stop the running app in order to pair with the PC.', escapeHTML(nvhttpHost.hostname)));
       } else {
         $('#pairingDialogText').html(t('Error: Failed to pair with %1$s.<br><br>Please, try pairing with the PC again.', escapeHTML(nvhttpHost.hostname)));
       }
@@ -2360,7 +2400,11 @@ function startPcPowerSession(host, kind) {
     }, function(failed) {
       endPcPowerSessionStart();
       console.error('%c[index.js, startPcPowerSession]', 'color: green;', 'Error: PC power: ' + kind + ' of ' + host.hostname + ': failed to read its apps: ' + failed);
-      snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', host.hostname || t('the PC'));
+      if (failed === HOST_REFUSED_TV_ERROR) {
+        snackbarHostRefusedTv(host);
+      } else {
+        snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', host.hostname || t('the PC'));
+      }
     });
   });
 }
@@ -4367,6 +4411,10 @@ function startGame(host, appID, restartKind, restartChange) {
     // The launch screen of a start once more still shows, which nothing else would end
     if (isRestart) {
       endStreamRestart(restartKind, 'the host is not paired', restartChange);
+    } else if (host) {
+      // A check while the app list showed found that the PC no longer accepts this TV (markRefusedByHost() of utils.js),
+      // after which OK on an app did nothing before 2.3.3
+      snackbarHostRefusedTv(host);
     }
     return;
   }
@@ -4874,8 +4922,13 @@ function startGame(host, appID, restartKind, restartChange) {
       endStreamRestart(restartKind, 'the server info of the host could not be refreshed', restartChange);
       return;
     }
-    // The app list still shows, where OK otherwise seemed to do nothing, e.g. for a PC that went to sleep meanwhile
-    snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', host.hostname || t('the PC'));
+    // The app list still shows, where OK otherwise seemed to do nothing, e.g. for a PC that went to sleep meanwhile, or
+    // one that no longer accepts this TV
+    if (failedRefreshInfo === HOST_REFUSED_TV_ERROR) {
+      snackbarHostRefusedTv(host);
+    } else {
+      snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', host.hostname || t('the PC'));
+    }
     // Close the audio scheduler that the key press opened for this start, which would otherwise keep running in the menus
     if (isWebAudioBackendSelected() && typeof stopAudioScheduler === 'function') {
       stopAudioScheduler();
@@ -5214,6 +5267,9 @@ function stopGame(host, callbackFunction) {
   isInGame = false;
 
   if (!host.paired) {
+    // A check while the app list showed found that the PC no longer accepts this TV (markRefusedByHost() of utils.js),
+    // after which "Quit app on the PC" did nothing before 2.3.3
+    snackbarHostRefusedTv(host);
     return;
   }
 
@@ -5241,7 +5297,10 @@ function stopGame(host, callbackFunction) {
         showAppsAfterQuit(true);
       }, function(failedQuitApp) {
         console.error('%c[index.js, stopGame]', 'color: green;', 'Error: Failed to quit app! Returned error was: ' + failedQuitApp + '!');
-        if (failedQuitApp === QUIT_APP_STILL_RUNNING_ERROR) {
+        if (failedQuitApp === HOST_REFUSED_TV_ERROR) {
+          // The refresh after /cancel: the PC no longer accepts this TV
+          snackbarHostRefusedTv(host);
+        } else if (failedQuitApp === QUIT_APP_STILL_RUNNING_ERROR) {
           snackbarLogLong('%1$s is still running on %2$s, probably because another device started it. Quit it on that device or on the PC.', appTitle, host.hostname);
         } else {
           snackbarLogLong('Unable to quit %1$s. Check the connection to %2$s and try again.', appTitle, host.hostname);
@@ -5256,7 +5315,11 @@ function stopGame(host, callbackFunction) {
     });
   }, function(failedRefreshInfo) {
     console.error('%c[index.js, stopGame]', 'color: green;', 'Error: Failed to refresh server info! Returned error was: ' + failedRefreshInfo + '!');
-    snackbarLogLong('Unable to quit the app. Check the connection to %1$s and try again.', host.hostname);
+    if (failedRefreshInfo === HOST_REFUSED_TV_ERROR) {
+      snackbarHostRefusedTv(host);
+    } else {
+      snackbarLogLong('Unable to quit the app. Check the connection to %1$s and try again.', host.hostname);
+    }
     showAppsAfterQuit(false);
   });
 }
@@ -7703,6 +7766,7 @@ function loadHTTPCertsCb() {
           revivedHost._pollCompletionCallbacks = [];
           revivedHost._consecutivePollFailures = 0;
           revivedHost._pollCount = 0;
+          revivedHost.pinnedKeyMismatch = false;
           hosts[hostUID] = revivedHost;
           addHostToGrid(revivedHost);
         }

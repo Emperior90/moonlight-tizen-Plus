@@ -887,6 +887,19 @@ function leaveStreamView(host, quitApp) {
     });
   }, function(failedRefreshInfo) {
     console.error('%c[messages.js, leaveStreamView]', 'color: gray;', 'Error: Failed to refresh server info! Returned error was: ' + failedRefreshInfo + '!');
+    // The PC no longer accepts this TV (HOST_REFUSED_TV_ERROR of utils.js), e.g. after "Unpair All" during the stream:
+    // its app list can't be read, so the PC list shows, as leaveStreamViewToHosts() goes there, where the PC shows
+    // Unpaired after its next check and OK pairs it again. Before 2.3.3 an empty app list showed. With a dialog over the
+    // stream, the app list shows as below.
+    if (typeof HOST_REFUSED_TV_ERROR !== 'undefined' && failedRefreshInfo === HOST_REFUSED_TV_ERROR) {
+      if (typeof snackbarHostRefusedTv === 'function') {
+        snackbarHostRefusedTv(host);
+      }
+      if (!window.isDialogOpen) {
+        showHosts();
+        return;
+      }
+    }
     // Return to the app list anyway
     showApps(host).then(() => {
       // Scroll to the current game row

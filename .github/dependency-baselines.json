@@ -359,9 +359,38 @@
       "track": "branch",
       "path": "libgamestream",
       "vendored": "http.c, mkcert.c and pairing.c (from client.c) of Moonlight Tizen 1.19.0, with the changes of this fork; no exact upstream base",
-      "reviewed_through": null,
-      "note": "Watched by the commits that touch libgamestream/. Not reviewed yet: look through its history once, then record the newest commit here.",
-      "decisions": []
+      "reviewed_through": "33142e58ebd576085a076f4ce24881d20b3c4ef5",
+      "reviewed_on": "2026-11-21",
+      "note": "Watched by the commits that touch libgamestream/. Reviewed once through 33142e5 (11 November 2026, a submodule update of moonlight-common-c that touches only libgamestream/CMakeLists.txt) for 2.3.3. The files of this fork come from client.c of moonlight-embedded through Moonlight Tizen, with their own changes (the launch, resume, quit, server info and app list requests are in utils.js here), so a commit is ported by hand or skipped. The older commits that touch the folder were looked through as well; those below are the ones worth a decision.",
+      "decisions": [
+        {
+          "commits": ["000d9da"],
+          "decision": "taken",
+          "in": "2.3.3",
+          "why": "Don't hardcode the signature length: gs_pair() in pairing.c takes a signature of 64 to 512 bytes in the pairing secret of the host (an RSA key of 2048 to 4096 bits, or an ECDSA key) instead of exactly 256, and verifies it with its length. Unlike upstream, which takes any length into a buffer on the heap, the length stays bounded for the buffer on the stack (PAIRING_SIGNATURE_MIN_BYTES, PAIRING_SIGNATURE_MAX_BYTES); tests/native/pairing_test.c pairs with a 4096-bit RSA and a P-256 ECDSA host."
+        },
+        {
+          "commits": ["f021439"],
+          "decision": "taken",
+          "in": "2.3.3",
+          "why": "Allow a pairing attempt even if the PC is busy (Sunshine pairs while it streams, GeForce Experience doesn't). The check is in pairingDialog() in index.js in this fork, which no longer refuses a busy PC and names the running app only after a failed attempt, after a wrong PIN."
+        },
+        {
+          "commits": ["5f7f0ec", "f32e415"],
+          "decision": "skipped",
+          "why": "client.c only: the status check of the launch and quit answers (gs_start_app(), gs_quit_app()) and the read of uniqueid.dat, which this fork does in JavaScript (utils.js, readStreamStartAnswer() in index.js) or keeps in IndexedDB."
+        },
+        {
+          "commits": ["274d3db"],
+          "decision": "skipped",
+          "why": "sprintf of the certificate paths in http_init() of moonlight-embedded; the http.c of this fork has no such function, the certificate comes from IndexedDB through wasm/http.cpp."
+        },
+        {
+          "commits": ["28c3aad", "ab9999c", "040e389"],
+          "decision": "skipped",
+          "why": "OpenSSL 4.0 compatibility and the OpenSSL requirement of moonlight-embedded (mkcert.c, and ASN1_STRING_length()/ASN1_STRING_get0_data() instead of the fields of ASN1_BIT_STRING in gs_pair()). The module builds with the OpenSSL 1.1.1 of the Emscripten ports, where pairing.c reads the fields directly; take ab9999c with a move to OpenSSL 4."
+        }
+      ]
     },
     {
       "id": "sunshine",

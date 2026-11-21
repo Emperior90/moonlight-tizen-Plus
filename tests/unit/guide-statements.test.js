@@ -1028,3 +1028,32 @@ test('the guide describes Shut down or restart the PC as menus.js does it, and t
   // B goes back one level in CONTROLLERS.md as well
   assert.ok(read('docs/CONTROLLERS.md').indexOf('B back one level: from a panel such as *Shortcuts…* or *Function keys…* to the menu, from the menu to the game') > 0);
 });
+
+test('the guide describes the trust of a PC of 2.3.3 as the code does it', () => {
+  const index = read('wasm/platform/index.js');
+  const utils = read('wasm/static/js/utils.js');
+  const english = JSON.parse(read('wasm/static/locales/en-US.json'));
+  // The two rows of the troubleshooting table quote the beginnings of the messages of the code
+  const refused = '%1$s no longer accepts this TV: its pairing was removed or turned off on the PC. Select it in the list of PCs to pair it again.';
+  const mismatch = '%1$s answers with a different key than at its pairing: another PC may have its address now, or Sunshine was set up anew on it. Try "Rescan network", and if that doesn\'t help, delete the PC and add it again.';
+  assert.equal(english[refused], refused);
+  assert.equal(english[mismatch], mismatch);
+  assert.ok(GUIDE.indexOf('| "… no longer accepts this TV: its pairing was removed or turned off on the PC. …" | The PC answered with the key that the TV pinned at the pairing') > 0);
+  assert.ok(GUIDE.indexOf('| "… answers with a different key than at its pairing: …" | The TV keeps the key of the PC from the pairing') > 0);
+  assert.ok(refused.indexOf(' no longer accepts this TV: its pairing was removed or turned off on the PC.') === '%1$s'.length);
+  assert.ok(mismatch.indexOf(' answers with a different key than at its pairing:') === '%1$s'.length);
+  // The PC list: Unpaired for a PC that refused the TV, its own message for another key, OK names the PC
+  assert.ok(GUIDE.indexOf('A paired PC that no longer accepts this TV (since 2.3.3, e.g. after *Unpair All* in Sunshine) shows *Unpaired*, and OK pairs it again with a new PIN, also while it runs a game') > 0);
+  assert.ok(GUIDE.indexOf('and otherwise the message *Failed to connect to GAMING-PC …*.') > 0);
+  // The 401 answer over HTTPS with the pinned key is the refusal; a mismatch of the key never marks the PC
+  assert.match(utils, /var HOST_REFUSED_TV_ERROR = 'HOST_REFUSED_TV';/);
+  assert.match(utils, /return this\._parseXML\(xmlStr\)\.find\('root'\)\.attr\('status_code'\) == 401;/);
+  assert.match(utils, /if \(this\._isUnauthorizedAnswer\(ret\)\) \{\s+return Promise\.reject\(HOST_REFUSED_TV_ERROR\);/);
+  assert.match(utils, /if \(!this\.paired && this\.ppkstr\) \{[\s\S]{0,300}this\.ppkstr = null;/);
+  // Pairing while the PC runs an app: no refusal before the request, a wrong PIN first
+  assert.equal(index.indexOf('is currently in a game session'), -1);
+  assert.match(index, /if \(String\(failedPairing\) === '-7'\) \{[\s\S]{0,400}\} else if \(nvhttpHost\.currentGame != 0\) \{/);
+  // The top of the PC list for another key, and the length of the signature of the host
+  assert.match(read('wasm/platform/launcher.js'), /const keyMismatch = state === 'offline' && host\.pinnedKeyMismatch === true;/);
+  assert.match(read('libgamestream/pairing.c'), /#define PAIRING_SIGNATURE_MAX_BYTES 512/);
+});

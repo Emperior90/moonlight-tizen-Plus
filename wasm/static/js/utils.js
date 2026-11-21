@@ -8,6 +8,29 @@ var SMART_HUB_PREVIEW_FILE_PREFIX = 'preview-s90c-';
 // reports as error 599 as well
 var QUIT_APP_STILL_RUNNING_ERROR = 599;
 
+// The error with which refreshServerInfoAtAddress() fails when a paired PC answers over HTTPS, on a connection whose key
+// curl checked against the key pinned at the pairing (CURLOPT_PINNEDPUBLICKEY in http_request() of
+// libgamestream/http.c), that it no longer accepts this TV: Sunshine, Apollo, Vibepollo and Vibeshine check the
+// certificate of a client after the TLS handshake and answer a client that they don't know (e.g. after "Unpair All")
+// or one turned off in their list of clients with HTTP 200 and <root status_code="401" ...> (on_verify_failed in their
+// src/nvhttp.cpp). The answer is authentic, so the polls take the PC for online and not paired (markRefusedByHost());
+// every other caller just fails.
+var HOST_REFUSED_TV_ERROR = 'HOST_REFUSED_TV';
+// The error with which NvHTTP.pair() fails when the PC doesn't confirm the pairing: its answer to the pairchallenge
+// request over HTTPS has no <paired>1</paired>, e.g. the 401 answer above right after the pairing
+var PAIRING_NOT_CONFIRMED_ERROR = 'PAIRING_NOT_CONFIRMED';
+
+// Whether a request failed because the device that answered over HTTPS has another key than the one pinned at the
+// pairing (GS_CERT_MISMATCH of libgamestream/errors.h, which the module sends as the text "-100"). Such an answer isn't
+// authenticated: it may come from another device that has the address of the PC now.
+function isPinnedKeyMismatchError(error) {
+  return String(error) === '-100';
+}
+
+// The PCs whose refusal of this TV is in the log already, by unique ID (markRefusedByHost()): once per start of the app,
+// and again whenever a PC that was paired refuses the TV
+var hostRefusalLogged = Object.create(null);
+
 // How long the app waits for the answer of a host to /cancel (quitting the running app) and to the download of one box
 // art, in milliseconds: 30 seconds, as Moonlight for PC waits for a quit. The request queue enforces the limit
 // (sendMessage('openUrl', ...) in messages.js cancels the request in the module and rejects it with -1). Without one, a
@@ -791,6 +814,10 @@ function NvHTTP(address, clientUid, userEnteredAddress = '', macAddress) {
   this.clientUid = clientUid;
   this.serverUid = '';
   this.ppkstr = null;
+  // True while the last check of a paired PC found no address that answered, and at least one where a device answered
+  // over HTTPS with another key than the pinned one (isPinnedKeyMismatchError()). Such an answer isn't authenticated, so
+  // it never makes the PC online or not paired; it only changes the message (hostChosen() and showHost() of launcher.js).
+  this.pinnedKeyMismatch = false;
   this._pollCount = 0;
   this._consecutivePollFailures = 0;
   this._pollCompletionCallbacks = [];
@@ -853,29 +880,27 @@ NvHTTP.prototype = {
     // (getPreflightUrl()).
     var preflightUrl = getPreflightUrl(url, this.httpsPort, this.httpPort);
 
-    return fetch(preflightUrl, abortCtrl ? { signal: abortCtrl.signal } : {})
-      .then(function(res) {
-        clearTimeout(timeoutId);
-        // The IP is alive and responded! Hand it over to C++
-        return sendMessage('openUrl', [url, ppkstr, false, 5000]).catch(error => {
-          throw error;
-        });
-      })
-      .catch(function(e) {
-        clearTimeout(timeoutId);
-        // If the fetch was forcefully aborted by our timeout, it means the IP is a black hole (silent drop).
-        // We MUST skip it, otherwise handing it to C++ will irrevocably freeze the WASM thread for 120 seconds!
-        if (e && e.name === 'AbortError') {
-          console.warn('%c[utils.js, _openUrlWithTimeout]', 'color: orange;', 'Skipping dead/hanging URL to prevent C++ WASM freeze: ' + url);
-          return Promise.reject(-1); // Instantly fail (GS_FAILED), don't pass to C++!
-        } else {
-          // Any other error (e.g. Cert Error, Connection Refused, CORS) means the IP actively responded quickly.
-          // C++ will also fail quickly without hanging (or succeed if mTLS), so it's safe to hand it over.
-          return sendMessage('openUrl', [url, ppkstr, false, 5000]).catch(error => {
-            throw error;
-          });
-        }
-      });
+    // The preflight is settled first, and the request goes to the module once: a .catch() after the request also caught
+    // its own rejection (-1 after its 5 seconds, or -100) and sent it a second time, up to 2.3.2
+    return fetch(preflightUrl, abortCtrl ? { signal: abortCtrl.signal } : {}).then(function() {
+      clearTimeout(timeoutId);
+      // The IP is alive and responded! Hand it over to C++
+      return true;
+    }, function(e) {
+      clearTimeout(timeoutId);
+      // If the fetch was forcefully aborted by our timeout, it means the IP is a black hole (silent drop).
+      // We MUST skip it, otherwise handing it to C++ will irrevocably freeze the WASM thread for 120 seconds!
+      if (e && e.name === 'AbortError') {
+        console.warn('%c[utils.js, _openUrlWithTimeout]', 'color: orange;', 'Skipping dead/hanging URL to prevent C++ WASM freeze: ' + url);
+        return false;
+      }
+      // Any other error (e.g. Cert Error, Connection Refused, CORS) means the IP actively responded quickly.
+      // C++ will also fail quickly without hanging (or succeed if mTLS), so it's safe to hand it over.
+      return true;
+    }).then(function(alive) {
+      // A black hole fails at once (GS_FAILED), without the module
+      return alive ? sendMessage('openUrl', [url, ppkstr, false, 5000]) : Promise.reject(-1);
+    });
   },
 
   // Refreshes the server info using the base URL. This is useful for testing whether we can successfully ping a host at the base URL
@@ -905,6 +930,11 @@ NvHTTP.prototype = {
     }
     // Paired hosts must use HTTPS with the pinned certificate. Do not fall back to unauthenticated HTTP for server metadata.
     return this._openUrlWithTimeout('https://' + urlAddr + ':' + this.httpsPort + '/serverinfo?' + this._buildUidStr(), this.ppkstr).then(function(ret) {
+      // The PC answered with the pinned key that it no longer accepts this TV: no field of the answer is taken (it has
+      // none), and only the polls change the state of the host (pollServer(), beginBackgroundPollingOfHost() in index.js)
+      if (this._isUnauthorizedAnswer(ret)) {
+        return Promise.reject(HOST_REFUSED_TV_ERROR);
+      }
       var parsed = this._parseServerInfo(ret);
       if (!parsed) { // If that fails
         console.warn('%c[utils.js, refreshServerInfoAtAddress]', 'color: gray;', 'Warning: Failed to parse server info from HTTPS. Please verify the host is reachable and re-pair the host if necessary!');
@@ -939,7 +969,12 @@ NvHTTP.prototype = {
       return;
     }
 
-    this.selectServerAddress(function(successfulAddress) {
+    this.selectServerAddress(function(successfulAddress, refused) {
+      // The PC answered at this address with its pinned key that it no longer accepts this TV: online, not paired. First,
+      // since the gates below read whether it is paired.
+      if (refused) {
+        this.markRefusedByHost();
+      }
       // Successfully determined server address. Update base URL
       var urlAddr = formatAddressForUrl(successfulAddress);
       this.address = successfulAddress;
@@ -962,10 +997,14 @@ NvHTTP.prototype = {
 
       this._consecutivePollFailures = 0;
       this.online = true;
+      this.pinnedKeyMismatch = false;
 
       // Call all pending completion callbacks
       this._completePoll();
-    }.bind(this), function() {
+    }.bind(this), function(keyMismatch) {
+      // A device answered with another key than the pinned one: only the message changes, the PC goes offline as any
+      // other that doesn't answer
+      this.pinnedKeyMismatch = !!keyMismatch;
       // Set host to offline and clear the app list cache
       if (++this._consecutivePollFailures >= 2) {
         this.online = false;
@@ -1002,21 +1041,29 @@ NvHTTP.prototype = {
     // isn't asked (getServerAddressCandidates()).
     var candidates = getServerAddressCandidates(this);
 
-    var tryNext = function(index) {
+    // onSuccess(address, refused) gets the address that answered, and whether the PC answered there that it no longer
+    // accepts this TV (HOST_REFUSED_TV_ERROR): the PC proved its pinned key at that address, so it ends the search like
+    // any answer, also after a device with another key at an earlier address. onFailure(keyMismatch) gets whether a
+    // device answered at one of the addresses with another key than the pinned one (isPinnedKeyMismatchError()).
+    var tryNext = function(index, keyMismatch) {
       if (index >= candidates.length) {
         console.error('%c[utils.js, selectServerAddress]', 'color: gray;', 'Error: Failed to contact the ' + this.hostname + '!', this);
-        onFailure();
+        onFailure(keyMismatch);
         return;
       }
       var addr = candidates[index];
       this.refreshServerInfoAtAddress(addr).then(function() {
-        onSuccess(addr);
-      }.bind(this), function() {
-        tryNext.call(this, index + 1);
+        onSuccess(addr, false);
+      }.bind(this), function(error) {
+        if (error === HOST_REFUSED_TV_ERROR) {
+          onSuccess(addr, true);
+          return;
+        }
+        tryNext.call(this, index + 1, keyMismatch || isPinnedKeyMismatchError(error));
       }.bind(this));
     }.bind(this);
 
-    tryNext(0);
+    tryNext(0, false);
   },
 
   toString: function() {
@@ -1033,6 +1080,7 @@ NvHTTP.prototype = {
     string += 'server UID: ' + this.serverUid + '\r\n';
     string += 'is paired: ' + this.paired + '\r\n';
     string += 'is online: ' + this.online + '\r\n';
+    string += 'pinned key mismatch: ' + this.pinnedKeyMismatch + '\r\n';
     string += 'number of apps: ' + this.numofapps + '\r\n';
     string += 'current game: ' + this.currentGame + '\r\n';
     string += 'app version: ' + this.appVersion + '\r\n';
@@ -1048,6 +1096,27 @@ NvHTTP.prototype = {
     }
 
     return string;
+  },
+
+  // Whether an answer is the one of a host to a client whose certificate it doesn't accept: status_code 401
+  _isUnauthorizedAnswer: function(xmlStr) {
+    try {
+      return this._parseXML(xmlStr).find('root').attr('status_code') == 401;
+    } catch (e) {
+      return false;
+    }
+  },
+
+  // Mark a paired PC that answered with its pinned key that it no longer accepts this TV (HOST_REFUSED_TV_ERROR) as not
+  // paired, so that its card shows Unpaired and OK pairs it again (hostChosen() in index.js). The pinned key stays: a PC
+  // that accepts the TV again (e.g. turned on again in its list of clients) answers the next poll over HTTPS as paired,
+  // without a pairing; pair() drops it. Logged once per PC and start of the app, and again whenever a paired PC refuses.
+  markRefusedByHost: function() {
+    if (this.paired === true || !hostRefusalLogged[this.serverUid]) {
+      hostRefusalLogged[this.serverUid] = true;
+      console.warn('%c[utils.js, markRefusedByHost]', 'color: gray;', 'Warning: ' + this.hostname + ' answered with its pinned key that it no longer accepts this TV (status 401): its pairing was removed or turned off on the PC. It shows as not paired until it is paired again.');
+    }
+    this.paired = false;
   },
 
   _parseServerInfo: function(xmlStr) {
@@ -1718,6 +1787,13 @@ NvHTTP.prototype = {
   },
 
   pair: function(randomNumber) {
+    // A PC that no longer accepts the pinned key (markRefusedByHost()) answers no HTTPS request with it, and its pairing
+    // starts over plain HTTP like the one of a new PC: the key is dropped, and the pairing pins the key it gets. The
+    // server info over HTTP still has to come with the unique ID of the PC (_parseServerInfo()).
+    if (!this.paired && this.ppkstr) {
+      console.log('%c[utils.js, pair]', 'color: gray;', 'Pairing ' + this.hostname + ' again: dropping the key pinned at its earlier pairing, which it no longer accepts.');
+      this.ppkstr = null;
+    }
     return this.refreshServerInfo().then(function() {
       if (this.paired && this.ppkstr) {
         return true;
@@ -1738,7 +1814,15 @@ NvHTTP.prototype = {
         }.bind(this)).then(function(ret) {
           $xml = this._parseXML(ret);
           this.paired = $xml.find('paired').html() == '1';
-          return this.paired;
+          if (!this.paired) {
+            // The PC didn't confirm the pairing (e.g. it answered that it doesn't accept the certificate of the TV): the
+            // key of the pairing is dropped, so that the polls ask it over plain HTTP like a PC that isn't paired, and
+            // the pairing fails (pairingDialog() in index.js). Up to 2.3.2 it resolved with false, which nothing read.
+            console.warn('%c[utils.js, pair]', 'color: gray;', 'Warning: ' + this.hostname + ' didn\'t confirm the pairing.');
+            this.ppkstr = null;
+            return Promise.reject(PAIRING_NOT_CONFIRMED_ERROR);
+          }
+          return true;
         }.bind(this));
       }.bind(this));
     }.bind(this));

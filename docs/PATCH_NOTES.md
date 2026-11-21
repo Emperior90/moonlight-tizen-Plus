@@ -2,7 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
-- [2.3.3](#233): pre-release, the remote and keyboard in a stream, and mouse fixes
+- [2.3.3](#233): pre-release, the remote and keyboard in a stream, mouse fixes, and pairing a PC again
 - [2.3.2](#232): 2026-11-20, a tidier Stream Menu with F keys and PC shutdown, finer frame times, how fast frames arrive, more facts in the log and a fix for recovery keyframes
 - [2.3.1](#231): 2026-11-18, lighter sound and statistics, fewer double presses, a switch for sound on Wi-Fi, and fixes from a review and from other Moonlight clients
 - [2.3.0](#230): 2026-11-08, smoother motion, a picture refresh in the Stream Menu and a longer guide
@@ -21,11 +21,11 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ## 2.3.3
 
-*Pre-release, in testing.* The remote's arrows and OK reach the PC without RETURN first, TV keys stay off the PC, and keyboard and mouse fixes.
+*Pre-release, in testing.* The remote's arrows and OK reach the PC without RETURN first, TV keys stay off the PC, PCs pair again, and keyboard and mouse fixes.
 
 > **Install:** by hand over 2.3.2 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >
-> **Tested:** with simulated TVs and hosts only; the keys, the keyboard and the mouse still need a test on a TV.
+> **Tested:** with simulated TVs and hosts only; the keys, the keyboard and the mouse still need a test on a TV, the pairing one with Sunshine.
 
 ### New
 
@@ -34,12 +34,17 @@ What changed in each version of Moonlight Plus, in short, newest first.
 ### Changed
 
 - In a stream, the first key of the remote or a keyboard gives the stream the keys; no RETURN needed first
+- A PC that no longer accepts the TV (e.g. after *Unpair All* in Sunshine) shows *Unpaired*, and OK pairs it again
+- Pairing also works while the PC runs a game
+- A PC that answers with a different key than at its pairing gets its own message instead of *Offline* advice
 
 ### Fixed
 
 - CH+, CH-, Source and the color keys no longer press keys on the PC (CH- could type M in games)
 - Ctrl + Alt + Shift + S or an F key on a keyboard no longer turns the keyboard off for the rest of the stream
 - A mouse click no longer reaches the PC before the movement right before it
+- A pairing that the PC didn't confirm no longer says that it succeeded
+- A failed check of a PC is no longer sent twice, and a PC with a 4096-bit RSA or an ECDSA certificate pairs
 
 ## 2.3.2
 

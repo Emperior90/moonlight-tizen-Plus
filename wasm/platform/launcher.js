@@ -275,11 +275,15 @@ const Launcher = (function() {
       return;
     }
     const state = hostState(host);
+    // An offline PC where a device answered with another key than the one pinned at the pairing (pinnedKeyMismatch of
+    // NvHTTP in utils.js): waking it can't help, and OK says what can (hostChosen() in index.js). It stays offline.
+    const keyMismatch = state === 'offline' && host.pinnedKeyMismatch === true;
     const texts = {
       online: t('Ready to stream. Select it to see its apps and games.'),
       running: t('A game is running on this PC. Open it to resume or quit the game.'),
       locked: t('Select it to pair this TV with the PC using a PIN.'),
-      offline: t('This PC is not reachable. Turn it on, or wake it from its options.'),
+      offline: keyMismatch ? t('This PC answers with a different key than at its pairing. Try "Rescan network", or delete the PC and add it again.') :
+        t('This PC is not reachable. Turn it on, or wake it from its options.'),
       unknown: '',
     };
     let hints = '';
@@ -287,7 +291,7 @@ const Launcher = (function() {
       hints = keyHint(t('OK'), null, t('Open'));
     } else if (state === 'locked') {
       hints = keyHint(t('OK'), null, t('Pair'));
-    } else if (state === 'offline' && host.autoWolEnabled === true) {
+    } else if (state === 'offline' && host.autoWolEnabled === true && !keyMismatch) {
       hints = keyHint(t('OK'), null, t('Wake PC'));
     }
     // UP reaches the options button from the first row of cards (Views.Hosts in navigation.js), the options key (CH+ or
