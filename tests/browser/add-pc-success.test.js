@@ -10,11 +10,13 @@
 // - the same for a PC stored as not paired: the pairing of that PC, no second card,
 // - OK on the card of a PC that isn't paired: the PIN, then its app list,
 // - a wrong PIN first: its message with Close, and the next attempt pairs, with one card,
-// - a PC that runs an app pairs as well (since 2.3.3; the pairing dialog refused it before any request up to 2.3.2).
+// - a PC that runs an app pairs as well (since 2.3.3; the pairing dialog refused it before any request up to 2.3.2),
+// - Add PC of a known PC that answers with another key than the pinned one says so and doesn't pair it (the user deletes
+//   the PC first).
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
-const { SUNSHINE_HOSTS, readStorage, reloadApp, startHarness } = require('./harness');
+const { SUNSHINE_HOSTS, readStorage, reloadApp, startHarness, waitForStorage } = require('./harness');
 const { key, openMenus, takeSnackbars } = require('./menu-driver');
 
 let harness;
@@ -122,6 +124,10 @@ test('Add PC and the PIN pair a new PC: one card, stored with its key, the polli
       index > 0 && request.scheme === 'https' && request.path === '/serverinfo' && request.key === pinned), KEY, { timeout: 5000 });
     await page.waitForFunction(() => hosts.HOST1.online === true, null, { timeout: 5000 });
     assert.equal(await page.evaluate(() => document.getElementById('host-container-HOST1').getAttribute('data-state')), 'online');
+    // Its MAC address, which Sunshine sends only over HTTPS (00:00:00:00:00:00 over HTTP), for Wake-on-LAN: from the first
+    // check over HTTPS, and stored once the first poll found it (updateMacAddress())
+    await page.waitForFunction(() => hosts.HOST1.macAddress === '00:11:22:33:44:55', null, { timeout: 5000 });
+    await waitForStorage(page, (values) => values.hosts && values.hosts.HOST1 && values.hosts.HOST1.macAddress === '00:11:22:33:44:55', 8000);
     assert.deepEqual(app.errors, []);
 
     // The next start of the app has the PC, paired and online
@@ -247,6 +253,33 @@ test('Add PC pairs a PC that runs an app, whose card then shows the app running'
     assert.deepEqual(snackbars.filter((message) => /game session|busy/.test(message)), []);
     // Its card shows the running app once its polling resumed over HTTPS
     await page.waitForFunction(() => document.getElementById('host-container-HOST1').getAttribute('data-state') === 'running', null, { timeout: 5000 });
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('Add PC of a known PC that answers with another key says so, and neither pairs it nor adds a card', async () => {
+  // Sunshine set up anew: another key than the one pinned at the pairing of the stored PC
+  const app = await openMenus(harness, { tv: TV, stored: { ipAddressFieldMode: false, hosts: SUNSHINE_HOSTS }, moduleScripts: ['sunshine-host.js'],
+    initScripts: ['window.__sunshineConfig = { key: "sha256//NEW" };'] });
+  const { page } = app;
+  try {
+    await page.waitForFunction(() => hosts.HOST1.online === false && hosts.HOST1.pinnedKeyMismatch === true, null, { timeout: 5000 });
+    await page.evaluate(() => $('#addHostContainer').trigger('click'));
+    await page.waitForTimeout(300);
+    await takeSnackbars(page);
+    await enterAddressAndContinue(page, '10.0.0.2');
+    await page.waitForFunction(() => window.__snackbars.some((message) => message.indexOf('answers with a different key') >= 0), null, { timeout: 5000 });
+    await page.waitForTimeout(300);
+    const state = await pcState(page);
+    const snackbars = await takeSnackbars(page);
+    assert.equal(snackbars[snackbars.length - 1], 'GAMING-PC answers with a different key than at its pairing: another PC may have its address now, or Sunshine ' +
+      'was set up anew on it. If the PC is asleep, wake it from its options. Otherwise try "Rescan network", and if that doesn\'t help, delete the PC and add it again.');
+    assert.deepEqual(snackbars.filter((message) => /Failed|paired/.test(message)), []);
+    assert.deepEqual([state.pairingOpen, state.pairs.length, await page.evaluate(() => window.__wasmCalls.filter((call) => call.name === 'pair').length)], [false, 0, 0]);
+    assert.deepEqual(state.cards, ['host-container-HOST1']);
+    assert.deepEqual(state.hosts, [{ uid: 'HOST1', name: 'GAMING-PC', paired: true, key: 'PPK' }]);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

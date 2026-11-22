@@ -546,7 +546,11 @@ test('the answers of Sunshine, Apollo and GeForce Experience are kept as they ar
   });
   // The answers of the tests themselves: the simulated host of the browser tests and the one of host-uid.test.js
   const simulated = read('tests/browser/mocks/sunshine-host.js');
-  assert.match(simulated, /<HttpsPort>47984<\/HttpsPort><ExternalPort>47989<\/ExternalPort><mac>00:11:22:33:44:55<\/mac><LocalIP>10\.0\.0\.2<\/LocalIP>/);
+  assert.match(simulated, /<HttpsPort>47984<\/HttpsPort><ExternalPort>47989<\/ExternalPort><mac>' \+ mac \+ '<\/mac><LocalIP>10\.0\.0\.2<\/LocalIP>/);
+  // Over HTTPS its own MAC address; over HTTP the same, or 00:00:00:00:00:00 as Sunshine sends it, for a PC that doesn't
+  // know the TV
+  assert.match(simulated, /https \? serverInfo\(1, '00:11:22:33:44:55'\) : serverInfo\(state\.httpPairStatus, state\.httpMac\)/);
+  assert.match(simulated, /httpMac: config\.unpaired \? '00:00:00:00:00:00' : '00:11:22:33:44:55',/);
   const ofTests = parseOne(platform, { hostname: 'GAMING-PC', uniqueid: 'HOST1', LocalIP: '10.0.0.2', ServerCodecModeSupport: '197377' });
   assert.deepEqual([ofTests.parsed, ofTests.hostname, ofTests.serverUid, ofTests.localAddress, ofTests.macAddress, ofTests.httpsPort, ofTests.externalPort],
     [[true], 'GAMING-PC', 'HOST1', '10.0.0.2', '00:11:22:33:44:55', 47984, 47989]);
@@ -561,7 +565,8 @@ test('_parseServerInfo() keeps each field by its rule', () => {
   assert.deepEqual(unchecked, []);
   assert.match(body, /this\.localAddress = isServerAddress\(localAddress\) \? localAddress : '';/);
   assert.match(body, /if \(isServerAddress\(externIP\)\) \{/);
-  assert.match(body, /if \(isMacAddress\(macAddr\)\) \{\s+this\.macAddress = macAddr;/);
+  // The all-zero MAC address (Sunshine over HTTP) replaces no MAC address that the host has (since 2.3.3)
+  assert.match(body, /if \(isMacAddress\(macAddr\) && \(macAddr !== '00:00:00:00:00:00' \|\| !isMacAddress\(this\.macAddress\)\)\) \{\s+this\.macAddress = macAddr;/);
   assert.match(body, /var httpsPort = parsePort\(\$root\.find\('HttpsPort'\)\.text\(\)\);/);
   assert.match(body, /this\.supportedDisplayModes = parseDisplayModes\(displayModes\);/);
   // The poll takes its addresses from the checked list, and the request for a server info checks its address

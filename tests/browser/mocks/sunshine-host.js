@@ -13,19 +13,27 @@
 // the answers until the test calls state.release(), e.g. to see the app before the first poll of a stored PC ended; the
 // app gives up on a request after 5 s (sendMessage() in messages.js), so a test releases them before that.
 // The trust between the TV and the PC: by default the PC knows the TV (state.knowsTv) and answers over HTTP and HTTPS
-// alike, as before. { unpaired: true } makes it a PC that doesn't know the TV: its server info over HTTP says
-// PairStatus 0 (as Sunshine's always does over HTTP, state.httpPairStatus), and every HTTPS request gets the answer of
-// Sunshine for a client that it doesn't accept, HTTP 200 with <root status_code="401" ...> (on_verify_failed in
-// src/nvhttp.cpp). state.unpair() makes a PC that knew the TV forget it, like "Unpair All" in Sunshine or the TV turned
-// off in its list of clients, and state.knowsTv = true takes it back without a pairing. The pairing itself is
+// alike, as up to 2.3.2, except for HTTPS /pair and Module.pair below (before 2.3.3 the first failed with -1 and the
+// second never settled). { unpaired: true } makes it a PC that doesn't know the TV: its server info over HTTP says
+// PairStatus 0 and the MAC address 00:00:00:00:00:00 (as Sunshine's always does over HTTP, state.httpPairStatus and
+// state.httpMac), and every HTTPS request gets the answer of Sunshine for a client that it doesn't accept, HTTP 200 with
+// <root status_code="401" ...> (on_verify_failed in src/nvhttp.cpp). state.unpair() makes a PC that knew the TV forget
+// it, like "Unpair All" in Sunshine or the TV turned off in its list of clients (with the answer over HTTP of
+// { unpaired: true }), and state.knowsTv = true takes it back without a pairing. The pairing itself is
 // Module.pair (gs_pair() of the module), recorded in state.pairs with its PIN, which answers after state.delayMs with
 // the key of the PC: with state.pairError (e.g. '-7' for a wrong PIN, used once, so that the next attempt pairs) it
 // fails, and otherwise the PC knows the TV from then on, unless state.confirmPairing is false ({ confirmPairing: false
 // }), after which the pairchallenge request over HTTPS gets the 401 answer instead of <paired>1</paired>. { key:
 // 'sha256//...' } (state.key, or state.newKey(key) later, like Sunshine set up anew) is the key of the PC: an HTTPS
 // request with another pinned key fails with the certificate mismatch of the module (-100), and the pairing pins this
-// key; without a key, the pairing pins 'sha256//SUNSHINE' and no pinned key is checked. state.requests records every
-// request as { scheme, path, key }, with its pinned key or null.
+// key; without a key, the pairing pins 'sha256//SUNSHINE' and no pinned key is checked. An HTTPS request without a
+// pinned key fails with -1, as in the module, whose curl then checks the certificate of the PC, which nobody signed.
+// The module rejects with the error code as text ('-1', '-100', '-7'), and so does this PC. state.requests records
+// every request as { scheme, path, key }, with its pinned key or null, and state.onAnswered (a function, if set) gets
+// the path of each request once it is answered, e.g. to make the PC forget the TV right after /cancel. { otherPcAt:
+// ['203.0.113.7'] } are addresses where another PC with Sunshine answers with its own key (e.g. the public address of
+// the household, which the router hands to the PC that it forwards the port to): an HTTPS request there fails with
+// '-100' (state.otherPcRequests counts them).
 (function() {
   'use strict';
   var config = window.__sunshineConfig || {};
@@ -48,6 +56,10 @@
     },
     knowsTv: !config.unpaired,
     httpPairStatus: config.unpaired ? 0 : 1,
+    httpMac: config.unpaired ? '00:00:00:00:00:00' : '00:11:22:33:44:55',
+    otherPcAt: config.otherPcAt || [],
+    otherPcRequests: 0,
+    onAnswered: null,
     key: config.key || null,
     pairs: [],
     pairError: null,
@@ -56,6 +68,7 @@
     unpair: function() {
       state.knowsTv = false;
       state.httpPairStatus = 0;
+      state.httpMac = '00:00:00:00:00:00';
     },
     newKey: function(key) {
       state.key = key;
@@ -68,11 +81,11 @@
       '" status_message="The client is not authorized. Certificate verification failed."/>';
   }
 
-  function serverInfo(pairStatus) {
+  function serverInfo(pairStatus, mac) {
     var busy = state.currentGame != 0;
     return '<?xml version="1.0" encoding="utf-8"?><root status_code="200"><hostname>GAMING-PC</hostname>' +
       '<appversion>7.1.431.-1</appversion><GfeVersion>3.23.0.74</GfeVersion><uniqueid>HOST1</uniqueid>' +
-      '<HttpsPort>47984</HttpsPort><ExternalPort>47989</ExternalPort><mac>00:11:22:33:44:55</mac><LocalIP>10.0.0.2</LocalIP>' +
+      '<HttpsPort>47984</HttpsPort><ExternalPort>47989</ExternalPort><mac>' + mac + '</mac><LocalIP>10.0.0.2</LocalIP>' +
       '<ServerCodecModeSupport>197377</ServerCodecModeSupport><PairStatus>' + pairStatus + '</PairStatus><currentgame>' + state.currentGame +
       '</currentgame><state>' + (busy ? 'SUNSHINE_SERVER_BUSY' : 'SUNSHINE_SERVER_FREE') + '</state></root>';
   }
@@ -86,25 +99,37 @@
   Module.openUrl = function(id, url, key) {
     var path = url.replace(/^https?:\/\/[^/]+/, '').replace(/\?.*$/, '');
     var appId = /[?&]appid=(\d+)/.exec(url);
-    if (!/^https?:\/\/10\.0\.0\.2:/.test(url)) {
+    var https = /^https:/.test(url);
+    var address = /^https?:\/\/\[?([^\]\/:]+)/.exec(url);
+    if (https && address && state.otherPcAt.indexOf(address[1]) >= 0) {
+      // Another PC with Sunshine answers there, with its own key: GS_CERT_MISMATCH of the module
+      state.otherPcRequests++;
       setTimeout(function() {
-        handlePromiseMessage(id, 'reject', -1);
+        handlePromiseMessage(id, 'reject', '-100');
       }, 0);
       return;
     }
-    var https = /^https:/.test(url);
+    if (!/^https?:\/\/10\.0\.0\.2:/.test(url)) {
+      setTimeout(function() {
+        handlePromiseMessage(id, 'reject', '-1');
+      }, 0);
+      return;
+    }
     state.http.push(path + (appId ? ' ' + appId[1] : ''));
     state.requests.push({ scheme: https ? 'https' : 'http', path: path, key: key || null });
     var answer = function() {
       if (state.offline) {
-        handlePromiseMessage(id, 'reject', -1);
+        handlePromiseMessage(id, 'reject', '-1');
+      } else if (https && !key) {
+        // No pinned key: curl checks the certificate of the PC against the authorities, and fails
+        handlePromiseMessage(id, 'reject', '-1');
       } else if (https && state.key && key !== state.key) {
         // GS_CERT_MISMATCH of the module: the PC answered with another key than the pinned one
-        handlePromiseMessage(id, 'reject', -100);
+        handlePromiseMessage(id, 'reject', '-100');
       } else if (https && !state.knowsTv) {
         handlePromiseMessage(id, 'resolve', unauthorized(path));
       } else if (path === '/serverinfo') {
-        handlePromiseMessage(id, 'resolve', serverInfo(https ? 1 : state.httpPairStatus));
+        handlePromiseMessage(id, 'resolve', https ? serverInfo(1, '00:11:22:33:44:55') : serverInfo(state.httpPairStatus, state.httpMac));
       } else if (path === '/pair' && https) {
         // The pairchallenge request after the pairing
         handlePromiseMessage(id, 'resolve', '<?xml version="1.0" encoding="utf-8"?><root status_code="200"><paired>1</paired></root>');
@@ -119,7 +144,10 @@
         state.currentGame = 0;
         handlePromiseMessage(id, 'resolve', '<root status_code="200"><cancel>1</cancel></root>');
       } else {
-        handlePromiseMessage(id, 'reject', -1);
+        handlePromiseMessage(id, 'reject', '-1');
+      }
+      if (typeof state.onAnswered === 'function') {
+        state.onAnswered(path);
       }
     };
     if (state.hold) {
@@ -136,7 +164,7 @@
     state.pairs.push({ version: version, address: address, httpPort: httpPort, pin: pin, uid: uid, deviceName: deviceName });
     setTimeout(function() {
       if (state.offline) {
-        handlePromiseMessage(id, 'reject', -1);
+        handlePromiseMessage(id, 'reject', '-1');
         return;
       }
       if (state.pairError !== null) {

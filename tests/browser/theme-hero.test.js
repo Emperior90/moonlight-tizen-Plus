@@ -17,6 +17,7 @@
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { openApp, startHarness } = require('./harness');
+const { forEachTextWidth } = require('./text-stress');
 
 let harness;
 before(async () => {
@@ -349,12 +350,44 @@ test('an empty or a failed app list selects its illustration, whose top says why
       snackbars: window.__snackbars.splice(0),
       hint: $('#appMenuHint').is(':visible'),
     }));
+    // The text of a failed list names only what this screen offers (RETURN); 2.3.3 in testing advised to refresh the list
+    // of apps, which only the menu of the PC in the PC list does
     const failed = { marked: ['IMG'], state: 'empty', title: 'Apps', snackbars: [], hint: false,
-      text: 'Unable to retrieve your list of apps at this time. Please refresh the list of apps or try again later!' };
+      text: 'The app list of this PC couldn\'t be read. Go back with RETURN and open the PC to try again.' };
+    // The copy of the hero (overline, title, text) stays inside the hero, whose height is fixed (.launcher-hero in
+    // style.css), and the grid starts below it, in every language and with the text 10 % wider. The box of the text
+    // itself grows with the text, so its own overflow says nothing (2.3.3 in testing checked that).
+    const fitsInEveryLanguage = (state) => forEachTextWidth(app.page, async (label) => {
+      for (const language of ['en-US', 'de-DE', 'es-ES', 'fr-FR', 'pt-BR']) {
+        const fit = await app.page.evaluate(async (code) => {
+          await i18n.setLanguage(code);
+          Launcher.refresh();
+          const hero = document.getElementById('launcher-hero').getBoundingClientRect();
+          const copy = document.querySelector('#launcher-hero .hero-copy').getBoundingClientRect();
+          const grid = document.getElementById('game-grid').getBoundingClientRect();
+          const text = document.getElementById('hero-text');
+          return {
+            translated: code === 'en-US' || text.textContent !== window.__englishHeroText,
+            inside: copy.top >= hero.top - 0.5 && copy.bottom <= hero.bottom + 0.5,
+            gridBelow: grid.top >= hero.bottom - 0.5,
+            lines: Math.round(text.getBoundingClientRect().height / parseFloat(getComputedStyle(text).lineHeight)),
+          };
+        }, language);
+        assert.deepEqual([fit.translated, fit.inside, fit.gridBelow], [true, true, true], state + ' ' + language + label + ': ' + JSON.stringify(fit));
+      }
+      await app.page.evaluate(async () => {
+        await i18n.setLanguage('en-US');
+        Launcher.refresh();
+      });
+    });
 
     // A list that can't be read: its illustration has the selection, and the top of the screen says so
     await open(null);
     assert.deepEqual(await shown(), failed);
+    await app.page.evaluate(() => {
+      window.__englishHeroText = document.getElementById('hero-text').textContent;
+    });
+    await fitsInEveryLanguage('failed list');
     // RETURN goes back to the PC list
     await app.page.evaluate(() => {
       ['keydown', 'keyup'].forEach((type) => {
@@ -369,17 +402,11 @@ test('an empty or a failed app list selects its illustration, whose top says why
     // An empty list says what to do
     await open([]);
     assert.deepEqual(await shown(), { marked: ['IMG'], state: 'empty', title: 'No apps yet', snackbars: [], hint: false,
-      text: 'Add apps in Sunshine on the PC (Applications), then choose "Refresh apps" in the menu of this PC in the PC list.' });
-    // The text fits its box also in French, the longest translation
-    assert.deepEqual(await app.page.evaluate(async () => {
-      await i18n.setLanguage('fr-FR');
-      Launcher.refresh();
-      const text = document.getElementById('hero-text');
-      const result = { translated: text.textContent.indexOf('Actualiser les applications') >= 0, overflow: text.scrollHeight > text.clientHeight + 1 };
-      await i18n.setLanguage('en-US');
-      Launcher.refresh();
-      return result;
-    }), { translated: true, overflow: false });
+      text: 'In the web UI of Sunshine on the PC, add apps under "Applications", then choose "Refresh apps" in the menu of this PC in the PC list.' });
+    await app.page.evaluate(() => {
+      window.__englishHeroText = document.getElementById('hero-text').textContent;
+    });
+    await fitsInEveryLanguage('empty list');
 
     // A list with apps shows the hint of the app options in the header
     await app.page.evaluate(() => {
@@ -400,6 +427,21 @@ test('an empty or a failed app list selects its illustration, whose top says why
     });
     assert.deepEqual(await shown(), failed);
     assert.equal(await app.page.evaluate(() => Navigation.isCurrent(Views.Apps)), true);
+
+    // Built again under a dialog (e.g. a warning that opened over the end of a stream): the dialog keeps the keys, and
+    // the illustration gets the selection only once the dialog hands them back
+    await app.page.evaluate(async () => {
+      window.__list = [{ id: 7, title: 'Cyberpunk 2077' }];
+      await showApps(window.__host);
+      Navigation.switch();
+      Navigation.change(Views.Apps);
+      warningDialog('Connection Error', 'The connection to the PC was lost.');
+      window.__list = null;
+      await showApps(window.__host).catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+    assert.deepEqual(await app.page.evaluate(() => [isDialogOpen, Navigation.isCurrent(Views.WarningDialog), Navigation.isCurrent(Views.Apps)]),
+      [true, true, false]);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

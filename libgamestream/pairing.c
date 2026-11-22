@@ -85,8 +85,9 @@ static void bytes_to_hex(unsigned char *in, char *out, size_t len) {
 
 // The length of the signature in the pairing secret of the host, which the host makes with the key of its
 // certificate: 256 bytes for the 2048-bit RSA key that every host makes by default, up to 512 for a 4096-bit RSA key,
-// about 70 to 72 for an ECDSA key on P-256 (DER) and 64 for Ed25519. moonlight-embedded (000d9da) and moonlight-qt take
-// any length; the bound keeps the buffer on the stack (gs_pair()) safe from a crafted answer of the host, as the exact
+// and about 70 to 72 for an ECDSA key on P-256 (DER); 64 leaves room below that. An Ed25519 host can't pair, since the
+// signature is verified with SHA-256 (verifySignature()). moonlight-embedded (000d9da) and moonlight-qt take any
+// length; the bound keeps the buffer on the stack (gs_pair()) safe from a crafted answer of the host, as the exact
 // length of 2.1.0 did.
 #define PAIRING_SIGNATURE_MIN_BYTES 64
 #define PAIRING_SIGNATURE_MAX_BYTES 512
@@ -168,17 +169,30 @@ cleanup:
     return result;
 }
 
+// Whether signature is the signature of data with the key of cert, made with SHA-256. A certificate without a key that
+// OpenSSL can read, or a key that it doesn't verify with SHA-256 (e.g. Ed25519, which has no separate digest), fails:
+// the context of the check is only used once it is set up (with OpenSSL 3 EVP_DigestVerifyFinal() crashed on one that
+// EVP_DigestVerifyInit() refused).
 static bool verifySignature(const unsigned char *data, int dataLength, unsigned char *signature, int signatureLength, X509 *cert) {
-    EVP_PKEY* pubKey = X509_get_pubkey(cert);
+    int result = 0;
     EVP_MD_CTX *mdctx = NULL;
-    mdctx = EVP_MD_CTX_create();
-    EVP_DigestVerifyInit(mdctx, NULL, EVP_sha256(), NULL, pubKey);
-    EVP_DigestVerifyUpdate(mdctx, data, dataLength);
-    int result = EVP_DigestVerifyFinal(mdctx, signature, signatureLength);
+    EVP_PKEY* pubKey = X509_get_pubkey(cert);
+    if (pubKey == NULL)
+        return false;
 
+    mdctx = EVP_MD_CTX_create();
+    if (mdctx == NULL)
+        goto cleanup;
+    if (EVP_DigestVerifyInit(mdctx, NULL, EVP_sha256(), NULL, pubKey) != 1)
+        goto cleanup;
+    if (EVP_DigestVerifyUpdate(mdctx, data, dataLength) != 1)
+        goto cleanup;
+    result = EVP_DigestVerifyFinal(mdctx, signature, signatureLength);
+
+cleanup:
     EVP_PKEY_free(pubKey);
     EVP_MD_CTX_destroy(mdctx);
-    
+
     return result > 0;
 }
 

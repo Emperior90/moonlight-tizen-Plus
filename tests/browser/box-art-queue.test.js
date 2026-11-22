@@ -9,7 +9,8 @@
 // Since 2.3.1 a box art download has a time limit (BOX_ART_TIMEOUT_MS in utils.js, 30 seconds): one that the host never
 // answers ends with the placeholder of a failed box art, and the downloads behind it run. Since 2.3.3 no host is polled
 // during a stream or its start (stopPollingHosts() in showStreamMode(), and the polling that the box art of the app grid
-// resumes once it settled waits for the app list after the stream).
+// resumes once it settled waits for the app list after the stream), and an app grid that was built again meanwhile
+// doesn't resume it (only the grid that shows does).
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -167,11 +168,16 @@ test('quitting the running app goes before the box art that waits, and the box a
   }
 });
 
-test('the box art that waits for an app grid that was built again is dropped before it reaches the network', async () => {
+test('the box art that waits for an app grid that was built again is dropped before it reaches the network, and only the new grid resumes the polling', async () => {
   const app = await openColdAppList();
   const { page } = app;
   try {
     await page.waitForFunction(() => window.__http.length === 1);
+    // Each resume of the polling of the host is recorded (and does nothing here)
+    await page.evaluate(() => {
+      window.__polls = [];
+      beginBackgroundPollingOfHost = (host) => window.__polls.push(host.serverUid);
+    });
     // The grid is built again (e.g. after an app was hidden) while App 1 downloads and App 2 waits for the module
     await page.evaluate(() => showApps(window.__host));
     await page.waitForFunction(() => $('#game-grid .game-container').length === 6 && !$('#wasmSpinner').is(':visible'));
@@ -188,6 +194,10 @@ test('the box art that waits for an app grid that was built again is dropped bef
       await answer('boxart ' + id);
     }
     assert.deepEqual((await httpState(page)).sent, ['boxart 1', 'boxart 2', 'boxart 1', 'boxart 2', 'boxart 3', 'boxart 4', 'boxart 5', 'boxart 6']);
+    // Only the grid that shows resumes the polling once its box art settled, not the one that was built again (since
+    // 2.3.3; both did before, one poll loop replacing the other)
+    await page.waitForTimeout(300);
+    assert.deepEqual(await page.evaluate(() => window.__polls), ['HOST1']);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

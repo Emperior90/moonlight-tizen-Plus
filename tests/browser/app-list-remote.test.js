@@ -16,7 +16,7 @@
 //   had any (Views.Apps in wasm/platform/navigation.js)
 // - the audio output of the Web Audio backend that OK opened closes again when the start ends without a stream (since
 //   2.3.3, closeStartAudio()): after No to the question to quit the running app, after a launch or resume that the PC
-//   answered without a session (endLaunchWithAnswer()), and after a failed launch request
+//   answered without a session (endLaunchWithAnswer()), and after a failed launch or resume request
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -306,6 +306,7 @@ test('the Web Audio output that OK opened closes again when the start ends witho
     { name: 'a launch answered without a session', currentGame: 0, answer: '<root status_code="503" status_message="Busy"/>', message: 'Error 503: Busy' },
     { name: 'a failed launch request', currentGame: 0, answer: -1, message: 'Failed to launch Cyberpunk 2077' },
     { name: 'a resume answered without a session', currentGame: 101, answer: '<root status_code="503" status_message="Busy"/>', message: 'Error 503: Busy' },
+    { name: 'a failed resume request', currentGame: 101, answer: -1, message: 'Failed to resume Cyberpunk 2077' },
   ];
   for (const testCase of cases) {
     const app = await openMenus(harness, {

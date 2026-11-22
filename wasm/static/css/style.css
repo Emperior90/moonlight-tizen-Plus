@@ -564,7 +564,8 @@ body[data-view="settings"][data-section] .header-section {
 .mdl-snackbar {
   bottom: 40px;
   /* Above the dimmed overlay of a dialog (999) and the overlay menus (1000), e.g. the button mapping panel, whose
-     messages would show dimmed or hidden under them; a modal <dialog> stays above it in the top layer */
+     messages would show dimmed or hidden under them; a modal <dialog> stays above it in the top layer, and so does the
+     Stream Menu (1002), which has no scrim */
   z-index: 1001;
   min-width: 0;
   max-width: 1100px;
@@ -2127,8 +2128,11 @@ dialog::backdrop {
   background: rgba(5, 7, 16, 0.74);
 }
 /* The Stream Menu sits on the right in the safe area over the live video, or on the left beside statistics in a right
-   corner, without a scrim; its panel is opaque */
+   corner, without a scrim; its panel is opaque. It stays above the messages (the snackbar, 1001), which would otherwise
+   cover its last entry and its hint while they show above the compact statistics in a bottom corner, e.g. the power
+   hint, which sends the user to that entry */
 .stream-menu-backdrop {
+  z-index: 1002;
   justify-content: flex-end;
   background: transparent;
 }
@@ -2736,9 +2740,21 @@ dialog::backdrop {
 .pad-svg .on + .pad-label {
   fill: var(--bg);
 }
-/* The button mapping: a wider menu whose rows scroll, each button with the one it presses between the arrows */
+/* The button mapping: a wider menu whose rows scroll, each button with the one it presses between the arrows. Its
+   panels are centred above the bottom 132 px, so that they end above a message of up to three lines (its top at 911 px:
+   40 px from the bottom and 129 px tall), the longest that comes while they are open (a controller with a non-standard
+   layout that connects): at most 840 px tall, from 54 to 894 px, so a message never covers the focused entry or the
+   hint (a message of four lines, from 881 px, only the edge of the panel) */
+#buttonMappingOverlay {
+  box-sizing: border-box;
+  padding-bottom: 132px;
+}
 .mapping-menu {
   width: 760px;
+}
+/* Close, the last entry, scrolls the rows to their end when it gets the focus, so that the hint below it shows too */
+#buttonMappingClose {
+  scroll-margin-bottom: 120px;
 }
 .mapping-row {
   min-height: 54px;

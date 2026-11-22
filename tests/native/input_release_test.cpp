@@ -4,8 +4,9 @@
 // the Stream Menu opened (which releases the pointer and keeps the keys in the UI) would otherwise stay held on the
 // host until it is pressed again. Since 2.3.3 also: Ctrl + Alt + Shift with a key, pressed in the order in which the
 // browser reports it, never ends the pointer lock (before, every combination other than Q and S did, after which no
-// key reached the host), only the key codes of a PC keyboard (1 to 0xFF) reach the host, and a release reaches it only
-// for a key whose press it got (the first key of a stream only locks the pointer, see initSpecialKeys() in index.js).
+// key reached the host), Ctrl + Alt + Shift + S and Q act once per press, not on the auto-repeat, only the key codes of
+// a PC keyboard (1 to 0xFF) reach the host, and a release reaches it only for a key whose press it got (the first key
+// of a stream only locks the pointer, see initSpecialKeys() in index.js).
 // input.cpp is included directly; the functions below stand in for moonlight-common-c and record what it sends.
 
 #include "../../wasm/input.cpp"
@@ -85,6 +86,12 @@ static EmscriptenKeyboardEvent Key(unsigned long keyCode, bool ctrl = false, boo
   event.ctrlKey = ctrl;
   event.altKey = alt;
   event.shiftKey = shift;
+  return event;
+}
+
+// The auto-repeat of a held key, a keydown with repeat set
+static EmscriptenKeyboardEvent Repeat(EmscriptenKeyboardEvent event) {
+  event.repeat = true;
   return event;
 }
 
@@ -220,6 +227,41 @@ static void TestStatsShortcutKeepsTheKeyboard() {
   CHECK(sent == w);
 }
 
+static void TestHeldStatsShortcutStepsOnce() {
+  // Ctrl + Alt + Shift + S held: its auto-repeat steps nothing (before 2.3.3 each repeat stepped the statistics on, so
+  // a held S ran through Off, Compact, Full, Off), and S never reaches the host; the same for Q, which ends the stream
+  // once. The auto-repeat of another combination still goes to the host, as a held key does
+  Reset();
+  Lock();
+  PressCtrlAltShift();
+  Instance()->HandleKeyDown(Key(0x53, true, true, true));
+  for (int i = 0; i < 3; ++i) {
+    const EM_BOOL handled = Instance()->HandleKeyDown(Repeat(Key(0x53, true, true, true)));
+    CHECK_EQ(handled, EM_TRUE);
+  }
+  Instance()->HandleKeyUp(Key(0x53, true, true, true));
+  CHECK_EQ(toggleStatsCalls, 1);
+  Instance()->HandleKeyDown(Key(0x51, true, true, true));
+  Instance()->HandleKeyDown(Repeat(Key(0x51, true, true, true)));
+  Instance()->HandleKeyDown(Repeat(Key(0x51, true, true, true)));
+  CHECK_EQ(stopStreamCalls, 1);
+  Instance()->HandleKeyUp(Key(0x51, true, true, true));
+  ReleaseCtrlAltShift();
+  const std::vector<std::string> modifiers = {
+    kModifiersDown[0], kModifiersDown[1], kModifiersDown[2], kModifiersUp[0], kModifiersUp[1], kModifiersUp[2],
+  };
+  CHECK(sent == modifiers);
+
+  Reset();
+  Lock();
+  PressCtrlAltShift();
+  sent.clear();
+  Instance()->HandleKeyDown(Key(0x4E, true, true, true));
+  Instance()->HandleKeyDown(Repeat(Key(0x4E, true, true, true)));
+  const std::vector<std::string> n = { "key down 0x804e modifiers 7", "key down 0x804e modifiers 7" };
+  CHECK(sent == n);
+}
+
 static void TestOtherCtrlAltShiftCombinationsGoToTheHost() {
   // Ctrl + Alt + Shift with another key, e.g. F1, with which Sunshine switches the display it captures, or N, goes to
   // the host whole, and the pointer stays locked
@@ -247,9 +289,9 @@ static void TestOtherCtrlAltShiftCombinationsGoToTheHost() {
 }
 
 static void TestTvKeysNeverReachTheHost() {
-  // The keys that only a TV has (the color keys, CH+, CH-, RETURN, Source, Channel list, Play/Pause, Pause, keys of the
+  // The keys that only a TV has (the color keys, CH+, CH-, RETURN, Source, Channel list, Play/Pause, Play, keys of the
   // keyboard of the TV) and a key the browser couldn't name are left to the app: the host would get only the low byte
-  // of their code, an unrelated key (CH- 428 = 0x1AC as 0xAC, which Sunshine types as M)
+  // of their code, an unrelated key (CH- 428 = 0x1AC as 0xAC, which Sunshine 2026.914 types as M)
   Reset();
   Lock();
   const unsigned long codes[] = { 403, 404, 405, 406, 427, 428, 10009, 10072, 10073, 10252, 415, 65376, 65385, 0, 256 };
@@ -309,6 +351,8 @@ int main() {
   test_support::RunTest("without the pointer lock nothing reaches the host", TestNothingReachesTheHostWithoutTheLock);
   test_support::RunTest("Ctrl + Alt + Shift + S in the order of the browser steps the statistics and keeps the keyboard",
                         TestStatsShortcutKeepsTheKeyboard);
+  test_support::RunTest("Ctrl + Alt + Shift + S or Q held steps the statistics or ends the stream once",
+                        TestHeldStatsShortcutStepsOnce);
   test_support::RunTest("Ctrl + Alt + Shift with another key goes to the host and keeps the keyboard",
                         TestOtherCtrlAltShiftCombinationsGoToTheHost);
   test_support::RunTest("the keys that only a TV has never reach the host", TestTvKeysNeverReachTheHost);

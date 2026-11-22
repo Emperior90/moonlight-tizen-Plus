@@ -157,10 +157,10 @@ test('texts that name a setting, a value or a menu entry use its Spanish and Fre
     ['OK on the field opens the keyboard of the TV, whose Done key sends the text. RETURN or B: back to the Stream Menu', 'Stream Menu'],
     ['For more information about this incompatibility and the ForceGM variant, see <b>ForceGM variant and game mode</b> in the guide of Moonlight Plus, which the Support button at the top of the screen links to.', 'Support'],
     // The header button that finds a PC again at a new address
-    ['%1$s answers with a different key than at its pairing: another PC may have its address now, or Sunshine was set up anew on it. Try "Rescan network", and if that doesn\'t help, delete the PC and add it again.', 'Rescan network'],
+    ['%1$s answers with a different key than at its pairing: another PC may have its address now, or Sunshine was set up anew on it. If the PC is asleep, wake it from its options. Otherwise try "Rescan network", and if that doesn\'t help, delete the PC and add it again.', 'Rescan network'],
     ['This PC answers with a different key than at its pairing. Try "Rescan network", or delete the PC and add it again.', 'Rescan network'],
     // The entry of the menu of a PC that an empty app list points to
-    ['Add apps in Sunshine on the PC (Applications), then choose "Refresh apps" in the menu of this PC in the PC list.', 'Refresh apps'],
+    ['In the web UI of Sunshine on the PC, add apps under "Applications", then choose "Refresh apps" in the menu of this PC in the PC list.', 'Refresh apps'],
   ];
   [['es-ES', spanish], ['fr-FR', french]].forEach(([locale, texts]) => {
     references.forEach(([text, name]) => {

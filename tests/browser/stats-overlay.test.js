@@ -336,7 +336,7 @@ test('the connection warning has the surface of the statistics and shows only wi
     assert.equal(shown.background, 'rgba(10, 13, 26, 0.8)');
     assert.match(shown.shadow, /rgb\(255, 197, 71\) 4px 0px 0px 0px inset/);
     assert.doesNotMatch(shown.inline, /background/);
-    // White text that stays readable over a white picture, as the statistics (2.3.2: 50 % black, about 3.9:1)
+    // White text that stays readable over a white picture, as the statistics (2.3.2: 50 % black, about 4:1)
     assert.equal(shown.color, 'rgb(255, 255, 255)');
     const surface = /^rgba\((\d+), (\d+), (\d+), ([\d.]+)\)$/.exec(shown.background);
     const alpha = Number(surface[4]);
@@ -347,7 +347,8 @@ test('the connection warning has the surface of the statistics and shows only wi
     assert.equal((await warning()).display, 'none');
     await app.page.evaluate(() => handleMessage('WarningMsg: Slow connection to PC.\nReduce your bitrate!'));
     assert.notEqual((await warning()).display, 'none');
-    // The start of a stream (startGame(), retryStreamStart(), resumeStreamAfterSettingsChange()) empties it
+    // The start of a stream (startGame(), retryStreamStart(), resumeStreamAfterSettingsChange()) empties it with this line
+    // and sets no background (tests/unit/guide-statements.test.js reads the three functions)
     await app.page.evaluate(() => $('#connection-warnings, #performance-stats').text(''));
     const emptied = await warning();
     assert.equal(emptied.display, 'none');

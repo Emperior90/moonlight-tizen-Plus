@@ -35,6 +35,7 @@ The app shows its texts in English, German, Spanish, French or Brazilian Portugu
 - **Key names stay as printed** on the remote, the keyboard and the gamepad: OK, RETURN, Play/Pause, CH+, SELECT, START, A, B, LB, RB, F1. Keys without a printed name get the word of the language (the arrow keys, the colored keys).
 - **Names of settings, menu entries and values** in a sentence are written as the translated UI shows them, e.g. the name of the *Unlock all frame rates* switch in the hint of the optimal settings dialog.
 - **Product names** stay: Moonlight Plus, Sunshine, GeForce Experience, GameStream, Wake-on-LAN, ForceGM, HEVC, AV1, HDR. A section of the English guide is named by its English heading.
+- **Names of pages and settings in the web UI of the host** stay English and quoted (Applications, Device Management, List Apps), since that UI is English by default.
 - **Length:** a translation may be longer than the English text, but chips, badges and menu entries have little room. Keep their words short and check the screens (the browser tests check the settings rows and the compact statistics line in every language).
 
 ## German glossary
@@ -45,6 +46,7 @@ The German texts address the user with the informal *du* and use the words of th
 |---|---|---|
 | host, host PC | PC | *Host* only in compounds and for host software: *Host-Audio*, *Hosts wie Wolf* |
 | pair, pairing | koppeln, Kopplung | *gekoppelt*, *nicht gekoppelt* |
+| key (of a PC, kept from the pairing) | Schlüssel | *mit einem anderen Schlüssel*; not *Taste*, which is a key of the remote or a keyboard |
 | gamepad, controller | Controller | |
 | remote | Fernbedienung | |
 | TV | TV | *der TV*, *des TVs*, not *Fernseher* |
@@ -99,6 +101,7 @@ The Spanish texts address the user with the informal *tú* (*Selecciona*, *Pulsa
 |---|---|---|
 | host, host PC, PC | PC | *el PC*, plural *los PC*: *Añadir PC*, *Eliminar todos los PC*, *Despertar el PC*; not *equipo*. Host software is *servidor*: *u otro servidor de GameStream*, *servidores como Wolf*, *audio del servidor* |
 | pair, pairing | vincular, vinculación | |
+| key (of a PC, kept from the pairing) | clave | *con una clave distinta*; not *tecla*, which is a key of the remote or a keyboard |
 | gamepad, controller | mando | *Mandos* |
 | remote | mando a distancia | |
 | TV | televisor | |
@@ -142,6 +145,7 @@ The French texts address the user with *vous*, as the menus of French TVs do (*S
 |---|---|---|
 | host, host PC | PC | *Ajouter un PC*, *Supprimer tous les PC*; *hôte* only for the hostname and for host software (*nom d’hôte*, *hôtes de type Wolf*, *audio de l’hôte*) |
 | pair, pairing | associer, association | |
+| key (of a PC, kept from the pairing) | clé | *avec une clé différente*; not *touche*, which is a key of the remote or a keyboard |
 | gamepad, controller | manette | |
 | remote | télécommande | |
 | TV | téléviseur | |

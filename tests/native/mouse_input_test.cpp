@@ -4,14 +4,17 @@
 // thread was lost; with atomic exchanges every movement reaches the host. A movement or a scroll beyond the 16 bits of a
 // packet goes out in several packets instead of wrapping around or being cut off. Since 2.3.3 a mouse button sends the
 // movement before it first, from the main thread (FlushMouseMovement()), so that a click lands where the pointer is,
-// and the horizontal wheel scrolls sideways (LiSendHighResHScrollEvent()). input.cpp is included directly; the
-// functions below stand in for moonlight-common-c and add up what it sends.
+// also while the input thread holds a movement that it took but didn't queue yet, and the horizontal wheel scrolls
+// sideways (LiSendHighResHScrollEvent()). input.cpp is included directly; the functions below stand in for
+// moonlight-common-c and add up what it sends.
 
 #include "../../wasm/input.cpp"
 
 #include "test_support.h"
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -43,7 +46,24 @@ int LiSendMouseButtonEvent(char action, int button) {
   events.push_back(std::string(action == BUTTON_ACTION_PRESS ? "press " : "release ") + std::to_string(button));
   return 0;
 }
+// A pause of one thread in LiSendMouseMoveEvent(), right after FlushMouseMovement() took the movement and before
+// moonlight-common-c queues it, as when the system lets another thread run there: pausedThread is held until the main
+// thread clicked (clicked) or 200 ms passed, and movementTaken says that it got there
+static std::mutex pauseMutex;
+static std::condition_variable pauseChanged;
+static std::thread::id pausedThread;
+static bool movementTaken = false;
+static bool clicked = false;
+
 int LiSendMouseMoveEvent(short deltaX, short deltaY) {
+  {
+    std::unique_lock<std::mutex> pause(pauseMutex);
+    if (std::this_thread::get_id() == pausedThread) {
+      movementTaken = true;
+      pauseChanged.notify_all();
+      pauseChanged.wait_for(pause, std::chrono::milliseconds(200), [] { return clicked; });
+    }
+  }
   std::lock_guard<std::mutex> lock(sendMutex);
   sentX += deltaX;
   sentY += deltaY;
@@ -214,6 +234,41 @@ static void TestClickComesAfterTheMovementBeforeIt() {
   CHECK(events == expected);
 }
 
+static void TestClickWaitsForTheMovementTheInputThreadTook() {
+  // The input thread took the movement for its report and is held up before moonlight-common-c queued it, when the main
+  // thread clicks: the click waits for that movement (mouseFlushMutex). Without the lock the main thread found nothing
+  // left to send and queued the press first: press 1, then move 12,0
+  Reset();
+  Instance()->HandleMouseMove(Move(12, 0));
+  std::thread input([] {
+    {
+      std::lock_guard<std::mutex> pause(pauseMutex);
+      pausedThread = std::this_thread::get_id();
+    }
+    Instance()->ReportMouseMovement();
+  });
+  {
+    std::unique_lock<std::mutex> pause(pauseMutex);
+    pauseChanged.wait(pause, [] { return movementTaken; });
+  }
+  Instance()->HandleMouseDown(Button(0));
+  {
+    std::lock_guard<std::mutex> pause(pauseMutex);
+    clicked = true;
+  }
+  pauseChanged.notify_all();
+  input.join();
+  Instance()->HandleMouseUp(Button(0));
+  {
+    std::lock_guard<std::mutex> pause(pauseMutex);
+    pausedThread = std::thread::id();
+    movementTaken = false;
+    clicked = false;
+  }
+  const std::vector<std::string> expected = { "move 12,0", "press 1", "release 1" };
+  CHECK(events == expected);
+}
+
 static void TestHorizontalWheelScrollsSideways() {
   // A tilt wheel or a touchpad scrolled sideways: a positive deltaX scrolls right on the host, at the scale of the
   // vertical wheel, without scrolling it vertically
@@ -253,6 +308,8 @@ int main() {
   test_support::RunTest("the wheel keeps its amount and direction", TestWheelKeepsItsAmount);
   test_support::RunTest("a scroll beyond 16 bits goes out in several packets", TestLargeScrollGoesOutInSeveralPackets);
   test_support::RunTest("a click comes after the movement before it", TestClickComesAfterTheMovementBeforeIt);
+  test_support::RunTest("a click waits for the movement that the input thread took but didn't queue yet",
+                        TestClickWaitsForTheMovementTheInputThreadTook);
   test_support::RunTest("the horizontal wheel scrolls sideways, right as right", TestHorizontalWheelScrollsSideways);
   return test_support::Summary();
 }

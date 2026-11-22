@@ -49,8 +49,9 @@
 //   0.1 ms on the TV, the longest frame times, the arrival rate of the frames (at IP level, data packets only, with its
 //   minimum, neither the bitrate nor the Wi-Fi link rate) in the full statistics and Last session, the QoS line of each
 //   socket of a stream and the WebAssembly line at the start of the app
-// - the keys of a stream (2.3.3): the first key of a PC keyboard only gives the stream the keys, RETURN sends Esc, the
-//   keys of a TV never reach the PC, Ctrl + Alt + Shift with Q, S or another key, and the horizontal wheel
+// - the keys of a stream (2.3.3): the first key of a PC keyboard only gives the stream the keys (not Esc or a modifier
+//   key), RETURN sends Esc, the keys of a TV never reach the PC, Ctrl + Alt + Shift with Q, S (once per press) or
+//   another key, and the horizontal wheel
 // - the messages and the overlays of a stream (2.3.3): how long a message shows, and where the Stream Menu and the
 //   messages go beside the statistics
 // The release notes of a release (docs/RELEASE_NOTES.md) only give the essentials, so the statements that they
@@ -710,7 +711,7 @@ test('the guide describes the wait after an abandoned start, the held start mess
   assert.ok(GUIDE.indexOf('No request of the app causes it, but keys sent to the PC can: e.g. *Alt + Enter* or *Alt + Tab* from the Stream Menu') > 0);
   assert.match(read('wasm/platform/menus.js'), /streamMenuKeyAltEnter: \[0xA4, 0x0D\]/);
   assert.equal(read('wasm/input.cpp').indexOf('m_WaitingForAllModifiersUp'), -1);
-  assert.match(read('wasm/input.cpp'), /keyCode == 0x53\) \{ \/\/ S key[\s\S]{0,120}toggleStats\(\);\s+return EM_TRUE;\s+\}\s+\}\s+LiSendKeyboardEvent\(/);
+  assert.match(read('wasm/input.cpp'), /keyCode == 0x53\) \{ \/\/ S key[\s\S]{0,120}if \(!event\.repeat\) \{\s+toggleStats\(\);\s+\}\s+return EM_TRUE;\s+\}\s+\}\s+LiSendKeyboardEvent\(/);
   assert.equal(GUIDE.indexOf('Nothing on the TV causes it'), -1);
   // A new controller type takes effect once Sunshine creates a new virtual controller, which the guide and
   // CONTROLLERS.md list the same ways (input.cpp and process.cpp of Sunshine 2026.914)
@@ -991,20 +992,29 @@ test('the guide describes the keys of a stream as the code handles them', () => 
     'The first key of a stream only gives the stream the keys and doesn\'t reach the PC, so press it again; the same after Moonlight was in the background.') === 1,
   'the paragraph opens the section');
   ['RETURN sends Esc to the PC, also as the first key.', 'CH+, CH-, GREEN, BLUE and Source do nothing there.',
-    'Ctrl + Alt + Shift + Q ends the stream and Ctrl + Alt + Shift + S steps the statistics; other combinations with Ctrl + Alt + Shift go to the PC.',
+    'Esc, Shift, Ctrl, Alt and the Windows key can\'t be that first key and do nothing until another key gave the stream the keys.',
+    'Ctrl + Alt + Shift + Q ends the stream and Ctrl + Alt + Shift + S steps the statistics, once per press; other combinations with Ctrl + Alt + Shift go to the PC ' +
+    '(with an F key only if the TV passes it as one: [Input test](CONTROLLERS.md#input-test) shows 112 to 123 for F1 to F12).',
+    'Ctrl + Alt + Shift with S or another key turned the keyboard off until RETURN (which sent Esc) or a click.',
     'A USB mouse gets the stream with its first click, and its wheel also scrolls sideways'].forEach((text) => {
     assert.ok(section.indexOf(text) > 0, text);
   });
   // After a command of Shut down or restart the PC from the PC list, the stream has no lock yet
   assert.ok(GUIDE.indexOf('If the first key does nothing on the PC, it gave the stream the keys (see [Stream Menu and app menu](#stream-menu-and-app-menu)): press it again. ' +
     'Avoid RETURN there: it sends Esc, which can cancel the question.') > 0);
+  // Esc and the modifier keys leave the lock to the next key (their keydown is no user gesture), and a held S or Q of
+  // Ctrl + Alt + Shift acts once
   const index = read('wasm/platform/index.js');
+  assert.match(index, /const NO_GESTURE_KEYS = \['Escape', 'Shift', 'Control', 'Alt', 'AltGraph', 'Meta',/);
   assert.match(index, /function isPcKeyEvent\(e\) \{\s+return e\.keyCode > 0 && e\.keyCode <= 0xFF;\s+\}/);
   assert.match(index, /if \(e\.key === 'XF86Back'\) \{[\s\S]{0,200}sendEscapeKeyToHost\(\);\s+lockStreamPointer\(\);/);
-  assert.match(index, /\} else if \(isStreamConnected && isPcKeyEvent\(e\)\) \{[\s\S]{0,700}lockStreamPointer\(\);/);
+  assert.match(index, /\} else if \(isStreamConnected && isPcKeyEvent\(e\)\) \{[\s\S]{0,700}if \(canKeyLockPointer\(e\)\) \{\s+lockStreamPointer\(\);\s+\}[\s\S]{0,300}e\.preventDefault\(\);\s+\}/);
   const input = read('wasm/input.cpp');
   assert.match(input, /return keyCode != 0 && keyCode <= 0xFF;/);
   assert.match(input, /if \(heldKeys\.erase\(keyCode\) == 0\) \{\s+return EM_TRUE;\s+\}/);
+  assert.match(input, /if \(!event\.repeat\) \{\s+stopStream\(\);\s+\}/);
+  // Run, left open with the command, would get Enter from the second OK of the next stream
+  assert.ok(GUIDE.indexOf('press RETURN (Esc) in the next stream before anything else, since OK would run the command from its second press.') > 0);
   // The horizontal wheel
   assert.match(input, /LiSendHighResHScrollEvent/);
 });
@@ -1038,13 +1048,21 @@ test('the guide describes the trust of a PC of 2.3.3 as the code does it', () =>
   const english = JSON.parse(read('wasm/static/locales/en-US.json'));
   // The two rows of the troubleshooting table quote the beginnings of the messages of the code
   const refused = '%1$s no longer accepts this TV: its pairing was removed or turned off on the PC. Select it in the list of PCs to pair it again.';
-  const mismatch = '%1$s answers with a different key than at its pairing: another PC may have its address now, or Sunshine was set up anew on it. Try "Rescan network", and if that doesn\'t help, delete the PC and add it again.';
+  const mismatch = '%1$s answers with a different key than at its pairing: another PC may have its address now, or Sunshine was set up anew on it. If the PC is asleep, wake it from its options. Otherwise try "Rescan network", and if that doesn\'t help, delete the PC and add it again.';
   assert.equal(english[refused], refused);
   assert.equal(english[mismatch], mismatch);
   assert.ok(GUIDE.indexOf('| "… no longer accepts this TV: its pairing was removed or turned off on the PC. …" | The PC answered with the key that the TV pinned at the pairing') > 0);
   assert.ok(GUIDE.indexOf('| "… answers with a different key than at its pairing: …" | The TV keeps the key of the PC from the pairing') > 0);
-  assert.ok(refused.indexOf(' no longer accepts this TV: its pairing was removed or turned off on the PC.') === '%1$s'.length);
-  assert.ok(mismatch.indexOf(' answers with a different key than at its pairing:') === '%1$s'.length);
+  // The quotes of the rows are the beginnings of the messages, right after the name of the PC
+  [[refused, /\| "… (no longer accepts this TV: [^"…]+) …" \|/], [mismatch, /\| "… (answers with a different key than at its pairing:) …" \|/]].forEach(([key, row]) => {
+    const quote = row.exec(GUIDE);
+    assert.ok(quote, String(row));
+    assert.equal(english[key].indexOf(quote[1]), '%1$s '.length, quote[1]);
+  });
+  // The rows say what to do: the key stays after a cancelled or failed pairing, and a PC that may sleep is woken first
+  assert.ok(GUIDE.indexOf('the PC shows *Online* again at its next check, also after a pairing that you cancelled or that failed, since the TV keeps the key of the PC until a new pairing succeeds.') > 0);
+  assert.ok(GUIDE.indexOf('If the PC may be asleep, wake it first with *Wake PC* in its options (OK does that too when *Always wake this PC automatically* is on)') > 0);
+  assert.ok(GUIDE.indexOf('Another key at the public address of your network doesn\'t count, unless the PC was last reached there or you entered it') > 0);
   // The PC list: Unpaired for a PC that refused the TV, its own message for another key, OK names the PC
   assert.ok(GUIDE.indexOf('A paired PC that no longer accepts this TV (since 2.3.3, e.g. after *Unpair All* in Sunshine) shows *Unpaired*, and OK pairs it again with a new PIN, also while it runs a game') > 0);
   assert.ok(GUIDE.indexOf('and otherwise the message *Failed to connect to GAMING-PC …*.') > 0);
@@ -1052,10 +1070,17 @@ test('the guide describes the trust of a PC of 2.3.3 as the code does it', () =>
   assert.match(utils, /var HOST_REFUSED_TV_ERROR = 'HOST_REFUSED_TV';/);
   assert.match(utils, /return this\._parseXML\(xmlStr\)\.find\('root'\)\.attr\('status_code'\) == 401;/);
   assert.match(utils, /if \(this\._isUnauthorizedAnswer\(ret\)\) \{\s+return Promise\.reject\(HOST_REFUSED_TV_ERROR\);/);
-  assert.match(utils, /if \(!this\.paired && this\.ppkstr\) \{[\s\S]{0,300}this\.ppkstr = null;/);
-  // Pairing while the PC runs an app: no refusal before the request, a wrong PIN first
+  // pair() leaves out a refused key while it pairs, and gives it back when the pairing pinned none
+  assert.match(utils, /if \(!this\.paired && this\.ppkstr && this\._refusedByHost\) \{[\s\S]{0,300}this\.ppkstr = null;/);
+  assert.match(utils, /if \(refusedKey && this\.ppkstr === null\) \{[\s\S]{0,250}this\.ppkstr = refusedKey;/);
+  // Another key at the external address counts only where the PC was used
+  assert.match(utils, /\(addr !== this\.externalIP \|\| addr === this\.address \|\| addr === this\.userEnteredAddress\)/);
+  // OK on an offline PC: Wake PC with Auto WoL also for another key, else the message of another key
+  assert.match(index, /if \(host\.autoWolEnabled === true\) \{\s+autoWolDialog\([\s\S]{0,500}\} else if \(host\.pinnedKeyMismatch === true\) \{/);
+  // Pairing while the PC runs an app: no refusal before the request, a wrong PIN first, and an unconfirmed pairing
+  // gets the general text
   assert.equal(index.indexOf('is currently in a game session'), -1);
-  assert.match(index, /if \(String\(failedPairing\) === '-7'\) \{[\s\S]{0,400}\} else if \(nvhttpHost\.currentGame != 0\) \{/);
+  assert.match(index, /if \(String\(failedPairing\) === '-7'\) \{[\s\S]{0,400}\} else if \(failedPairing !== PAIRING_NOT_CONFIRMED_ERROR && nvhttpHost\.currentGame != 0\) \{/);
   // The top of the PC list for another key, and the length of the signature of the host
   assert.match(read('wasm/platform/launcher.js'), /const keyMismatch = state === 'offline' && host\.pinnedKeyMismatch === true;/);
   assert.match(read('libgamestream/pairing.c'), /#define PAIRING_SIGNATURE_MAX_BYTES 512/);
@@ -1067,13 +1092,38 @@ test('the guide describes the app list of 2.3.3 as the code does it', () => {
   const english = JSON.parse(read('wasm/static/locales/en-US.json'));
   // A running app that the list doesn't have: the list is read once more, the questions name the PC, the quit goes out
   assert.ok(GUIDE.indexOf('When the PC runs an app that the list doesn\'t show, e.g. one added on the PC since, the app reads the list once more; ' +
-    'an app that still isn\'t there is called *the app that is running on GAMING-PC* in the questions, and *Quit app on the PC* quits it as well') > 0);
+    'for an app that still isn\'t there the questions name the PC instead (*Another app is running on GAMING-PC …*, *… the app that is running on GAMING-PC?*), ' +
+    'and *Quit app on the PC* quits it as well') > 0);
+  // The quoted beginnings and ends are those of the two questions
+  assert.equal(english['Another app is running on %1$s. Would you like to quit it and start %2$s?'].indexOf('Another app is running on %1$s'), 0);
+  assert.ok(/the app that is running on %1\$s\? /.test(english['Are you sure you want to quit the app that is running on %1$s? All unsaved data will be lost.']));
+  // A question or a list built again that waited for the PC is dropped after RETURN to the PC list (the visit of the
+  // app list at the press, appListVisitOf())
+  assert.ok(GUIDE.indexOf('A question or a list built again that waited for the PC is dropped when you went back to the PC list meanwhile.') > 0);
+  assert.match(index, /var pressVisit = isRestart \? null : appListVisitOf\(host\);/);
+  // So is what follows a quit after RETURN: the quit (stopGame()) builds the list and calls back only in the visit of
+  // the press, and the start after Yes changes the view and starts the other app only then
+  assert.ok(GUIDE.indexOf('So is what follows a quit: when you press RETURN while the PC still quits a game (which can take several seconds), ' +
+    'the quit goes on, but the PC list stays and the other app doesn\'t start (since 2.3.3; before, the app list came back and the app started).') > 0);
+  assert.match(index, /function stopGame\(host, callbackFunction, pressVisit\) \{/);
+  assert.match(index, /var showAppsAfterQuit = function\(quitSucceeded, refusalSaid\) \{\s+if \(pressVisit !== undefined && pressVisit !== null && !isAppListVisitShown\(host, pressVisit\)\) \{/);
+  assert.match(index, /if \(!isPressListShown\(\)\) \{[\s\S]{0,250}return;\s+\}\s+startGame\(host, appID\);/);
+  assert.match(index, /\}, pressVisit\);/);
+  assert.match(index, /appListVisit\+\+;/);
   assert.match(index, /function findHostApp\(host, appId\) \{\s+var isCached = !!host\._memCachedApplist;/);
   assert.ok(english['Are you sure you want to quit the app that is running on %1$s? All unsaved data will be lost.']);
   assert.ok(english['Another app is running on %1$s. Would you like to quit it and start %2$s?']);
   assert.match(index, /findHostApp\(host, host\.currentGame\)\.then\(quit, function\(failedGetApp\) \{[\s\S]{0,300}quit\(null\);/);
   // Refresh apps: only for a paired PC that is online, and it says how it went
-  assert.ok(GUIDE.indexOf('*Refresh apps* (for a paired PC that is online; it then says how many apps the PC lists, or that the list couldn\'t be read)') > 0);
+  assert.ok(GUIDE.indexOf('*Refresh apps* (for a paired PC that is online; it then says how many apps the PC lists, or that the list couldn\'t be read ' +
+    'and what to check, or that the PC no longer accepts this TV, which then shows it *Unpaired* at once)') > 0);
+  assert.ok(english['The app list of %1$s couldn\'t be read. Make sure that Sunshine (or another GameStream host) is running on the PC, then try again.']);
+  // The 401 answer of the list marks the PC as not paired, as a poll does
+  assert.match(utils, /if \(this\.ppkstr && \$root\.attr\('status_code'\) == 401\) \{[\s\S]{0,200}this\.markRefusedByHost\(\);[\s\S]{0,80}return Promise\.reject\(HOST_REFUSED_TV_ERROR\);/);
+  assert.ok(GUIDE.indexOf('also right after its app list or *Refresh apps* got this answer') > 0);
+  // Right after: both draw the card of the PC again at once, before the next check of the PC list
+  assert.match(index, /if \(failedAppList === HOST_REFUSED_TV_ERROR\) \{\s+updateHostStatusIndicator\(host\);/);
+  assert.match(index, /if \(failed === HOST_REFUSED_TV_ERROR\) \{\s+updateHostStatusIndicator\(host\);/);
   assert.match(index, /function refreshHostApps\(host\) \{/);
   assert.match(index, /id: 'refreshApps-' \+ host\.hostname,[\s\S]{0,120}shown: host\.online === true && host\.paired === true,/);
   assert.ok(english['The app list of %1$s is up to date: %2$s.']);
@@ -1081,13 +1131,15 @@ test('the guide describes the app list of 2.3.3 as the code does it', () => {
   assert.equal(utils.indexOf('// TODO: Bubble up an error here'), -1);
   assert.match(utils, /return Promise\.reject\('The app list was answered with status ' \+ \$root\.attr\('status_code'\)\);/);
   // The box art of the same PC shows at once; no PC is polled during a stream
-  assert.ok(GUIDE.indexOf('When you return to the same PC, e.g. after a stream, its box art shows at once instead of loading again (since 2.3.3).') > 0);
+  assert.ok(GUIDE.indexOf('The box art that already showed shows at once when you return to the same PC, e.g. after a stream, unless the apps of ' +
+    'another PC were open in between or *Refresh apps* ran (since 2.3.3).') > 0);
   assert.match(index, /var appGridBoxArt = \{ serverUid: null, urls: \{\} \};/);
   const showStreamMode = index.slice(index.indexOf('function showStreamMode() {'), index.indexOf('\n}\n', index.indexOf('function showStreamMode() {')));
   assert.match(showStreamMode, /isInGame = true;[\s\S]{0,300}stopPollingHosts\(\);/);
   // An empty list or one that couldn't be read says why at the top; the hint of the app options only with apps
-  assert.ok(GUIDE.indexOf('A PC without apps shows *No apps yet* with what to do, and a list that couldn\'t be read says so at the top of the screen; ' +
-    'the hint for the app options shows only while there are apps.') > 0);
+  assert.ok(GUIDE.indexOf('A PC without apps shows *No apps yet* with what to do, and a list that couldn\'t be read says so at the top of the screen, ' +
+    'with what to do: RETURN, then open the PC again, which reads its list again; the hint for the app options shows only while there are apps.') > 0);
+  assert.ok(english['The app list of this PC couldn\'t be read. Go back with RETURN and open the PC to try again.']);
   assert.match(index, /\$\('#appMenuHint'\)\.toggle\(\$\('#game-grid \.game-container'\)\.length > 0\);/);
   assert.match(index, /if \(!isDialogOpen && \(Navigation\.isCurrent\(Views\.Apps\) \|\| Navigation\.isCurrent\(Views\.AppsNav\)\)\) \{/);
   // The start screen of an app without box art shows the gamepad of its tile
@@ -1102,26 +1154,38 @@ test('the guide describes the app list of 2.3.3 as the code does it', () => {
 
 test('the guide says how long a message shows and where the Stream Menu and the messages go beside the statistics, as the code does', () => {
   const index = read('wasm/platform/index.js');
-  // How long: from 5 to 15 seconds by the length of the text, and the log keeps the English text (snackbarLogLong()
-  // logs the key with its values)
-  assert.ok(guideSection('## Troubleshooting').indexOf('A message shows for 5 to 15 seconds, depending on its length, and the ' +
-    '[diagnostic log](#diagnostic-log) keeps it in English.') > 0);
+  // How long: from 5 to 15 seconds by the length of the text, short messages (snackbarLog(): confirmations, but also
+  // "Failed to launch …" after a failed start request) 2.5 seconds, a dialog until it is closed; one at a time (the
+  // queue of the snackbar of MDL); and the log keeps the English text of most messages (snackbarLog() and
+  // snackbarLogLong() log the key with its values; a few callers pass a text that is translated already, e.g. the
+  // notice of an Apollo host that ended the running app)
+  assert.ok(guideSection('## Troubleshooting').indexOf('A message at the bottom of the screen shows for 5 to 15 seconds, depending on its ' +
+    'length (short messages, e.g. a confirmation or "Failed to launch …", 2.5 seconds), and one in a dialog until you close it. ' +
+    'Messages at the bottom show one at a time, so one that comes meanwhile waits for those before it, after a change of a video ' +
+    'setting with several warnings up to about a minute. The [diagnostic log](#diagnostic-log) keeps the English text of most ' +
+    'messages.') > 0);
+  assert.match(index, /snackbarLog\('Failed to launch %1\$s', appToStart\.title\);/);
   assert.match(index, /const SNACKBAR_LONG_MIN_MS = 5000;/);
   assert.match(index, /const SNACKBAR_LONG_MAX_MS = 15000;/);
+  assert.match(index, /function snackbarLog\(\.\.\.args\) \{\s+const translatedMessage = t\(\.\.\.args\);\s+console\.log\('%c\[index\.js, snackbarLog\]', 'color: green;', \.\.\.args\);\s+showSnackbarMessage\(translatedMessage, 2500\);/);
   assert.match(index, /function snackbarLogLong\(\.\.\.args\) \{\s+const translatedMessage = t\(\.\.\.args\);\s+console\.log\('%c\[index\.js, snackbarLogLong\]', 'color: green;', \.\.\.args\);/);
-  // The Stream Menu on the left while the statistics take a right corner
-  assert.ok(guideSection('## Stream Menu and app menu').indexOf('to open the Stream Menu on the right of the picture, or on the left while the ' +
-    '[statistics](#performance-statistics) sit in a right corner, inside the safe area of the screen.') > 0);
+  // The Stream Menu on the left while the setting names a right corner, also with the statistics off
+  assert.ok(guideSection('## Stream Menu and app menu').indexOf('to open the Stream Menu on the right of the picture, or on the left while ' +
+    '*Statistics position* is a right corner (see [Performance statistics](#performance-statistics)), inside the safe area of the screen.') > 0);
   assert.ok(guideSection('## Performance statistics').indexOf('at the top right the connection warnings move to the top left, in a right corner ' +
     'the Stream Menu opens on the left, and in a bottom corner messages show beside the full statistics or above the compact line)') > 0);
   assert.match(index, /\$\('#streamMenuOverlay'\)\.toggleClass\('is-left', chosenPosition === 'top-right' \|\| chosenPosition === 'bottom-right'\)/);
-  // The place of a message: beside the full statistics in a bottom corner, above the compact line, otherwise the middle
+  // The place of a message: beside the full statistics in a bottom corner, above the compact line, otherwise the middle.
+  // While the statistics are empty or hidden (before their first figures, after a step of the level, or off), the level
+  // of the setting once the module started the session of the stream, and the middle before it.
   const app = loadPlatformScripts(INDEX_SCRIPTS, { tv: { tv: 's90c', conn: 'wifi' } });
-  const place = (inGame, classes) => {
-    const overlay = { firstChild: {}, classList: { contains: (name) => classes.indexOf(name) >= 0 } };
+  const place = (inGame, classes, options) => {
+    const opts = options || {};
+    const overlay = { firstChild: opts.empty ? null : {}, classList: { contains: (name) => classes.indexOf(name) >= 0 } };
     app.context.document.getElementById = (id) => (id === 'performance-stats' ? overlay : null);
-    app.context.getComputedStyle = () => ({ display: 'block' });
-    app.run('isInGame = ' + inGame + ';');
+    app.context.getComputedStyle = () => ({ display: opts.hidden ? 'none' : 'block' });
+    app.run('isInGame = ' + inGame + '; wasmSessionStarted = ' + !!opts.session + '; getPerformanceStatsLevel = function() { return ' +
+      (opts.level || 0) + '; };');
     return app.get('getSnackbarPlace')();
   };
   assert.equal(place(true, ['stats-bottom-left', 'is-compact']), 'raised');
@@ -1131,4 +1195,28 @@ test('the guide says how long a message shows and where the Stream Menu and the 
   assert.equal(place(true, ['stats-top-left']), '');
   assert.equal(place(true, ['stats-top-right', 'is-compact']), '');
   assert.equal(place(false, ['stats-bottom-left']), '');
+  // The statistics that show win over the setting
+  assert.equal(place(true, ['stats-bottom-left'], { session: true, level: 1 }), 'right');
+  // Empty or hidden statistics in a bottom corner: the level that is about to show once the session started
+  for (const state of [{ empty: true }, { hidden: true }, { empty: true, hidden: true }]) {
+    const where = JSON.stringify(state);
+    assert.equal(place(true, ['stats-bottom-left'], Object.assign({ session: true, level: 2 }, state)), 'right', where);
+    assert.equal(place(true, ['stats-bottom-right'], Object.assign({ session: true, level: 2 }, state)), 'left', where);
+    assert.equal(place(true, ['stats-bottom-right', 'is-compact'], Object.assign({ session: true, level: 1 }, state)), 'raised', where);
+    assert.equal(place(true, ['stats-bottom-left'], Object.assign({ session: true, level: 1 }, state)), 'raised', where);
+    // Off, before the session (e.g. Failed to launch while isInGame is still true), in a top corner, after the stream
+    assert.equal(place(true, ['stats-bottom-left'], Object.assign({ session: true, level: 0 }, state)), '', where);
+    assert.equal(place(true, ['stats-bottom-left'], Object.assign({ session: false, level: 2 }, state)), '', where);
+    assert.equal(place(true, ['stats-top-left'], Object.assign({ session: true, level: 2 }, state)), '', where);
+    assert.equal(place(false, ['stats-bottom-left'], Object.assign({ session: true, level: 2 }, state)), '', where);
+  }
+  // The connection warning gets its surface from the stylesheet alone: no code sets an inline background on it (it
+  // would beat the stylesheet for the rest of the stream), also not the start, the retry or the reconnect of a stream
+  const messages = read('wasm/platform/messages.js');
+  assert.doesNotMatch(index + messages, /#connection-warnings[^;\n]*\.css\(\s*\{?\s*['"]?background/);
+  for (const name of ['startGame', 'retryStreamStart', 'resumeStreamAfterSettingsChange']) {
+    const start = index.indexOf('function ' + name + '(');
+    const body = index.slice(start, index.indexOf('\n}\n', start));
+    assert.ok(start > 0 && body.indexOf("$('#connection-warnings, #performance-stats').text('');") > 0, name);
+  }
 });

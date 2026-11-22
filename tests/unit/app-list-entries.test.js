@@ -6,7 +6,7 @@
 // the whole list, so the host showed no apps at all, and an ID that is no number became NaN, which named the box art
 // files of that app 'boxart-NaN.png' and went into the request of its start. Such an entry is left out now, with one
 // line in the log per list, and the other apps show. An answer with another status than 200 fails (since 2.3.3; an
-// empty list before). The answer is read here with a stand-in for the XML parser of the page (helpers/xml-stand-in.js);
+// empty list before), and one of status 401 with the pinned key marks the PC as not paired, as a poll does. The answer is read here with a stand-in for the XML parser of the page (helpers/xml-stand-in.js);
 // tests/browser/hostile-server-info.test.js reads one with the real parser.
 
 const test = require('node:test');
@@ -84,15 +84,17 @@ test('an entry without an ID that is a number, or without a title, is left out, 
   assert.deepEqual(plain(await loadHost(appList([])).host.getAppListWithCacheFlush()), []);
 });
 
+// The answer of Sunshine to a client that it no longer accepts: HTTP 200 and this XML (on_verify_failed in src/nvhttp.cpp)
+const REFUSED = '<?xml version="1.0" encoding="utf-8"?><root status_code="401" query="/applist" status_message="The client is not authorized. Certificate verification failed."/>';
+
 test('an app list answered with another status than 200 fails instead of being an empty list', async () => {
-  // Sunshine answers a client that it no longer accepts with HTTP 200 and this XML (on_verify_failed in src/nvhttp.cpp),
-  // and a busy or broken host may answer with another error status: before 2.3.3 the list was [] (No apps yet, and
-  // Refresh apps found 0 apps), now it fails with the status, as a request that fails does
-  for (const [answer, status] of [
-    ['<?xml version="1.0" encoding="utf-8"?><root status_code="401" query="/applist" status_message="The client is not authorized. Certificate verification failed."/>', '401'],
-    ['<root status_code="503"/>', '503'],
-  ]) {
+  // A busy or broken host may answer with an error status: before 2.3.3 the list was [] (No apps yet, and Refresh apps
+  // found 0 apps), now it fails with the status, as a request that fails does. So does the answer of a PC that no longer
+  // accepts the TV without a pinned key, which can't be told from another device.
+  for (const [answer, status, ppkstr] of [['<root status_code="503"/>', '503', 'PPK'], [REFUSED, '401', null]]) {
     const { platform, host } = loadHost(answer);
+    host.ppkstr = ppkstr;
+    host.paired = true;
     await assert.rejects(host.getAppListWithCacheFlush(), (error) => {
       assert.equal(error, 'The app list was answered with status ' + status);
       return true;
@@ -101,24 +103,45 @@ test('an app list answered with another status than 200 fails instead of being a
     assert.ok(!host._memCachedApplist);
     await assert.rejects(host.getAppById(101));
     assert.ok(platform.consoleMessages.some((message) => message.level === 'error' && /Failed to request app list/.test(message.text)));
+    assert.equal(host.paired, true);
   }
   // A list of status 200 whose entries are all broken is still an empty list
   const { host } = loadHost(appList(['<App></App>']));
   assert.deepEqual(plain(await host.getAppListWithCacheFlush()), []);
 });
 
-test('the list refresh of every 10th poll logs a list that fails instead of leaving the rejection unhandled', async () => {
-  const { platform, host, warnings } = loadHost('<root status_code="401" status_message="The client is not authorized. Certificate verification failed."/>');
-  platform.context.isInGame = false;
+test('an app list that the PC answers with its pinned key and status 401 marks the PC as not paired, as a poll does', async () => {
+  // Since 2.3.3 (in testing it failed like any other status, so the PC kept showing as paired until its next poll, and
+  // Refresh apps or its app list said to try again later)
+  const { platform, host } = loadHost(REFUSED);
   host.paired = true;
-  // The poll that reads the app list (pollServer() in utils.js), at an address that answered
-  host._pollCount = 1;
-  host.selectServerAddress = (onFound) => onFound('10.0.0.2', false);
-  await new Promise((resolve) => host.pollServer(resolve));
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.equal(host.online, true);
-  assert.deepEqual(warnings().filter((line) => /pollServer/.test(line)),
-    ['%c[utils.js, pollServer] color: gray; Warning: Failed to read the app list of GAMING-PC: The app list was answered with status 401']);
+  host._memCachedApplist = [{ id: 101, title: 'Cyberpunk 2077' }];
+  await assert.rejects(host.getAppListWithCacheFlush(), (error) => {
+    assert.equal(error, platform.get('HOST_REFUSED_TV_ERROR'));
+    return true;
+  });
+  // Not paired, the list in the cache is gone, and the pairing leaves the refused key out (pair() in utils.js)
+  assert.deepEqual([host.paired, host._refusedByHost, host._memCachedApplist, host.ppkstr], [false, true, null, 'PPK']);
+  assert.ok(platform.consoleMessages.some((message) => message.level === 'warn' && /no longer accepts this TV/.test(message.text)));
+});
+
+test('the list refresh of every 10th poll logs a list that fails instead of leaving the rejection unhandled', async () => {
+  for (const [answer, error, paired] of [['<root status_code="503"/>', 'The app list was answered with status 503', true],
+    [REFUSED, 'HOST_REFUSED_TV', false]]) {
+    const { platform, host, warnings } = loadHost(answer);
+    platform.context.isInGame = false;
+    host.paired = true;
+    // The poll that reads the app list (pollServer() in utils.js), at an address that answered
+    host._pollCount = 1;
+    host.selectServerAddress = (onFound) => onFound('10.0.0.2', false);
+    await new Promise((resolve) => host.pollServer(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(host.online, true);
+    assert.deepEqual(warnings().filter((line) => /pollServer/.test(line)),
+      ['%c[utils.js, pollServer] color: gray; Warning: Failed to read the app list of GAMING-PC: ' + error]);
+    // A PC that no longer accepts the TV shows as not paired from then on, as after the server info of a poll
+    assert.equal(host.paired, paired);
+  }
 });
 
 test('one entry of an app list by its rule', () => {

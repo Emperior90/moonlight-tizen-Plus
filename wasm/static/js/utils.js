@@ -13,8 +13,9 @@ var QUIT_APP_STILL_RUNNING_ERROR = 599;
 // libgamestream/http.c), that it no longer accepts this TV: Sunshine, Apollo, Vibepollo and Vibeshine check the
 // certificate of a client after the TLS handshake and answer a client that they don't know (e.g. after "Unpair All")
 // or one turned off in their list of clients with HTTP 200 and <root status_code="401" ...> (on_verify_failed in their
-// src/nvhttp.cpp). The answer is authentic, so the polls take the PC for online and not paired (markRefusedByHost());
-// every other caller just fails.
+// src/nvhttp.cpp). The answer is authentic, so the polls take the PC for online and not paired (markRefusedByHost()), and
+// so does the request of the app list (getAppListWithCacheFlush(), which fails with this error as well); every other
+// caller just fails.
 var HOST_REFUSED_TV_ERROR = 'HOST_REFUSED_TV';
 // The error with which NvHTTP.pair() fails when the PC doesn't confirm the pairing: its answer to the pairchallenge
 // request over HTTPS has no <paired>1</paired>, e.g. the 401 answer above right after the pairing
@@ -818,6 +819,9 @@ function NvHTTP(address, clientUid, userEnteredAddress = '', macAddress) {
   // over HTTPS with another key than the pinned one (isPinnedKeyMismatchError()). Such an answer isn't authenticated, so
   // it never makes the PC online or not paired; it only changes the message (hostChosen() and showHost() of launcher.js).
   this.pinnedKeyMismatch = false;
+  // True from a refusal of the pinned key by the PC (markRefusedByHost()) until an answer that the PC accepts it again,
+  // or a pairing that pins a key: only then does pair() start over without the pinned key
+  this._refusedByHost = false;
   this._pollCount = 0;
   this._consecutivePollFailures = 0;
   this._pollCompletionCallbacks = [];
@@ -940,6 +944,8 @@ NvHTTP.prototype = {
         console.warn('%c[utils.js, refreshServerInfoAtAddress]', 'color: gray;', 'Warning: Failed to parse server info from HTTPS. Please verify the host is reachable and re-pair the host if necessary!');
         return Promise.reject("Failed to parse server info from HTTPS");
       }
+      // The PC accepts the pinned key (again)
+      this._refusedByHost = false;
       return parsed;
     }.bind(this), function(error) {
       if (error == -100) { // GS_CERT_MISMATCH
@@ -1046,7 +1052,15 @@ NvHTTP.prototype = {
     // onSuccess(address, refused) gets the address that answered, and whether the PC answered there that it no longer
     // accepts this TV (HOST_REFUSED_TV_ERROR): the PC proved its pinned key at that address, so it ends the search like
     // any answer, also after a device with another key at an earlier address. onFailure(keyMismatch) gets whether a
-    // device answered at one of the addresses with another key than the pinned one (isPinnedKeyMismatchError()).
+    // device answered at one of the addresses with another key than the pinned one (isPinnedKeyMismatchError()). Not
+    // counted is the external address (externalIP), unless the PC answered there last or the user entered it: it is the
+    // public address of the household (STUN, updateExternalAddressIP4()), the same for every PC, which the router hands
+    // to the PC that it forwards the port to, e.g. another PC with Sunshine for remote play. Counted, it said "a
+    // different key" for a PC that was only off, and OK no longer woke it.
+    var isMismatchOfThePc = function(addr, error) {
+      return isPinnedKeyMismatchError(error) &&
+        (addr !== this.externalIP || addr === this.address || addr === this.userEnteredAddress);
+    }.bind(this);
     var tryNext = function(index, keyMismatch) {
       if (index >= candidates.length) {
         console.error('%c[utils.js, selectServerAddress]', 'color: gray;', 'Error: Failed to contact the ' + this.hostname + '!', this);
@@ -1061,7 +1075,7 @@ NvHTTP.prototype = {
           onSuccess(addr, true);
           return;
         }
-        tryNext.call(this, index + 1, keyMismatch || isPinnedKeyMismatchError(error));
+        tryNext.call(this, index + 1, keyMismatch || isMismatchOfThePc(addr, error));
       }.bind(this));
     }.bind(this);
 
@@ -1110,15 +1124,17 @@ NvHTTP.prototype = {
   },
 
   // Mark a paired PC that answered with its pinned key that it no longer accepts this TV (HOST_REFUSED_TV_ERROR) as not
-  // paired, so that its card shows Unpaired and OK pairs it again (hostChosen() in index.js). The pinned key stays: a PC
-  // that accepts the TV again (e.g. turned on again in its list of clients) answers the next poll over HTTPS as paired,
-  // without a pairing; pair() drops it. Logged once per PC and start of the app, and again whenever a paired PC refuses.
+  // paired, so that its card shows Unpaired and OK pairs it again (hostChosen() in index.js). The pinned key stays until
+  // a pairing pins a new one: a PC that accepts the TV again (e.g. turned on again in its list of clients) answers the
+  // next poll over HTTPS as paired, without a pairing; pair() leaves it out while it pairs, and gives it back when the
+  // pairing fails or is cancelled. Logged once per PC and start of the app, and again whenever a paired PC refuses.
   markRefusedByHost: function() {
     if (this.paired === true || !hostRefusalLogged[this.serverUid]) {
       hostRefusalLogged[this.serverUid] = true;
       console.warn('%c[utils.js, markRefusedByHost]', 'color: gray;', 'Warning: ' + this.hostname + ' answered with its pinned key that it no longer accepts this TV (status 401): its pairing was removed or turned off on the PC. It shows as not paired until it is paired again.');
     }
     this.paired = false;
+    this._refusedByHost = true;
   },
 
   _parseServerInfo: function(xmlStr) {
@@ -1166,9 +1182,11 @@ NvHTTP.prototype = {
     var localAddress = $root.find('LocalIP').text().trim();
     this.localAddress = isServerAddress(localAddress) ? localAddress : '';
 
-    // Retrieve the MAC address of the host (required for Wake-on-LAN): six pairs of hexadecimal digits
+    // Retrieve the MAC address of the host (required for Wake-on-LAN): six pairs of hexadecimal digits. The all-zero
+    // address, which Sunshine sends over plain HTTP (e.g. to the pairing of a PC that refused the TV, pair()), never
+    // replaces a MAC address that the host has: Wake-on-LAN of that PC needs it.
     var macAddr = $root.find('mac').text().trim();
-    if (isMacAddress(macAddr)) {
+    if (isMacAddress(macAddr) && (macAddr !== '00:00:00:00:00:00' || !isMacAddress(this.macAddress))) {
       this.macAddress = macAddr;
     }
 
@@ -1285,6 +1303,14 @@ NvHTTP.prototype = {
       $xml = this._parseXML(ret);
       $root = $xml.find('root');
 
+      // The PC answered with the pinned key that it no longer accepts this TV (HOST_REFUSED_TV_ERROR): as after a poll,
+      // the PC shows Unpaired from now on and OK on it pairs it again, and its list in the cache is of no use until then
+      if (this.ppkstr && $root.attr('status_code') == 401) {
+        console.error('%c[utils.js, getAppListWithCacheFlush]', 'color: gray;', 'Error: ' + this.hostname + ' answered the request of its app list with status 401.');
+        this.markRefusedByHost();
+        this._memCachedApplist = null;
+        return Promise.reject(HOST_REFUSED_TV_ERROR);
+      }
       if ($root.attr('status_code') != 200) {
         console.error('%c[utils.js, getAppListWithCacheFlush]', 'color: gray;', 'Error: Failed to request app list: ', $root.attr('status_code'));
         return Promise.reject('The app list was answered with status ' + $root.attr('status_code'));
@@ -1796,11 +1822,19 @@ NvHTTP.prototype = {
 
   pair: function(randomNumber) {
     // A PC that no longer accepts the pinned key (markRefusedByHost()) answers no HTTPS request with it, and its pairing
-    // starts over plain HTTP like the one of a new PC: the key is dropped, and the pairing pins the key it gets. The
-    // server info over HTTP still has to come with the unique ID of the PC (_parseServerInfo()).
-    if (!this.paired && this.ppkstr) {
-      console.log('%c[utils.js, pair]', 'color: gray;', 'Pairing ' + this.hostname + ' again: dropping the key pinned at its earlier pairing, which it no longer accepts.');
+    // starts over plain HTTP like the one of a new PC: the key is left out, and the pairing pins the key it gets. The
+    // server info over HTTP still has to come with the unique ID of the PC (_parseServerInfo()), and it tells again what
+    // the PC runs, which the error message of a failed pairing names (pairingDialog() in index.js): until then that of the
+    // last answer that the PC accepted may be old. A pairing that pins no key (a wrong PIN, Cancel, a failed request, or
+    // one that the PC doesn't confirm) gives the key back below, so that the PC is paired again once it accepts the TV.
+    // A key that a pairing pinned and that the PC didn't refuse since stays (e.g. after a failed pairchallenge request,
+    // when the PC may have stored the pairing): the server info below asks the PC over HTTPS with it.
+    var refusedKey = null;
+    if (!this.paired && this.ppkstr && this._refusedByHost) {
+      console.log('%c[utils.js, pair]', 'color: gray;', 'Pairing ' + this.hostname + ' again: leaving out the key pinned at its earlier pairing, which it no longer accepts, until the pairing pins a new one.');
+      refusedKey = this.ppkstr;
       this.ppkstr = null;
+      this.currentGame = 0;
     }
     return this.refreshServerInfo().then(function() {
       if (this.paired && this.ppkstr) {
@@ -1815,6 +1849,7 @@ NvHTTP.prototype = {
         this.serverMajorVersion.toString(), this.address, this.httpPort, randomNumber, this.getUid(), deviceName
       ]).then(function(ppkstr) {
         this.ppkstr = ppkstr;
+        this._refusedByHost = false;
         return sendMessage('openUrl', [
           this._baseUrlHttps + '/pair?uniqueid=' + this.getUid() + '&devicename=' + deviceName + '&updateState=1&phrase=pairchallenge', this.ppkstr, false, 5000
         ]).catch(function(error) {
@@ -1833,6 +1868,14 @@ NvHTTP.prototype = {
           return true;
         }.bind(this));
       }.bind(this));
+    }.bind(this)).catch(function(error) {
+      // The pairing pinned no key (or dropped it): the PC keeps the key that it refused, as before the pairing
+      if (refusedKey && this.ppkstr === null) {
+        console.log('%c[utils.js, pair]', 'color: gray;', 'The pairing with ' + this.hostname + ' failed: keeping the key pinned at its earlier pairing.');
+        this.ppkstr = refusedKey;
+        this._refusedByHost = true;
+      }
+      throw error;
     }.bind(this));
   },
 

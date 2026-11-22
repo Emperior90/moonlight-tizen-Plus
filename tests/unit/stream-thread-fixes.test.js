@@ -47,6 +47,10 @@ test('the mouse movement and wheel pass between the threads through atomic excha
   // The movement goes out from both threads through the same exchanges (since 2.3.3)
   const flush = functionBody(input, 'void MoonlightInstance::FlushMouseMovement(');
   assert.match(flush, /int32_t deltaX = m_MouseDeltaX\.exchange\(0\);\s+int32_t deltaY = m_MouseDeltaY\.exchange\(0\);/);
+  // One flush at a time, from the exchanges until the movement is queued, so that a click of the main thread never
+  // overtakes a movement that the input thread took (since 2.3.3, tests/native/mouse_input_test.cpp)
+  assert.match(input, /static std::mutex mouseFlushMutex;/);
+  assert.match(flush, /^void MoonlightInstance::FlushMouseMovement\(\) \{\s+std::lock_guard<std::mutex> lock\(mouseFlushMutex\);/);
   const report = functionBody(input, 'void MoonlightInstance::ReportMouseMovement(');
   assert.match(report, /FlushMouseMovement\(\);/);
   assert.match(report, /SendScroll\(m_AccumulatedMilliTicks\.exchange\(0\), LiSendHighResScrollEvent\);/);

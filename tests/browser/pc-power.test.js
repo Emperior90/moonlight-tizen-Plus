@@ -369,6 +369,40 @@ test('a PC whose running app the list of the TV lacks reads the list once more a
   }
 });
 
+test('a PC that runs an app and whose app list can\'t be read is asked for the list once, and the session says that it can\'t reach it', async () => {
+  const app = await openPcList({ currentGame: 104, apps: DESKTOP_APPS });
+  try {
+    await app.page.waitForFunction(() => Number(hosts.HOST1.currentGame) === 104, null, { timeout: 10000 });
+    // The TV has no copy of the list (as after a failed poll), and the PC fails every request of its list
+    await app.page.evaluate(() => {
+      const openUrl = Module.openUrl;
+      Module.openUrl = function(id, url) {
+        if (/\/applist\?/.test(url)) {
+          window.__sunshine.http.push('/applist');
+          setTimeout(() => handlePromiseMessage(id, 'reject', -1), 30);
+          return;
+        }
+        return openUrl.apply(this, arguments);
+      };
+      hosts.HOST1._memCachedApplist = null;
+      window.__requestsFrom = window.__sunshine.http.length;
+    });
+    await takeSnackbars(app.page);
+    await choosePower(app.page, 'shutdownPcPower');
+    await app.page.waitForFunction(() => window.__snackbars.length > 0, null, { timeout: 8000 });
+    assert.deepEqual(await takeSnackbars(app.page), ['Failed to connect to GAMING-PC. Make sure that Sunshine (or another GameStream host) is running on the PC.']);
+    // After the server info of the session, one request of the list: 2.3.3 in testing asked a second time (each with
+    // a limit of 10 s) before it said so
+    const requests = await app.page.evaluate(() => window.__sunshine.http.slice(window.__requestsFrom));
+    assert.deepEqual(requests.slice(requests.lastIndexOf('/serverinfo') + 1), ['/applist'], requests.join(', '));
+    assert.deepEqual(await startRequests(app.page), []);
+    assert.deepEqual(await app.page.evaluate(() => [isInGame, pcPowerSessionStart]), [false, null]);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
 test('a PC without a Desktop app and with nothing running gets a message, and nothing starts', async () => {
   const app = await openPcList({ apps: [{ id: 2, title: 'Steam Big Picture' }, { id: 104, title: 'Forza Horizon 5' }] });
   try {

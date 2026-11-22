@@ -39,14 +39,15 @@ typedef struct {
   char* pem;
 } IDENTITY;
 
-// bits: the size of an RSA key, or 0 for an ECDSA key on P-256
+// bits: the size of an RSA key, 0 for an ECDSA key on P-256, or -1 for an Ed25519 key (which signs without a separate
+// digest)
 static IDENTITY create_identity_of(const char* name, int bits) {
   IDENTITY identity = { NULL, NULL, NULL };
-  EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_id(bits ? EVP_PKEY_RSA : EVP_PKEY_EC, NULL);
+  EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_id(bits > 0 ? EVP_PKEY_RSA : bits == 0 ? EVP_PKEY_EC : EVP_PKEY_ED25519, NULL);
   EVP_PKEY_keygen_init(ctx);
-  if (bits) {
+  if (bits > 0) {
     EVP_PKEY_CTX_set_rsa_keygen_bits(ctx, bits);
-  } else {
+  } else if (bits == 0) {
     EVP_PKEY_CTX_set_ec_paramgen_curve_nid(ctx, NID_X9_62_prime256v1);
   }
   EVP_PKEY_keygen(ctx, &identity.key);
@@ -61,7 +62,7 @@ static IDENTITY create_identity_of(const char* name, int bits) {
   X509_NAME* subject = X509_get_subject_name(identity.cert);
   X509_NAME_add_entry_by_txt(subject, "CN", MBSTRING_ASC, (const unsigned char*)name, -1, -1, 0);
   X509_set_issuer_name(identity.cert, subject);
-  X509_sign(identity.cert, identity.key, EVP_sha256());
+  X509_sign(identity.cert, identity.key, bits < 0 ? NULL : EVP_sha256());
 
   BIO* bio = BIO_new(BIO_s_mem());
   PEM_write_bio_X509(bio, identity.cert);
@@ -309,9 +310,15 @@ static void handle_server_challenge_response(const char* url, PHTTP_DATA data) {
   memcpy(pairingSecret, host.serverSecret, 16);
   EVP_MD_CTX* ctx = EVP_MD_CTX_create();
   size_t signatureLength = sizeof(pairingSecret) - 16;
-  EVP_DigestSignInit(ctx, NULL, EVP_sha256(), NULL, host.signer->key);
-  EVP_DigestSignUpdate(ctx, host.serverSecret, 16);
-  EVP_DigestSignFinal(ctx, pairingSecret + 16, &signatureLength);
+  if (EVP_PKEY_id(host.signer->key) == EVP_PKEY_ED25519) {
+    // Ed25519 signs the message itself, in one call
+    EVP_DigestSignInit(ctx, NULL, NULL, NULL, host.signer->key);
+    EVP_DigestSign(ctx, pairingSecret + 16, &signatureLength, host.serverSecret, 16);
+  } else {
+    EVP_DigestSignInit(ctx, NULL, EVP_sha256(), NULL, host.signer->key);
+    EVP_DigestSignUpdate(ctx, host.serverSecret, 16);
+    EVP_DigestSignFinal(ctx, pairingSecret + 16, &signatureLength);
+  }
   EVP_MD_CTX_destroy(ctx);
   host.signatureLength = signatureLength;
 
@@ -538,6 +545,28 @@ static void test_hosts_with_other_keys_pair(void) {
   CHECK(host.clientProvedPin);
 }
 
+static IDENTITY ed25519Host;
+
+// verifySignature() checks the signature with SHA-256, which OpenSSL refuses for an Ed25519 key (it has no separate
+// digest): the check fails, and the pairing with it, instead of running on a context that was never set up (a crash in
+// EVP_DigestVerifyFinal() with OpenSSL 3). The signature of 64 bytes is within the bounds. A certificate without a key
+// that OpenSSL can read fails the check as well.
+static void test_signature_that_cant_be_checked_fails(void) {
+  reset_host(7, "1234");
+  host.identity = ed25519Host;
+  host.signer = &ed25519Host;
+  CHECK_EQ_INT(pair("1234"), GS_FAILED);
+  CHECK_EQ_INT((int)host.signatureLength, 64);
+  CHECK(!host.gotClientPairingSecret);
+  CHECK(!host.clientSecretSigned);
+
+  unsigned char data[16] = { 0 };
+  unsigned char signature[64] = { 0 };
+  X509* keyless = X509_new();
+  CHECK(!verifySignature(data, 16, signature, 64, keyless));
+  X509_free(keyless);
+}
+
 static void test_pairing_secret_signature_bounds(void) {
   // A whole number of bytes, 16 for the secret and 64 to 512 for the signature, and nothing else is decoded
   size_t invalid[] = { 8192, (16 + 513) * 2, 545, (16 + 63) * 2, 32, 0 };
@@ -672,6 +701,7 @@ int main(void) {
   otherKey = create_identity("Someone else");
   rsa4096Host = create_identity_of("Sunshine Gamestream Host 4096", 4096);
   ecdsaHost = create_identity_of("Sunshine Gamestream Host ECDSA", 0);
+  ed25519Host = create_identity_of("Sunshine Gamestream Host Ed25519", -1);
   g_Cert = client.cert;
   g_PrivateKey = client.key;
   g_UniqueId = "0123456789ABCDEF";
@@ -691,6 +721,7 @@ int main(void) {
            test_challenge_response_is_read_with_its_exact_length);
   RUN_TEST("hosts with a 4096-bit RSA or a P-256 ECDSA key pair", test_hosts_with_other_keys_pair);
   RUN_TEST("the pairing secret is read only with a signature of 64 to 512 bytes", test_pairing_secret_signature_bounds);
+  RUN_TEST("a signature that the check can't verify with SHA-256 (Ed25519) or without a key fails the pairing", test_signature_that_cant_be_checked_fails);
   RUN_TEST("the certificate of the host must be a whole hex string", test_certificate_must_be_hex);
   RUN_TEST("the PIN must have 4 digits", test_pin_must_have_four_digits);
   RUN_TEST("hex fields are decoded only with their exact length and hex digits", test_hex_to_bytes);
@@ -706,5 +737,6 @@ int main(void) {
   free_identity(&otherKey);
   free_identity(&rsa4096Host);
   free_identity(&ecdsaHost);
+  free_identity(&ed25519Host);
   return test_summary();
 }

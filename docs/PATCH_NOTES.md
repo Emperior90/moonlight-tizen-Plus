@@ -2,7 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
-- [2.3.3](#233): pre-release, the remote and keyboard in a stream, mouse fixes, and pairing a PC again
+- [2.3.3](#233): pre-release, the remote, keyboard and mouse in a stream, pairing a PC that dropped the TV, the app list and messages
 - [2.3.2](#232): 2026-11-20, a tidier Stream Menu with F keys and PC shutdown, finer frame times, how fast frames arrive, more facts in the log and a fix for recovery keyframes
 - [2.3.1](#231): 2026-11-18, lighter sound and statistics, fewer double presses, a switch for sound on Wi-Fi, and fixes from a review and from other Moonlight clients
 - [2.3.0](#230): 2026-11-08, smoother motion, a picture refresh in the Stream Menu and a longer guide
@@ -21,11 +21,11 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ## 2.3.3
 
-*Pre-release, in testing.* The remote's arrows and OK reach the PC without RETURN first, TV keys stay off the PC, PCs pair again, and keyboard and mouse fixes.
+*Pre-release, in testing.* The remote's arrows and OK reach the PC without RETURN, a PC that dropped the TV pairs again, and the app list and messages get fixes.
 
 > **Install:** by hand over 2.3.2 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >
-> **Tested:** with simulated TVs and hosts only; the keys, the keyboard and the mouse still need a test on a TV, the pairing one with Sunshine.
+> **Tested:** with simulated TVs and hosts only; the keys and mouse of a stream, pairing again after *Unpair All* and the message times still need a test on a TV.
 
 ### New
 
@@ -33,23 +33,23 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ### Changed
 
-- In a stream, the first key of the remote or a keyboard gives the stream the keys; no RETURN needed first
+- In a stream the first arrow, OK or keyboard key gives the stream the keys (not Esc, Shift, Ctrl or Alt)
 - A PC that no longer accepts the TV (e.g. after *Unpair All* in Sunshine) shows *Unpaired*, and OK pairs it again
 - Pairing also works while the PC runs a game
 - A PC that answers with a different key than at its pairing gets its own message instead of *Offline* advice
 - After a stream the box art of the same PC shows at once, and *Refresh apps* says how many apps the PC lists
-- Long messages stay on screen for 5 to 15 seconds, by their length, instead of always 5 seconds
-- The Stream Menu and messages make room for the statistics in a right or bottom corner
+- Long messages stay 5 to 15 seconds by their length (not 5); they and the Stream Menu make room for the statistics
 
 ### Fixed
 
 - CH+, CH-, Source and the color keys no longer press keys on the PC (CH- could type M in games)
-- Ctrl + Alt + Shift + S or an F key on a keyboard no longer turns the keyboard off for the rest of the stream
+- Ctrl + Alt + Shift + S no longer turns the keyboard off, and it or YELLOW held steps the statistics only once
 - A mouse click no longer reaches the PC before the movement right before it
-- A pairing that the PC didn't confirm no longer says that it succeeded
-- A failed check of a PC is no longer sent twice, and a PC with a 4096-bit RSA or an ECDSA certificate pairs
-- OK and *Quit app on the PC* work for a running app the TV's list lacks; an empty or failed app list says why
-- Messages show above dialogs, the connection warning is easier to read, and no statistics line is half English
+- A pairing the PC didn't confirm no longer says it worked, and a PC with a 4096-bit RSA certificate pairs
+- A check of a PC that hangs is no longer sent twice, so starts and box art wait less behind it
+- OK and *Quit app on the PC* work while the PC runs an app the TV's list lacks; an empty or failed list says why
+- RETURN while the PC still quits a game keeps the PC list, and the other app no longer starts
+- Messages aren't dimmed by dialogs, the connection warning reads better, and no statistics line is half English
 
 ## 2.3.2
 

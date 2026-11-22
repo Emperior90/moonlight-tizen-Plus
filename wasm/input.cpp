@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 #include <set>
 
 #define KEY_PREFIX 0x80
@@ -13,6 +14,9 @@
 // The handlers below run on the main thread, which is the only one that uses them.
 static std::set<uint32_t> heldKeys;
 static std::set<int> heldMouseButtons;
+
+// Held by FlushMouseMovement() from taking the movement until moonlight-common-c queued it (see there)
+static std::mutex mouseFlushMutex;
 
 // Release every key and mouse button that the host still holds from the stream
 static void ReleaseHeldInput() {
@@ -29,7 +33,7 @@ static void ReleaseHeldInput() {
 // Whether a key code is one of a PC keyboard: a Windows virtual-key code, of which the host reads only the low byte (a
 // code with the prefix 0x80). The keys that only a TV has are above 0xFF (RETURN 10009, the color keys 403 to 406, CH+
 // 427, CH- 428, Source 10072, Channel list 10073, Play/Pause 10252, the keys of the keyboard of the TV), and the host
-// would get only their low byte, an unrelated key (CH- 0xAC types M with the US layout of Sunshine). A key that the
+// would get only their low byte, an unrelated key (CH- 0xAC, which Sunshine 2026.914 types as M). A key that the
 // browser couldn't name is 0. moonlight-qt drops the keys it can't map in the same way (keyboard.cpp).
 static bool IsPcKeyCode(uint32_t keyCode) {
   return keyCode != 0 && keyCode <= 0xFF;
@@ -131,18 +135,23 @@ EM_BOOL MoonlightInstance::HandleKeyDown(const EmscriptenKeyboardEvent &event) {
 
   char modifiers = GetModifierFlags(event);
 
-  // Ctrl + Alt + Shift + Q ends the stream and Ctrl + Alt + Shift + S steps the statistics; every other key with these
-  // modifiers goes to the PC (e.g. an F key, with which Sunshine switches the display). Before 2.3.3 such a key also
-  // ended the pointer lock once the modifiers were up, after which no key reached the PC any more: a TV has no desktop
-  // to give the pointer to, and the Stream Menu releases it itself (openStreamMenu() in menus.js).
+  // Ctrl + Alt + Shift + Q ends the stream and Ctrl + Alt + Shift + S steps the statistics, once per press (the
+  // auto-repeat of a held S stepped on through every level); every other key with these modifiers goes to the PC (e.g.
+  // an F key, with which Sunshine switches the display, if the TV passes it as one). Before 2.3.3 such a key also ended
+  // the pointer lock once the modifiers were up, after which no key reached the PC until RETURN or a click: a TV has no
+  // desktop to give the pointer to, and the Stream Menu releases it itself (openStreamMenu() in menus.js).
   if (modifiers == (MODIFIER_CTRL | MODIFIER_ALT | MODIFIER_SHIFT)) {
     if (keyCode == 0x51) { // Q key
       // Terminate the connection
-      stopStream();
+      if (!event.repeat) {
+        stopStream();
+      }
       return EM_TRUE;
     } else if (keyCode == 0x53) { // S key
       // Toggle performance stats overlay
-      toggleStats();
+      if (!event.repeat) {
+        toggleStats();
+      }
       return EM_TRUE;
     }
   }
@@ -218,8 +227,12 @@ static short ClampToShort(int64_t value) {
 // Send the mouse movement that the main thread added up (HandleMouseMove()). The input thread calls it every 5 ms
 // (ReportMouseMovement()), and the main thread right before a mouse button (HandleMouseDown(), HandleMouseUp()), so that
 // a click comes after the movement before it. Both can: the exchange gives each movement to one of them, and
-// LiSendMouseMoveEvent() of moonlight-common-c takes its own lock.
+// LiSendMouseMoveEvent() of moonlight-common-c takes its own lock. A flush holds mouseFlushMutex until it queued what it
+// took: otherwise the main thread could find nothing left while the input thread, between its exchange and its
+// LiSendMouseMoveEvent(), still held the movement, and queue the click before it. The main thread waits for it only
+// before a mouse button, and the input thread holds it for a few microseconds every 5 ms.
 void MoonlightInstance::FlushMouseMovement() {
+  std::lock_guard<std::mutex> lock(mouseFlushMutex);
   // Take what the main thread added up and reset it in one step, so that a movement that arrives meanwhile stays for
   // the next report instead of being reset unsent. The idea comes from the fork of samirmartins (moonlight-tizen,
   // 78ef238).

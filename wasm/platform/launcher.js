@@ -276,7 +276,8 @@ const Launcher = (function() {
     }
     const state = hostState(host);
     // An offline PC where a device answered with another key than the one pinned at the pairing (pinnedKeyMismatch of
-    // NvHTTP in utils.js): waking it can't help, and OK says what can (hostChosen() in index.js). It stays offline.
+    // NvHTTP in utils.js): the text says so, and OK says what to do (hostChosen() in index.js). It stays offline, and OK
+    // still wakes it when Auto WoL is on, since another PC may have its address while it sleeps.
     const keyMismatch = state === 'offline' && host.pinnedKeyMismatch === true;
     const texts = {
       online: t('Ready to stream. Select it to see its apps and games.'),
@@ -291,7 +292,7 @@ const Launcher = (function() {
       hints = keyHint(t('OK'), null, t('Open'));
     } else if (state === 'locked') {
       hints = keyHint(t('OK'), null, t('Pair'));
-    } else if (state === 'offline' && host.autoWolEnabled === true && !keyMismatch) {
+    } else if (state === 'offline' && host.autoWolEnabled === true) {
       hints = keyHint(t('OK'), null, t('Wake PC'));
     }
     // UP reaches the options button from the first row of cards (Views.Hosts in navigation.js), the options key (CH+ or
@@ -353,13 +354,14 @@ const Launcher = (function() {
       return;
     }
     if (!/^game-container-/.test(card.id || '')) {
-      // The illustration of an empty or failed app list
+      // The illustration of an empty or failed app list. The text of a failed list names only what this screen offers:
+      // RETURN to the PC list, where OK on the PC reads its list again (the list of a failed read isn't kept).
       const failed = /applist_error\.svg$/.test(card.getAttribute('src') || '');
       setHero('app', 'empty', {
         overline: hostName,
         title: failed ? t('Apps') : t('No apps yet'),
-        text: failed ? t('Unable to retrieve your list of apps at this time. Please refresh the list of apps or try again later!')
-          : t('Add apps in Sunshine on the PC (Applications), then choose "Refresh apps" in the menu of this PC in the PC list.'),
+        text: failed ? t('The app list of this PC couldn\'t be read. Go back with RETURN and open the PC to try again.')
+          : t('In the web UI of Sunshine on the PC, add apps under "Applications", then choose "Refresh apps" in the menu of this PC in the PC list.'),
       });
       return;
     }

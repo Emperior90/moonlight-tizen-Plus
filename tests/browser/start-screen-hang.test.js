@@ -604,7 +604,7 @@ test('a start whose app list the PC doesn\'t send says so, and a start once more
     assert.deepEqual(await app.page.evaluate(() => ({
       marked: Array.prototype.map.call(document.querySelectorAll('.hovered'), (element) => element.id || element.tagName),
       text: document.getElementById('hero-text').textContent,
-    })), { marked: ['IMG'], text: 'Unable to retrieve your list of apps at this time. Please refresh the list of apps or try again later!' });
+    })), { marked: ['IMG'], text: 'The app list of this PC couldn\'t be read. Go back with RETURN and open the PC to try again.' });
     assert.ok(app.logs.some((line) => line.indexOf('The stream can\'t be started once more: the app list of the host could not be read') >= 0));
     // The app list that leaveStreamView() (messages.js) shows after the end fails as well, which it logs (since 2.3.3;
     // an unhandled rejection before)

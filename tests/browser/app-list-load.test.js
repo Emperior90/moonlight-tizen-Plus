@@ -5,10 +5,10 @@
 // wasm/platform/launcher.js): the grid shows before any box art is read and the box art then loads one app per task,
 // so that a key pressed right away is handled after one of them instead of after all; the box art shows through object
 // URLs, which a grid of the same PC built again shows at once (since 2.3.3) and which are freed for another PC, an app
-// that left the list, Refresh apps and Delete PC, and as a data URL where an image refuses the object URL; the Smart Hub previews
-// are made only when the TV is idle, one at a time; and the ambient light of the hero reads the colours of the box art
-// from its Blob with createImageBitmap(), away from the main thread. Counters and stubs decide, not the time things
-// take. tests/unit/box-art-main-thread.test.js checks the parts of utils.js on their own.
+// that left the list, Refresh apps, Delete PC and Remove all PCs, and as a data URL where an image refuses the object
+// URL; the Smart Hub previews are made only when the TV is idle, one at a time; and the ambient light of the hero reads
+// the colours of the box art from its Blob with createImageBitmap(), away from the main thread. Counters and stubs
+// decide, not the time things take. tests/unit/box-art-main-thread.test.js checks the parts of utils.js on their own.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -132,7 +132,7 @@ test('the grid shows before any box art is read, and a key pressed right away wa
   }
 });
 
-test('box art shows through object URLs, which the grid of the same PC shows again at once, and which go with another PC, an app that left the list, Refresh apps and Delete PC', async () => {
+test('box art shows through object URLs, which the grid of the same PC shows again at once, and which go with another PC, an app that left the list, Refresh apps, Delete PC and Remove all PCs', async () => {
   const app = await openAppList(6, () => {
     window.__revoked = [];
     const revoke = URL.revokeObjectURL;
@@ -237,6 +237,25 @@ test('box art shows through object URLs, which the grid of the same PC shows aga
       $('#continueDeleteHost').click();
     });
     assert.deepEqual((await page.evaluate(() => window.__revoked.splice(0))).sort(), again.slice().sort());
+    assert.deepEqual(await page.evaluate(() => appGridBoxArt), { serverUid: null, urls: {} });
+
+    // The grid of the first PC again (without the app of Sunshine's default box art), then Remove all PCs: its box art
+    // goes as well
+    await page.evaluate(async () => {
+      window.__host._memCachedApplist = window.__host._memCachedApplist.filter((entry) => entry.id !== 7);
+      api = window.__host;
+      await showApps(window.__host);
+    });
+    await boxArtShown(page, /^blob:/);
+    const last = (await sources()).filter((source) => /^blob:/.test(source));
+    assert.ok(last.length > 0);
+    await page.evaluate(() => window.__revoked.splice(0));
+    await page.evaluate(() => {
+      hosts.HOST1 = window.__host;
+      deleteAllHostsDialog();
+      $('#continueDeleteHost').click();
+    });
+    assert.deepEqual((await page.evaluate(() => window.__revoked.splice(0))).filter((url) => last.includes(url)).sort(), last.slice().sort());
     assert.deepEqual(await page.evaluate(() => appGridBoxArt), { serverUid: null, urls: {} });
     assert.deepEqual(app.errors, []);
   } finally {

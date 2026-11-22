@@ -7,7 +7,8 @@
 // pairing itself is answered by the test through the pair() of the host. A PC that runs an app is paired as well
 // (since 2.3.3: the dialog refused it before any request), and a failure names the running app, but a wrong PIN as
 // such first. A pairing that the PC doesn't confirm (NvHTTP.pair() of utils.js with the simulated Sunshine of
-// mocks/sunshine-host.js) is a failure, which was announced as a success up to 2.3.2.
+// mocks/sunshine-host.js) is a failure, which was announced as a success up to 2.3.2, with the general message also
+// while the PC runs an app: the PC took the PIN and then refused the certificate of the TV, which no app explains.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -185,7 +186,7 @@ test('a PC that runs an app opens the pairing dialog and pairs', async () => {
   }
 });
 
-test('a wrong PIN on a PC that runs an app is reported as a wrong PIN, another failure names the running app', async () => {
+test('a wrong PIN on a PC that runs an app is reported as a wrong PIN, another failure names the running app, an unconfirmed pairing doesn\'t', async () => {
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
   try {
     await openPairingDialog(app, 101);
@@ -197,22 +198,29 @@ test('a wrong PIN on a PC that runs an app is reported as a wrong PIN, another f
     dialog = await failPairing(app, '-1');
     assert.equal(dialog.text, 'Error: OFFICE is currently busy!You must stop the running app in order to pair with the PC.');
     assert.equal(dialog.button, 'Close');
+    await app.page.evaluate(() => document.getElementById('cancelPairing').click());
+    // PAIRING_NOT_CONFIRMED_ERROR of utils.js: the general message
+    await openPairingDialog(app, 101);
+    dialog = await failPairing(app, 'PAIRING_NOT_CONFIRMED');
+    assert.equal(dialog.text, 'Error: Failed to pair with OFFICE.Please, try pairing with the PC again.');
+    assert.equal(dialog.button, 'Close');
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
   }
 });
 
-test('a pairing that the PC doesn\'t confirm is a failure: Close, no key, and the PC list stays', async () => {
-  // GAMING-PC stored as not paired; the simulated Sunshine pairs, but answers the pairchallenge request with its 401
-  // answer instead of <paired>1</paired>
+test('a pairing that the PC doesn\'t confirm is a failure: Close, no key, the general message also while the PC runs an app, and the PC list stays', async () => {
+  // GAMING-PC stored as not paired, running an app; the simulated Sunshine pairs, but answers the pairchallenge request
+  // with its 401 answer instead of <paired>1</paired>
   const app = await openMenus(harness, {
     moduleScripts: ['sunshine-host.js'],
     stored: { hosts: { HOST1: Object.assign({}, SUNSHINE_HOSTS.HOST1, { paired: false, ppkstr: null }) } },
-    initScripts: ['window.__sunshineConfig = { unpaired: true, confirmPairing: false };'],
+    initScripts: ['window.__sunshineConfig = { unpaired: true, confirmPairing: false, currentGame: 101 };'],
   });
   try {
     await app.page.waitForFunction(() => hosts.HOST1.online === true, null, { timeout: 5000 });
+    assert.equal(await app.page.evaluate(() => hosts.HOST1.currentGame), 101);
     await app.page.evaluate(() => $('#host-container-HOST1').trigger('click'));
     await app.page.waitForFunction(() => $('#cancelPairing').text().trim() === 'Close', null, { timeout: 5000 });
     await app.page.waitForTimeout(300);

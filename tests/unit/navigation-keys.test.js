@@ -286,6 +286,13 @@ test('YELLOW toggles the performance statistics only while streaming, and steps 
   remote.platform.run('wasmSessionStarted = true;');
   remote.press('KEY_YELLOW');
   assert.deepEqual(remote.moduleCalls, ['savePerformanceStatsLevel 2', 'toggleStats']);
+  // Once per press: the auto-repeat of a held YELLOW steps nothing, in the stream and while it starts (since 2.3.3; before,
+  // a held key stepped through every level)
+  remote.press('KEY_YELLOW', { repeat: true });
+  remote.press('KEY_YELLOW', { repeat: true });
+  remote.platform.run('wasmSessionStarted = false;');
+  remote.press('KEY_YELLOW', { repeat: true });
+  assert.deepEqual(remote.moduleCalls, ['savePerformanceStatsLevel 2', 'toggleStats']);
 });
 
 test('Play/Pause, Play and Pause toggle the Stream Menu in a stream and open the menu of a host or app otherwise', () => {
@@ -357,6 +364,18 @@ test('the keys of a PC keyboard go to the PC in a stream, the keys that only a T
   assert.equal(isMenuKeyEvent({ keyCode: 19, key: 'Pause' }), false);
   // RETURN, which sends Esc in a stream through sendEscapeKeyToHost(), isn't one either
   assert.equal(isPcKeyEvent({ keyCode: tvKey.KEY_RETURN, key: 'XF86Back' }), false);
+});
+
+test('Esc and the modifier keys don\'t ask for the pointer lock of a stream, every other key of a PC keyboard does', () => {
+  // The keydown of Esc and of a modifier key is no user gesture in Chromium, which refuses them the lock (since 2.3.3 the
+  // next key asks instead, initSpecialKeys() in index.js); the names are those of KeyboardEvent.key
+  const canKeyLockPointer = loadPlatformScripts(INDEX_SCRIPTS).get('canKeyLockPointer');
+  ['Escape', 'Shift', 'Control', 'Alt', 'AltGraph', 'Meta', 'CapsLock', 'NumLock', 'ScrollLock'].forEach((key) => {
+    assert.equal(canKeyLockPointer({ key }), false, key);
+  });
+  ['ArrowRight', 'Enter', 'Tab', 'w', 'W', 'F1', 'ContextMenu', ' ', 'Backspace', 'Pause', 'Unidentified'].forEach((key) => {
+    assert.equal(canKeyLockPointer({ key }), true, key);
+  });
 });
 
 test('other keys do nothing', () => {

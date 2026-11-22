@@ -8,12 +8,13 @@
 // emulation (its entry shows for a controller that reports a timestamp of 0 once its input changed, Tizen 5.5, before
 // that input moves the selection), the keys for the PC (every key released again; since 2.3.2 in the panel of
 // 'Shortcuts…', whose buttons still run with a click), Disconnect and 'Quit app on the PC'. Since 2.3.3 the first key of
-// a PC keyboard in a running stream asks for the pointer lock, as RETURN does, while the keys of the TV don't. It
-// stays inside the safe area of the screen with every entry showing without scrolling and every label on one line in
+// a PC keyboard in a running stream asks for the pointer lock, as RETURN does, while the keys of the TV, Esc and the
+// modifier keys don't, and no default action of such a key runs (Tab moved the focus off the video). It stays inside the safe area of the screen with every entry showing without scrolling and every label on one line in
 // every language, also with text 10 % wider than this machine draws it (tests/browser/text-stress.js), and the video
 // keeps showing, also with the surround quality entry of a 5.1 stream and the notes of a changed bitrate and quality.
-// Since 2.3.3 the menu and its panels open on the left while the statistics take a right corner, so that they never
-// cover the full statistics, whichever their level.
+// Since 2.3.3 the menu and its panels (Shortcuts…, Function keys…, the power question and the text panel of Type
+// text…) open on the left while the statistics take a right corner, so that they never cover the full statistics,
+// whichever their level.
 // The bitrate and surround quality entries and 'Type text…' are checked by stream-menu-entries.test.js, the panels of
 // 'Shortcuts…', 'Function keys…' and 'Shut down or restart the PC…' by stream-menu-panels.test.js. The controller
 // side (the
@@ -280,6 +281,8 @@ test('the first key of a PC keyboard in a running stream asks for the pointer lo
     assert.equal(await lockRequests(app.page), 1, 'W');
     assert.deepEqual(await app.page.evaluate(() => window.__videoKeys.splice(0)),
       ['keydown 39', 'keyup 39', 'keydown 13', 'keyup 13', 'keydown 87', 'keyup 87']);
+    // The page sends nothing to the PC for them either (no Esc as for RETURN)
+    assert.deepEqual(await moduleCalls(app.page), [], 'the first keys send nothing from the page');
     // The keys that only a TV has never reach the PC, so they don't ask for it: CH+, CH-, Source, Channel list, GREEN,
     // BLUE, and YELLOW, which steps the statistics
     for (const [code, name] of [[427, 'ChannelUp'], [428, 'ChannelDown'], [10072, 'Source'], [10073, 'ChannelList'],
@@ -287,6 +290,7 @@ test('the first key of a PC keyboard in a running stream asks for the pointer lo
       await remoteKey(app.page, code, name);
       assert.equal(await lockRequests(app.page), 0, name);
     }
+    assert.deepEqual(await moduleCalls(app.page), ['toggleStats'], 'only YELLOW calls the module');
     // RETURN sends Esc to the PC and asks for the lock, as before
     await app.page.evaluate(() => window.__wasmCalls.splice(0));
     await remoteKey(app.page, ...RETURN);
@@ -314,6 +318,66 @@ test('the first key of a PC keyboard in a running stream asks for the pointer lo
     // The next key after it asks again, since the menu released the pointer
     await remoteKey(app.page, ...DOWN);
     assert.equal(await lockRequests(app.page), 1, 'after the Stream Menu');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('the first key keeps no default action, so Tab leaves the focus on the stream, and Esc and the modifier keys leave the lock to the next key', async () => {
+  // Keys pressed with the real keyboard of this browser (trusted events). Without the lock the keyboard handler of the
+  // module leaves a key to the browser, so the default action of the first key ran: Tab moved the focus off the video,
+  // and no key reached the stream until the Stream Menu gave it back. Since 2.3.3 the page prevents it
+  const app = await openStreaming();
+  const keyDefaults = () => app.page.evaluate(() => window.__keyDefaults.splice(0));
+  try {
+    await app.page.evaluate(() => {
+      window.__keyDefaults = [];
+      window.addEventListener('keydown', (e) => window.__keyDefaults.push(e.key + (e.defaultPrevented ? ' prevented' : '')));
+    });
+    await app.page.keyboard.press('Tab');
+    assert.equal(await lockRequests(app.page), 1, 'Tab asks for the lock');
+    assert.equal(await app.page.evaluate(() => document.activeElement.id), 'wasm_module', 'Tab');
+    assert.deepEqual(await keyDefaults(), ['Tab prevented']);
+    // Shift + Tab: Tab asks, and the focus stays
+    await app.page.keyboard.down('Shift');
+    await app.page.keyboard.press('Tab');
+    await app.page.keyboard.up('Shift');
+    assert.equal(await app.page.evaluate(() => document.activeElement.id), 'wasm_module', 'Shift + Tab');
+    assert.deepEqual(await keyDefaults(), ['Shift prevented', 'Tab prevented']);
+    assert.equal(await lockRequests(app.page), 1, 'Shift + Tab');
+    // Esc and the modifier keys don't ask: their keydown is no user gesture, without which the browser refuses the lock
+    // (each refusal logged 'Error locking mouse'), so the next key gives the stream the keys
+    for (const key of ['Escape', 'Shift', 'Control', 'Alt', 'Meta', 'CapsLock']) {
+      await app.page.keyboard.press(key);
+      assert.equal(await lockRequests(app.page), 0, key);
+    }
+    assert.deepEqual(await keyDefaults(), ['Escape prevented', 'Shift prevented', 'Control prevented', 'Alt prevented',
+      'Meta prevented', 'CapsLock prevented']);
+    await app.page.keyboard.press('w');
+    assert.equal(await lockRequests(app.page), 1, 'W after them');
+    // Ctrl + Alt + Shift + S as the first keys: S asks
+    for (const key of ['Control', 'Alt', 'Shift']) {
+      await app.page.keyboard.down(key);
+      assert.equal(await lockRequests(app.page), 0, key);
+    }
+    await app.page.keyboard.press('s');
+    for (const key of ['Shift', 'Alt', 'Control']) {
+      await app.page.keyboard.up(key);
+    }
+    assert.equal(await lockRequests(app.page), 1, 'S of Ctrl + Alt + Shift');
+    assert.equal(await app.page.evaluate(() => document.activeElement.id), 'wasm_module');
+    // The page sends nothing to the PC for these keys (the keyboard handler of the module sends nothing without the lock)
+    assert.deepEqual(await moduleCalls(app.page), []);
+    // With the pointer locked no key asks again, and the page prevents the default action as the module does
+    await keyDefaults();
+    await app.page.evaluate(() => {
+      Object.defineProperty(document, 'pointerLockElement', { get: () => document.getElementById('wasm_module'), configurable: true });
+    });
+    await app.page.keyboard.press('Tab');
+    assert.deepEqual(await keyDefaults(), ['Tab prevented']);
+    assert.equal(await lockRequests(app.page), 0, 'locked');
+    assert.equal(await app.page.evaluate(() => document.activeElement.id), 'wasm_module', 'locked');
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
@@ -475,6 +539,14 @@ test('with the statistics in a right corner the Stream Menu opens on the left, a
         assert.ok(!intersect(panel, stats), corner + ' ' + entry + ' ' + JSON.stringify(panel));
         await app.page.evaluate(() => closeStreamMenuPanel());
       }
+      // And the text panel of Type text…, which opens by its own code and sits at the top
+      await app.page.evaluate(() => openStreamText());
+      const textPanel = await rectOf('#streamTextPanel');
+      assert.equal(await app.page.evaluate(() => isStreamTextOpen), true, corner);
+      assert.ok(onLeft ? textPanel.left <= textPanel.width * 0.1 : textPanel.right >= textPanel.width * 0.9, corner + ' Type text ' + JSON.stringify(textPanel));
+      assert.ok(textPanel.left >= textPanel.width * 0.05 && textPanel.right <= textPanel.width * 0.95, corner + ' Type text ' + JSON.stringify(textPanel));
+      assert.ok(textPanel.top >= textPanel.height * 0.05 && !intersect(textPanel, stats), corner + ' Type text ' + JSON.stringify(textPanel));
+      await app.page.evaluate(() => cancelStreamText());
       // The side follows the corner and not the level: the menu doesn't move when its entry steps the statistics
       await app.page.evaluate(() => handleMessage('StatLevelMsg: 1'));
       assert.deepEqual(await rectOf('#streamMenu'), menu, corner);
