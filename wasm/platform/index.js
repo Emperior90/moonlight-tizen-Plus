@@ -30,7 +30,7 @@ var pollGenerations = {}; // Number of the latest start of the polling of each h
 var hostStatusChecks = {}; // The first request of the latest start of the polling of each host (beginBackgroundPollingOfHost()), which decides whether a stored host is online, keyed by server UID
 var hostChoiceWait = null; // The host that was chosen while its state was still unknown (hostChosen()), as { host }, or null
 var appGridGeneration = 0; // Number of the latest build of the app grid (showApps()), whose box art downloads are the only ones still wanted
-var appGridBoxArtUrls = []; // The object URLs of the box art that the app grid shows (makeBoxArtUrl() in utils.js), freed when the grid is built again
+var appGridBoxArt = { serverUid: null, urls: {} }; // The URLs of the box art of the app grid by app ID, for the host of the grid: a grid of the same host built again shows them again at once (showApps())
 var pairingCert; // Loads the generated certificate
 var myUniqueid;
 var api; // The `api` should only be set if we're in a host-specific screen, on the initial screen it should always be null
@@ -2117,20 +2117,18 @@ function hostMenuDialog(host) {
   };
 
   // The entries of the menu, in their order. An entry that can't run for the state of the host (Refresh apps of a host
-  // that is offline, Wake PC of one that is online) is left out instead of showing disabled, so the focus never lands
-  // on it, and the red Delete PC comes after the harmless entries. While the state is still unknown (right after the
-  // start of the app), Wake PC shows: its dialog closes at once if the PC turns out to be on, and Refresh apps needs it.
+  // that is offline or not paired, whose app list can't be asked; Wake PC of one that is online) is left out instead of
+  // showing disabled, so the focus never lands on it, and the red Delete PC comes after the harmless entries. While the
+  // state is still unknown (right after the start of the app), Wake PC shows: its dialog closes at once if the PC turns
+  // out to be on, and Refresh apps needs it.
   var hostMenuDialogOptions = [
     {
       id: 'refreshApps-' + host.hostname,
       icon: 'refresh',
       text: t('Refresh apps'),
-      shown: host.online === true,
+      shown: host.online === true && host.paired === true,
       action: function() {
-        // Refresh the list of apps for the target host
-        snackbarLogLong('Refreshing the list of %1$s applications...', host.hostname);
-        host.clearBoxArt();
-        host.getAppListWithCacheFlush();
+        refreshHostApps(host);
       }
     },
     {
@@ -2313,7 +2311,16 @@ function choosePcPowerApp(appList, currentGame) {
 // Read which app a PC-list session streams, after a refresh of the server info (choosePcPowerApp())
 function pickPcPowerApp(host) {
   return host.refreshServerInfo().then(function() {
-    return host.getAppList();
+    if (!host.currentGame || host.currentGame == 0) {
+      return host.getAppList();
+    }
+    // A running app that the list in the cache lacks: the list is read once more (findHostApp()); a list that can't be
+    // read then leaves the cache as it was, and the message about an app that isn't in the list follows
+    return findHostApp(host, host.currentGame).catch(function() {
+      return null;
+    }).then(function() {
+      return host.getAppList();
+    });
   }).then(function(appList) {
     return choosePcPowerApp(appList, host.currentGame);
   });
@@ -2456,6 +2463,8 @@ function deleteHostDialog(host) {
     updatePreviewData();
     // Forget the apps that were hidden for the host
     forgetHiddenApps(host.serverUid);
+    // The box art of its app grid that the app still holds goes (releaseAppGridBoxArt())
+    forgetAppGridBoxArtOf(host.serverUid);
     // If host removed, show snackbar message
     snackbarLog('%1$s has been deleted successfully.', host.hostname);
     deleteHostOverlay.style.display = 'none';
@@ -2523,6 +2532,8 @@ function deleteAllHostsDialog() {
           saveHosts();
         }
       }
+      // The box art of the app grid that the app still holds goes (releaseAppGridBoxArt())
+      forgetAppGridBoxArtOf(null);
       // If all hosts removed, show snackbar message
       snackbarLog('All PCs have been deleted.');
       // Clear the preview app cache and update Smart Hub Preview
@@ -3715,8 +3726,9 @@ function showAppsMode() {
   $('#main-header').show();
   $('#goBackBtn').show();
   updateQuitRunningAppButton(api);
-  // Tell how to open the menu of an app (menus.js)
-  $('#appMenuHint').show();
+  // Tell how to open the menu of an app (menus.js), only while there is an app to open it on (not over the illustration
+  // of an empty list or of one that couldn't be read)
+  $('#appMenuHint').toggle($('#game-grid .game-container').length > 0);
   $('#main-content').children().not('#listener, #loadingSpinner, #wasmSpinner').show();
   $('#host-grid').hide();
   $('#settings-list').hide();
@@ -3776,12 +3788,12 @@ function showApps(host) {
     // Remove all game container elements from the game grid and from any other div elements
     $('#game-grid').empty();
     $('div.game-container').remove();
-    // No image shows the box art of the removed grid any more (releaseBoxArtUrl() in utils.js)
-    appGridBoxArtUrls.splice(0).forEach(function(url) {
-      if (typeof releaseBoxArtUrl === 'function') {
-        releaseBoxArtUrl(url);
-      }
-    });
+    // The box art of another host goes; that of this host that can show again stays for the tiles of the new grid, and
+    // the rest goes (releaseBoxArtUrl() in utils.js)
+    releaseAppGridBoxArt(appGridBoxArt.serverUid === host.serverUid ? function(url) {
+      return !isReusableBoxArt(url);
+    } : null);
+    appGridBoxArt.serverUid = host.serverUid;
     // The box art downloads of an earlier build of the grid that still wait are dropped (NvHTTP.getBoxArt() in utils.js)
     var gridGeneration = ++appGridGeneration;
     var isBoxArtStale = function() {
@@ -3805,13 +3817,22 @@ function showApps(host) {
           var emptyAppListImg = new Image();
           emptyAppListImg.src = 'static/res/applist_empty.svg';
           $('#game-grid').html(emptyAppListImg);
-          snackbarLogLong('Your list is currently empty. Please add your favorite apps to the list.');
+          // Every app left the list, and its box art with it; the top of the screen says what to do (showApp() in launcher.js)
+          releaseAppGridBoxArt(null);
           // Navigate to the Apps view
           showAppsMode();
           resolve();
           return;
         }
 
+        // The box art of the apps that the host no longer lists goes (by the whole list, so hidden apps keep theirs)
+        var listedIds = {};
+        appList.forEach(function(app) {
+          listedIds[app.id] = true;
+        });
+        releaseAppGridBoxArt(function(url, appId) {
+          return !listedIds[appId];
+        });
         // The favorites first, then the order of the setting 'Sort the list of apps'
         const sortedAppList = orderHostApps(host.serverUid, appList);
         const favoriteApps = loadFavoriteApps(host.serverUid);
@@ -3953,10 +3974,50 @@ function showApps(host) {
           var appEntry = (_isSmartHubSupported && _previewApps[host.serverUid]) ? _previewApps[host.serverUid].apps.find(function(a) {
             return a.id === app.id; 
           }) : null;
+          // Point the Smart Hub Preview entry of the app at its preview, for the box art behind url
+          var pointPreviewAt = function(url) {
+            // The url is an object URL of the box art (or a data URL where object URLs are missing)
+            if (_isSmartHubSupported && _previewApps[host.serverUid] && appEntry) {
+              var previewPlace = getPreviewLocation();
+
+              // Use deterministic filename so the local HTTP server route stays stable
+              var filename = SMART_HUB_PREVIEW_FILE_PREFIX + app.id + '.jpg';
+              var cacheBuster = '?v=' + Date.now();
+
+              // Determine local path from the url if it's a file URI
+              if (url.startsWith('file://')) {
+                var localPngPath = url.replace('file://', '');
+                appEntry.txtPath = localPngPath;
+              } else {
+                appEntry.txtPath = previewPlace.documentsPath + '/' + filename;
+              }
+              appEntry.imageUri = 'http://' + previewPlace.tvIp + ':' + SMART_HUB_PREVIEW_PORT + '/' + filename + cacheBuster;
+            }
+          };
+          // The box art that an earlier grid of this host showed shows again at once, set in the task that builds the grid
+          // (no read of its file, no copy of its Blob, no new URL); onerror below, set in the same task, still sees an
+          // image that refuses the object URL
+          var reusedUrl = appGridBoxArt.urls[app.id];
+          boxArtPlaceholderImg.onload = e => boxArtPlaceholderImg.classList.add('fade-in');
+          if (reusedUrl) {
+            boxArtPlaceholderImg.src = reusedUrl;
+          }
           var boxArtPromise = new Promise(function(resolveBoxArt) {
             boxArtJobs.push(function() {
               // Nothing more loads for a grid that was built again or once a stream starts (its downloads were dropped)
               if (isBoxArtStale() || isInGame === true) {
+                resolveBoxArt();
+                return;
+              }
+              // Box art that shows again only gets its Smart Hub Preview, whose file may be missing, e.g. when the grid
+              // that read the box art was built again before the preview was made (NvHTTP.queueBoxArtPreview() in utils.js)
+              if (reusedUrl) {
+                pointPreviewAt(reusedUrl);
+                // (its Blob is gone once Refresh apps freed the URL meanwhile)
+                var reusedBlob = boxArtBlob(reusedUrl);
+                if (_isSmartHubSupported && appEntry && reusedBlob && typeof host.queueBoxArtPreview === 'function') {
+                  host.queueBoxArtPreview(app.id, reusedBlob, isBoxArtStale);
+                }
                 resolveBoxArt();
                 return;
               }
@@ -3969,25 +4030,10 @@ function showApps(host) {
                   resolveBoxArt();
                   return;
                 }
-                appGridBoxArtUrls.push(resolvedPromise);
+                // Kept for the next grid of this host (isReusableBoxArt())
+                rememberAppGridBoxArt(app.id, resolvedPromise);
                 boxArtPlaceholderImg.src = resolvedPromise;
-                // The resolvedPromise is now an object URL of the box art (or a data URL where object URLs are missing).
-                if (_isSmartHubSupported && _previewApps[host.serverUid] && appEntry) {
-                  var previewPlace = getPreviewLocation();
-
-                  // Use deterministic filename so the local HTTP server route stays stable
-                  var filename = SMART_HUB_PREVIEW_FILE_PREFIX + app.id + '.jpg';
-                  var cacheBuster = '?v=' + Date.now();
-
-                  // Determine local path from resolvedPromise if it's a file URI
-                  if (resolvedPromise.startsWith('file://')) {
-                    var localPngPath = resolvedPromise.replace('file://', '');
-                    appEntry.txtPath = localPngPath;
-                  } else {
-                    appEntry.txtPath = previewPlace.documentsPath + '/' + filename;
-                  }
-                  appEntry.imageUri = 'http://' + previewPlace.tvIp + ':' + SMART_HUB_PREVIEW_PORT + '/' + filename + cacheBuster;
-                }
+                pointPreviewAt(resolvedPromise);
                 resolveBoxArt();
               }, function(failedPromise) {
                 // A download that was dropped (the grid was built again, or a stream starts) is no error
@@ -4000,7 +4046,6 @@ function showApps(host) {
             });
           });
 
-          boxArtPlaceholderImg.onload = e => boxArtPlaceholderImg.classList.add('fade-in');
           // An image that refuses the object URL of the box art gets a data URL of it instead, once (boxArtDataUrl() in
           // utils.js), so that a TV without object URLs for images still shows the box art
           boxArtPlaceholderImg.onerror = function() {
@@ -4067,8 +4112,13 @@ function showApps(host) {
         setTimeout(loadNextBoxArt, 0);
 
         Promise.all(settledPromises).then(function() {
-          // Resume background polling now that all box art downloads are complete
-          beginBackgroundPollingOfHost(host);
+          // Resume background polling now that all box art downloads are complete, but not during a stream or its start
+          // (showStreamMode() stopped it, and the app list after the stream resumes it), where its first request went out
+          // between the launch request and the start of the stream, nor for a grid that was built again, whose own build
+          // resumes it
+          if (isInGame !== true && !isBoxArtStale()) {
+            beginBackgroundPollingOfHost(host);
+          }
 
           // Wait for all Smart Hub Preview JPEGs to finish encoding and saving to disk
           // before sending the updated data to the background service.
@@ -4089,10 +4139,16 @@ function showApps(host) {
         var errorAppListImg = new Image();
         errorAppListImg.src = 'static/res/applist_error.svg';
         $('#game-grid').html(errorAppListImg);
-        snackbarLogLong('Unable to retrieve your list of apps at this time. Please refresh the list of apps or try again later!');
 
         // Navigate to the Apps view
         showAppsMode();
+        // The illustration of the failed list gets the selection, so that the top of the screen says why no apps show
+        // (showApp() in launcher.js): the callers give the selection to the grid only once a list showed. Not under a
+        // dialog, whose close hands the selection back to the view below.
+        if (!isDialogOpen && (Navigation.isCurrent(Views.Apps) || Navigation.isCurrent(Views.AppsNav))) {
+          Navigation.switch();
+          Navigation.change(Views.Apps);
+        }
         reject(failedAppList);
       });
     }, abortedScan ? SCAN_ABORT_PAUSE_MS : 0);
@@ -4106,13 +4162,23 @@ function quitAppDialog() {
     snackbarLog('No app is currently running.');
     return;
   } else {
-    api.getAppById(api.currentGame).then(function(currentGame) {
+    var host = api;
+    var wasShown = isAppListShownFor(host);
+    var ask = function(currentGame) {
+      // The question waits for the list only when the cache lacks the running app (findHostApp()); meanwhile the user
+      // may have left the app list, which the question then no longer fits
+      if (wasShown && !isAppListShownFor(host)) {
+        console.log('%c[index.js, quitAppDialog]', 'color: green;', 'Not asking to quit the running app of ' + host.hostname + ', since the app list no longer shows.');
+        return;
+      }
       // Find the existing overlay and dialog elements
       var quitAppOverlay = document.querySelector('#quitAppDialogOverlay');
       var quitAppDialog = document.querySelector('#quitAppDialog');
 
-      // Change the dialog text element to include the game title
-      document.getElementById('quitAppDialogText').innerHTML = t('Are you sure you want to quit %1$s? All unsaved data will be lost.', escapeHTML(currentGame.title));
+      // The running app by its title, or by the PC when the list of the PC doesn't have it (or can't be read)
+      document.getElementById('quitAppDialogText').innerHTML = currentGame ?
+        t('Are you sure you want to quit %1$s? All unsaved data will be lost.', escapeHTML(currentGame.title)) :
+        t('Are you sure you want to quit the app that is running on %1$s? All unsaved data will be lost.', escapeHTML(host.hostname));
       
       // Show the dialog and push the view
       quitAppOverlay.style.display = 'flex';
@@ -4139,12 +4205,111 @@ function quitAppDialog() {
         quitAppDialog.close();
         isDialogOpen = false;
         Navigation.pop();
-        stopGame(api, function() {
+        stopGame(host, function() {
           // After stopping the game, set the focus again, on the back button when the quit button is gone
           setTimeout(() => Navigation.switch(), 3000);
         });
       });
+    };
+    findHostApp(host, host.currentGame).then(ask, function(failed) {
+      console.error('%c[index.js, quitAppDialog]', 'color: green;', 'Error: Failed to read the app list of ' + host.hostname + ': ' + failed);
+      // The quit doesn't need the list: ask by the name of the PC
+      ask(null);
     });
+  }
+}
+
+// Whether the app list of host shows with nothing over it, e.g. still once a request that a question waited for ended
+function isAppListShownFor(host) {
+  return api === host && isInGame !== true && !isDialogOpen && $('#game-grid').is(':visible');
+}
+
+// The app with the ID appId in the app list of host, or null when the list doesn't have it. A list from the cache of the
+// host that lacks it is read once more from the host, since the app may be newer than the list that the TV read: an app
+// added or changed on the PC since (Sunshine gives an app a new ID when its name or image changes), or started from
+// another device. A list that was just read counts as it is (getAppList() reads it when the cache is empty, so the miss
+// is final then). Fails like getAppById() when the list can't be read.
+function findHostApp(host, appId) {
+  var isCached = !!host._memCachedApplist;
+  return host.getAppById(appId).then(function(app) {
+    if (app || !isCached || typeof host.getAppListWithCacheFlush !== 'function') {
+      return app;
+    }
+    console.log('%c[index.js, findHostApp]', 'color: green;', 'App ' + appId + ' is not in the app list that ' + host.hostname + ' sent before, reading the list again.');
+    return host.getAppListWithCacheFlush().then(function() {
+      return host.getAppById(appId);
+    });
+  });
+}
+
+// Close the audio output of the Web Audio backend that the key press of a start opened (startWebAudio() in startGame()),
+// for a start that ends without a stream and without leaveStreamView() (messages.js), whose removeStreamView() closes it
+// itself. A no-op with the other backends and when nothing is open (stopAudioScheduler() in audio.js).
+function closeStartAudio() {
+  if (isWebAudioBackendSelected() && typeof stopAudioScheduler === 'function') {
+    stopAudioScheduler();
+  }
+}
+
+// Read the app list of a PC anew, with its box art (Refresh apps in its menu, hostMenuDialog()), and say how it went:
+// the number of apps it lists, or that the list couldn't be read. The box art files of the PC are deleted
+// (clearBoxArt() in utils.js), so its next app list downloads them again, and the box art of its grid that the app
+// still holds goes as well (releaseAppGridBoxArt()).
+function refreshHostApps(host) {
+  snackbarLog('Refreshing the list of %1$s applications...', host.hostname);
+  if (appGridBoxArt.serverUid === host.serverUid) {
+    releaseAppGridBoxArt(null);
+  }
+  Promise.resolve().then(function() {
+    return host.clearBoxArt();
+  }).catch(function(error) {
+    console.warn('%c[index.js, refreshHostApps]', 'color: green;', 'Warning: Failed to clear the box art of ' + host.hostname + ': ' + error);
+  });
+  host.getAppListWithCacheFlush().then(function(appList) {
+    snackbarLog('The app list of %1$s is up to date: %2$s.', host.hostname, _n('%1$s app', '%1$s apps', appList.length));
+  }, function(failed) {
+    console.error('%c[index.js, refreshHostApps]', 'color: green;', 'Error: Failed to read the app list of ' + host.hostname + ': ' + failed);
+    snackbarLogLong('Unable to retrieve your list of apps at this time. Please refresh the list of apps or try again later!');
+  });
+}
+
+// Whether box art can show again in a grid of its host built later: an object URL of its Blob (makeBoxArtUrl() in
+// utils.js), but not Sunshine's default box art, which is read again each time to see whether the app got box art
+// meanwhile (NvHTTP.getBoxArt()), and not a data URL of a browser without object URLs
+function isReusableBoxArt(url) {
+  var blob = typeof boxArtBlob === 'function' ? boxArtBlob(url) : null;
+  return !!blob && blob.size !== SUNSHINE_DEFAULT_BOX_ART_SIZE;
+}
+
+// Remember the box art URL of an app of the grid, freeing an earlier one of the same app
+function rememberAppGridBoxArt(appId, url) {
+  var old = appGridBoxArt.urls[appId];
+  if (old && old !== url && typeof releaseBoxArtUrl === 'function') {
+    releaseBoxArtUrl(old);
+  }
+  appGridBoxArt.urls[appId] = url;
+}
+
+// Free the box art of the grid for which isGone(url, appId) says so, or all of it without isGone (releaseBoxArtUrl() in
+// utils.js, which leaves URLs alone that aren't its object URLs)
+function releaseAppGridBoxArt(isGone) {
+  Object.keys(appGridBoxArt.urls).forEach(function(appId) {
+    var url = appGridBoxArt.urls[appId];
+    if (!isGone || isGone(url, appId)) {
+      delete appGridBoxArt.urls[appId];
+      if (typeof releaseBoxArtUrl === 'function') {
+        releaseBoxArtUrl(url);
+      }
+    }
+  });
+}
+
+// Free the box art of the app grid when it belongs to the PC with serverUid, or to any PC for null, e.g. once the PC was
+// deleted, so that no Blob of a deleted PC stays in memory
+function forgetAppGridBoxArtOf(serverUid) {
+  if (serverUid === null || appGridBoxArt.serverUid === serverUid) {
+    releaseAppGridBoxArt(null);
+    appGridBoxArt.serverUid = null;
   }
 }
 
@@ -4165,6 +4330,9 @@ function showStreamMode() {
   }
 
   isInGame = true;
+  // No host is polled during a stream (pollServer() in utils.js asks nothing while isInGame, but its loop went on and
+  // redrew the card of the host every 5 seconds); the app list or the PC list after the stream starts it again
+  stopPollingHosts();
   fullscreenWasmModule();
   handleOnScreenOverlays();
   Navigation.stop();
@@ -4270,6 +4438,7 @@ function endLaunchWithAnswer(host, statusCode, statusMessage) {
   var kind = classifyLaunchAnswer(statusCode, statusMessage);
   console.warn('%c[index.js, endLaunchWithAnswer]', 'color: green;', 'Warning: The host answered the launch with ' + statusCode + ' (' + statusMessage + '), taken as ' + kind + '.');
   stopHeartbeatOfFailedStart('the host answered the launch with ' + statusCode);
+  closeStartAudio();
   var backToApps = function() {
     showApps(host).then(() => {
       // Scroll to the current game row
@@ -4279,7 +4448,7 @@ function endLaunchWithAnswer(host, statusCode, statusMessage) {
       if (kind === 'permission') {
         hostPermissionDialog(host, statusMessage);
       }
-    });
+    }, logFailedAppList);
   };
   if (kind === 'notice') {
     // 'App terminated.' after the Terminate tile; the other notices tell what to do, e.g. to launch the app again
@@ -4517,9 +4686,7 @@ function startGame(host, appID, restartKind, restartChange) {
       return;
     }
     snackbarLogLong('Unable to retrieve your list of apps at this time. Please refresh the list of apps or try again later!');
-    if (isWebAudioBackendSelected() && typeof stopAudioScheduler === 'function') {
-      stopAudioScheduler();
-    }
+    closeStartAudio();
   };
 
   // Refresh the server info, because the user might have quit the game
@@ -4530,11 +4697,23 @@ function startGame(host, appID, restartKind, restartChange) {
       if (launchId !== streamLaunchId) {
         return;
       }
+      // The tile of an app that the PC no longer lists (its list was read again meanwhile, e.g. by the 10th poll or by
+      // findHostApp()), where OK threw before 2.3.3: the grid is built again from the list. A start once more ends below.
+      if (!appToStart && !isRestart) {
+        console.warn('%c[index.js, startGame]', 'color: green;', 'Warning: App ' + appID + ' is no longer in the app list of ' + host.hostname + '.');
+        closeStartAudio();
+        snackbarLogLong('The selected app is no longer available on this PC. Showing the current app list.');
+        showApps(host).then(function() {
+          Navigation.switch();
+          Navigation.change(Views.Apps);
+        }, logFailedAppList);
+        return;
+      }
       // The 'Permission Denied' tile of Apollo or Vibepollo is never started
       if (isHostPermissionTile(appToStart)) {
         console.warn('%c[index.js, startGame]', 'color: green;', 'Warning: Not starting the Permission Denied tile of ' + host.hostname + '.');
-        if (!isRestart && isWebAudioBackendSelected() && typeof stopAudioScheduler === 'function') {
-          stopAudioScheduler();
+        if (!isRestart) {
+          closeStartAudio();
         }
         hostPermissionDialog(host, '');
         return;
@@ -4548,13 +4727,25 @@ function startGame(host, appID, restartKind, restartChange) {
         return;
       }
       if (host.currentGame != 0 && host.currentGame != appID && !isHostTerminateTile(appToStart)) {
-        host.getAppById(host.currentGame).then(function(currentApp) {
+        var wasShown = isAppListShownFor(host);
+        var askToQuit = function(currentApp) {
+          // The question waits for the list only when the cache lacks the running app (findHostApp()); meanwhile the
+          // user may have started something else or left the app list, which the question then no longer fits
+          if (launchId !== streamLaunchId || (wasShown && !isAppListShownFor(host))) {
+            console.log('%c[index.js, startGame]', 'color: green;', 'Not asking to quit the running app of ' + host.hostname + ', since the app list no longer shows.');
+            if (launchId === streamLaunchId) {
+              closeStartAudio();
+            }
+            return;
+          }
           // Find the existing overlay and dialog elements
           var quitAppOverlay = document.querySelector('#quitAppDialogOverlay');
           var quitAppDialog = document.querySelector('#quitAppDialog');
 
-          // Change the dialog text element to include the game title
-          document.getElementById('quitAppDialogText').innerHTML = t('%1$s is already running. Would you like to quit it and start %2$s?', escapeHTML(currentApp.title), escapeHTML(appToStart.title));
+          // The running app by its title, or by the PC when the list of the PC doesn't have it (or can't be read)
+          document.getElementById('quitAppDialogText').innerHTML = currentApp ?
+            t('%1$s is already running. Would you like to quit it and start %2$s?', escapeHTML(currentApp.title), escapeHTML(appToStart.title)) :
+            t('Another app is running on %1$s. Would you like to quit it and start %2$s?', escapeHTML(host.hostname), escapeHTML(appToStart.title));
 
           // Show the dialog and push the view
           quitAppOverlay.style.display = 'flex';
@@ -4570,12 +4761,15 @@ function startGame(host, appID, restartKind, restartChange) {
             quitAppDialog.close();
             isDialogOpen = false;
             Navigation.pop();
+            closeStartAudio();
           });
 
           // Quit the running app if the Continue button is pressed
           $('#continueQuitApp').off('click');
           $('#continueQuitApp').on('click', function() {
             console.log('%c[index.js, startGame]', 'color: green;', 'Quitting game, closing app dialog, and returning.');
+            // The start after the quit opens its own audio output
+            closeStartAudio();
             stopGame(host, function(quitSucceeded) {
               setTimeout(() => {
                 // Scroll to the current game row
@@ -4596,10 +4790,11 @@ function startGame(host, appID, restartKind, restartChange) {
           });
 
           return;
-        }, function(failedCurrentApp) {
+        };
+        findHostApp(host, host.currentGame).then(askToQuit, function(failedCurrentApp) {
           console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to get the current running app from ' + host.hostname + '\n Returned error was: ' + failedCurrentApp + '!', '\n Host object: ' + '\n', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
-          endWithoutAppList();
-          return;
+          // The quit doesn't need the list: ask by the name of the PC
+          askToQuit(null);
         });
         return;
       }
@@ -4805,13 +5000,16 @@ function startGame(host, appID, restartKind, restartChange) {
             }
             console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to resume app with id: ' + appID + '\n Returned error was: ' + failedResumeApp + '!');
             stopHeartbeatOfFailedStart('the resume request failed');
+            if (!isRestart) {
+              closeStartAudio();
+            }
             snackbarLog('Failed to resume %1$s', appToStart.title);
             showApps(host).then(() => {
               // Scroll to the current game row
               Navigation.switch();
               // Switch to Apps view
               Navigation.change(Views.Apps);
-            });
+            }, logFailedAppList);
             return;
           });
         }
@@ -4897,13 +5095,16 @@ function startGame(host, appID, restartKind, restartChange) {
           }
           console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to launch app with id: ' + appID + '\n Returned error was: ' + failedLaunchApp + '!');
           stopHeartbeatOfFailedStart('the launch request failed');
+          if (!isRestart) {
+            closeStartAudio();
+          }
           snackbarLog('Failed to launch %1$s', appToStart.title);
           showApps(host).then(() => {
             // Scroll to the current game row
             Navigation.switch();
             // Switch to Apps view
             Navigation.change(Views.Apps);
-          });
+          }, logFailedAppList);
           return;
         });
       });
@@ -4930,10 +5131,14 @@ function startGame(host, appID, restartKind, restartChange) {
       snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', host.hostname || t('the PC'));
     }
     // Close the audio scheduler that the key press opened for this start, which would otherwise keep running in the menus
-    if (isWebAudioBackendSelected() && typeof stopAudioScheduler === 'function') {
-      stopAudioScheduler();
-    }
+    closeStartAudio();
   });
+}
+
+// Log an app list that failed to show (showApps() shows the failure on the screen itself), instead of leaving the
+// rejection unhandled
+function logFailedAppList(failedAppList) {
+  console.warn('%c[index.js, showApps]', 'color: green;', 'Warning: The app list failed to show: ' + failedAppList);
 }
 
 // How long a stream that ended at its start waits before it starts once more (retryStreamStart()), so that the failed
@@ -5274,25 +5479,37 @@ function stopGame(host, callbackFunction) {
   }
 
   // Show the app list once the quit is over, also when it couldn't start (the quit after a stream that the Stream Menu
-  // ended waits for it on the loading screen), and pass to the callback whether the app is quit
+  // ended waits for it on the loading screen), and pass to the callback whether the app is quit. A list that fails shows
+  // why itself; its rejection is only logged (finally() alone passed it on, unhandled).
   var showAppsAfterQuit = function(quitSucceeded) {
-    showApps(host).finally(() => {
+    showApps(host).catch(logFailedAppList).finally(() => {
       if (typeof(callbackFunction) === "function") callbackFunction(quitSucceeded);
     });
   };
 
   host.refreshServerInfo().then(function(ret) {
-    host.getAppById(host.currentGame).then(function(runningApp) {
-      if (!runningApp) {
-        snackbarLog('No app is currently running.');
-        showAppsAfterQuit(true);
-        return;
+    // Nothing runs on the PC (any more), e.g. the app was quit there meanwhile
+    if (!host.currentGame || host.currentGame == 0) {
+      snackbarLog('No app is currently running.');
+      showAppsAfterQuit(true);
+      return;
+    }
+    // The app that runs is quit also when the app list doesn't have it or can't be read (findHostApp()): /cancel quits
+    // whatever runs on the PC, and the title only names it in the messages
+    var quit = function(runningApp) {
+      var appTitle = runningApp ? runningApp.title : '';
+      if (appTitle) {
+        snackbarLog('Quitting %1$s...', appTitle);
+      } else {
+        snackbarLog('Quitting the app on %1$s...', host.hostname);
       }
-      var appTitle = runningApp.title;
-      snackbarLog('Quitting %1$s...', appTitle);
       // quitApp() refreshes the server info once the host answered and fails while the host still runs the app
       host.quitApp().then(function(ret2) {
-        snackbarLog('Successfully quit %1$s', appTitle);
+        if (appTitle) {
+          snackbarLog('Successfully quit %1$s', appTitle);
+        } else {
+          snackbarLog('Successfully quit the app on %1$s', host.hostname);
+        }
         // Refresh to show no app is currently running
         showAppsAfterQuit(true);
       }, function(failedQuitApp) {
@@ -5301,17 +5518,24 @@ function stopGame(host, callbackFunction) {
           // The refresh after /cancel: the PC no longer accepts this TV
           snackbarHostRefusedTv(host);
         } else if (failedQuitApp === QUIT_APP_STILL_RUNNING_ERROR) {
-          snackbarLogLong('%1$s is still running on %2$s, probably because another device started it. Quit it on that device or on the PC.', appTitle, host.hostname);
-        } else {
+          if (appTitle) {
+            snackbarLogLong('%1$s is still running on %2$s, probably because another device started it. Quit it on that device or on the PC.', appTitle, host.hostname);
+          } else {
+            snackbarLogLong('The app is still running on %1$s, probably because another device started it. Quit it on that device or on the PC.', host.hostname);
+          }
+        } else if (appTitle) {
           snackbarLogLong('Unable to quit %1$s. Check the connection to %2$s and try again.', appTitle, host.hostname);
+        } else {
+          snackbarLogLong('Unable to quit the app. Check the connection to %1$s and try again.', host.hostname);
         }
         // Refresh to show the app that still runs
         showAppsAfterQuit(false);
       });
-    }, function(failedGetApp) {
+    };
+    findHostApp(host, host.currentGame).then(quit, function(failedGetApp) {
       console.error('%c[index.js, stopGame]', 'color: green;', 'Error: Failed to get app ID! Returned error was: ' + failedGetApp + '!');
-      snackbarLogLong('Unable to quit the app. Check the connection to %1$s and try again.', host.hostname);
-      showAppsAfterQuit(false);
+      // The quit doesn't need the list: it names the PC instead of the app
+      quit(null);
     });
   }, function(failedRefreshInfo) {
     console.error('%c[index.js, stopGame]', 'color: green;', 'Error: Failed to refresh server info! Returned error was: ' + failedRefreshInfo + '!');

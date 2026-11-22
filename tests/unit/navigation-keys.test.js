@@ -12,7 +12,7 @@ const path = require('path');
 const { REPO_ROOT } = require('../lib/dev-modules');
 const { INDEX_SCRIPTS, loadPlatformScripts, plain } = require('./helpers/platform-loader');
 
-const NAVIGATION_API = ['up', 'down', 'left', 'right', 'accept', 'back', 'press', 'switch', 'push', 'change', 'pop', 'start', 'stop', 'guardAccept'];
+const NAVIGATION_API = ['up', 'down', 'left', 'right', 'accept', 'back', 'press', 'switch', 'push', 'change', 'pop', 'isCurrent', 'start', 'stop', 'guardAccept'];
 
 // Navigation stub that records the operations the key handler runs
 function createNavigationRecorder() {

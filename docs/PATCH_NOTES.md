@@ -37,6 +37,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 - A PC that no longer accepts the TV (e.g. after *Unpair All* in Sunshine) shows *Unpaired*, and OK pairs it again
 - Pairing also works while the PC runs a game
 - A PC that answers with a different key than at its pairing gets its own message instead of *Offline* advice
+- After a stream the box art of the same PC shows at once, and *Refresh apps* says how many apps the PC lists
 
 ### Fixed
 
@@ -45,6 +46,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 - A mouse click no longer reaches the PC before the movement right before it
 - A pairing that the PC didn't confirm no longer says that it succeeded
 - A failed check of a PC is no longer sent twice, and a PC with a 4096-bit RSA or an ECDSA certificate pairs
+- OK and *Quit app on the PC* work for a running app the TV's list lacks; an empty or failed app list says why
 
 ## 2.3.2
 

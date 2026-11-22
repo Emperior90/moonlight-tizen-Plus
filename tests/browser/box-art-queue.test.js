@@ -7,7 +7,9 @@
 // one that runs, so that its launch request is next. The host is a real NvHTTP object whose HTTP requests the stub of
 // the module records and the test answers. tests/unit/box-art-queue.test.js checks the queue on its own.
 // Since 2.3.1 a box art download has a time limit (BOX_ART_TIMEOUT_MS in utils.js, 30 seconds): one that the host never
-// answers ends with the placeholder of a failed box art, and the downloads behind it run.
+// answers ends with the placeholder of a failed box art, and the downloads behind it run. Since 2.3.3 no host is polled
+// during a stream or its start (stopPollingHosts() in showStreamMode(), and the polling that the box art of the app grid
+// resumes once it settled waits for the app list after the stream).
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -84,6 +86,50 @@ test('a stream that starts drops every box art download, also the one that runs,
     assert.deepEqual((await httpState(page)).sent, ['boxart 1', '/launch']);
     assert.ok(app.logs.some((line) => line.indexOf('Dropped the box art download of app ID 6.') >= 0));
     assert.ok(!app.logs.some((line) => /Failed to retrieve (original )?box art/.test(line)), 'a dropped download is no error');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('no host is polled during a stream or its start, and the app list after the stream polls its host again', async () => {
+  const app = await openColdAppList();
+  const { page } = app;
+  try {
+    // The host polls in the background (as after an earlier app list), and every start of its polling is recorded
+    await page.evaluate(() => {
+      hosts.HOST1 = window.__host;
+      beginBackgroundPollingOfHost(window.__host);
+      window.__polls = [];
+      const begin = beginBackgroundPollingOfHost;
+      beginBackgroundPollingOfHost = function(host) {
+        window.__polls.push({ uid: host.serverUid, isInGame: isInGame });
+        return begin.apply(this, arguments);
+      };
+    });
+    await page.waitForFunction(() => window.__http.length === 1);
+    assert.deepEqual(await page.evaluate(() => Object.keys(activePolls)), ['HOST1']);
+    // OK on App 3 while the box art still loads: the dropped downloads settle the box art of the grid at once, whose
+    // polling doesn't start during the start (before 2.3.3 its first request went out before the start of the stream)
+    await page.evaluate(() => startGame(window.__host, 3));
+    await page.waitForFunction(() => window.__http.length === 2, null, { timeout: 3000 });
+    await page.evaluate(() => window.__answer('/launch', '<root status_code="200" status_message="OK"><sessionUrl0>rtsp://10.0.0.2:48010</sessionUrl0></root>'));
+    await page.waitForFunction(() => window.__startStreamArgs !== null, null, { timeout: 3000 });
+    await page.waitForTimeout(300);
+    assert.deepEqual(await page.evaluate(() => ({ polls: window.__polls.splice(0), activePolls: Object.keys(activePolls), isInGame })),
+      { polls: [], activePolls: [], isInGame: true });
+    // The stream ends: the app list shows again, and once its box art settled (here: each download fails) its host is
+    // polled again
+    await page.evaluate(() => {
+      setInterval(() => window.__http.filter((entry) => entry.what.indexOf('boxart') === 0 && !entry.answered).forEach((entry) => {
+        entry.answered = true;
+        handlePromiseMessage(entry.id, 'reject', -1);
+      }), 50);
+      handleMessage('streamTerminated: 0');
+    });
+    await page.waitForFunction(() => window.__polls.length > 0, null, { timeout: 8000 });
+    assert.deepEqual(await page.evaluate(() => ({ polls: window.__polls, activePolls: Object.keys(activePolls), view: document.body.getAttribute('data-view') })),
+      { polls: [{ uid: 'HOST1', isInGame: false }], activePolls: ['HOST1'], view: 'apps' });
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

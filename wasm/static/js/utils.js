@@ -992,7 +992,9 @@ NvHTTP.prototype = {
       // Poll for the app list every 10 successful server info polls
       // Not including the first one to avoid PCs taking a while to show as online initially
       if (this.paired && this._pollCount++ % 10 === 1) {
-        this.getAppListWithCacheFlush();
+        this.getAppListWithCacheFlush().catch(function(error) {
+          console.warn('%c[utils.js, pollServer]', 'color: gray;', 'Warning: Failed to read the app list of ' + this.hostname + ': ' + error);
+        }.bind(this));
       }
 
       this._consecutivePollFailures = 0;
@@ -1284,9 +1286,8 @@ NvHTTP.prototype = {
       $root = $xml.find('root');
 
       if ($root.attr('status_code') != 200) {
-        // TODO: Bubble up an error here
         console.error('%c[utils.js, getAppListWithCacheFlush]', 'color: gray;', 'Error: Failed to request app list: ', $root.attr('status_code'));
-        return [];
+        return Promise.reject('The app list was answered with status ' + $root.attr('status_code'));
       }
 
       var rootElement = $xml.find('root')[0];
@@ -1344,24 +1345,6 @@ NvHTTP.prototype = {
 
       var self = this;
 
-      // Queue the optimized JPEG preview of the box art. The original PNG box art is returned right away without
-      // waiting for it; showApps() in index.js waits for window.previewPromises before it hands the previews to the
-      // Smart Hub service.
-      var queuePreview = function(blob, origin) {
-        var previewPromise = queuePreviewImage(function() {
-          return self.generatePreviewImage(blob, appId).then(function(previewBytes) {
-            return previewBytes ? self.savePreviewImage(appId, previewBytes) : false;
-          });
-        }, isStale).catch(function(error) {
-          console.warn('%c[utils.js, getBoxArt]', 'color: gray;', 'Warning: Failed to generate Smart Hub Preview box art from ' + origin + ' for app ID ' + appId + ': ' + error);
-        });
-
-        if (!window.previewPromises) {
-          window.previewPromises = [];
-        }
-        window.previewPromises.push(previewPromise);
-      };
-
       var fetchBoxArt = function() {
         // Fetch the new box art from the network
         boxArtDownloads.run(function() {
@@ -1393,7 +1376,7 @@ NvHTTP.prototype = {
 
           // Make the optimized JPEG preview box art from network later, when Smart Hub Preview is supported
           if (isSmartHubSupported) {
-            queuePreview(blob, 'network');
+            self._queueBoxArtPreview(blob, appId, 'network', isStale);
           }
           makeBoxArtUrl(blob).then(resolve);
         }, function(error) {
@@ -1426,22 +1409,7 @@ NvHTTP.prototype = {
           console.log('%c[utils.js, getBoxArt]', 'color: gray;', 'Returning storage-cached box art: ', appId);
 
           if (isSmartHubSupported) {
-            // Check whether an optimized Smart Hub Preview has already been cached
-            var previewFilePath = 'documents/' + previewFileName;
-            var previewExists = false;
-            try {
-              // Open the cached preview file to check whether it already exists
-              var previewFileHandle = tizen.filesystem.openFile(previewFilePath, 'r');
-              previewFileHandle.close();
-              previewExists = true;
-              console.log('%c[utils.js, getBoxArt]', 'color: gray;', 'Smart Hub Preview box art file already cached: ' + previewFileName);
-            } catch (previewReadError) {
-              // The preview box art file does not exist, so generate it from the original box art
-              console.log('%c[utils.js, getBoxArt]', 'color: gray;', 'Smart Hub Preview box art file not found, generating: ' + previewFileName);
-            }
-            if (!previewExists) {
-              queuePreview(typedBlob, 'storage');
-            }
+            self.queueBoxArtPreview(appId, typedBlob, isStale);
           }
           makeBoxArtUrl(typedBlob).then(resolve);
         };
@@ -1487,6 +1455,46 @@ NvHTTP.prototype = {
         fetchBoxArt();
       }
     }.bind(this));
+  },
+
+  // Queue the optimized JPEG preview of the box art of an app for Smart Hub Preview, made later, one at a time while the
+  // TV is idle (queuePreviewImage()), and not at all once isStale() says that the box art is no longer wanted. The box art
+  // shows right away without waiting for it; showApps() in index.js waits for window.previewPromises before it hands the
+  // previews to the Smart Hub service. origin only names where the box art came from in the log.
+  _queueBoxArtPreview: function(blob, appId, origin, isStale) {
+    var self = this;
+    var previewPromise = queuePreviewImage(function() {
+      return self.generatePreviewImage(blob, appId).then(function(previewBytes) {
+        return previewBytes ? self.savePreviewImage(appId, previewBytes) : false;
+      });
+    }, isStale).catch(function(error) {
+      console.warn('%c[utils.js, getBoxArt]', 'color: gray;', 'Warning: Failed to generate Smart Hub Preview box art from ' + origin + ' for app ID ' + appId + ': ' + error);
+    });
+
+    if (!window.previewPromises) {
+      window.previewPromises = [];
+    }
+    window.previewPromises.push(previewPromise);
+  },
+
+  // Queue the Smart Hub Preview of box art that the TV already has (_queueBoxArtPreview()), unless its file is in the
+  // public documents directory already: for box art from the storage of the TV (getBoxArt()), and for box art that the
+  // app grid shows again without getBoxArt() (showApps() in index.js), whose preview may have been skipped for a grid
+  // that was built again meanwhile. Returns whether it was queued.
+  queueBoxArtPreview: function(appId, blob, isStale) {
+    var previewFileName = SMART_HUB_PREVIEW_FILE_PREFIX + appId + '.jpg';
+    try {
+      // Open the cached preview file to check whether it already exists
+      var previewFileHandle = tizen.filesystem.openFile('documents/' + previewFileName, 'r');
+      previewFileHandle.close();
+      console.log('%c[utils.js, getBoxArt]', 'color: gray;', 'Smart Hub Preview box art file already cached: ' + previewFileName);
+      return false;
+    } catch (previewReadError) {
+      // The preview box art file does not exist, so generate it from the original box art
+      console.log('%c[utils.js, getBoxArt]', 'color: gray;', 'Smart Hub Preview box art file not found, generating: ' + previewFileName);
+    }
+    this._queueBoxArtPreview(blob, appId, 'storage', isStale);
+    return true;
   },
 
   // Clears cached box art and preview images from local storage.

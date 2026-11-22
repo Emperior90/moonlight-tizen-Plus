@@ -1057,3 +1057,42 @@ test('the guide describes the trust of a PC of 2.3.3 as the code does it', () =>
   assert.match(read('wasm/platform/launcher.js'), /const keyMismatch = state === 'offline' && host\.pinnedKeyMismatch === true;/);
   assert.match(read('libgamestream/pairing.c'), /#define PAIRING_SIGNATURE_MAX_BYTES 512/);
 });
+
+test('the guide describes the app list of 2.3.3 as the code does it', () => {
+  const index = read('wasm/platform/index.js');
+  const utils = read('wasm/static/js/utils.js');
+  const english = JSON.parse(read('wasm/static/locales/en-US.json'));
+  // A running app that the list doesn't have: the list is read once more, the questions name the PC, the quit goes out
+  assert.ok(GUIDE.indexOf('When the PC runs an app that the list doesn\'t show, e.g. one added on the PC since, the app reads the list once more; ' +
+    'an app that still isn\'t there is called *the app that is running on GAMING-PC* in the questions, and *Quit app on the PC* quits it as well') > 0);
+  assert.match(index, /function findHostApp\(host, appId\) \{\s+var isCached = !!host\._memCachedApplist;/);
+  assert.ok(english['Are you sure you want to quit the app that is running on %1$s? All unsaved data will be lost.']);
+  assert.ok(english['Another app is running on %1$s. Would you like to quit it and start %2$s?']);
+  assert.match(index, /findHostApp\(host, host\.currentGame\)\.then\(quit, function\(failedGetApp\) \{[\s\S]{0,300}quit\(null\);/);
+  // Refresh apps: only for a paired PC that is online, and it says how it went
+  assert.ok(GUIDE.indexOf('*Refresh apps* (for a paired PC that is online; it then says how many apps the PC lists, or that the list couldn\'t be read)') > 0);
+  assert.match(index, /function refreshHostApps\(host\) \{/);
+  assert.match(index, /id: 'refreshApps-' \+ host\.hostname,[\s\S]{0,120}shown: host\.online === true && host\.paired === true,/);
+  assert.ok(english['The app list of %1$s is up to date: %2$s.']);
+  // An error answer of the PC is a list that couldn't be read, not an empty list
+  assert.equal(utils.indexOf('// TODO: Bubble up an error here'), -1);
+  assert.match(utils, /return Promise\.reject\('The app list was answered with status ' \+ \$root\.attr\('status_code'\)\);/);
+  // The box art of the same PC shows at once; no PC is polled during a stream
+  assert.ok(GUIDE.indexOf('When you return to the same PC, e.g. after a stream, its box art shows at once instead of loading again (since 2.3.3).') > 0);
+  assert.match(index, /var appGridBoxArt = \{ serverUid: null, urls: \{\} \};/);
+  const showStreamMode = index.slice(index.indexOf('function showStreamMode() {'), index.indexOf('\n}\n', index.indexOf('function showStreamMode() {')));
+  assert.match(showStreamMode, /isInGame = true;[\s\S]{0,300}stopPollingHosts\(\);/);
+  // An empty list or one that couldn't be read says why at the top; the hint of the app options only with apps
+  assert.ok(GUIDE.indexOf('A PC without apps shows *No apps yet* with what to do, and a list that couldn\'t be read says so at the top of the screen; ' +
+    'the hint for the app options shows only while there are apps.') > 0);
+  assert.match(index, /\$\('#appMenuHint'\)\.toggle\(\$\('#game-grid \.game-container'\)\.length > 0\);/);
+  assert.match(index, /if \(!isDialogOpen && \(Navigation\.isCurrent\(Views\.Apps\) \|\| Navigation\.isCurrent\(Views\.AppsNav\)\)\) \{/);
+  // The start screen of an app without box art shows the gamepad of its tile
+  assert.ok(GUIDE.indexOf('**Start of a stream.** The box art of the app (the gamepad picture of a tile without box art)') === GUIDE.indexOf('**Start of a stream.**'));
+  const launcher = read('wasm/platform/launcher.js');
+  const prepareStart = launcher.slice(launcher.indexOf('prepareStart: function('), launcher.indexOf('refresh: function('));
+  assert.ok(prepareStart.indexOf("overlineKey ? 'static/res/placeholder_game.svg' : 'static/res/placeholder_error.svg'") > 0);
+  // The two new rows of the troubleshooting table
+  assert.ok(GUIDE.indexOf('| "The app is still running on …, probably because another device started it." | The same for an app that the app list doesn\'t show.') > 0);
+  assert.ok(GUIDE.indexOf('| "The selected app is no longer available on this PC. Showing the current app list." | The app was removed or renamed on the PC') > 0);
+});

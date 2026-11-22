@@ -84,6 +84,8 @@ test('texts that name a setting, a value or a menu entry use its German name', (
     // The header button that finds a PC again at a new address
     ['%1$s answers with a different key than at its pairing: another PC may have its address now, or Sunshine was set up anew on it. Try "Rescan network", and if that doesn\'t help, delete the PC and add it again.', 'Rescan network'],
     ['This PC answers with a different key than at its pairing. Try "Rescan network", or delete the PC and add it again.', 'Rescan network'],
+    // The entry of the menu of a PC that an empty app list points to
+    ['Add apps in Sunshine on the PC (Applications), then choose "Refresh apps" in the menu of this PC in the PC list.', 'Refresh apps'],
   ];
   references.forEach(([text, name]) => {
     const germanName = german[name].replace(/ \(%1\$s\)$/, '');

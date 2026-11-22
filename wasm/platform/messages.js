@@ -874,9 +874,8 @@ function leaveStreamView(host, quitApp) {
     });
     return;
   }
-  // Refresh the server info to update the current game and app list
-  host.refreshServerInfo().then(function(ret) {
-    // Return to the app list with new current game
+  // Show the app list, also once the refresh failed; a list that fails shows why itself (showApps() in index.js)
+  var backToApps = function() {
     showApps(host).then(() => {
       // Scroll to the current game row
       Navigation.switch();
@@ -884,8 +883,12 @@ function leaveStreamView(host, quitApp) {
       if (!window.isDialogOpen) {
         Navigation.change(Views.Apps);
       }
+    }, function(failedAppList) {
+      console.warn('%c[messages.js, leaveStreamView]', 'color: gray;', 'Warning: The app list failed to show: ' + failedAppList);
     });
-  }, function(failedRefreshInfo) {
+  };
+  // Refresh the server info to update the current game and app list
+  host.refreshServerInfo().then(backToApps, function(failedRefreshInfo) {
     console.error('%c[messages.js, leaveStreamView]', 'color: gray;', 'Error: Failed to refresh server info! Returned error was: ' + failedRefreshInfo + '!');
     // The PC no longer accepts this TV (HOST_REFUSED_TV_ERROR of utils.js), e.g. after "Unpair All" during the stream:
     // its app list can't be read, so the PC list shows, as leaveStreamViewToHosts() goes there, where the PC shows
@@ -901,14 +904,7 @@ function leaveStreamView(host, quitApp) {
       }
     }
     // Return to the app list anyway
-    showApps(host).then(() => {
-      // Scroll to the current game row
-      Navigation.switch();
-      // Switch to Apps view
-      if (!window.isDialogOpen) {
-        Navigation.change(Views.Apps);
-      }
-    });
+    backToApps();
   });
 }
 

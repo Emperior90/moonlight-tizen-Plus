@@ -5,8 +5,8 @@
 // instead of a data URL (and as a data URL once for an image that refuses the object URL), the object URLs are freed
 // with their grid, only a cached file of the size of Sunshine's default box art is hashed, the Smart Hub previews are
 // made one at a time when the TV is idle (none during a stream, none for an app list that was left, none after a
-// preview could not be saved), and the app list is sorted with one collator. tests/browser/app-list-load.test.js runs
-// the app grid with them.
+// preview could not be saved, and for box art that the grid shows again only when its file is missing), and the app list
+// is sorted with one collator. tests/browser/app-list-load.test.js runs the app grid with them.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -245,6 +245,35 @@ test('no preview is made during a stream, for an app list that was left, or afte
   assert.equal(await second, false);
   assert.ok(!made.includes('after a failed save'));
   assert.ok(refusing.platform.consoleMessages.some((entry) => /No more Smart Hub Preview box art is made until the app starts again/.test(entry.text)));
+});
+
+test('a Smart Hub preview of box art that shows again is queued only when its file is missing', async () => {
+  const utils = loadUtils({ files: { 'documents/preview-s90c-8.jpg': new Blob([new Uint8Array(10)]) } });
+  const made = [];
+  utils.host.generatePreviewImage = (blob, appId) => {
+    made.push([appId, blob.size]);
+    return Promise.resolve(new Uint8Array([255, 216, 255]));
+  };
+  utils.platform.context.previewPromises = [];
+  // The app grid shows the box art of app 7 again without getBoxArt() (showApps() in index.js): its preview is made
+  // from its Blob, once the TV is idle, since its file is missing
+  assert.equal(utils.host.queueBoxArtPreview(7, new Blob([new Uint8Array(1000)])), true);
+  assert.equal(utils.platform.get('previewPromises.length'), 1);
+  assert.deepEqual(made, []);
+  utils.runIdle();
+  await settle();
+  assert.deepEqual(made, [[7, 1000]]);
+  assert.deepEqual(plain(utils.calls.writes), [{ path: 'documents/preview-s90c-7.jpg', size: 3 }]);
+  // The preview of app 8 is there already: nothing is queued
+  assert.equal(utils.host.queueBoxArtPreview(8, new Blob([new Uint8Array(1000)])), false);
+  assert.equal(utils.platform.get('previewPromises.length'), 1);
+  assert.equal(utils.idle.length, 0);
+  // Nor is one for an app list that was left meanwhile
+  assert.equal(utils.host.queueBoxArtPreview(9, new Blob([new Uint8Array(1000)]), () => true), true);
+  await settle();
+  utils.runIdle();
+  await settle();
+  assert.deepEqual(made, [[7, 1000]]);
 });
 
 test('a preview is saved from its bytes, or from a data URL of it', () => {

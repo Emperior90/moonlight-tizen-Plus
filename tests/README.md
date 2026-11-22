@@ -35,7 +35,7 @@ npm run test:browser --prefix tests
 node --test tests/browser/video-defaults.test.js   # a single file
 ```
 
-Measured run times for 2.3.3 on a machine with 4 CPUs: the tools about 1 second, the unit tests about 30 seconds (923 tests), the native tests about 4 minutes (55 test programs with 426 tests, mostly compiling; measured without the headers of curl, so without `http_request_test`, which adds one program with 6 tests) and the browser tests about 11 minutes (570 tests, two files at a time), so `npm test` takes about 15 minutes. In CI the whole run of 2.1.0 took about 5 minutes. A single test file is the faster way while you work on one part.
+Measured run times for 2.3.3 on a machine with 4 CPUs: the tools about 1 second, the unit tests about 30 seconds (927 tests), the native tests about 4 minutes (55 test programs with 426 tests, mostly compiling; measured without the headers of curl, so without `http_request_test`, which adds one program with 6 tests) and the browser tests about 11 minutes (581 tests, two files at a time), so `npm test` takes about 15 minutes. In CI the whole run of 2.1.0 took about 5 minutes. A single test file is the faster way while you work on one part.
 
 ## Test files added in 2.3.3
 
@@ -43,6 +43,7 @@ Measured run times for 2.3.3 on a machine with 4 CPUs: the tools about 1 second,
 |---|---|
 | `browser/add-pc-success.test.js` | Adding and pairing a PC that succeed: Add PC and the PIN (one card, stored with its key, the polling over HTTPS, the same after a reload), a known PC that isn't paired, OK on a card that isn't paired, a wrong PIN first, and a PC that runs an app |
 | `browser/pc-trust.test.js` | A PC that no longer accepts the TV while its app list shows or during a stream: a start, *Quit app on the PC*, the end of a stream and *Shut down the PC* from the PC list |
+| `browser/running-app-unlisted.test.js` | A running app that the app list of the TV or of the PC lacks: the list read once more, the questions by the name of the PC, the quit (also when the list can't be read), a tile of an app that the PC no longer lists, and the Web Audio output after *No* |
 | `unit/pc-trust.test.js` | NvHTTP with a PC that refuses the TV (the 401 answer over HTTPS), a mismatch of the pinned key, a PC that accepts the TV again, the pairing after a refusal, and a pairing that the PC doesn't confirm |
 
 ## Test files added in 2.3.2
@@ -88,11 +89,11 @@ Measured run times for 2.3.3 on a machine with 4 CPUs: the tools about 1 second,
 | `unit/host-rfi.test.js` | The local patches of moonlight-common-c for reference frame invalidation |
 | `unit/frequent-messages.test.js` | No console line for the statistics and rumble messages, and the line about the app in the full statistics |
 | `unit/bitrate-texts.test.js` | The texts about the bitrate in every language |
-| `unit/scan-known-host.test.js`, `unit/server-info-fields.test.js`, `unit/box-art-dir.test.js`, `unit/app-list-entries.test.js` | What the app keeps of the answers of a PC: the scan of a paired PC, the fields of the server info, the box art directory, the entries of the app list |
+| `unit/scan-known-host.test.js`, `unit/server-info-fields.test.js`, `unit/box-art-dir.test.js`, `unit/app-list-entries.test.js` | What the app keeps of the answers of a PC: the scan of a paired PC, the fields of the server info, the box art directory, the entries of the app list and an error answer instead of a list |
 | `unit/idr-request-limit.test.js`, `unit/audio-lead.test.js` | The lock rules of the limit of the keyframe requests and of the measurement of the sound, and how both reach the session report |
 | `unit/audio-qos.test.js` | *Prioritize sound on Wi-Fi* from the switch through the start request to the SDP of moonlight-common-c |
 | `unit/pairing-device-name.test.js` | The device name of the pairing requests: from the model of the TV, ASCII, at most 64 bytes, URL-encoded, `roth` for GeForce Experience and without a model, and its way to the module |
-| `browser/settings-menus.test.js`, `browser/pc-list-menus.test.js`, `browser/add-pc-dialog.test.js` | The menus driven like a user: drop-downs, double presses, dialogs, the PC list and the Add PC dialog |
+| `browser/settings-menus.test.js`, `browser/pc-list-menus.test.js`, `browser/add-pc-dialog.test.js` | The menus driven like a user: drop-downs, double presses, dialogs, the PC list (also *Refresh apps* and its result) and the Add PC dialog |
 | `browser/navigation-speed.test.js` | How fast the selection follows the remote and the D-pad, with fixed limits; the speed of the app on a desktop machine, not of a TV |
 | `browser/web-audio-stereo.test.js`, `browser/surround-quality-default.test.js`, `browser/audio-overload.test.js` | Stereo with Web Audio, the default of *Surround audio quality* with its notice, and the overload message |
 | `browser/start-request-failure.test.js` | A start request that fails, also in the silent retry and the reconnect of the Stream Menu, and the uncaught errors in the diagnostic log |

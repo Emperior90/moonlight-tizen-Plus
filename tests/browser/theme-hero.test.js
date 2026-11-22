@@ -10,7 +10,9 @@
 // mouse pointer; it offers UP for the options of a host only where UP reaches them; the ambient light changes only once
 // the focus rests and covers the right part of the screen only; the tiles keep the top of portrait covers and ring the
 // focused card with a dark gap, so that the ring shows on light box art; and the tooltips of the header buttons lie above
-// the PC illustration.
+// the PC illustration. Since 2.3.3 an empty app list and one that can't be read select their illustration, whose top
+// says why (without a snackbar and without the hint of the app options), and the start screen of an app without box art
+// shows the gamepad of its tile.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -227,7 +229,8 @@ test('the hero of the apps screen keeps the last app while the focus is in the h
 });
 
 test('box art shows uncropped: portrait covers as a poster and landscape art as a banner, in the hero and on the start screen', async () => {
-  const app = await openAppList();
+  // One more app without box art (Z Game 10, ID 100)
+  const app = await openAppList(1);
   try {
     const look = (title) => focusApp(app.page, title).then(() => app.page.evaluate(() => {
       const poster = document.getElementById('hero-poster');
@@ -258,7 +261,7 @@ test('box art shows uncropped: portrait covers as a poster and landscape art as 
       const message = box(document.getElementById('loadingSpinnerMessage'));
       const info = box(document.querySelector('.launch-info'));
       const result = {
-        source: poster.getAttribute('src') === ($('#game-container-' + appId + ' img').attr('src') || 'static/res/placeholder_game.svg'),
+        source: poster.getAttribute('src') === ($('#game-container-' + appId + ' img').attr('src') || 'static/res/placeholder_error.svg'),
         wide: poster.classList.contains('is-wide'),
         ratio: Math.round(rect.width / rect.height * 100) / 100,
         art: Math.round(poster.naturalWidth / poster.naturalHeight * 100) / 100,
@@ -292,6 +295,111 @@ test('box art shows uncropped: portrait covers as a poster and landscape art as 
       document.getElementById('loadingSpinner').style.display = 'none';
       return result;
     }), [720, 2]);
+    // An app without box art (its tile shows the gamepad of placeholder_error.svg) shows the same gamepad on the start
+    // screen (since 2.3.3; the empty gradient of placeholder_game.svg before), and so does an app whose box art hasn't
+    // loaded yet. A session of the menu of a PC, which starts no game, keeps the plain poster.
+    const poster = (id, overlineKey) => app.page.evaluate(({ appId, key }) => {
+      Launcher.prepareStart(window.__host, appId, 'Z Game 10', key);
+      return document.getElementById('launch-poster').getAttribute('src');
+    }, { appId: id, key: overlineKey });
+    assert.equal(await app.page.evaluate(() => $('#game-container-100 img').attr('src')), 'static/res/placeholder_error.svg');
+    assert.equal(await poster(100), 'static/res/placeholder_error.svg');
+    assert.equal(await app.page.evaluate(() => {
+      $('#game-container-100 img').removeAttr('src');
+      Launcher.prepareStart(window.__host, 100, 'Z Game 10');
+      return document.getElementById('launch-poster').getAttribute('src');
+    }), 'static/res/placeholder_error.svg');
+    assert.equal(await poster(100, 'Shut down the PC'), 'static/res/placeholder_game.svg');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('an empty or a failed app list selects its illustration, whose top says why, without a snackbar and without the hint of the app options', async () => {
+  const app = await openApp(harness, { tv: TV });
+  try {
+    // Open the app list of a simulated PC whose list is `apps` (null: it can't be read), as OK on its card does
+    // (openPairedHost() in index.js), and say what shows
+    const open = (apps) => app.page.evaluate(async (list) => {
+      window.beginBackgroundPollingOfHost = function() {};
+      window.__snackbars = [];
+      document.querySelector('#snackbar').MaterialSnackbar.showSnackbar = (data) => window.__snackbars.push(data.message);
+      window.__list = list;
+      const host = {
+        paired: true, online: true, serverUid: 'HOST1', hostname: 'GAMING-PC', address: '10.0.0.2', httpPort: 47989, currentGame: 0,
+        appVersion: '7.1.431.-1', gfeVersion: '', serverCodecModeSupport: 0x1F03,
+        refreshServerInfo: () => Promise.resolve(),
+        getAppList: () => (window.__list ? Promise.resolve(window.__list.slice()) : Promise.reject(-1)),
+        getAppById: (id) => Promise.resolve((window.__list || []).find((entry) => entry.id == id) || null),
+        getBoxArt: () => Promise.reject(new Error('no box art')),
+        pollServer: (callback) => callback(host),
+        toString: () => 'GAMING-PC',
+      };
+      window.__host = host;
+      api = host;
+      await openPairedHost(host);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }, apps);
+    const shown = () => app.page.evaluate(() => ({
+      marked: Array.prototype.map.call(document.querySelectorAll('.hovered'), (element) => element.id || element.tagName),
+      state: document.getElementById('launcher-hero').getAttribute('data-state'),
+      title: document.getElementById('hero-title').textContent,
+      text: document.getElementById('hero-text').textContent,
+      snackbars: window.__snackbars.splice(0),
+      hint: $('#appMenuHint').is(':visible'),
+    }));
+    const failed = { marked: ['IMG'], state: 'empty', title: 'Apps', snackbars: [], hint: false,
+      text: 'Unable to retrieve your list of apps at this time. Please refresh the list of apps or try again later!' };
+
+    // A list that can't be read: its illustration has the selection, and the top of the screen says so
+    await open(null);
+    assert.deepEqual(await shown(), failed);
+    // RETURN goes back to the PC list
+    await app.page.evaluate(() => {
+      ['keydown', 'keyup'].forEach((type) => {
+        const event = new KeyboardEvent(type, { key: 'XF86Back', bubbles: true, cancelable: true });
+        Object.defineProperty(event, 'keyCode', { value: 10009 });
+        Object.defineProperty(event, 'which', { value: 10009 });
+        (document.activeElement || document.body).dispatchEvent(event);
+      });
+    });
+    await app.page.waitForFunction(() => document.body.getAttribute('data-view') === 'hosts', null, { timeout: 3000 });
+
+    // An empty list says what to do
+    await open([]);
+    assert.deepEqual(await shown(), { marked: ['IMG'], state: 'empty', title: 'No apps yet', snackbars: [], hint: false,
+      text: 'Add apps in Sunshine on the PC (Applications), then choose "Refresh apps" in the menu of this PC in the PC list.' });
+    // The text fits its box also in French, the longest translation
+    assert.deepEqual(await app.page.evaluate(async () => {
+      await i18n.setLanguage('fr-FR');
+      Launcher.refresh();
+      const text = document.getElementById('hero-text');
+      const result = { translated: text.textContent.indexOf('Actualiser les applications') >= 0, overflow: text.scrollHeight > text.clientHeight + 1 };
+      await i18n.setLanguage('en-US');
+      Launcher.refresh();
+      return result;
+    }), { translated: true, overflow: false });
+
+    // A list with apps shows the hint of the app options in the header
+    await app.page.evaluate(() => {
+      Navigation.pop();
+    });
+    await open([{ id: 7, title: 'Cyberpunk 2077' }]);
+    const withApps = await shown();
+    assert.deepEqual([withApps.marked, withApps.hint, withApps.snackbars], [['game-container-7'], true, []]);
+
+    // The list is built again while the header row has the keys (e.g. after Quit app on the PC in the header) and can't
+    // be read: the illustration gets the selection
+    await press(app.page, 'ArrowUp');
+    assert.equal(await app.page.evaluate(() => Navigation.isCurrent(Views.AppsNav)), true);
+    await app.page.evaluate(async () => {
+      window.__list = null;
+      await showApps(window.__host).catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+    assert.deepEqual(await shown(), failed);
+    assert.equal(await app.page.evaluate(() => Navigation.isCurrent(Views.Apps)), true);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

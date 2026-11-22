@@ -3,7 +3,9 @@
 // Checks quitting the running app of a host in the UI (stopGame() of wasm/platform/index.js with the real
 // NvHTTP.quitApp() of wasm/static/js/utils.js): the server info is refreshed once the host answered /cancel, a host
 // that keeps the app running (e.g. one that another device started) is reported instead of 'Successfully quit', and the
-// start of another app that needed the quit doesn't follow a failed quit. The requests to the host are answered by the
+// start of another app that needed the quit doesn't follow a failed quit. An app that the app list doesn't have, or a
+// list that can't be read, is quit all the same and named by the PC (since 2.3.3; before, stopGame() said "No app is
+// currently running." or "Unable to quit the app" and sent no /cancel). The requests to the host are answered by the
 // test through a replaced sendMessage().
 
 const { after, before, test } = require('node:test');
@@ -120,6 +122,45 @@ test('a failed /cancel request is reported', async () => {
     assert.deepEqual(result.events, ['refresh', 'openUrl /cancel']);
     assert.equal(result.quitSucceeded, false);
     assert.deepEqual(result.messages, ['Quitting Game 7...', 'Unable to quit Game 7. Check the connection to GAMING-PC and try again.']);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a running app that the app list doesn\'t have is quit all the same and named by the PC', async () => {
+  for (const stillRunning of [false, true]) {
+    const app = await openWithHost();
+    try {
+      // The PC runs an app that its app list doesn't show (e.g. one that another device started from its own list)
+      await app.page.evaluate((keepRunning) => {
+        window.__stillRunning = keepRunning;
+        window.__host.getAppById = () => Promise.resolve(null);
+      }, stillRunning);
+      const result = await quit(app.page);
+      assert.deepEqual(result.events, ['refresh', 'openUrl /cancel', 'answered', 'refresh']);
+      assert.equal(result.quitSucceeded, !stillRunning);
+      assert.deepEqual(result.messages, stillRunning ? ['Quitting the app on GAMING-PC...',
+        'The app is still running on GAMING-PC, probably because another device started it. Quit it on that device or on the PC.'] :
+        ['Quitting the app on GAMING-PC...', 'Successfully quit the app on GAMING-PC']);
+      assert.equal(result.showApps, 1);
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
+test('an app list that can\'t be read doesn\'t stop the quit', async () => {
+  const app = await openWithHost();
+  try {
+    await app.page.evaluate(() => {
+      window.__host.getAppById = () => Promise.reject(-1);
+    });
+    const result = await quit(app.page);
+    assert.deepEqual(result.events, ['refresh', 'openUrl /cancel', 'answered', 'refresh']);
+    assert.equal(result.quitSucceeded, true);
+    assert.deepEqual(result.messages, ['Quitting the app on GAMING-PC...', 'Successfully quit the app on GAMING-PC']);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

@@ -359,7 +359,7 @@ const Launcher = (function() {
         overline: hostName,
         title: failed ? t('Apps') : t('No apps yet'),
         text: failed ? t('Unable to retrieve your list of apps at this time. Please refresh the list of apps or try again later!')
-          : t('Your list is currently empty. Please add your favorite apps to the list.'),
+          : t('Add apps in Sunshine on the PC (Applications), then choose "Refresh apps" in the menu of this PC in the PC list.'),
       });
       return;
     }
@@ -614,9 +614,10 @@ const Launcher = (function() {
           escapeHTML(tile[1]) + '</span><span class="value-unit">' + escapeHTML(tile[2]) + '</span></div>';
       }).join('');
     },
-    // Fill the start screen of a stream: the box art as a poster, the title and the host (startGame()), and over them
-    // what the start is for: the key of a text (overlineKey, e.g. 'Shut down the PC' for a session of the menu of a PC),
-    // or 'Starting'. The key stays on the element, so that a change of the language translates it.
+    // Fill the start screen of a stream: the box art as a poster (or the gamepad of a tile without box art), the title and
+    // the host (startGame()), and over them what the start is for: the key of a text (overlineKey, e.g. 'Shut down the
+    // PC' for a session of the menu of a PC), or 'Starting'. The key stays on the element, so that a change of the
+    // language translates it.
     prepareStart: function(host, appId, title, overlineKey) {
       const overline = document.querySelector('.launch-overline');
       if (overline) {
@@ -627,7 +628,10 @@ const Launcher = (function() {
       const art = artOf(byId('game-container-' + appId));
       const poster = byId('launch-poster');
       if (poster) {
-        poster.setAttribute('src', art ? art.getAttribute('src') : 'static/res/placeholder_game.svg');
+        // Without box art (none, or not loaded yet) the poster is the one of a tile without box art, with the gamepad,
+        // except for a session of the menu of a PC (overlineKey), which starts no game
+        poster.setAttribute('src', art ? art.getAttribute('src') :
+          overlineKey ? 'static/res/placeholder_game.svg' : 'static/res/placeholder_error.svg');
         poster.classList.toggle('is-wide', isWide(art));
       }
       paintAmbient(byId('launch-backdrop'), art);

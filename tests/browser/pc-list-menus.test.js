@@ -12,6 +12,8 @@
 // - the second press of a double OK or A that opens the Wake PC dialog or the PC details doesn't close them at once
 // - UP keeps the highlight on the only button of a dialog (PC details, navigation guide, support, Update, pairing)
 // - after a PC was deleted, from CH+ or from its menu icon, one card is highlighted, the one that is selected
+// - Refresh apps says how many apps the PC lists, or that its list couldn't be read, also for an error answer of the PC
+//   (since 2.3.3, refreshHostApps())
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -312,6 +314,66 @@ test('after a PC was deleted, from CH+ or from its menu icon, the one highlighte
     // The icon of the PC that is gone is neither marked nor unmarked
     assert.deepEqual(navigationErrors(app).filter((line) => /Cannot (mark|unmark) the unresolved target: undefined/.test(line)), []);
     assert.deepEqual(await page.evaluate(() => Object.keys(hosts)), ['HOST1']);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('Refresh apps says how many apps the PC lists, or that the list couldn\'t be read', async () => {
+  const app = await openWithPcs();
+  const { page } = app;
+  try {
+    // CH+ on the PC opens its menu on Refresh apps, and OK runs it
+    const refresh = async () => {
+      await selectItem(page, 'Hosts', 'host-container-HOST1', 'left', 'right');
+      await page.evaluate(() => {
+        window.__requestsFrom = window.__sunshine.http.length;
+      });
+      await key(page, 'chup', 600);
+      assert.equal((await menuState(page)).focused, 'refreshApps-GAMING-PC');
+      await key(page, 'ok', 900);
+      return {
+        snackbars: await takeSnackbars(page),
+        appListRequests: await page.evaluate(() => window.__sunshine.http.slice(window.__requestsFrom).filter((request) => request === '/applist').length),
+      };
+    };
+    await takeSnackbars(page);
+    assert.deepEqual(await refresh(), { snackbars: ['Refreshing the list of GAMING-PC applications...', 'The app list of GAMING-PC is up to date: 5 apps.'],
+      appListRequests: 1 });
+    // The PC lists one app now
+    await page.evaluate(() => {
+      window.__sunshine.apps = window.__sunshine.apps.slice(0, 1);
+    });
+    assert.deepEqual((await refresh()).snackbars, ['Refreshing the list of GAMING-PC applications...', 'The app list of GAMING-PC is up to date: 1 app.']);
+    // The request of the list fails
+    const failed = ['Refreshing the list of GAMING-PC applications...',
+      'Unable to retrieve your list of apps at this time. Please refresh the list of apps or try again later!'];
+    await page.evaluate(() => {
+      window.__answerAppList = (id) => handlePromiseMessage(id, 'reject', -1);
+      const openUrl = Module.openUrl;
+      Module.openUrl = function(id, url) {
+        if (/\/applist\?/.test(url) && window.__answerAppList) {
+          window.__sunshine.http.push('/applist');
+          const answer = window.__answerAppList;
+          setTimeout(() => answer(id), 30);
+          return;
+        }
+        return openUrl.apply(this, arguments);
+      };
+    });
+    assert.deepEqual((await refresh()).snackbars, failed);
+    // The PC answers with its error for a client that it doesn't accept: a failure as well (not an empty list), and the
+    // list that the TV has stays
+    await page.evaluate(() => {
+      window.__answerAppList = (id) => handlePromiseMessage(id, 'resolve',
+        '<?xml version="1.0" encoding="utf-8"?><root status_code="401" query="/applist" status_message="The client is not authorized. Certificate verification failed."/>');
+    });
+    assert.deepEqual((await refresh()).snackbars, failed);
+    assert.deepEqual(await page.evaluate(() => hosts.HOST1._memCachedApplist.map((entry) => entry.id)), [101]);
+    // The box art of the PC is deleted each time: the files of this TV can't be listed here (no listDirectory() in the
+    // simulated file system), which is logged instead of an unhandled rejection
+    assert.ok(app.logs.some((line) => line.indexOf('Warning: Failed to clear the box art of GAMING-PC') >= 0));
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

@@ -5,8 +5,9 @@
 // getElementsByTagName('ID')[0].textContent: an entry without an <ID> or without an <AppTitle> threw, which rejected
 // the whole list, so the host showed no apps at all, and an ID that is no number became NaN, which named the box art
 // files of that app 'boxart-NaN.png' and went into the request of its start. Such an entry is left out now, with one
-// line in the log per list, and the other apps show. The answer is read here with a stand-in for the XML parser of the
-// page (helpers/xml-stand-in.js); tests/browser/hostile-server-info.test.js reads one with the real parser.
+// line in the log per list, and the other apps show. An answer with another status than 200 fails (since 2.3.3; an
+// empty list before). The answer is read here with a stand-in for the XML parser of the page (helpers/xml-stand-in.js);
+// tests/browser/hostile-server-info.test.js reads one with the real parser.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -81,6 +82,43 @@ test('an entry without an ID that is a number, or without a title, is left out, 
   assert.deepEqual(plain(await empty.host.getAppListWithCacheFlush()), []);
   assert.equal(empty.warnings().length, 1);
   assert.deepEqual(plain(await loadHost(appList([])).host.getAppListWithCacheFlush()), []);
+});
+
+test('an app list answered with another status than 200 fails instead of being an empty list', async () => {
+  // Sunshine answers a client that it no longer accepts with HTTP 200 and this XML (on_verify_failed in src/nvhttp.cpp),
+  // and a busy or broken host may answer with another error status: before 2.3.3 the list was [] (No apps yet, and
+  // Refresh apps found 0 apps), now it fails with the status, as a request that fails does
+  for (const [answer, status] of [
+    ['<?xml version="1.0" encoding="utf-8"?><root status_code="401" query="/applist" status_message="The client is not authorized. Certificate verification failed."/>', '401'],
+    ['<root status_code="503"/>', '503'],
+  ]) {
+    const { platform, host } = loadHost(answer);
+    await assert.rejects(host.getAppListWithCacheFlush(), (error) => {
+      assert.equal(error, 'The app list was answered with status ' + status);
+      return true;
+    });
+    // The list in the cache stays as it was (none here), so the next getAppList() asks the host again
+    assert.ok(!host._memCachedApplist);
+    await assert.rejects(host.getAppById(101));
+    assert.ok(platform.consoleMessages.some((message) => message.level === 'error' && /Failed to request app list/.test(message.text)));
+  }
+  // A list of status 200 whose entries are all broken is still an empty list
+  const { host } = loadHost(appList(['<App></App>']));
+  assert.deepEqual(plain(await host.getAppListWithCacheFlush()), []);
+});
+
+test('the list refresh of every 10th poll logs a list that fails instead of leaving the rejection unhandled', async () => {
+  const { platform, host, warnings } = loadHost('<root status_code="401" status_message="The client is not authorized. Certificate verification failed."/>');
+  platform.context.isInGame = false;
+  host.paired = true;
+  // The poll that reads the app list (pollServer() in utils.js), at an address that answered
+  host._pollCount = 1;
+  host.selectServerAddress = (onFound) => onFound('10.0.0.2', false);
+  await new Promise((resolve) => host.pollServer(resolve));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(host.online, true);
+  assert.deepEqual(warnings().filter((line) => /pollServer/.test(line)),
+    ['%c[utils.js, pollServer] color: gray; Warning: Failed to read the app list of GAMING-PC: The app list was answered with status 401']);
 });
 
 test('one entry of an app list by its rule', () => {
