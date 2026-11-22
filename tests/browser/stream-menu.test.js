@@ -12,6 +12,8 @@
 // stays inside the safe area of the screen with every entry showing without scrolling and every label on one line in
 // every language, also with text 10 % wider than this machine draws it (tests/browser/text-stress.js), and the video
 // keeps showing, also with the surround quality entry of a 5.1 stream and the notes of a changed bitrate and quality.
+// Since 2.3.3 the menu and its panels open on the left while the statistics take a right corner, so that they never
+// cover the full statistics, whichever their level.
 // The bitrate and surround quality entries and 'Type text…' are checked by stream-menu-entries.test.js, the panels of
 // 'Shortcuts…', 'Function keys…' and 'Shut down or restart the PC…' by stream-menu-panels.test.js. The controller
 // side (the
@@ -23,6 +25,7 @@ const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { openApp, startHarness } = require('./harness');
 const { forEachTextWidth } = require('./text-stress');
+const { FULL_TEXT } = require('./full-stats-text');
 
 const XBOX_ID = 'Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)';
 // delayedNavigation() runs the gamepad buttons of the menus 50 ms later (BUTTON_NAVIGATION_DELAY), and the gamepads are
@@ -429,6 +432,57 @@ test('the Stream Menu stays inside the safe area of the screen', async () => {
     assert.ok(fit.scrollHeight <= fit.clientHeight, JSON.stringify(fit));
     assert.ok(box.top >= box.height * 0.05 && box.bottom <= box.height * 0.95, JSON.stringify(box));
     assert.ok(box.right >= box.width * 0.9, 'on the right side of the picture: ' + JSON.stringify(box));
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('with the statistics in a right corner the Stream Menu opens on the left, and in no corner does it cover the full statistics', async () => {
+  // A 7.1 stream: the full statistics with every line, the largest box they have
+  const app = await openStreaming({ stored: { performanceStats: 2, audioConfig: '71Surround' } });
+  try {
+    await app.page.evaluate((text) => handleMessage('StatMsg: {"rtt":12,"lost":2}\n' + text), FULL_TEXT);
+    const rectOf = (selector) => app.page.evaluate((query) => {
+      const element = Array.prototype.filter.call(document.querySelectorAll(query), (candidate) => !candidate.hidden)[0];
+      const rect = element.getBoundingClientRect();
+      return { id: element.id, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: window.innerWidth, height: window.innerHeight };
+    }, selector);
+    const intersect = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    const panels = await app.page.evaluate(() => Object.keys(STREAM_MENU_PANELS));
+    assert.ok(panels.indexOf('streamMenuShortcuts') >= 0, JSON.stringify(panels));
+    // Top right and bottom right, then the left corners, and from a right corner back to a left one
+    for (const corner of ['top-right', 'bottom-right', 'top-left', 'bottom-left', 'top-right', 'top-left']) {
+      await app.page.evaluate((value) => showStatsPosition(value), corner);
+      await remoteKey(app.page, ...PLAY_PAUSE);
+      assert.equal((await menuState(app.page)).open, true, corner);
+      const stats = await rectOf('#performance-stats');
+      const menu = await rectOf('#streamMenu');
+      const onLeft = corner === 'top-right' || corner === 'bottom-right';
+      // The box of the full statistics with every line (892 x 822 px)
+      assert.ok(stats.right - stats.left > 800 && stats.bottom - stats.top > 700, corner + ' ' + JSON.stringify(stats));
+      assert.ok(!intersect(menu, stats), corner + ': the menu ' + JSON.stringify(menu) + ' covers the statistics ' + JSON.stringify(stats));
+      // Inside the safe area of the screen, on the side that the statistics leave free
+      assert.ok(menu.left >= menu.width * 0.05 && menu.right <= menu.width * 0.95, corner + ' ' + JSON.stringify(menu));
+      assert.ok(menu.top >= menu.height * 0.05 && menu.bottom <= menu.height * 0.95, corner + ' ' + JSON.stringify(menu));
+      assert.ok(onLeft ? menu.left <= menu.width * 0.1 : menu.right >= menu.width * 0.9, corner + ' ' + JSON.stringify(menu));
+      // Each panel of the menu on the same side
+      for (const entry of panels) {
+        await app.page.evaluate((id) => openStreamMenuPanel(id), entry);
+        const panel = await rectOf('#streamMenuOverlay .stream-menu');
+        assert.notEqual(panel.id, 'streamMenu', entry);
+        assert.ok(onLeft ? panel.left <= panel.width * 0.1 : panel.right >= panel.width * 0.9, corner + ' ' + entry + ' ' + JSON.stringify(panel));
+        assert.ok(!intersect(panel, stats), corner + ' ' + entry + ' ' + JSON.stringify(panel));
+        await app.page.evaluate(() => closeStreamMenuPanel());
+      }
+      // The side follows the corner and not the level: the menu doesn't move when its entry steps the statistics
+      await app.page.evaluate(() => handleMessage('StatLevelMsg: 1'));
+      assert.deepEqual(await rectOf('#streamMenu'), menu, corner);
+      await app.page.evaluate(() => handleMessage('StatLevelMsg: 2'));
+      await app.page.evaluate((text) => handleMessage('StatMsg: {"rtt":12,"lost":2}\n' + text), FULL_TEXT);
+      await remoteKey(app.page, ...RETURN);
+      assert.equal((await menuState(app.page)).open, false, corner);
+    }
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

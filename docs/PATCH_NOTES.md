@@ -38,6 +38,8 @@ What changed in each version of Moonlight Plus, in short, newest first.
 - Pairing also works while the PC runs a game
 - A PC that answers with a different key than at its pairing gets its own message instead of *Offline* advice
 - After a stream the box art of the same PC shows at once, and *Refresh apps* says how many apps the PC lists
+- Long messages stay on screen for 5 to 15 seconds, by their length, instead of always 5 seconds
+- The Stream Menu and messages make room for the statistics in a right or bottom corner
 
 ### Fixed
 
@@ -47,6 +49,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 - A pairing that the PC didn't confirm no longer says that it succeeded
 - A failed check of a PC is no longer sent twice, and a PC with a 4096-bit RSA or an ECDSA certificate pairs
 - OK and *Quit app on the PC* work for a running app the TV's list lacks; an empty or failed app list says why
+- Messages show above dialogs, the connection warning is easier to read, and no statistics line is half English
 
 ## 2.3.2
 

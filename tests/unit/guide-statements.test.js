@@ -51,6 +51,8 @@
 //   socket of a stream and the WebAssembly line at the start of the app
 // - the keys of a stream (2.3.3): the first key of a PC keyboard only gives the stream the keys, RETURN sends Esc, the
 //   keys of a TV never reach the PC, Ctrl + Alt + Shift with Q, S or another key, and the horizontal wheel
+// - the messages and the overlays of a stream (2.3.3): how long a message shows, and where the Stream Menu and the
+//   messages go beside the statistics
 // The release notes of a release (docs/RELEASE_NOTES.md) only give the essentials, so the statements that they
 // carried until 1.19.100 are checked in the guide and the patch notes (docs/PATCH_NOTES.md), where they are now.
 
@@ -61,6 +63,7 @@ const path = require('path');
 const { REPO_ROOT } = require('../lib/dev-modules');
 const tvMock = require('../browser/mocks/tv-mock');
 const profile = require('../../wasm/platform/tv_profile');
+const { INDEX_SCRIPTS, loadPlatformScripts } = require('./helpers/platform-loader');
 
 const read = (relativePath) => fs.readFileSync(path.join(REPO_ROOT, relativePath), 'utf8');
 const GUIDE = read('docs/GUIDE.md');
@@ -1095,4 +1098,37 @@ test('the guide describes the app list of 2.3.3 as the code does it', () => {
   // The two new rows of the troubleshooting table
   assert.ok(GUIDE.indexOf('| "The app is still running on …, probably because another device started it." | The same for an app that the app list doesn\'t show.') > 0);
   assert.ok(GUIDE.indexOf('| "The selected app is no longer available on this PC. Showing the current app list." | The app was removed or renamed on the PC') > 0);
+});
+
+test('the guide says how long a message shows and where the Stream Menu and the messages go beside the statistics, as the code does', () => {
+  const index = read('wasm/platform/index.js');
+  // How long: from 5 to 15 seconds by the length of the text, and the log keeps the English text (snackbarLogLong()
+  // logs the key with its values)
+  assert.ok(guideSection('## Troubleshooting').indexOf('A message shows for 5 to 15 seconds, depending on its length, and the ' +
+    '[diagnostic log](#diagnostic-log) keeps it in English.') > 0);
+  assert.match(index, /const SNACKBAR_LONG_MIN_MS = 5000;/);
+  assert.match(index, /const SNACKBAR_LONG_MAX_MS = 15000;/);
+  assert.match(index, /function snackbarLogLong\(\.\.\.args\) \{\s+const translatedMessage = t\(\.\.\.args\);\s+console\.log\('%c\[index\.js, snackbarLogLong\]', 'color: green;', \.\.\.args\);/);
+  // The Stream Menu on the left while the statistics take a right corner
+  assert.ok(guideSection('## Stream Menu and app menu').indexOf('to open the Stream Menu on the right of the picture, or on the left while the ' +
+    '[statistics](#performance-statistics) sit in a right corner, inside the safe area of the screen.') > 0);
+  assert.ok(guideSection('## Performance statistics').indexOf('at the top right the connection warnings move to the top left, in a right corner ' +
+    'the Stream Menu opens on the left, and in a bottom corner messages show beside the full statistics or above the compact line)') > 0);
+  assert.match(index, /\$\('#streamMenuOverlay'\)\.toggleClass\('is-left', chosenPosition === 'top-right' \|\| chosenPosition === 'bottom-right'\)/);
+  // The place of a message: beside the full statistics in a bottom corner, above the compact line, otherwise the middle
+  const app = loadPlatformScripts(INDEX_SCRIPTS, { tv: { tv: 's90c', conn: 'wifi' } });
+  const place = (inGame, classes) => {
+    const overlay = { firstChild: {}, classList: { contains: (name) => classes.indexOf(name) >= 0 } };
+    app.context.document.getElementById = (id) => (id === 'performance-stats' ? overlay : null);
+    app.context.getComputedStyle = () => ({ display: 'block' });
+    app.run('isInGame = ' + inGame + ';');
+    return app.get('getSnackbarPlace')();
+  };
+  assert.equal(place(true, ['stats-bottom-left', 'is-compact']), 'raised');
+  assert.equal(place(true, ['stats-bottom-right', 'is-compact']), 'raised');
+  assert.equal(place(true, ['stats-bottom-left']), 'right');
+  assert.equal(place(true, ['stats-bottom-right']), 'left');
+  assert.equal(place(true, ['stats-top-left']), '');
+  assert.equal(place(true, ['stats-top-right', 'is-compact']), '');
+  assert.equal(place(false, ['stats-bottom-left']), '');
 });

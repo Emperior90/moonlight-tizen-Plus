@@ -839,10 +839,26 @@ function snackbarLog(...args) {
   showSnackbarMessage(translatedMessage, 2500);
 }
 
+// How long snackbarLogLong() shows a message: the time to read it from the couch, 1.5 s to notice it and 50 ms per
+// character of the translated text (about 20 characters a second), at least 5 s, as every message before 2.3.3 (up to
+// 70 characters), and at most 15 s (from 270 characters), since the messages that come meanwhile wait in the queue of
+// the snackbar
+const SNACKBAR_LONG_MIN_MS = 5000;
+const SNACKBAR_LONG_MAX_MS = 15000;
+const SNACKBAR_LONG_NOTICE_MS = 1500;
+const SNACKBAR_LONG_MS_PER_CHARACTER = 50;
+
+// The time that snackbarLogLong() shows a translated message for
+function getSnackbarLongTimeout(message) {
+  const time = SNACKBAR_LONG_NOTICE_MS + SNACKBAR_LONG_MS_PER_CHARACTER * String(message).length;
+  return Math.min(SNACKBAR_LONG_MAX_MS, Math.max(SNACKBAR_LONG_MIN_MS, time));
+}
+
+// Show a message that needs time to read, for as long as its translated text takes (getSnackbarLongTimeout())
 function snackbarLogLong(...args) {
   const translatedMessage = t(...args);
   console.log('%c[index.js, snackbarLogLong]', 'color: green;', ...args);
-  showSnackbarMessage(translatedMessage, 5000);
+  showSnackbarMessage(translatedMessage, getSnackbarLongTimeout(translatedMessage));
 }
 
 // Show a message for timeoutMs, e.g. one that is true only until a moment that is known in advance: the countdown of
@@ -876,7 +892,8 @@ function dismissSnackbar() {
 }
 
 // Wrap the timers of the snackbar of MDL once (dismissSnackbar()): each shown message gets a cleanup of its own, which
-// does nothing once the message ended otherwise, and a message ends once. Returns whether the snackbar is wrapped.
+// does nothing once the message ended otherwise, and a message ends once; and place each message when it shows
+// (placeSnackbar()). Returns whether the snackbar is wrapped.
 function guardSnackbarTimers(snackbar) {
   if (!snackbar) {
     return false;
@@ -906,12 +923,51 @@ function guardSnackbarTimers(snackbar) {
     this.cleanup_ = function() {
       end(id);
     };
+    placeSnackbar(this.element_);
     display.call(this);
   };
   snackbar.endShownMessage_ = function() {
     end(shown.id);
   };
   return true;
+}
+
+// Where the next message shows: while the performance statistics show in a bottom corner, never over them. Beside the
+// full statistics, at the bottom of the other side, in the column that they leave free ('left' or 'right'), and above
+// the compact line ('raised'); in the middle of the bottom otherwise ('')
+function getSnackbarPlace() {
+  const overlay = document.getElementById('performance-stats');
+  if (isInGame !== true || !overlay || !overlay.firstChild || getComputedStyle(overlay).display === 'none') {
+    return '';
+  }
+  const right = overlay.classList.contains('stats-bottom-right');
+  if (!right && !overlay.classList.contains('stats-bottom-left')) {
+    return '';
+  }
+  if (overlay.classList.contains('is-compact')) {
+    return 'raised';
+  }
+  return right ? 'left' : 'right';
+}
+
+// The places of getSnackbarPlace() other than the middle, each a class 'is-…' of the snackbar (style.css)
+const SNACKBAR_PLACES = ['left', 'right', 'raised'];
+
+// Move the snackbar, which is hidden below the screen between two messages, to the place of the next message at once,
+// without the slide of its transition, so that it slides in from below there (the wrapper of displaySnackbar_() in
+// guardSnackbarTimers())
+function placeSnackbar(element) {
+  if (!element) {
+    return;
+  }
+  const place = getSnackbarPlace();
+  if (SNACKBAR_PLACES.every((name) => element.classList.contains('is-' + name) === (name === place))) {
+    return;
+  }
+  element.style.transition = 'none';
+  SNACKBAR_PLACES.forEach((name) => element.classList.toggle('is-' + name, name === place));
+  void element.offsetWidth;
+  element.style.transition = '';
 }
 
 // Handle layout elements when displaying the Hosts view
@@ -4882,7 +4938,7 @@ function startGame(host, appID, restartKind, restartChange) {
       '\n Controller type sent to the PC: ' + controllerType);
 
       // Hide on-screen overlays until the streaming session begins
-      $('#connection-warnings, #performance-stats').css('background', 'transparent').text('');
+      $('#connection-warnings, #performance-stats').text('');
 
       // Shows a loading message to launch the application and start stream mode, or what a reconnect changed
       $('#loadingSpinnerMessage').text(restartKind === STREAM_RESTART_SETTINGS ?
@@ -5181,7 +5237,7 @@ function retryStreamStart(restartKind, blockedPorts) {
   }
   // Back to the launch screen: the stream view stays, the video goes, and the stream counts as starting again
   isInGame = true;
-  $('#connection-warnings, #performance-stats').css('background', 'transparent').text('');
+  $('#connection-warnings, #performance-stats').text('');
   $('#wasm_module').css('display', 'none');
   $('body').css('backgroundColor', '');
   $('#loadingSpinner').css('display', 'inline-block');
@@ -5378,7 +5434,7 @@ function resumeStreamAfterSettingsChange(errorCode) {
   console.log('%c[index.js, resumeStreamAfterSettingsChange]', 'color: green;', 'Resuming app ' + appID + ' with the new settings in ' + SETTINGS_RESTART_DELAY_MS + ' ms.');
   // Back to the launch screen: the stream view stays, the video goes, and the stream counts as starting again
   isInGame = true;
-  $('#connection-warnings, #performance-stats').css('background', 'transparent').text('');
+  $('#connection-warnings, #performance-stats').text('');
   $('#wasm_module').css('display', 'none');
   $('body').css('backgroundColor', '');
   $('#loadingSpinner').css('display', 'inline-block');
@@ -6661,7 +6717,8 @@ function parseStatsPosition(value) {
 }
 
 // Show a corner in the settings and move the statistics there, at the compact and the full level. At the top right they
-// take the place of the connection warnings, which move to the top left.
+// take the place of the connection warnings, which move to the top left, and in a right corner the Stream Menu opens
+// on the left.
 function showStatsPosition(position) {
   const chosenPosition = parseStatsPosition(position);
   const item = $('.statsPositionMenu li[data-value="' + chosenPosition + '"]');
@@ -6671,6 +6728,8 @@ function showStatsPosition(position) {
     STATS_POSITIONS.forEach((corner) => overlay.classList.toggle('stats-' + corner, corner === chosenPosition));
   }
   $('#connection-warnings').toggleClass('is-left', chosenPosition === 'top-right');
+  // The Stream Menu takes the left side while the statistics take a right corner, so that it never covers them
+  $('#streamMenuOverlay').toggleClass('is-left', chosenPosition === 'top-right' || chosenPosition === 'bottom-right');
 }
 
 // Save the corner chosen in the menu of the settings

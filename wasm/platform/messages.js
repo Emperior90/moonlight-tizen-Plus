@@ -188,10 +188,20 @@ function replaceKnownStatsLabels(text) {
           bufferFull, recovered, keyframeRequired, trackNotReady, other, lastCode);
       })
     .replace(/Session recovery keyframes:/g, t('Session recovery keyframes:'))
-    .replace(/Session FEC recoveries:/g, t('Session FEC recoveries:'))
-    .replace(/Worst FEC block:/g, t('Worst FEC block:'))
+    // The FEC recoveries of the session, the worst FEC block (FormatVideoStats() in wasm/wasmplayer.cpp) and the top of
+    // the WASM heap, each as a whole, so that a language orders the words its own way
+    .replace(/Session FEC recoveries: (\d+) blocks, (\d+) packets \(longest (\d+) ms, (\d+) slow, (\d+) failed\)/g,
+      function(match, blocks, packets, longest, slow, failed) {
+        return t('Session FEC recoveries: %1$s blocks, %2$s packets (longest %3$s ms, %4$s slow, %5$s failed)', blocks, packets,
+          longest, slow, failed);
+      })
+    .replace(/Worst FEC block: (\d+) of (\d+) parity packets used/g, function(match, used, parity) {
+      return t('Worst FEC block: %1$s of %2$s parity packets used', used, parity);
+    })
     .replace(/TV player rejections:/g, t('TV player rejections:'))
-    .replace(/WASM heap top:/g, t('WASM heap top:'))
+    .replace(/WASM heap top: (\d+) of (\d+) MB \(\+(\d+) MB this stream\)/g, function(match, top, size, growth) {
+      return t('WASM heap top: %1$s of %2$s MB (+%3$s MB this stream)', top, size, growth);
+    })
     .replace(/Slow connection to PC\.\nReduce your bitrate!/g, t('Slow connection to PC.\nReduce your bitrate!'));
 }
 
@@ -1232,12 +1242,10 @@ function dispatchMessage(msg) {
     // Show the video stream now
     $('#listener').addClass('fullscreen');
   } else if (msg.indexOf('NoWarningMsg: ') === 0) {
-    // Hide the connection warnings overlay
-    $('#connection-warnings').css('background', 'transparent');
+    // Hide the connection warnings overlay: without a text it doesn't show (style.css)
     $('#connection-warnings').text('');
   } else if (msg.indexOf('WarningMsg: ') === 0) {
-    // Show the connection warnings overlay
-    $('#connection-warnings').css('background', 'rgba(0, 0, 0, 0.5)');
+    // Show the connection warnings overlay, on the surface of the statistics (style.css)
     $('#connection-warnings').text(translateBackendMessage(msg.replace('WarningMsg: ', '')));
   } else if (msg.indexOf('StatLevelMsg: ') === 0) {
     // The stats key (YELLOW, the Stream Menu, the gamepad or keyboard combo) stepped the performance statistics to their

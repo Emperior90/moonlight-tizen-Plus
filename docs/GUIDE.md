@@ -179,7 +179,7 @@ This table shows what the button applies. A test checks it against the code of t
 
 **Keys in a stream.** The arrows and OK of the remote and the keys of a USB keyboard go to the PC. The first key of a stream only gives the stream the keys and doesn't reach the PC, so press it again; the same after Moonlight was in the background. RETURN sends Esc to the PC, also as the first key. Play/Pause opens the Stream Menu, RED ends the stream and YELLOW steps the [statistics](#performance-statistics); CH+, CH-, GREEN, BLUE and Source do nothing there. On a keyboard, Ctrl + Alt + Shift + Q ends the stream and Ctrl + Alt + Shift + S steps the statistics; other combinations with Ctrl + Alt + Shift go to the PC. A USB mouse gets the stream with its first click, and its wheel also scrolls sideways (a tilt wheel or a touchpad; untested on a TV). Before 2.3.3, the keys reached the PC only after RETURN or a click, CH- could press M on the PC, and Ctrl + Alt + Shift with S or an F key turned the keyboard off for the rest of the stream.
 
-**Stream Menu.** During a stream, press **Play/Pause** on the remote, or hold **Select + Start** on a controller for 1 second, to open the Stream Menu on the right of the picture, inside the safe area of the screen. The stream keeps playing behind it, but the PC gets nothing from the remote, the keyboard or the controllers while it is open: they move through the menu (UP and DOWN or the D-pad, OK or A). Play/Pause closes it and returns to the game; RETURN or B go back one level, from *Shortcuts…*, *Function keys…* or the power question to the menu (on the entry that opened it), and from the menu to the game.
+**Stream Menu.** During a stream, press **Play/Pause** on the remote, or hold **Select + Start** on a controller for 1 second, to open the Stream Menu on the right of the picture, or on the left while the [statistics](#performance-statistics) sit in a right corner, inside the safe area of the screen. The stream keeps playing behind it, but the PC gets nothing from the remote, the keyboard or the controllers while it is open: they move through the menu (UP and DOWN or the D-pad, OK or A). Play/Pause closes it and returns to the game; RETURN or B go back one level, from *Shortcuts…*, *Function keys…* or the power question to the menu (on the entry that opened it), and from the menu to the game.
 
 | Entry | What it does |
 |---|---|
@@ -540,7 +540,7 @@ The fork [moonlight-tizen-ac3](https://github.com/fidoboy/moonlight-tizen-ac3) b
 
 Choose the level in Settings → Advanced Settings → *Performance statistics*: *Off*, *Compact* or *Full*. In the stream, the YELLOW key steps *Off* → *Compact* → *Full* → *Off*, and so do the controller combo Select + LB + RB + X, Ctrl + Alt + Shift + S on a keyboard and *Performance statistics* in the [Stream Menu](#stream-menu-and-app-menu). The setting keeps the last level for the next stream.
 
-**Compact** shows one line at the top left of the picture, or in the corner chosen in Settings → Advanced Settings → *Statistics position* (top left, top right, bottom left or bottom right, for both levels; at the top right the connection warnings move to the top left), e.g.:
+**Compact** shows one line at the top left of the picture, or in the corner chosen in Settings → Advanced Settings → *Statistics position* (top left, top right, bottom left or bottom right, for both levels; at the top right the connection warnings move to the top left, in a right corner the Stream Menu opens on the left, and in a bottom corner messages show beside the full statistics or above the compact line), e.g.:
 
 `4K60 HEVC HDR · 59.9 fps · 74 Mb/s · RTT 3 ms · Net drops 0.1% · Wait+pacing 6.3 ms`
 
@@ -663,7 +663,7 @@ Settings → About → *Diagnostic log* shows the log of the app for this sessio
 
 ## Troubleshooting
 
-The app ends a failed stream with a message instead of a frozen or black picture.
+The app ends a failed stream with a message instead of a frozen or black picture. A message shows for 5 to 15 seconds, depending on its length, and the [diagnostic log](#diagnostic-log) keeps it in English.
 
 | Message | Cause and what to do |
 |---|---|

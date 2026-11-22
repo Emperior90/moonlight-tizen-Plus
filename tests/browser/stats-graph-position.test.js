@@ -179,7 +179,7 @@ test('the compact line has no graph, and a new level, a new stream or text witho
     assert.deepEqual([state.shown, state.children], [true, ['div.stats-text']]);
     // The overlay emptied by a script, as the start of a stream does, builds its elements again
     await sendFullStats(app.page, [[3, 0]], 6000000);
-    await app.page.evaluate(() => $('#connection-warnings, #performance-stats').css('background', 'transparent').text(''));
+    await app.page.evaluate(() => $('#connection-warnings, #performance-stats').text(''));
     assert.equal((await overlay(app.page)).shown, false);
     await sendFullStats(app.page, [[4, 0]], 6001000);
     state = await overlay(app.page);
@@ -263,7 +263,7 @@ test('the statistics show in the chosen corner inside the safe area, and the war
         await sendFullStats(app.page, [[3, 0], [9, 1]], 9000000 + Math.random() * 1000);
       }
       await app.page.evaluate(() => {
-        $('#connection-warnings').css('background', 'rgba(0, 0, 0, 0.5)').text('Slow connection to PC.');
+        $('#connection-warnings').text('Slow connection to PC.');
       });
       return app.page.evaluate(() => {
         const box = document.getElementById('performance-stats').getBoundingClientRect();

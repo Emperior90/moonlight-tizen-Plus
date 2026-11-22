@@ -18,7 +18,10 @@
 //   correction (FEC) and the audio, and the frame receive time with its share of the frame time; so does the rate at
 //   which the frames arrive (2.3.2), which follows the receive time, also with text 10 % wider. The Spanish receive time
 //   keeps its one line with wider text too, which makes room for the new line in the box. The longest line sets the
-//   width of the box, and a line that wraps adds to its height.
+//   width of the box, and a line that wraps adds to its height. Since 2.3.3 the FEC recoveries of the session, the
+//   worst FEC block and the top of the WASM heap are translated as whole lines, each on one row of the box;
+// - the connection warning (2.3.3) has the dark surface of the statistics with an amber edge instead of an inline
+//   background of 50 % black, and shows only with a text.
 // The figures themselves and their two stats windows are pinned by tests/native/stats_overlay_test.cpp, the slots of
 // the graph by tests/unit/stats-graph.test.js, the line by tests/unit/frequent-messages.test.js.
 
@@ -26,6 +29,7 @@ const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { openApp, startHarness } = require('./harness');
 const { forEachTextWidth } = require('./text-stress');
+const { FULL_TEXT } = require('./full-stats-text');
 
 let harness;
 before(async () => {
@@ -39,36 +43,7 @@ after(async () => {
 
 const TV = { tv: 's90c', conn: 'wifi' };
 const LANGUAGES = ['en-US', 'de-DE', 'es-ES', 'fr-FR', 'pt-BR'];
-// Every line that the module can send at once, with wide figures
-const FULL_TEXT = 'Video stream: 3840x2160 119.88 FPS (Codec: HEVC 10-bit HDR)\n' +
-  'Incoming frame rate from network: 119.88 FPS\n' +
-  'Decoding frame rate: 119.88 FPS\n' +
-  'Rendering frame rate: 119.88 FPS\n' +
-  'Bitrate: 148.52 Mbps video received, 150.0 Mbps configured (with FEC and audio)\n' +
-  'Host frame rate (30 s): 119.88 FPS\n' +
-  'Host processing latency min/max/average: 4.1/12.9/6.3 ms\n' +
-  'Frames dropped by your network connection: 0.42%\n' +
-  'Average network latency: 12 ms (variance: 3 ms)\n' +
-  'Average frame receive time: 13.21 ms (159% of the frame time)\n' +
-  'Frames arrive at: 1234 Mbps\n' +
-  'Average frame wait time: 0.42 ms\n' +
-  'Average frame pacing delay: 5.87 ms\n' +
-  'Average rendering time: 0.31 ms\n' +
-  'Longest frame times (ms): receive 125.3, wait 16.7, pacing 33.4, rendering 16.8\n' +
-  'Pending frames: 1 (max 3)\n' +
-  'Host frame intervals: deviation 0.47 ms, p95 17.0 ms, 0.0% off cadence\n' +
-  'TV player frame intervals: deviation 1.92 ms, p95 19.4 ms, 3.1% off cadence\n' +
-  'Session frames dropped by network: 1234 (0.42%)\n' +
-  'Session frames dropped by the TV: 12 (video pipeline resets: 1)\n' +
-  'Session recovery keyframes: 17\n' +
-  'TV player rejections: buffer full 12 (10 recovered), keyframe required 3, track not ready 2, other 1 (last code -5)\n' +
-  'Session FEC recoveries: 1234 blocks, 5678 packets (longest 12 ms, 3 slow, 2 failed)\n' +
-  'Worst FEC block: 18 of 20 parity packets used\n' +
-  'Audio stream: Opus 7.1 surround (8 channels), 10 ms packets, 450 kbps\n' +
-  'Audio CPU: decode 104.21 ms/s (max 2.31 ms), output 66.42 ms/s (max 22.31 ms)\n' +
-  'Session audio packets lost by network: 123/456789 (0.03%)\n' +
-  'Session audio decode errors: 2, TV audio player rejections: 3\n' +
-  'WASM heap top: 96 of 128 MB (+12 MB this stream)\n';
+// The full statistics with every line that the module can send at once: FULL_TEXT of full-stats-text.js
 const COMPACT_MESSAGE = 'StatCompactMsg: {"w":3840,"h":2160,"fps":120,"codec":"HEVC","bits":10,"hdr":1,"rfps":119.88,"mbps":148.5,' +
   '"rtt":12,"drop":0.42,"delay":6.3}';
 
@@ -189,7 +164,7 @@ test('the full statistics are a small box without a text shadow that stays reada
   }
 });
 
-test('the bitrate line, the frame receive time and the arrival rate keep their one line in the box, in every language', async () => {
+test('the bitrate line, the frame receive time, the arrival rate and the FEC and heap lines keep their one line in the box, in every language', async () => {
   for (const language of LANGUAGES) {
     const app = await openApp(harness, { tv: TV, stored: { performanceStats: 2, languagePreference: language, audioConfig: '71Surround' } });
     try {
@@ -238,6 +213,17 @@ test('the bitrate line, the frame receive time and the arrival rate keep their o
         if (language === 'es-ES') {
           const receiveRows = rows.filter((entry) => /13\.21 ms/.test(entry.line))[0];
           assert.equal(receiveRows.rows, 1, language + stress + ': ' + receiveRows.line);
+        }
+      });
+      // The FEC recoveries of the session, the worst FEC block and the top of the WASM heap, translated as whole lines
+      // since 2.3.3 (only their labels before), each on one row of the box
+      const wholeLines = [/1234 .*5678 .*12 .*3 .*2/, /(18 .*20|20 .*18)/, /96 .*128 .*\+12 /].map((pattern) =>
+        lines.filter((entry) => pattern.test(entry.line) && /FEC|WASM/.test(entry.line)));
+      wholeLines.forEach((found) => {
+        assert.equal(found.length, 1, language + ': ' + JSON.stringify(found));
+        assert.equal(found[0].rows, 1, language + ': ' + found[0].line);
+        if (language !== 'en-US') {
+          assert.doesNotMatch(found[0].line, /blocks|packets|longest|slow|failed|parity|used|this stream/, language);
         }
       });
       // (the measurement tells a wrapped line: the line of the rejections of the player is longer than the box is wide)
@@ -326,6 +312,55 @@ test('the ForceGM variant says so in the line, and the help text of the setting 
     // The same name and version as System information shows
     const systemInfo = await app.page.evaluate(() => document.getElementById('systemInfoBtn').innerText);
     assert.ok(systemInfo.indexOf('App Version: Moonlight Plus-ForceGM v' + version) === 0, systemInfo.slice(0, 80));
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('the connection warning has the surface of the statistics and shows only with a text', async () => {
+  const app = await openApp(harness, { tv: TV, stored: { performanceStats: 2 } });
+  try {
+    await startStream(app);
+    const warning = () => app.page.evaluate(() => {
+      const element = document.getElementById('connection-warnings');
+      const style = getComputedStyle(element);
+      return { text: element.textContent, display: style.display, background: style.backgroundColor, color: style.color,
+        shadow: style.boxShadow, inline: element.getAttribute('style') || '' };
+    });
+    await app.page.evaluate(() => handleMessage('WarningMsg: Slow connection to PC.\nReduce your bitrate!'));
+    const shown = await warning();
+    assert.equal(shown.text, 'Slow connection to PC.\nReduce your bitrate!');
+    assert.notEqual(shown.display, 'none');
+    // The dark surface of the statistics, with their outline and an amber edge on the left, from the stylesheet
+    assert.equal(shown.background, 'rgba(10, 13, 26, 0.8)');
+    assert.match(shown.shadow, /rgb\(255, 197, 71\) 4px 0px 0px 0px inset/);
+    assert.doesNotMatch(shown.inline, /background/);
+    // White text that stays readable over a white picture, as the statistics (2.3.2: 50 % black, about 3.9:1)
+    assert.equal(shown.color, 'rgb(255, 255, 255)');
+    const surface = /^rgba\((\d+), (\d+), (\d+), ([\d.]+)\)$/.exec(shown.background);
+    const alpha = Number(surface[4]);
+    const overWhite = [1, 2, 3].map((index) => Math.round(Number(surface[index]) * alpha + 255 * (1 - alpha)));
+    assert.ok(contrast([255, 255, 255], overWhite) >= 7, 'contrast ' + contrast([255, 255, 255], overWhite).toFixed(2));
+    // Gone without a text, back with one
+    await app.page.evaluate(() => handleMessage('NoWarningMsg: Connection to PC has been improved.'));
+    assert.equal((await warning()).display, 'none');
+    await app.page.evaluate(() => handleMessage('WarningMsg: Slow connection to PC.\nReduce your bitrate!'));
+    assert.notEqual((await warning()).display, 'none');
+    // The start of a stream (startGame(), retryStreamStart(), resumeStreamAfterSettingsChange()) empties it
+    await app.page.evaluate(() => $('#connection-warnings, #performance-stats').text(''));
+    const emptied = await warning();
+    assert.equal(emptied.display, 'none');
+    assert.doesNotMatch(emptied.inline, /background/);
+    // 'Hide connection warnings' keeps it hidden with a text
+    await app.page.evaluate(() => {
+      document.getElementById('disableWarningsSwitch').checked = true;
+      handleOnScreenOverlays();
+      handleMessage('WarningMsg: Slow connection to PC.\nReduce your bitrate!');
+    });
+    const hidden = await warning();
+    assert.equal(hidden.text, 'Slow connection to PC.\nReduce your bitrate!');
+    assert.equal(hidden.display, 'none');
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

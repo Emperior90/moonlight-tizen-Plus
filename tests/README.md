@@ -35,7 +35,7 @@ npm run test:browser --prefix tests
 node --test tests/browser/video-defaults.test.js   # a single file
 ```
 
-Measured run times for 2.3.3 on a machine with 4 CPUs: the tools about 1 second, the unit tests about 30 seconds (927 tests), the native tests about 4 minutes (55 test programs with 426 tests, mostly compiling; measured without the headers of curl, so without `http_request_test`, which adds one program with 6 tests) and the browser tests about 11 minutes (581 tests, two files at a time), so `npm test` takes about 15 minutes. In CI the whole run of 2.1.0 took about 5 minutes. A single test file is the faster way while you work on one part.
+Measured run times for 2.3.3 on a machine with 4 CPUs: the tools about 1 second, the unit tests about 30 seconds (932 tests), the native tests about 4 minutes (55 test programs with 426 tests, mostly compiling; measured without the headers of curl, so without `http_request_test`, which adds one program with 6 tests) and the browser tests about 11 minutes (586 tests, two files at a time), so `npm test` takes about 15 minutes. In CI the whole run of 2.1.0 took about 5 minutes. A single test file is the faster way while you work on one part.
 
 ## Test files added in 2.3.3
 
@@ -44,6 +44,8 @@ Measured run times for 2.3.3 on a machine with 4 CPUs: the tools about 1 second,
 | `browser/add-pc-success.test.js` | Adding and pairing a PC that succeed: Add PC and the PIN (one card, stored with its key, the polling over HTTPS, the same after a reload), a known PC that isn't paired, OK on a card that isn't paired, a wrong PIN first, and a PC that runs an app |
 | `browser/pc-trust.test.js` | A PC that no longer accepts the TV while its app list shows or during a stream: a start, *Quit app on the PC*, the end of a stream and *Shut down the PC* from the PC list |
 | `browser/running-app-unlisted.test.js` | A running app that the app list of the TV or of the PC lacks: the list read once more, the questions by the name of the PC, the quit (also when the list can't be read), a tile of an app that the PC no longer lists, and the Web Audio output after *No* |
+| `browser/snackbar.test.js` | The messages in the real snackbar: the time of each kind of message (a long one by the length of its translated text, 5 to 15 seconds) and the early end of a long one, a message over the Add PC dialog and the button mapping panel, and its place beside the full statistics or above the compact line in a bottom corner, in English and German, also at 10 % wider text (with the full statistics of `browser/full-stats-text.js`, which `stats-overlay.test.js` and `stream-menu.test.js` share) |
+| `unit/snackbar-time.test.js` | The time of a long message by its length (1.5 seconds plus 50 ms per character, 5 to 15 seconds), the times of `snackbarLog()` and `snackbarLogFor()`, and the two start failures in every language |
 | `unit/pc-trust.test.js` | NvHTTP with a PC that refuses the TV (the 401 answer over HTTPS), a mismatch of the pinned key, a PC that accepts the TV again, the pairing after a refusal, and a pairing that the PC doesn't confirm |
 
 ## Test files added in 2.3.2
@@ -84,7 +86,7 @@ Measured run times for 2.3.3 on a machine with 4 CPUs: the tools about 1 second,
 | `unit/library-log-lines.test.js` | The stage messages of moonlight-common-c that the listener knows, and the one place of `LC_LOG` |
 | `unit/dockerfile-downloads.test.js` | The pinned base image and that every download of the `Dockerfile` is checked or a listed exception |
 | `unit/navigation-views.test.js` | The views of `navigation.js` on a stand-in for the page: drop-downs, views on top, dialogs |
-| `unit/menu-texts.test.js` | The start numbers of the Add PC dialog, the button names for the Voice Guide and two statistics fragments in every language |
+| `unit/menu-texts.test.js` | The start numbers of the Add PC dialog, the button names for the Voice Guide and five lines and fragments of the statistics in every language |
 | `unit/host-uid.test.js` | The unique ID of a host, with real and hostile IDs |
 | `unit/host-rfi.test.js` | The local patches of moonlight-common-c for reference frame invalidation |
 | `unit/frequent-messages.test.js` | No console line for the statistics and rumble messages, and the line about the app in the full statistics |
@@ -98,7 +100,7 @@ Measured run times for 2.3.3 on a machine with 4 CPUs: the tools about 1 second,
 | `browser/web-audio-stereo.test.js`, `browser/surround-quality-default.test.js`, `browser/audio-overload.test.js` | Stereo with Web Audio, the default of *Surround audio quality* with its notice, and the overload message |
 | `browser/start-request-failure.test.js` | A start request that fails, also in the silent retry and the reconnect of the Stream Menu, and the uncaught errors in the diagnostic log |
 | `browser/hostile-host-id.test.js`, `browser/hostile-server-info.test.js` | Devices on the local network that answer with a hostile unique ID or hostile fields |
-| `browser/stats-overlay.test.js` | The box of the full statistics in every language and corner |
+| `browser/stats-overlay.test.js` | The box of the full statistics in every language and corner, and the surface of the connection warning |
 | `browser/host-status.test.js` | The state of a stored PC at the start: unknown until its first poll ends, OK and the Smart Hub tiles wait for that poll (and drop it for a PC deleted meanwhile), a host stored during a poll, and a PC that no longer accepts the TV or answers with another key |
 | `browser/audio-qos.test.js` | The switch *Prioritize sound on Wi-Fi*: its default, stored, after a restart, *Restore Defaults*, the optimal settings button and the start requests |
 

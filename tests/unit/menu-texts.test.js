@@ -7,7 +7,9 @@
 //   names their key, the translation pass of wasm/platform/i18n.js sets them, and wasm/static/js/i18n-sync.js keeps
 //   their keys in the locale files;
 // - the full statistics translate the count of the video pipeline resets and the kinds of the rejections of the TV
-//   player (replaceKnownStatsLabels() in wasm/platform/messages.js), which stayed English in every language.
+//   player (replaceKnownStatsLabels() in wasm/platform/messages.js), which stayed English in every language, and since
+//   2.3.3 three more lines as a whole: the FEC recoveries of the session, the worst FEC block and the top of the WASM
+//   heap, of which only the label was translated before.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -138,14 +140,20 @@ test('i18n-sync.js keeps a key that only a button name uses', () => {
   }
 });
 
-// The two lines of the full statistics as FormatVideoStats() of wasm/wasmplayer.cpp writes them
+// The lines of the full statistics as FormatVideoStats() of wasm/wasmplayer.cpp writes them
 const DROPPED = 'Session frames dropped by the TV: 4 (video pipeline resets: 1)';
 const REJECTIONS = 'TV player rejections: buffer full 4 (3 recovered), keyframe required 1, track not ready 0, other 2 (last code -3)';
+const FEC_RECOVERIES = 'Session FEC recoveries: 1234 blocks, 5678 packets (longest 12 ms, 3 slow, 2 failed)';
+const WORST_FEC_BLOCK = 'Worst FEC block: 18 of 20 parity packets used';
+const HEAP_TOP = 'WASM heap top: 96 of 128 MB (+12 MB this stream)';
 
 test('the sample lines of the statistics are those of the native code', () => {
   const native = fs.readFileSync(path.join(REPO_ROOT, 'wasm/wasmplayer.cpp'), 'utf8');
   assert.ok(native.includes('"Session frames dropped by the TV: %u (video pipeline resets: %u)\\n"'));
   assert.ok(native.includes('"TV player rejections: buffer full %u (%u recovered), keyframe required %u, track not ready %u, other %u (last code %d)\\n"'));
+  assert.ok(native.includes('"Session FEC recoveries: %u blocks, %u packets (longest %u ms, %u slow, %u failed)\\n"'));
+  assert.ok(native.includes('"Worst FEC block: %u of %u parity packets used\\n"'));
+  assert.ok(native.includes('"WASM heap top: %u of %u MB (+%u MB this stream)\\n"'));
 });
 
 test('the full statistics translate the video pipeline resets and the kinds of the TV player rejections', () => {
@@ -164,4 +172,32 @@ test('the full statistics translate the video pipeline resets and the kinds of t
     assert.deepEqual(lines[0].match(/\d+/g), ['4', '1'], locale);
   });
   assert.equal(translate('de-DE')(DROPPED), 'Vom TV verworfene Frames (Sitzung): 4 (Video-Neustarts: 1)');
+});
+
+test('the full statistics translate the FEC recoveries, the worst FEC block and the WASM heap top as whole lines', () => {
+  const translate = (locale) => loadPlatformScripts(['wasm/platform/messages.js'], { globals: { t: translator(locale) } }).get('replaceKnownStatsLabels');
+  const text = FEC_RECOVERIES + '\n' + WORST_FEC_BLOCK + '\n' + HEAP_TOP;
+  // English keeps the lines
+  assert.equal(translate('en-US')(text), text);
+  LOCALES.forEach((locale) => {
+    const t = translator(locale);
+    const lines = translate(locale)(text).split('\n');
+    assert.deepEqual(lines, [
+      t('Session FEC recoveries: %1$s blocks, %2$s packets (longest %3$s ms, %4$s slow, %5$s failed)', '1234', '5678', '12', '3', '2'),
+      t('Worst FEC block: %1$s of %2$s parity packets used', '18', '20'),
+      t('WASM heap top: %1$s of %2$s MB (+%3$s MB this stream)', '96', '128', '12'),
+    ], locale);
+    // Nothing of the three lines stays English (the label of the line was translated before 2.3.3, the rest wasn't)
+    assert.doesNotMatch(lines.join('\n'), /blocks|packets|longest|slow|failed|parity|used|this stream/, locale);
+    // The numbers in the order of each language
+    assert.deepEqual(lines[0].match(/\d+/g), ['1234', '5678', '12', '3', '2'], locale);
+    assert.deepEqual(lines[2].match(/\d+/g), ['96', '128', '12'], locale);
+    assert.deepEqual(lines[1].match(/\d+/g).sort(), ['18', '20'], locale);
+  });
+  // German with the term of 'Last session' (FEC repairs), so that the line keeps one row in the box
+  assert.equal(translate('de-DE')(FEC_RECOVERIES), 'FEC-Reparaturen (Sitzung): 1234 Blöcke, 5678 Pakete (max. 12 ms, 3 langsam, 2 fehlgeschlagen)');
+  assert.equal(translate('de-DE')(WORST_FEC_BLOCK), 'Schlechtester FEC-Block: 18 von 20 Paritätspaketen genutzt');
+  // The line of the log at the end of a stream (wasmplayer.cpp) is a different one and stays as it is
+  const endLine = 'WASM heap top after the stream: 62 of 128 MB (+1 MB this stream)';
+  assert.equal(translate('de-DE')(endLine), endLine);
 });
