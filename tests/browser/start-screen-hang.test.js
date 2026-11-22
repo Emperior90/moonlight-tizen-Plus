@@ -595,18 +595,21 @@ test('a start whose app list the PC doesn\'t send says so, and a start once more
     });
     await app.page.waitForFunction(() => document.body.getAttribute('data-view') === 'apps' && !$('#loadingSpinner').is(':visible') &&
       !$('#wasmSpinner').is(':visible'), null, { timeout: 5000 });
+    await app.page.waitForTimeout(300);
     const retry = await take(app.page);
     assert.deepEqual([retry.screen.view, retry.screen.startScreen, retry.screen.isInGame], ['apps', false, false], JSON.stringify(retry));
-    // The message of a retry that fails, then the one of the app list, which can't show its apps
-    assert.deepEqual(retry.snack, ['No video received from the PC. Check the host PC\'s firewall and port forwarding rules.',
-      'Unable to retrieve your list of apps at this time. Please refresh the list of apps or try again later!']);
+    // The message of a retry that fails; the app list, which can't show its apps, says why at the top of the screen,
+    // where its illustration has the selection (since 2.3.3; a snackbar of the same text before)
+    assert.deepEqual(retry.snack, ['No video received from the PC. Check the host PC\'s firewall and port forwarding rules.']);
+    assert.deepEqual(await app.page.evaluate(() => ({
+      marked: Array.prototype.map.call(document.querySelectorAll('.hovered'), (element) => element.id || element.tagName),
+      text: document.getElementById('hero-text').textContent,
+    })), { marked: ['IMG'], text: 'The app list of this PC couldn\'t be read. Go back with RETURN and open the PC to try again.' });
     assert.ok(app.logs.some((line) => line.indexOf('The stream can\'t be started once more: the app list of the host could not be read') >= 0));
-    // The app list that leaveStreamView() (messages.js) shows after the end fails as well: its showApps(host).then()
-    // has no failure handler, so the one rejection of getAppList() with -1 stays unhandled. That is as before 2.3.2 and
-    // leaves no screen up; only this one -1 is let through, any other rejection fails the test.
-    assert.deepEqual(retry.unhandled.filter((reason) => reason !== '-1'), []);
-    assert.ok(retry.unhandled.length <= 1, JSON.stringify(retry.unhandled));
-    assert.deepEqual(app.errors.filter((error) => error !== '-1'), []);
+    // The app list that leaveStreamView() (messages.js) shows after the end fails as well, which it logs (since 2.3.3;
+    // an unhandled rejection before)
+    assert.deepEqual(retry.unhandled, []);
+    assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
   }

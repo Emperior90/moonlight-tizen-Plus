@@ -560,6 +560,11 @@ test('the power question opens on Cancel, ignores an OK right after it opened, s
 test('Shut down the PC: the menu closes, Windows key + R, the command and Enter go out with their waits, and the keys and the menu stay away meanwhile', async () => {
   const app = await openStreaming({ gamepad: true });
   try {
+    // The mouse button presses on the video, with which the page asks the module for the pointer lock
+    await app.page.evaluate(() => {
+      window.__videoMouseDowns = 0;
+      document.getElementById('wasm_module').addEventListener('mousedown', () => window.__videoMouseDowns++, true);
+    });
     await openMenuAt(app.page, 'streamMenuPower');
     await remoteKey(app.page, ...ENTER);
     await remoteKey(app.page, ...DOWN);
@@ -581,6 +586,7 @@ test('Shut down the PC: the menu closes, Windows key + R, the command and Enter 
     await remoteKey(app.page, ...YELLOW);
     assert.equal((await state(app.page)).open, false);
     assert.deepEqual(await app.page.evaluate(() => window.__videoKeys.slice()), []);
+    assert.equal(await app.page.evaluate(() => window.__videoMouseDowns), 0, 'no key asks for the pointer lock meanwhile');
     await app.page.waitForFunction(() => window.__wasmCalls.some((call) => call.name === 'sendKeyboardEvent' && call.args[0] === 32781), null, { timeout: 5000 });
     await app.page.waitForTimeout(100);
     const calls = await app.page.evaluate(() => window.__wasmCalls.map((call) => ({ text: call.name + (call.args.length ? ' ' + call.args.join(',') : ''), at: call.at })));
@@ -597,10 +603,13 @@ test('Shut down the PC: the menu closes, Windows key + R, the command and Enter 
     // The command never goes to the log
     assert.ok(!app.logs.some((line) => line.indexOf('shutdown /') >= 0), 'the log has no command');
     assert.ok(app.logs.some((line) => line.indexOf('PC power (shutdown, from the Stream Menu): Enter sent') >= 0));
-    // After Enter the stream goes on: the keys reach the PC again, and the menu opens
+    // After Enter the stream goes on: the keys reach the PC again, and the menu opens. The menu found the pointer
+    // unlocked, so the first key asks for the lock (since 2.3.3), which gives the stream the keys
     assert.equal(await app.page.evaluate(() => document.activeElement.id), 'wasm_module');
+    assert.equal(await app.page.evaluate(() => window.__videoMouseDowns), 0);
     await remoteKey(app.page, ...ENTER);
     assert.deepEqual(await app.page.evaluate(() => window.__videoKeys.slice()), ['keydown 13', 'keyup 13']);
+    assert.equal(await app.page.evaluate(() => window.__videoMouseDowns), 1, 'the first key after Enter asks for the pointer lock');
     await remoteKey(app.page, ...PLAY_PAUSE);
     now = await state(app.page);
     assert.deepEqual([now.open, now.focused], [true, 'streamMenuResume']);

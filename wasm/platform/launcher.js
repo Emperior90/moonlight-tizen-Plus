@@ -275,11 +275,16 @@ const Launcher = (function() {
       return;
     }
     const state = hostState(host);
+    // An offline PC where a device answered with another key than the one pinned at the pairing (pinnedKeyMismatch of
+    // NvHTTP in utils.js): the text says so, and OK says what to do (hostChosen() in index.js). It stays offline, and OK
+    // still wakes it when Auto WoL is on, since another PC may have its address while it sleeps.
+    const keyMismatch = state === 'offline' && host.pinnedKeyMismatch === true;
     const texts = {
       online: t('Ready to stream. Select it to see its apps and games.'),
       running: t('A game is running on this PC. Open it to resume or quit the game.'),
       locked: t('Select it to pair this TV with the PC using a PIN.'),
-      offline: t('This PC is not reachable. Turn it on, or wake it from its options.'),
+      offline: keyMismatch ? t('This PC answers with a different key than at its pairing. Try "Rescan network", or delete the PC and add it again.') :
+        t('This PC is not reachable. Turn it on, or wake it from its options.'),
       unknown: '',
     };
     let hints = '';
@@ -349,13 +354,14 @@ const Launcher = (function() {
       return;
     }
     if (!/^game-container-/.test(card.id || '')) {
-      // The illustration of an empty or failed app list
+      // The illustration of an empty or failed app list. The text of a failed list names only what this screen offers:
+      // RETURN to the PC list, where OK on the PC reads its list again (the list of a failed read isn't kept).
       const failed = /applist_error\.svg$/.test(card.getAttribute('src') || '');
       setHero('app', 'empty', {
         overline: hostName,
         title: failed ? t('Apps') : t('No apps yet'),
-        text: failed ? t('Unable to retrieve your list of apps at this time. Please refresh the list of apps or try again later!')
-          : t('Your list is currently empty. Please add your favorite apps to the list.'),
+        text: failed ? t('The app list of this PC couldn\'t be read. Go back with RETURN and open the PC to try again.')
+          : t('In the web UI of Sunshine on the PC, add apps under "Applications", then choose "Refresh apps" in the menu of this PC in the PC list.'),
       });
       return;
     }
@@ -610,9 +616,10 @@ const Launcher = (function() {
           escapeHTML(tile[1]) + '</span><span class="value-unit">' + escapeHTML(tile[2]) + '</span></div>';
       }).join('');
     },
-    // Fill the start screen of a stream: the box art as a poster, the title and the host (startGame()), and over them
-    // what the start is for: the key of a text (overlineKey, e.g. 'Shut down the PC' for a session of the menu of a PC),
-    // or 'Starting'. The key stays on the element, so that a change of the language translates it.
+    // Fill the start screen of a stream: the box art as a poster (or the gamepad of a tile without box art), the title and
+    // the host (startGame()), and over them what the start is for: the key of a text (overlineKey, e.g. 'Shut down the
+    // PC' for a session of the menu of a PC), or 'Starting'. The key stays on the element, so that a change of the
+    // language translates it.
     prepareStart: function(host, appId, title, overlineKey) {
       const overline = document.querySelector('.launch-overline');
       if (overline) {
@@ -623,7 +630,10 @@ const Launcher = (function() {
       const art = artOf(byId('game-container-' + appId));
       const poster = byId('launch-poster');
       if (poster) {
-        poster.setAttribute('src', art ? art.getAttribute('src') : 'static/res/placeholder_game.svg');
+        // Without box art (none, or not loaded yet) the poster is the one of a tile without box art, with the gamepad,
+        // except for a session of the menu of a PC (overlineKey), which starts no game
+        poster.setAttribute('src', art ? art.getAttribute('src') :
+          overlineKey ? 'static/res/placeholder_game.svg' : 'static/res/placeholder_error.svg');
         poster.classList.toggle('is-wide', isWide(art));
       }
       paintAmbient(byId('launch-backdrop'), art);

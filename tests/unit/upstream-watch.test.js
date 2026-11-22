@@ -193,6 +193,15 @@ test('the review of November 2026 moved each project to the upstream state it re
   assert.match(byId.sunshine.note, /a newer full release is reported even when its tag has a decision/);
   assert.deepEqual(byId.sunshine.decisions.map((decision) => decision.tags[0]), ['v2026.516.143833', 'v2026.1115.211404', 'v2026.1116.25010']);
   assert.deepEqual([byId['sunshine-pr-5917'].reviewed_through, byId['sunshine-pr-5917'].reviewed_state], ['31044d8af7f8fdb0795c6bc2e460eed8ccb07782', 'open']);
+  // libgamestream of moonlight-embedded, reviewed once for 2.3.3 through 33142e5: the length of the signature of the host
+  // (000d9da) and pairing while the PC is busy (f021439) taken, the rest skipped, each commit once
+  const libgamestream = byId.libgamestream;
+  assert.equal(libgamestream.reviewed_through, '33142e58ebd576085a076f4ce24881d20b3c4ef5');
+  ['000d9da', 'f021439'].forEach((hash) => assert.deepEqual([decisionsOf(libgamestream, hash).length, decisionsOf(libgamestream, hash)[0].decision,
+    decisionsOf(libgamestream, hash)[0].in], [1, 'taken', '2.3.3'], hash));
+  ['5f7f0ec', 'f32e415', '274d3db', '28c3aad', 'ab9999c', '040e389'].forEach((hash) => assert.deepEqual([decisionsOf(libgamestream, hash).length,
+    decisionsOf(libgamestream, hash)[0].decision], [1, 'skipped'], hash));
+  assert.match(fs.readFileSync(path.join(REPO_ROOT, 'libgamestream/pairing.c'), 'utf8'), /#define PAIRING_SIGNATURE_MAX_BYTES 512/);
 });
 
 test('every upstream commit that the changelog says was ported is recorded as taken', () => {

@@ -8,6 +8,30 @@ var SMART_HUB_PREVIEW_FILE_PREFIX = 'preview-s90c-';
 // reports as error 599 as well
 var QUIT_APP_STILL_RUNNING_ERROR = 599;
 
+// The error with which refreshServerInfoAtAddress() fails when a paired PC answers over HTTPS, on a connection whose key
+// curl checked against the key pinned at the pairing (CURLOPT_PINNEDPUBLICKEY in http_request() of
+// libgamestream/http.c), that it no longer accepts this TV: Sunshine, Apollo, Vibepollo and Vibeshine check the
+// certificate of a client after the TLS handshake and answer a client that they don't know (e.g. after "Unpair All")
+// or one turned off in their list of clients with HTTP 200 and <root status_code="401" ...> (on_verify_failed in their
+// src/nvhttp.cpp). The answer is authentic, so the polls take the PC for online and not paired (markRefusedByHost()), and
+// so does the request of the app list (getAppListWithCacheFlush(), which fails with this error as well); every other
+// caller just fails.
+var HOST_REFUSED_TV_ERROR = 'HOST_REFUSED_TV';
+// The error with which NvHTTP.pair() fails when the PC doesn't confirm the pairing: its answer to the pairchallenge
+// request over HTTPS has no <paired>1</paired>, e.g. the 401 answer above right after the pairing
+var PAIRING_NOT_CONFIRMED_ERROR = 'PAIRING_NOT_CONFIRMED';
+
+// Whether a request failed because the device that answered over HTTPS has another key than the one pinned at the
+// pairing (GS_CERT_MISMATCH of libgamestream/errors.h, which the module sends as the text "-100"). Such an answer isn't
+// authenticated: it may come from another device that has the address of the PC now.
+function isPinnedKeyMismatchError(error) {
+  return String(error) === '-100';
+}
+
+// The PCs whose refusal of this TV is in the log already, by unique ID (markRefusedByHost()): once per start of the app,
+// and again whenever a PC that was paired refuses the TV
+var hostRefusalLogged = Object.create(null);
+
 // How long the app waits for the answer of a host to /cancel (quitting the running app) and to the download of one box
 // art, in milliseconds: 30 seconds, as Moonlight for PC waits for a quit. The request queue enforces the limit
 // (sendMessage('openUrl', ...) in messages.js cancels the request in the module and rejects it with -1). Without one, a
@@ -791,6 +815,13 @@ function NvHTTP(address, clientUid, userEnteredAddress = '', macAddress) {
   this.clientUid = clientUid;
   this.serverUid = '';
   this.ppkstr = null;
+  // True while the last check of a paired PC found no address that answered, and at least one where a device answered
+  // over HTTPS with another key than the pinned one (isPinnedKeyMismatchError()). Such an answer isn't authenticated, so
+  // it never makes the PC online or not paired; it only changes the message (hostChosen() and showHost() of launcher.js).
+  this.pinnedKeyMismatch = false;
+  // True from a refusal of the pinned key by the PC (markRefusedByHost()) until an answer that the PC accepts it again,
+  // or a pairing that pins a key: only then does pair() start over without the pinned key
+  this._refusedByHost = false;
   this._pollCount = 0;
   this._consecutivePollFailures = 0;
   this._pollCompletionCallbacks = [];
@@ -853,29 +884,27 @@ NvHTTP.prototype = {
     // (getPreflightUrl()).
     var preflightUrl = getPreflightUrl(url, this.httpsPort, this.httpPort);
 
-    return fetch(preflightUrl, abortCtrl ? { signal: abortCtrl.signal } : {})
-      .then(function(res) {
-        clearTimeout(timeoutId);
-        // The IP is alive and responded! Hand it over to C++
-        return sendMessage('openUrl', [url, ppkstr, false, 5000]).catch(error => {
-          throw error;
-        });
-      })
-      .catch(function(e) {
-        clearTimeout(timeoutId);
-        // If the fetch was forcefully aborted by our timeout, it means the IP is a black hole (silent drop).
-        // We MUST skip it, otherwise handing it to C++ will irrevocably freeze the WASM thread for 120 seconds!
-        if (e && e.name === 'AbortError') {
-          console.warn('%c[utils.js, _openUrlWithTimeout]', 'color: orange;', 'Skipping dead/hanging URL to prevent C++ WASM freeze: ' + url);
-          return Promise.reject(-1); // Instantly fail (GS_FAILED), don't pass to C++!
-        } else {
-          // Any other error (e.g. Cert Error, Connection Refused, CORS) means the IP actively responded quickly.
-          // C++ will also fail quickly without hanging (or succeed if mTLS), so it's safe to hand it over.
-          return sendMessage('openUrl', [url, ppkstr, false, 5000]).catch(error => {
-            throw error;
-          });
-        }
-      });
+    // The preflight is settled first, and the request goes to the module once: a .catch() after the request also caught
+    // its own rejection (-1 after its 5 seconds, or -100) and sent it a second time, up to 2.3.2
+    return fetch(preflightUrl, abortCtrl ? { signal: abortCtrl.signal } : {}).then(function() {
+      clearTimeout(timeoutId);
+      // The IP is alive and responded! Hand it over to C++
+      return true;
+    }, function(e) {
+      clearTimeout(timeoutId);
+      // If the fetch was forcefully aborted by our timeout, it means the IP is a black hole (silent drop).
+      // We MUST skip it, otherwise handing it to C++ will irrevocably freeze the WASM thread for 120 seconds!
+      if (e && e.name === 'AbortError') {
+        console.warn('%c[utils.js, _openUrlWithTimeout]', 'color: orange;', 'Skipping dead/hanging URL to prevent C++ WASM freeze: ' + url);
+        return false;
+      }
+      // Any other error (e.g. Cert Error, Connection Refused, CORS) means the IP actively responded quickly.
+      // C++ will also fail quickly without hanging (or succeed if mTLS), so it's safe to hand it over.
+      return true;
+    }).then(function(alive) {
+      // A black hole fails at once (GS_FAILED), without the module
+      return alive ? sendMessage('openUrl', [url, ppkstr, false, 5000]) : Promise.reject(-1);
+    });
   },
 
   // Refreshes the server info using the base URL. This is useful for testing whether we can successfully ping a host at the base URL
@@ -905,11 +934,18 @@ NvHTTP.prototype = {
     }
     // Paired hosts must use HTTPS with the pinned certificate. Do not fall back to unauthenticated HTTP for server metadata.
     return this._openUrlWithTimeout('https://' + urlAddr + ':' + this.httpsPort + '/serverinfo?' + this._buildUidStr(), this.ppkstr).then(function(ret) {
+      // The PC answered with the pinned key that it no longer accepts this TV: no field of the answer is taken (it has
+      // none), and only the polls change the state of the host (pollServer(), beginBackgroundPollingOfHost() in index.js)
+      if (this._isUnauthorizedAnswer(ret)) {
+        return Promise.reject(HOST_REFUSED_TV_ERROR);
+      }
       var parsed = this._parseServerInfo(ret);
       if (!parsed) { // If that fails
         console.warn('%c[utils.js, refreshServerInfoAtAddress]', 'color: gray;', 'Warning: Failed to parse server info from HTTPS. Please verify the host is reachable and re-pair the host if necessary!');
         return Promise.reject("Failed to parse server info from HTTPS");
       }
+      // The PC accepts the pinned key (again)
+      this._refusedByHost = false;
       return parsed;
     }.bind(this), function(error) {
       if (error == -100) { // GS_CERT_MISMATCH
@@ -939,7 +975,12 @@ NvHTTP.prototype = {
       return;
     }
 
-    this.selectServerAddress(function(successfulAddress) {
+    this.selectServerAddress(function(successfulAddress, refused) {
+      // The PC answered at this address with its pinned key that it no longer accepts this TV: online, not paired. First,
+      // since the gates below read whether it is paired.
+      if (refused) {
+        this.markRefusedByHost();
+      }
       // Successfully determined server address. Update base URL
       var urlAddr = formatAddressForUrl(successfulAddress);
       this.address = successfulAddress;
@@ -957,15 +998,21 @@ NvHTTP.prototype = {
       // Poll for the app list every 10 successful server info polls
       // Not including the first one to avoid PCs taking a while to show as online initially
       if (this.paired && this._pollCount++ % 10 === 1) {
-        this.getAppListWithCacheFlush();
+        this.getAppListWithCacheFlush().catch(function(error) {
+          console.warn('%c[utils.js, pollServer]', 'color: gray;', 'Warning: Failed to read the app list of ' + this.hostname + ': ' + error);
+        }.bind(this));
       }
 
       this._consecutivePollFailures = 0;
       this.online = true;
+      this.pinnedKeyMismatch = false;
 
       // Call all pending completion callbacks
       this._completePoll();
-    }.bind(this), function() {
+    }.bind(this), function(keyMismatch) {
+      // A device answered with another key than the pinned one: only the message changes, the PC goes offline as any
+      // other that doesn't answer
+      this.pinnedKeyMismatch = !!keyMismatch;
       // Set host to offline and clear the app list cache
       if (++this._consecutivePollFailures >= 2) {
         this.online = false;
@@ -1002,21 +1049,37 @@ NvHTTP.prototype = {
     // isn't asked (getServerAddressCandidates()).
     var candidates = getServerAddressCandidates(this);
 
-    var tryNext = function(index) {
+    // onSuccess(address, refused) gets the address that answered, and whether the PC answered there that it no longer
+    // accepts this TV (HOST_REFUSED_TV_ERROR): the PC proved its pinned key at that address, so it ends the search like
+    // any answer, also after a device with another key at an earlier address. onFailure(keyMismatch) gets whether a
+    // device answered at one of the addresses with another key than the pinned one (isPinnedKeyMismatchError()). Not
+    // counted is the external address (externalIP), unless the PC answered there last or the user entered it: it is the
+    // public address of the household (STUN, updateExternalAddressIP4()), the same for every PC, which the router hands
+    // to the PC that it forwards the port to, e.g. another PC with Sunshine for remote play. Counted, it said "a
+    // different key" for a PC that was only off, and OK no longer woke it.
+    var isMismatchOfThePc = function(addr, error) {
+      return isPinnedKeyMismatchError(error) &&
+        (addr !== this.externalIP || addr === this.address || addr === this.userEnteredAddress);
+    }.bind(this);
+    var tryNext = function(index, keyMismatch) {
       if (index >= candidates.length) {
         console.error('%c[utils.js, selectServerAddress]', 'color: gray;', 'Error: Failed to contact the ' + this.hostname + '!', this);
-        onFailure();
+        onFailure(keyMismatch);
         return;
       }
       var addr = candidates[index];
       this.refreshServerInfoAtAddress(addr).then(function() {
-        onSuccess(addr);
-      }.bind(this), function() {
-        tryNext.call(this, index + 1);
+        onSuccess(addr, false);
+      }.bind(this), function(error) {
+        if (error === HOST_REFUSED_TV_ERROR) {
+          onSuccess(addr, true);
+          return;
+        }
+        tryNext.call(this, index + 1, keyMismatch || isMismatchOfThePc(addr, error));
       }.bind(this));
     }.bind(this);
 
-    tryNext(0);
+    tryNext(0, false);
   },
 
   toString: function() {
@@ -1033,6 +1096,7 @@ NvHTTP.prototype = {
     string += 'server UID: ' + this.serverUid + '\r\n';
     string += 'is paired: ' + this.paired + '\r\n';
     string += 'is online: ' + this.online + '\r\n';
+    string += 'pinned key mismatch: ' + this.pinnedKeyMismatch + '\r\n';
     string += 'number of apps: ' + this.numofapps + '\r\n';
     string += 'current game: ' + this.currentGame + '\r\n';
     string += 'app version: ' + this.appVersion + '\r\n';
@@ -1048,6 +1112,29 @@ NvHTTP.prototype = {
     }
 
     return string;
+  },
+
+  // Whether an answer is the one of a host to a client whose certificate it doesn't accept: status_code 401
+  _isUnauthorizedAnswer: function(xmlStr) {
+    try {
+      return this._parseXML(xmlStr).find('root').attr('status_code') == 401;
+    } catch (e) {
+      return false;
+    }
+  },
+
+  // Mark a paired PC that answered with its pinned key that it no longer accepts this TV (HOST_REFUSED_TV_ERROR) as not
+  // paired, so that its card shows Unpaired and OK pairs it again (hostChosen() in index.js). The pinned key stays until
+  // a pairing pins a new one: a PC that accepts the TV again (e.g. turned on again in its list of clients) answers the
+  // next poll over HTTPS as paired, without a pairing; pair() leaves it out while it pairs, and gives it back when the
+  // pairing fails or is cancelled. Logged once per PC and start of the app, and again whenever a paired PC refuses.
+  markRefusedByHost: function() {
+    if (this.paired === true || !hostRefusalLogged[this.serverUid]) {
+      hostRefusalLogged[this.serverUid] = true;
+      console.warn('%c[utils.js, markRefusedByHost]', 'color: gray;', 'Warning: ' + this.hostname + ' answered with its pinned key that it no longer accepts this TV (status 401): its pairing was removed or turned off on the PC. It shows as not paired until it is paired again.');
+    }
+    this.paired = false;
+    this._refusedByHost = true;
   },
 
   _parseServerInfo: function(xmlStr) {
@@ -1095,9 +1182,11 @@ NvHTTP.prototype = {
     var localAddress = $root.find('LocalIP').text().trim();
     this.localAddress = isServerAddress(localAddress) ? localAddress : '';
 
-    // Retrieve the MAC address of the host (required for Wake-on-LAN): six pairs of hexadecimal digits
+    // Retrieve the MAC address of the host (required for Wake-on-LAN): six pairs of hexadecimal digits. The all-zero
+    // address, which Sunshine sends over plain HTTP (e.g. to the pairing of a PC that refused the TV, pair()), never
+    // replaces a MAC address that the host has: Wake-on-LAN of that PC needs it.
     var macAddr = $root.find('mac').text().trim();
-    if (isMacAddress(macAddr)) {
+    if (isMacAddress(macAddr) && (macAddr !== '00:00:00:00:00:00' || !isMacAddress(this.macAddress))) {
       this.macAddress = macAddr;
     }
 
@@ -1214,10 +1303,17 @@ NvHTTP.prototype = {
       $xml = this._parseXML(ret);
       $root = $xml.find('root');
 
+      // The PC answered with the pinned key that it no longer accepts this TV (HOST_REFUSED_TV_ERROR): as after a poll,
+      // the PC shows Unpaired from now on and OK on it pairs it again, and its list in the cache is of no use until then
+      if (this.ppkstr && $root.attr('status_code') == 401) {
+        console.error('%c[utils.js, getAppListWithCacheFlush]', 'color: gray;', 'Error: ' + this.hostname + ' answered the request of its app list with status 401.');
+        this.markRefusedByHost();
+        this._memCachedApplist = null;
+        return Promise.reject(HOST_REFUSED_TV_ERROR);
+      }
       if ($root.attr('status_code') != 200) {
-        // TODO: Bubble up an error here
         console.error('%c[utils.js, getAppListWithCacheFlush]', 'color: gray;', 'Error: Failed to request app list: ', $root.attr('status_code'));
-        return [];
+        return Promise.reject('The app list was answered with status ' + $root.attr('status_code'));
       }
 
       var rootElement = $xml.find('root')[0];
@@ -1275,24 +1371,6 @@ NvHTTP.prototype = {
 
       var self = this;
 
-      // Queue the optimized JPEG preview of the box art. The original PNG box art is returned right away without
-      // waiting for it; showApps() in index.js waits for window.previewPromises before it hands the previews to the
-      // Smart Hub service.
-      var queuePreview = function(blob, origin) {
-        var previewPromise = queuePreviewImage(function() {
-          return self.generatePreviewImage(blob, appId).then(function(previewBytes) {
-            return previewBytes ? self.savePreviewImage(appId, previewBytes) : false;
-          });
-        }, isStale).catch(function(error) {
-          console.warn('%c[utils.js, getBoxArt]', 'color: gray;', 'Warning: Failed to generate Smart Hub Preview box art from ' + origin + ' for app ID ' + appId + ': ' + error);
-        });
-
-        if (!window.previewPromises) {
-          window.previewPromises = [];
-        }
-        window.previewPromises.push(previewPromise);
-      };
-
       var fetchBoxArt = function() {
         // Fetch the new box art from the network
         boxArtDownloads.run(function() {
@@ -1324,7 +1402,7 @@ NvHTTP.prototype = {
 
           // Make the optimized JPEG preview box art from network later, when Smart Hub Preview is supported
           if (isSmartHubSupported) {
-            queuePreview(blob, 'network');
+            self._queueBoxArtPreview(blob, appId, 'network', isStale);
           }
           makeBoxArtUrl(blob).then(resolve);
         }, function(error) {
@@ -1357,22 +1435,7 @@ NvHTTP.prototype = {
           console.log('%c[utils.js, getBoxArt]', 'color: gray;', 'Returning storage-cached box art: ', appId);
 
           if (isSmartHubSupported) {
-            // Check whether an optimized Smart Hub Preview has already been cached
-            var previewFilePath = 'documents/' + previewFileName;
-            var previewExists = false;
-            try {
-              // Open the cached preview file to check whether it already exists
-              var previewFileHandle = tizen.filesystem.openFile(previewFilePath, 'r');
-              previewFileHandle.close();
-              previewExists = true;
-              console.log('%c[utils.js, getBoxArt]', 'color: gray;', 'Smart Hub Preview box art file already cached: ' + previewFileName);
-            } catch (previewReadError) {
-              // The preview box art file does not exist, so generate it from the original box art
-              console.log('%c[utils.js, getBoxArt]', 'color: gray;', 'Smart Hub Preview box art file not found, generating: ' + previewFileName);
-            }
-            if (!previewExists) {
-              queuePreview(typedBlob, 'storage');
-            }
+            self.queueBoxArtPreview(appId, typedBlob, isStale);
           }
           makeBoxArtUrl(typedBlob).then(resolve);
         };
@@ -1418,6 +1481,46 @@ NvHTTP.prototype = {
         fetchBoxArt();
       }
     }.bind(this));
+  },
+
+  // Queue the optimized JPEG preview of the box art of an app for Smart Hub Preview, made later, one at a time while the
+  // TV is idle (queuePreviewImage()), and not at all once isStale() says that the box art is no longer wanted. The box art
+  // shows right away without waiting for it; showApps() in index.js waits for window.previewPromises before it hands the
+  // previews to the Smart Hub service. origin only names where the box art came from in the log.
+  _queueBoxArtPreview: function(blob, appId, origin, isStale) {
+    var self = this;
+    var previewPromise = queuePreviewImage(function() {
+      return self.generatePreviewImage(blob, appId).then(function(previewBytes) {
+        return previewBytes ? self.savePreviewImage(appId, previewBytes) : false;
+      });
+    }, isStale).catch(function(error) {
+      console.warn('%c[utils.js, getBoxArt]', 'color: gray;', 'Warning: Failed to generate Smart Hub Preview box art from ' + origin + ' for app ID ' + appId + ': ' + error);
+    });
+
+    if (!window.previewPromises) {
+      window.previewPromises = [];
+    }
+    window.previewPromises.push(previewPromise);
+  },
+
+  // Queue the Smart Hub Preview of box art that the TV already has (_queueBoxArtPreview()), unless its file is in the
+  // public documents directory already: for box art from the storage of the TV (getBoxArt()), and for box art that the
+  // app grid shows again without getBoxArt() (showApps() in index.js), whose preview may have been skipped for a grid
+  // that was built again meanwhile. Returns whether it was queued.
+  queueBoxArtPreview: function(appId, blob, isStale) {
+    var previewFileName = SMART_HUB_PREVIEW_FILE_PREFIX + appId + '.jpg';
+    try {
+      // Open the cached preview file to check whether it already exists
+      var previewFileHandle = tizen.filesystem.openFile('documents/' + previewFileName, 'r');
+      previewFileHandle.close();
+      console.log('%c[utils.js, getBoxArt]', 'color: gray;', 'Smart Hub Preview box art file already cached: ' + previewFileName);
+      return false;
+    } catch (previewReadError) {
+      // The preview box art file does not exist, so generate it from the original box art
+      console.log('%c[utils.js, getBoxArt]', 'color: gray;', 'Smart Hub Preview box art file not found, generating: ' + previewFileName);
+    }
+    this._queueBoxArtPreview(blob, appId, 'storage', isStale);
+    return true;
   },
 
   // Clears cached box art and preview images from local storage.
@@ -1718,6 +1821,21 @@ NvHTTP.prototype = {
   },
 
   pair: function(randomNumber) {
+    // A PC that no longer accepts the pinned key (markRefusedByHost()) answers no HTTPS request with it, and its pairing
+    // starts over plain HTTP like the one of a new PC: the key is left out, and the pairing pins the key it gets. The
+    // server info over HTTP still has to come with the unique ID of the PC (_parseServerInfo()), and it tells again what
+    // the PC runs, which the error message of a failed pairing names (pairingDialog() in index.js): until then that of the
+    // last answer that the PC accepted may be old. A pairing that pins no key (a wrong PIN, Cancel, a failed request, or
+    // one that the PC doesn't confirm) gives the key back below, so that the PC is paired again once it accepts the TV.
+    // A key that a pairing pinned and that the PC didn't refuse since stays (e.g. after a failed pairchallenge request,
+    // when the PC may have stored the pairing): the server info below asks the PC over HTTPS with it.
+    var refusedKey = null;
+    if (!this.paired && this.ppkstr && this._refusedByHost) {
+      console.log('%c[utils.js, pair]', 'color: gray;', 'Pairing ' + this.hostname + ' again: leaving out the key pinned at its earlier pairing, which it no longer accepts, until the pairing pins a new one.');
+      refusedKey = this.ppkstr;
+      this.ppkstr = null;
+      this.currentGame = 0;
+    }
     return this.refreshServerInfo().then(function() {
       if (this.paired && this.ppkstr) {
         return true;
@@ -1731,6 +1849,7 @@ NvHTTP.prototype = {
         this.serverMajorVersion.toString(), this.address, this.httpPort, randomNumber, this.getUid(), deviceName
       ]).then(function(ppkstr) {
         this.ppkstr = ppkstr;
+        this._refusedByHost = false;
         return sendMessage('openUrl', [
           this._baseUrlHttps + '/pair?uniqueid=' + this.getUid() + '&devicename=' + deviceName + '&updateState=1&phrase=pairchallenge', this.ppkstr, false, 5000
         ]).catch(function(error) {
@@ -1738,9 +1857,25 @@ NvHTTP.prototype = {
         }.bind(this)).then(function(ret) {
           $xml = this._parseXML(ret);
           this.paired = $xml.find('paired').html() == '1';
-          return this.paired;
+          if (!this.paired) {
+            // The PC didn't confirm the pairing (e.g. it answered that it doesn't accept the certificate of the TV): the
+            // key of the pairing is dropped, so that the polls ask it over plain HTTP like a PC that isn't paired, and
+            // the pairing fails (pairingDialog() in index.js). Up to 2.3.2 it resolved with false, which nothing read.
+            console.warn('%c[utils.js, pair]', 'color: gray;', 'Warning: ' + this.hostname + ' didn\'t confirm the pairing.');
+            this.ppkstr = null;
+            return Promise.reject(PAIRING_NOT_CONFIRMED_ERROR);
+          }
+          return true;
         }.bind(this));
       }.bind(this));
+    }.bind(this)).catch(function(error) {
+      // The pairing pinned no key (or dropped it): the PC keeps the key that it refused, as before the pairing
+      if (refusedKey && this.ppkstr === null) {
+        console.log('%c[utils.js, pair]', 'color: gray;', 'The pairing with ' + this.hostname + ' failed: keeping the key pinned at its earlier pairing.');
+        this.ppkstr = refusedKey;
+        this._refusedByHost = true;
+      }
+      throw error;
     }.bind(this));
   },
 

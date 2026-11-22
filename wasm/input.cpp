@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 #include <set>
 
 #define KEY_PREFIX 0x80
@@ -13,6 +14,9 @@
 // The handlers below run on the main thread, which is the only one that uses them.
 static std::set<uint32_t> heldKeys;
 static std::set<int> heldMouseButtons;
+
+// Held by FlushMouseMovement() from taking the movement until moonlight-common-c queued it (see there)
+static std::mutex mouseFlushMutex;
 
 // Release every key and mouse button that the host still holds from the stream
 static void ReleaseHeldInput() {
@@ -24,6 +28,15 @@ static void ReleaseHeldInput() {
     LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, button);
   }
   heldMouseButtons.clear();
+}
+
+// Whether a key code is one of a PC keyboard: a Windows virtual-key code, of which the host reads only the low byte (a
+// code with the prefix 0x80). The keys that only a TV has are above 0xFF (RETURN 10009, the color keys 403 to 406, CH+
+// 427, CH- 428, Source 10072, Channel list 10073, Play/Pause 10252, the keys of the keyboard of the TV), and the host
+// would get only their low byte, an unrelated key (CH- 0xAC, which Sunshine 2026.914 types as M). A key that the
+// browser couldn't name is 0. moonlight-qt drops the keys it can't map in the same way (keyboard.cpp).
+static bool IsPcKeyCode(uint32_t keyCode) {
+  return keyCode != 0 && keyCode <= 0xFF;
 }
 
 static int ConvertButtonToLiButton(unsigned short button) {
@@ -63,6 +76,9 @@ EM_BOOL MoonlightInstance::HandleMouseDown(const EmscriptenMouseEvent &event) {
     return EM_TRUE;
   }
 
+  // The movement that the input thread didn't send yet goes first, so that the click lands where the pointer is
+  // (FlushMouseMovement())
+  FlushMouseMovement();
   const int button = ConvertButtonToLiButton(event.button);
   LiSendMouseButtonEvent(BUTTON_ACTION_PRESS, button);
   heldMouseButtons.insert(button);
@@ -88,6 +104,7 @@ EM_BOOL MoonlightInstance::HandleMouseUp(const EmscriptenMouseEvent &event) {
     return EM_FALSE;
   }
 
+  FlushMouseMovement();
   const int button = ConvertButtonToLiButton(event.button);
   LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, button);
   heldMouseButtons.erase(button);
@@ -103,30 +120,39 @@ EM_BOOL MoonlightInstance::HandleWheel(const EmscriptenWheelEvent &event) {
   // of an absurd delta can't overflow)
   const double milliTicks = std::max(-1000000.0, std::min(1000000.0, -event.deltaY * 1000.0));
   m_AccumulatedMilliTicks.fetch_add(static_cast<int32_t>(std::lround(milliTicks)));
+  // The horizontal wheel (a tilt wheel, a touchpad scrolled sideways), at the same scale and not inverted: a positive
+  // deltaX scrolls right in the browser and on the host
+  const double milliTicksX = std::max(-1000000.0, std::min(1000000.0, event.deltaX * 1000.0));
+  m_AccumulatedMilliTicksX.fetch_add(static_cast<int32_t>(std::lround(milliTicksX)));
   return EM_TRUE;
 }
 
 EM_BOOL MoonlightInstance::HandleKeyDown(const EmscriptenKeyboardEvent &event) {
-  if (!m_MouseLocked) {
+  const uint32_t keyCode = event.keyCode;
+  if (!IsPcKeyCode(keyCode) || !m_MouseLocked) {
     return EM_FALSE;
   }
 
   char modifiers = GetModifierFlags(event);
-  uint32_t keyCode = event.keyCode;
 
-  // Check if the current modifier flags match the defined key combination on the keyboard
+  // Ctrl + Alt + Shift + Q ends the stream and Ctrl + Alt + Shift + S steps the statistics, once per press (the
+  // auto-repeat of a held S stepped on through every level); every other key with these modifiers goes to the PC (e.g.
+  // an F key, with which Sunshine switches the display, if the TV passes it as one). Before 2.3.3 such a key also ended
+  // the pointer lock once the modifiers were up, after which no key reached the PC until RETURN or a click: a TV has no
+  // desktop to give the pointer to, and the Stream Menu releases it itself (openStreamMenu() in menus.js).
   if (modifiers == (MODIFIER_CTRL | MODIFIER_ALT | MODIFIER_SHIFT)) {
     if (keyCode == 0x51) { // Q key
       // Terminate the connection
-      stopStream();
+      if (!event.repeat) {
+        stopStream();
+      }
       return EM_TRUE;
     } else if (keyCode == 0x53) { // S key
       // Toggle performance stats overlay
-      toggleStats();
+      if (!event.repeat) {
+        toggleStats();
+      }
       return EM_TRUE;
-    } else {
-      // Wait until these keys come up to unlock the mouse
-      m_WaitingForAllModifiersUp = true;
     }
   }
 
@@ -136,21 +162,17 @@ EM_BOOL MoonlightInstance::HandleKeyDown(const EmscriptenKeyboardEvent &event) {
 }
 
 EM_BOOL MoonlightInstance::HandleKeyUp(const EmscriptenKeyboardEvent &event) {
-  if (!m_MouseLocked) {
+  const uint32_t keyCode = event.keyCode;
+  if (!IsPcKeyCode(keyCode) || !m_MouseLocked) {
     return EM_FALSE;
   }
 
-  char modifiers = GetModifierFlags(event);
-  uint32_t keyCode = event.keyCode;
-
-  // Check if all modifiers are up now
-  if (m_WaitingForAllModifiersUp && modifiers == 0) {
-    UnlockMouse();
-    m_WaitingForAllModifiersUp = false;
+  // Only the release of a key that the host got pressed: the first key of a stream, which only locks the pointer
+  // (initSpecialKeys() in index.js), can be released after the lock, and Q and S of Ctrl + Alt + Shift stay on the TV
+  if (heldKeys.erase(keyCode) == 0) {
+    return EM_TRUE;
   }
-
-  LiSendKeyboardEvent(KEY_PREFIX << 8 | keyCode, KEY_ACTION_UP, modifiers);
-  heldKeys.erase(keyCode);
+  LiSendKeyboardEvent(KEY_PREFIX << 8 | keyCode, KEY_ACTION_UP, GetModifierFlags(event));
   return EM_TRUE;
 }
 
@@ -202,7 +224,15 @@ static short ClampToShort(int64_t value) {
   return static_cast<short>(std::max<int64_t>(-32768, std::min<int64_t>(32767, value)));
 }
 
-void MoonlightInstance::ReportMouseMovement() {
+// Send the mouse movement that the main thread added up (HandleMouseMove()). The input thread calls it every 5 ms
+// (ReportMouseMovement()), and the main thread right before a mouse button (HandleMouseDown(), HandleMouseUp()), so that
+// a click comes after the movement before it. Both can: the exchange gives each movement to one of them, and
+// LiSendMouseMoveEvent() of moonlight-common-c takes its own lock. A flush holds mouseFlushMutex until it queued what it
+// took: otherwise the main thread could find nothing left while the input thread, between its exchange and its
+// LiSendMouseMoveEvent(), still held the movement, and queue the click before it. The main thread waits for it only
+// before a mouse button, and the input thread holds it for a few microseconds every 5 ms.
+void MoonlightInstance::FlushMouseMovement() {
+  std::lock_guard<std::mutex> lock(mouseFlushMutex);
   // Take what the main thread added up and reset it in one step, so that a movement that arrives meanwhile stays for
   // the next report instead of being reset unsent. The idea comes from the fork of samirmartins (moonlight-tizen,
   // 78ef238).
@@ -217,17 +247,28 @@ void MoonlightInstance::ReportMouseMovement() {
     deltaX -= x;
     deltaY -= y;
   }
+}
 
-  const int32_t milliTicks = m_AccumulatedMilliTicks.exchange(0);
+// Send wheel ticks in thousandths with send (LiSendHighResScrollEvent() or LiSendHighResHScrollEvent())
+static void SendScroll(int32_t milliTicks, int (*send)(short)) {
   // We can have fractional ticks here, so multiply by WHEEL_DELTA to get actual scroll distance and use the high-res
   // variant. More scrolling than a packet holds (over 6553 ticks, e.g. after the input thread was held up) goes out in
   // several packets like a large movement, instead of being cut at 16 bits.
   int64_t scroll = static_cast<int64_t>(milliTicks) * 5 / 1000;
   while (scroll != 0) {
     const short amount = ClampToShort(scroll);
-    LiSendHighResScrollEvent(amount);
+    send(amount);
     scroll -= amount;
   }
+}
+
+void MoonlightInstance::ReportMouseMovement() {
+  FlushMouseMovement();
+  // The wheel only here, on the input thread: the batching of LiSendHighResScrollEvent() for GeForce Experience takes
+  // no lock. The horizontal wheel is an extension of Sunshine, which GeForce Experience refuses, as for the right stick
+  // of the mouse emulation (gamepad.cpp).
+  SendScroll(m_AccumulatedMilliTicks.exchange(0), LiSendHighResScrollEvent);
+  SendScroll(m_AccumulatedMilliTicksX.exchange(0), LiSendHighResHScrollEvent);
 }
 
 void MoonlightInstance::LockMouse() {

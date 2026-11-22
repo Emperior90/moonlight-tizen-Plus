@@ -81,6 +81,11 @@ test('texts that name a setting, a value or a menu entry use its German name', (
     ['- Compact shows one line with the main figures over the stream, updated every second. Full shows every figure, updated every 2 seconds. While streaming, the YELLOW key and the Stream Menu switch between Off, Compact and Full.', 'Stream Menu'],
     ['— Step the performance statistics overlay through Off, Compact and Full.', 'Off'],
     ['For more information about this incompatibility and the ForceGM variant, see <b>ForceGM variant and game mode</b> in the guide of Moonlight Plus, which the Support button at the top of the screen links to.', 'Support'],
+    // The header button that finds a PC again at a new address
+    ['%1$s answers with a different key than at its pairing: another PC may have its address now, or Sunshine was set up anew on it. If the PC is asleep, wake it from its options. Otherwise try "Rescan network", and if that doesn\'t help, delete the PC and add it again.', 'Rescan network'],
+    ['This PC answers with a different key than at its pairing. Try "Rescan network", or delete the PC and add it again.', 'Rescan network'],
+    // The entry of the menu of a PC that an empty app list points to
+    ['In the web UI of Sunshine on the PC, add apps under "Applications", then choose "Refresh apps" in the menu of this PC in the PC list.', 'Refresh apps'],
   ];
   references.forEach(([text, name]) => {
     const germanName = german[name].replace(/ \(%1\$s\)$/, '');

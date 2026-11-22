@@ -88,12 +88,13 @@ function findNvService(ipString) {
  * host), and the hosts are saved. Any device on the local network can read the unique ID of a PC from the PC itself
  * and answer the scan with it. Up to 2.3.0 that answer was enough: the paired PC was pointed at the device, showed
  * offline since the key of the device didn't match, and got its MAC address for Wake-on-LAN, until a later scan found
- * the real PC again. Now such an answer changes nothing, and says so in the log.
+ * the real PC again. Now such an answer changes nothing, and says so in the log. A PC that answers over HTTPS with its
+ * pinned key that it no longer accepts this TV proved to be the PC as well, and moves; it has no fields to take.
  */
 function moveKnownHostTo(knownHost, discoveredAddress) {
   var previousAddress = knownHost.address;
-  return knownHost.refreshServerInfoAtAddress(discoveredAddress).then(function() {
-    console.log('%c[main.js, moveKnownHostTo]', 'color: gray;', 'Updating address for server UID:', knownHost.serverUid, 'from', previousAddress, 'to', discoveredAddress, '(the PC proved its pinned key there)');
+  var move = function(why) {
+    console.log('%c[main.js, moveKnownHostTo]', 'color: gray;', 'Updating address for server UID:', knownHost.serverUid, 'from', previousAddress, 'to', discoveredAddress, why);
     var urlAddr = formatAddressForUrl(discoveredAddress);
     knownHost.address = discoveredAddress;
     knownHost._baseUrlHttps = 'https://' + urlAddr + ':' + knownHost.httpsPort;
@@ -103,7 +104,16 @@ function moveKnownHostTo(knownHost, discoveredAddress) {
     }
     saveHosts();
     return true;
+  };
+  return knownHost.refreshServerInfoAtAddress(discoveredAddress).then(function() {
+    return move('(the PC proved its pinned key there)');
   }, function(error) {
+    // The PC answered there with its pinned key that it no longer accepts this TV (HOST_REFUSED_TV_ERROR of utils.js):
+    // it is the PC, so it moves, and its next poll at the new address marks it not paired. Before 2.3.3 it stayed at
+    // the old address, offline, until Add PC with the new one.
+    if (error === HOST_REFUSED_TV_ERROR) {
+      return move('(the PC proved its pinned key there, and answered that it no longer accepts this TV)');
+    }
     console.warn('%c[main.js, moveKnownHostTo]', 'color: gray;', 'Warning: A device at ' + discoveredAddress + ' answered the scan with the unique ID of the paired PC ' + knownHost.hostname +
       ', but didn\'t prove to be that PC over HTTPS with its pinned key (' + error + '). Keeping the PC at ' + previousAddress + '.');
     return false;

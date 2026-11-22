@@ -3,7 +3,8 @@
 // built with g++ for the native tests. The EM_ASM macros keep the shape of Emscripten 1.39 (the code block is one
 // macro argument), so a code block with a comma outside parentheses fails here just like in the real build. A test
 // can answer the main-thread EM_ASM calls through em_asm_sync_hook() and the gamepad calls through em_gamepad_hook(),
-// read how many lines went to the console of the calling thread with em_log_calls(), and make the thread that calls
+// read how many lines went to the console of the calling thread with em_log_calls(), count the requests for the pointer
+// lock and for its end with em_pointerlock_requests() and em_pointerlock_exits(), and make the thread that calls
 // em_main_browser_thread() = true play the main thread of the page for emscripten_is_main_browser_thread().
 #include <atomic>
 #include <cstdint>
@@ -52,8 +53,11 @@ inline int emscripten_set_mousemove_callback(const char*, void*, EM_BOOL, em_mou
 inline int emscripten_set_wheel_callback(const char*, void*, EM_BOOL, em_wheel_callback_func) { return 0; }
 inline int emscripten_set_pointerlockchange_callback(const char*, void*, EM_BOOL, em_pointerlockchange_callback_func) { return 0; }
 inline int emscripten_set_pointerlockerror_callback(const char*, void*, EM_BOOL, em_pointerlockerror_callback_func) { return 0; }
-inline int emscripten_request_pointerlock(const char*, EM_BOOL) { return 0; }
-inline int emscripten_exit_pointerlock() { return 0; }
+// How often the code asked for the pointer lock and for its end, for the tests of wasm/input.cpp
+inline std::atomic<int>& em_pointerlock_requests() { static std::atomic<int> calls{0}; return calls; }
+inline std::atomic<int>& em_pointerlock_exits() { static std::atomic<int> calls{0}; return calls; }
+inline int emscripten_request_pointerlock(const char*, EM_BOOL) { em_pointerlock_requests()++; return 0; }
+inline int emscripten_exit_pointerlock() { em_pointerlock_exits()++; return 0; }
 
 // Gamepad API (layout as in Emscripten 1.39.4 html5.h)
 typedef int EMSCRIPTEN_RESULT;

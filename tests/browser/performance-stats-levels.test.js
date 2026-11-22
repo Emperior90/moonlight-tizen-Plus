@@ -188,7 +188,7 @@ test('YELLOW steps Off, Compact, Full, Off, and the overlay shows only the figur
     assert.ok(state.text.indexOf('Host frame intervals: deviation 0.47 ms, p95 17.0 ms, 0.0% off cadence') >= 0, state.text);
     await waitForStorage(app.page, (values) => values.performanceStats === 2);
     // Emptied as the start of a stream and the retry after no video do it, its outlined surface doesn't stay behind
-    await app.page.evaluate(() => $('#connection-warnings, #performance-stats').css('background', 'transparent').text(''));
+    await app.page.evaluate(() => $('#connection-warnings, #performance-stats').text(''));
     assert.equal((await statsState(app.page)).shown, false);
     await app.page.evaluate((message) => handleMessage(message), FULL_MESSAGE);
     assert.equal((await statsState(app.page)).shown, true);

@@ -12,6 +12,9 @@
 // - the second press of a double OK or A that opens the Wake PC dialog or the PC details doesn't close them at once
 // - UP keeps the highlight on the only button of a dialog (PC details, navigation guide, support, Update, pairing)
 // - after a PC was deleted, from CH+ or from its menu icon, one card is highlighted, the one that is selected
+// - Refresh apps says how many apps the PC lists (or none), or that its list couldn't be read and what to check, also for
+//   an error answer of the PC, and that the PC no longer accepts the TV for its answer of status 401, after which the PC
+//   shows Unpaired at once (since 2.3.3, refreshHostApps())
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -312,6 +315,88 @@ test('after a PC was deleted, from CH+ or from its menu icon, the one highlighte
     // The icon of the PC that is gone is neither marked nor unmarked
     assert.deepEqual(navigationErrors(app).filter((line) => /Cannot (mark|unmark) the unresolved target: undefined/.test(line)), []);
     assert.deepEqual(await page.evaluate(() => Object.keys(hosts)), ['HOST1']);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('Refresh apps says how many apps the PC lists, or that the list couldn\'t be read', async () => {
+  const app = await openWithPcs();
+  const { page } = app;
+  try {
+    // CH+ on the PC opens its menu on Refresh apps, and OK runs it
+    const refresh = async () => {
+      await selectItem(page, 'Hosts', 'host-container-HOST1', 'left', 'right');
+      await page.evaluate(() => {
+        window.__requestsFrom = window.__sunshine.http.length;
+      });
+      await key(page, 'chup', 600);
+      assert.equal((await menuState(page)).focused, 'refreshApps-GAMING-PC');
+      await key(page, 'ok', 900);
+      return {
+        snackbars: await takeSnackbars(page),
+        appListRequests: await page.evaluate(() => window.__sunshine.http.slice(window.__requestsFrom).filter((request) => request === '/applist').length),
+      };
+    };
+    await takeSnackbars(page);
+    assert.deepEqual(await refresh(), { snackbars: ['Refreshing the list of GAMING-PC applications...', 'The app list of GAMING-PC is up to date: 5 apps.'],
+      appListRequests: 1 });
+    // The PC lists one app now
+    await page.evaluate(() => {
+      window.__sunshine.apps = window.__sunshine.apps.slice(0, 1);
+    });
+    assert.deepEqual((await refresh()).snackbars, ['Refreshing the list of GAMING-PC applications...', 'The app list of GAMING-PC is up to date: 1 app.']);
+    // None (a sentence of its own, without a count: French takes the singular for 0, which _n() doesn't know)
+    await page.evaluate(() => {
+      window.__sunshine.apps = [];
+    });
+    assert.deepEqual((await refresh()).snackbars, ['Refreshing the list of GAMING-PC applications...', 'The app list of GAMING-PC is up to date: no apps.']);
+    await page.evaluate(() => {
+      window.__sunshine.apps = [{ id: 101, title: 'Cyberpunk 2077' }];
+    });
+    assert.deepEqual((await refresh()).snackbars, ['Refreshing the list of GAMING-PC applications...', 'The app list of GAMING-PC is up to date: 1 app.']);
+    // The request of the list fails: the message says what to check before the next try (2.3.3 in testing advised to
+    // refresh the list of apps, which had just failed)
+    const failed = ['Refreshing the list of GAMING-PC applications...',
+      'The app list of GAMING-PC couldn\'t be read. Make sure that Sunshine (or another GameStream host) is running on the PC, then try again.'];
+    await page.evaluate(() => {
+      window.__answerAppList = (id) => handlePromiseMessage(id, 'reject', -1);
+      const openUrl = Module.openUrl;
+      Module.openUrl = function(id, url) {
+        if (/\/applist\?/.test(url) && window.__answerAppList) {
+          window.__sunshine.http.push('/applist');
+          const answer = window.__answerAppList;
+          setTimeout(() => answer(id), 30);
+          return;
+        }
+        return openUrl.apply(this, arguments);
+      };
+    });
+    assert.deepEqual((await refresh()).snackbars, failed);
+    // Another error status of the PC (e.g. a busy host): a failure as well (not an empty list), and the list that the TV
+    // has stays
+    await page.evaluate(() => {
+      window.__answerAppList = (id) => handlePromiseMessage(id, 'resolve', '<root status_code="503" status_message="Busy"/>');
+    });
+    assert.deepEqual((await refresh()).snackbars, failed);
+    assert.deepEqual(await page.evaluate(() => hosts.HOST1._memCachedApplist.map((entry) => entry.id)), [101]);
+    // The box art of the PC is deleted each time: the files of this TV can't be listed here (no listDirectory() in the
+    // simulated file system), which is logged instead of an unhandled rejection
+    assert.ok(app.logs.some((line) => line.indexOf('Warning: Failed to clear the box art of GAMING-PC') >= 0));
+    // The PC forgot the TV ("Unpair All" in Sunshine), which no poll noticed yet (they are stopped here), and answers
+    // with its error for a client that it no longer accepts (status 401, with the key that the TV pinned): as after a
+    // poll, the PC shows Unpaired at once, its list in the TV is gone, and the message says what to do, where 2.3.3 in
+    // testing said to try again later
+    await page.evaluate(() => {
+      endBackgroundPollingOfHost(hosts.HOST1);
+      window.__answerAppList = null;
+      window.__sunshine.unpair();
+    });
+    assert.deepEqual((await refresh()).snackbars, ['Refreshing the list of GAMING-PC applications...',
+      'GAMING-PC no longer accepts this TV: its pairing was removed or turned off on the PC. Select it in the list of PCs to pair it again.']);
+    assert.deepEqual(await page.evaluate(() => [hosts.HOST1.paired, hosts.HOST1._memCachedApplist, $('#host-container-HOST1 .host-chips').text()]),
+      [false, null, 'UNPAIRED']);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

@@ -16,7 +16,12 @@
 // - OK on an unknown host whose poll doesn't run starts that poll,
 // - a host that 2.3.0 stored while one of its polls ran (the callbacks of the poll as null) is polled again,
 // - a Smart Hub deep link to an app waits the same way: Wake PC for the PC that is off, the stream for the one that
-//   is on.
+//   is on,
+// - a paired PC that answers with its pinned key that it no longer accepts the TV (Sunshine's 401 answer) shows
+//   Unpaired, and OK pairs it again over plain HTTP, which keeps its MAC address; one that accepts the TV again shows
+//   Online without a pairing; a device that answers with another key leaves the PC offline with a message of its own
+//   and never pairs it, while OK still opens Wake PC with Auto WoL (since 2.3.3); another PC that answers at the
+//   public address of the household (NAT loopback) doesn't count as such a device.
 // The PC is the simulated Sunshine of mocks/sunshine-host.js, which holds its answers until the test releases them.
 
 const { after, before, test } = require('node:test');
@@ -217,7 +222,8 @@ test('without Auto WoL, OK on a PC that turned out to be off says that it can\'t
     await app.page.waitForFunction(() => window.__snackbars.length > 0, null, { timeout: 3000 });
     const state = await pcState(app.page);
     assert.equal(state.online, false);
-    assert.deepEqual(state.snackbars, ['Failed to connect to the PC. Make sure that Sunshine (or another GameStream host) is running on the PC.']);
+    // The message names the PC, as every other one does (since 2.3.3)
+    assert.deepEqual(state.snackbars, ['Failed to connect to GAMING-PC. Make sure that Sunshine (or another GameStream host) is running on the PC.']);
     assert.equal(state.wolDialog, false);
     assert.equal(state.requests.indexOf('/applist'), -1, 'no request for the app list: ' + JSON.stringify(state.requests));
     assert.equal(state.view, 'hosts');
@@ -393,6 +399,164 @@ test('a Smart Hub tile of a PC whose state is unknown after the scan at startup 
     await app.page.evaluate(() => window.__sunshine.release());
     await app.page.waitForFunction(() => window.__sunshine.starts.length === 1, null, { timeout: 8000 });
     assert.ok((await pcState(app.page)).requests.indexOf('/launch 101') >= 0);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+const K1 = 'GAMING-PC answers with a different key than at its pairing: another PC may have its address now, or Sunshine was set up anew on it. If the PC is asleep, wake it from its options. Otherwise try "Rescan network", and if that doesn\'t help, delete the PC and add it again.';
+const K2 = 'This PC answers with a different key than at its pairing. Try "Rescan network", or delete the PC and add it again.';
+
+// What the hero shows of the focused card: its text and its key hints
+const heroOf = (page) => page.evaluate(() => ({
+  text: document.getElementById('hero-text').textContent,
+  hints: Array.prototype.map.call(document.querySelectorAll('#hero-hints .hint'), (hint) => hint.textContent),
+}));
+
+test('a paired PC that no longer accepts the TV shows Unpaired, and OK pairs it again with a new PIN, over plain HTTP', async () => {
+  // Sunshine forgot the TV ("Unpair All"): it answers every HTTPS request with its 401 answer
+  const app = await openWithStoredPc({ online: true }, { unpaired: true });
+  try {
+    await app.page.waitForFunction(() => hosts.HOST1.online === true, null, { timeout: 5000 });
+    let state = await pcState(app.page);
+    assert.equal(state.card, 'locked');
+    assert.equal(state.chips, 'UNPAIRED');
+    // Straight from unknown to Unpaired: the first check of the polling marks it (beginBackgroundPollingOfHost())
+    assert.deepEqual(state.states, ['unknown', 'locked']);
+    assert.deepEqual(await app.page.evaluate(() => [hosts.HOST1.paired, hosts.HOST1.ppkstr, hosts.HOST1.pinnedKeyMismatch]), [false, 'PPK', false]);
+    const refusals = () => app.logs.filter((line) => line.indexOf('GAMING-PC answered with its pinned key that it no longer accepts this TV (status 401)') >= 0);
+    assert.equal(refusals().length, 1);
+    // The hero of the card: pair it
+    await app.page.keyboard.press('ArrowRight');
+    await app.page.waitForTimeout(200);
+    assert.deepEqual(await heroOf(app.page), { text: 'Select it to pair this TV with the PC using a PIN.', hints: ['OKPair', 'Options'] });
+
+    // OK: the pairing dialog, whose pairing starts over plain HTTP without the old key
+    await app.page.evaluate(() => {
+      window.__requestsAtDialog = -1;
+      new MutationObserver(() => {
+        if (document.getElementById('pairingDialog').open && window.__requestsAtDialog < 0) {
+          window.__requestsAtDialog = window.__sunshine.requests.length;
+        }
+      }).observe(document.getElementById('pairingDialog'), { attributes: true, attributeFilter: ['open'] });
+    });
+    await chooseHost(app.page);
+    await app.page.waitForFunction(() => document.body.getAttribute('data-view') === 'apps' && document.getElementById('game-container-101'),
+      null, { timeout: 8000 });
+    state = await pcState(app.page);
+    assert.deepEqual(state.snackbars.filter((message) => /Failed|no longer accepts/.test(message)), []);
+    assert.ok(state.snackbars.indexOf('Successfully paired with GAMING-PC') >= 0, JSON.stringify(state.snackbars));
+    const pairing = await app.page.evaluate(() => ({ pairs: window.__sunshine.pairs.length, at: window.__requestsAtDialog,
+      requests: window.__sunshine.requests.slice(), key: hosts.HOST1.ppkstr, paired: hosts.HOST1.paired }));
+    assert.equal(pairing.pairs, 1);
+    assert.deepEqual([pairing.key, pairing.paired], ['sha256//SUNSHINE', true]);
+    assert.ok(pairing.at >= 0);
+    const afterDialog = pairing.requests.slice(pairing.at);
+    assert.deepEqual(afterDialog[0], { scheme: 'http', path: '/serverinfo', key: null });
+    assert.deepEqual(afterDialog.filter((request) => request.key === 'PPK'), []);
+    assert.ok(afterDialog.some((request) => request.scheme === 'https' && request.path === '/pair' && request.key === 'sha256//SUNSHINE'));
+    const stored = await waitForStorage(app.page, (values) => values.hosts && values.hosts.HOST1 && values.hosts.HOST1.ppkstr === 'sha256//SUNSHINE');
+    assert.equal(stored.hosts.HOST1.paired, true);
+    // The answer over HTTP has the MAC address 00:00:00:00:00:00, which replaced the one of the PC up to 2.3.3 in testing
+    assert.equal(stored.hosts.HOST1.macAddress, '00:11:22:33:44:55');
+    assert.equal(refusals().length, 1);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a PC that answers with another key stays Offline with its own message; OK wakes it with Auto WoL, else says what to do, and never pairs it', async () => {
+  // Sunshine set up anew, or another PC with its address while it sleeps: another key than the one pinned at the pairing
+  // (GS_CERT_MISMATCH of the module)
+  const app = await openWithStoredPc({ online: true, autoWolEnabled: true }, { key: 'sha256//NEW' });
+  try {
+    await app.page.waitForFunction(() => hosts.HOST1.online === false, null, { timeout: 5000 });
+    let state = await pcState(app.page);
+    assert.equal(state.card, 'offline');
+    assert.equal(state.chips, 'OFFLINE');
+    assert.deepEqual(await app.page.evaluate(() => [hosts.HOST1.paired, hosts.HOST1.ppkstr, hosts.HOST1.pinnedKeyMismatch]), [true, 'PPK', true]);
+    // The hero says what it is, and OK wakes the PC (Auto WoL), as for any offline PC
+    await app.page.keyboard.press('ArrowRight');
+    await app.page.waitForTimeout(200);
+    assert.deepEqual(await heroOf(app.page), { text: K2, hints: ['OKWake PC', 'Options'] });
+
+    // OK: the Wake PC dialog, which finds the PC once it wakes, also at a new address (2.3.3 in testing showed K1 and
+    // didn't wake it)
+    await chooseHost(app.page);
+    await app.page.waitForFunction(() => document.getElementById('autoWolDialog').open, null, { timeout: 3000 });
+    state = await pcState(app.page);
+    assert.ok(state.wakeRequests >= 1, 'the dialog sent the Wake-on-LAN request');
+    assert.deepEqual(state.snackbars, []);
+    await app.page.evaluate(() => $('#cancelAutoWol').trigger('click'));
+    await app.page.waitForTimeout(200);
+
+    // Without Auto WoL: the message that says what to do, no dialog, no Wake-on-LAN request, and the hero without the hint
+    const wakeRequests = (await pcState(app.page)).wakeRequests;
+    await app.page.evaluate(() => {
+      hosts.HOST1.autoWolEnabled = false;
+      isClickPrevented = false;
+      Launcher.refresh();
+    });
+    await app.page.waitForTimeout(200);
+    assert.deepEqual(await heroOf(app.page), { text: K2, hints: ['Options'] });
+    await chooseHost(app.page);
+    await app.page.waitForFunction(() => window.__snackbars.length > 0, null, { timeout: 3000 });
+    await app.page.waitForTimeout(300);
+    state = await pcState(app.page);
+    assert.deepEqual(state.snackbars, [K1]);
+    assert.equal(state.wolDialog, false);
+    assert.equal(state.wakeRequests, wakeRequests);
+    const pairing = await app.page.evaluate(() => ({ dialog: document.getElementById('pairingDialog').open, pairs: window.__sunshine.pairs.length,
+      pairRequests: window.__sunshine.requests.filter((request) => request.path === '/pair').length,
+      moduleCalls: window.__wasmCalls.filter((call) => call.name === 'pair').length }));
+    assert.deepEqual(pairing, { dialog: false, pairs: 0, pairRequests: 0, moduleCalls: 0 });
+    assert.equal(state.view, 'hosts');
+    assert.ok(app.logs.some((line) => line.indexOf('Error: GAMING-PC answers with another key than the one pinned at its pairing.') >= 0));
+    assert.deepEqual(await app.page.evaluate(() => [hosts.HOST1.paired, hosts.HOST1.ppkstr]), [true, 'PPK']);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a PC that is off, whose public address another PC answers with its own key, shows as off, and OK wakes it', async () => {
+  // The external address of a PC is the public address of the household (STUN), the same for every PC, which the router
+  // hands to the PC that it forwards the port to (NAT loopback), here another PC with Sunshine and its own key
+  const app = await openWithStoredPc({ online: true, autoWolEnabled: true, externalIP: '203.0.113.7' }, { offline: true, otherPcAt: ['203.0.113.7'] });
+  try {
+    await app.page.waitForFunction(() => hosts.HOST1.online === false && window.__sunshine.otherPcRequests >= 1, null, { timeout: 8000 });
+    await app.page.waitForTimeout(300);
+    assert.deepEqual(await app.page.evaluate(() => [hosts.HOST1.paired, hosts.HOST1.ppkstr, hosts.HOST1.pinnedKeyMismatch]), [true, 'PPK', false]);
+    await app.page.keyboard.press('ArrowRight');
+    await app.page.waitForTimeout(200);
+    assert.deepEqual(await heroOf(app.page), { text: 'This PC is not reachable. Turn it on, or wake it from its options.', hints: ['OKWake PC', 'Options'] });
+    await chooseHost(app.page);
+    await app.page.waitForFunction(() => document.getElementById('autoWolDialog').open, null, { timeout: 3000 });
+    const state = await pcState(app.page);
+    assert.ok(state.wakeRequests >= 1, 'the dialog sent the Wake-on-LAN request');
+    assert.deepEqual(state.snackbars, []);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a PC that accepts the TV again shows Online at its next check, without a pairing', async () => {
+  const app = await openWithStoredPc({ online: true }, { unpaired: true });
+  try {
+    await app.page.waitForFunction(() => hosts.HOST1.online === true && hosts.HOST1.paired === false, null, { timeout: 5000 });
+    assert.equal((await pcState(app.page)).card, 'locked');
+    // The TV turned on again in the list of clients of Sunshine
+    await app.page.evaluate(() => {
+      window.__sunshine.knowsTv = true;
+    });
+    await app.page.waitForFunction(() => hosts.HOST1.paired === true, null, { timeout: 8000 });
+    const state = await pcState(app.page);
+    assert.equal(state.card, 'online');
+    assert.deepEqual(state.states, ['unknown', 'locked', 'online']);
+    assert.deepEqual(await app.page.evaluate(() => [hosts.HOST1.ppkstr, window.__sunshine.pairs.length]), ['PPK', 0]);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

@@ -563,6 +563,10 @@ body[data-view="settings"][data-section] .header-section {
 }
 .mdl-snackbar {
   bottom: 40px;
+  /* Above the dimmed overlay of a dialog (999) and the overlay menus (1000), e.g. the button mapping panel, whose
+     messages would show dimmed or hidden under them; a modal <dialog> stays above it in the top layer, and so does the
+     Stream Menu (1002), which has no scrim */
+  z-index: 1001;
   min-width: 0;
   max-width: 1100px;
   border-radius: 20px;
@@ -571,6 +575,31 @@ body[data-view="settings"][data-section] .header-section {
   transform: translate(-50%, 180px);
 }
 .mdl-snackbar--active {
+  transform: translate(-50%, 0);
+}
+/* Beside the full statistics in a bottom corner: at the bottom of the other side, in the column that they leave free.
+   They take at most 892 px from 64 px of their edge, the column at most 840 px from 96 px of the other edge, 28 px
+   apart (placeSnackbar() in index.js) */
+.mdl-snackbar.is-left, .mdl-snackbar.is-right {
+  max-width: 840px;
+  transform: translate(0, 180px);
+}
+.mdl-snackbar.is-left {
+  left: var(--safe-x);
+}
+.mdl-snackbar.is-right {
+  left: auto;
+  right: var(--safe-x);
+}
+.mdl-snackbar.is-left.mdl-snackbar--active, .mdl-snackbar.is-right.mdl-snackbar--active {
+  transform: translate(0, 0);
+}
+/* Above the compact line in a bottom corner: its 48 px from the edge, its 42 px and a gap of 14 px */
+.mdl-snackbar.is-raised {
+  bottom: 104px;
+  transform: translate(-50%, 244px);
+}
+.mdl-snackbar.is-raised.mdl-snackbar--active {
   transform: translate(-50%, 0);
 }
 .mdl-snackbar__text {
@@ -2098,8 +2127,12 @@ dialog::backdrop {
   height: 100%;
   background: rgba(5, 7, 16, 0.74);
 }
-/* The Stream Menu sits on the right in the safe area over the live video, without a scrim; its panel is opaque */
+/* The Stream Menu sits on the right in the safe area over the live video, or on the left beside statistics in a right
+   corner, without a scrim; its panel is opaque. It stays above the messages (the snackbar, 1001), which would otherwise
+   cover its last entry and its hint while they show above the compact statistics in a bottom corner, e.g. the power
+   hint, which sends the user to that entry */
 .stream-menu-backdrop {
+  z-index: 1002;
   justify-content: flex-end;
   background: transparent;
 }
@@ -2122,6 +2155,14 @@ dialog::backdrop {
 .stream-menu {
   width: 680px;
   margin-right: var(--safe-x);
+}
+/* On the left while the statistics take a right corner (showStatsPosition() in index.js) */
+.stream-menu-backdrop.is-left {
+  justify-content: flex-start;
+}
+.stream-menu-backdrop.is-left .stream-menu {
+  margin-right: 0;
+  margin-left: var(--safe-x);
 }
 /* The Stream Menu has the most entries: a little tighter, so that all of them and the hint fit the safe area of the
    screen with the mouse emulation entry of a controller and the surround quality entry of a 5.1 or 7.1 stream (12
@@ -2483,10 +2524,13 @@ dialog::backdrop {
   white-space: pre-wrap;
   font-variant-numeric: tabular-nums;
 }
+/* The connection warning on the surface of the statistics, with an amber edge; without a text it doesn't show */
 #connection-warnings {
   right: 64px;
   font-size: 26px;
   font-weight: 800;
+  background: rgba(10, 13, 26, 0.8);
+  box-shadow: 0 0 0 1px var(--line-2), inset 4px 0 0 var(--amber);
 }
 /* The performance statistics on the dark surface of the theme, which keeps the white text readable over bright video
    and stands out from dark video by its outline. Nothing that the TV would have to render over the video with each
@@ -2503,8 +2547,9 @@ dialog::backdrop {
   background: rgba(10, 13, 26, 0.8);
   box-shadow: 0 0 0 1px var(--line-2);
 }
-/* Nothing to show (e.g. while a stream starts again), also where a script left it displayed */
-#performance-stats:empty {
+/* Nothing to show (e.g. while a stream starts again, or a connection without a warning), also where a script left it
+   displayed */
+#connection-warnings:empty, #performance-stats:empty {
   display: none !important;
 }
 /* The compact line: one line in a pill at the same place */
@@ -2695,9 +2740,21 @@ dialog::backdrop {
 .pad-svg .on + .pad-label {
   fill: var(--bg);
 }
-/* The button mapping: a wider menu whose rows scroll, each button with the one it presses between the arrows */
+/* The button mapping: a wider menu whose rows scroll, each button with the one it presses between the arrows. Its
+   panels are centred above the bottom 132 px, so that they end above a message of up to three lines (its top at 911 px:
+   40 px from the bottom and 129 px tall), the longest that comes while they are open (a controller with a non-standard
+   layout that connects): at most 840 px tall, from 54 to 894 px, so a message never covers the focused entry or the
+   hint (a message of four lines, from 881 px, only the edge of the panel) */
+#buttonMappingOverlay {
+  box-sizing: border-box;
+  padding-bottom: 132px;
+}
 .mapping-menu {
   width: 760px;
+}
+/* Close, the last entry, scrolls the rows to their end when it gets the focus, so that the hint below it shows too */
+#buttonMappingClose {
+  scroll-margin-bottom: 120px;
 }
 .mapping-row {
   min-height: 54px;

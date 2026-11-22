@@ -7,7 +7,10 @@
 // - the question opens on Cancel, ignores a double OK, and Cancel or RETURN close it without a request to the PC
 // - a session launches the Desktop app (or resumes the app that runs), names its purpose on the launch screen, waits for
 //   the picture, counts down, types the command (the same sequence as the Stream Menu, tests/unit/pc-power.test.js) and
-//   ends on the PC list with "… is shutting down." when the PC ends the stream
+//   ends on the PC list with "… is shutting down." when the PC ends the stream; meanwhile the first key of the remote
+//   gives the stream the keys (since 2.3.3), so that the question of Windows can be answered
+// - a PC whose running app the list of the TV lacks reads the list once more (since 2.3.3) and resumes the app; one that
+//   runs an app that the PC doesn't list either gets a message of its own
 // - a PC without a Desktop app gets a message and nothing starts; RETURN during the countdown ends the stream and quits
 //   the Desktop app that the session launched, but not a game it resumed; no picture, no command; a stream without video
 //   starts once more and counts down again; a start that the PC refuses leaves nothing for the next start
@@ -98,6 +101,8 @@ test('the menu of a PC that is online and paired offers Shut down or restart the
     assert.deepEqual((await menuOf('HOST2')).map((item) => item[0]), ['wakeHost-OFFICE-PC', 'viewDetails-OFFICE-PC', 'deleteHost-OFFICE-PC', 'closeHostMenu']);
     assert.deepEqual((await menuOf('HOST3')).map((item) => item[0]), ['wakeHost-LIVING-ROOM', 'viewDetails-LIVING-ROOM', 'deleteHost-LIVING-ROOM', 'closeHostMenu']);
     assert.ok(!(await menuOf('HOST1', { paired: false })).some((item) => item[0].indexOf('powerHost-') === 0), 'unpaired');
+    // Nor Refresh apps, since the app list of a PC that isn't paired can't be asked (since 2.3.3)
+    assert.ok(!(await menuOf('HOST1', { paired: false })).some((item) => item[0].indexOf('refreshApps-') === 0), 'unpaired');
     assert.ok(!(await menuOf('HOST1', { online: undefined })).some((item) => item[0].indexOf('powerHost-') === 0), 'unknown');
     // (The console has the errors of the PCs that don't answer, and of the menus closed at once by this test)
     assert.deepEqual(app.errors, []);
@@ -180,6 +185,17 @@ test('Shut down from the PC list launches Desktop, waits for the picture, counts
     const firstKeyAt = await app.page.evaluate(() => window.__wasmCalls.find((call) => call.name === 'sendKeyboardEvent').at);
     assert.ok(firstKeyAt - shownAt >= 990, 'the countdown lasts PC_POWER_LIST_DELAY_MS: ' + Math.round(firstKeyAt - shownAt) + ' ms');
     assert.deepEqual(await takeSnackbars(app.page), ['Shutdown command sent to the PC']);
+    // The stream goes on, so that the question of Windows about open apps can be answered with the remote: its video has
+    // the focus, and the first key asks for the pointer lock, which gives the stream the keys (since 2.3.3; before, only
+    // RETURN did, which sends Esc to the PC first and can cancel that question)
+    assert.equal(await app.page.evaluate(() => document.activeElement && document.activeElement.id), 'wasm_module');
+    await app.page.evaluate(() => {
+      window.__videoMouseDowns = 0;
+      document.getElementById('wasm_module').addEventListener('mousedown', () => window.__videoMouseDowns++, true);
+    });
+    await key(app.page, 'right', 100);
+    assert.equal(await app.page.evaluate(() => window.__videoMouseDowns), 1, 'the first key asks for the pointer lock');
+    assert.deepEqual(await sentToPc(app.page), [...WIN_R, 'sendText shutdown /s /t 0', ...ENTER_KEY], 'no Esc');
     // The PC goes off and ends the stream
     await app.page.evaluate(() => handleMessage('streamTerminated: 0'));
     await app.page.waitForTimeout(600);
@@ -308,13 +324,79 @@ test('a PC that runs an app its app list doesn\'t show gets a message of its own
   try {
     await app.page.waitForFunction(() => Number(hosts.HOST1.currentGame) === 999, null, { timeout: 10000 });
     await takeSnackbars(app.page);
+    await app.page.evaluate(() => {
+      window.__requestsFrom = window.__sunshine.http.length;
+    });
     await choosePower(app.page, 'shutdownPcPower');
     await app.page.waitForFunction(() => window.__snackbars.length > 0, null, { timeout: 5000 });
     assert.deepEqual(await takeSnackbars(app.page), ['GAMING-PC runs an app that isn\'t in its app list. Quit it first with "Quit app on the PC", then try again.']);
+    // The session read the list of the PC once more after its server info, since the list that the TV had lacked the
+    // app (findHostApp() in index.js, since 2.3.3), before it said so
+    const requests = await app.page.evaluate(() => window.__sunshine.http.slice(window.__requestsFrom));
+    assert.ok(requests.indexOf('/applist', requests.indexOf('/serverinfo') + 1) > 0, requests.join(', '));
+    assert.ok(app.logs.some((line) => line.indexOf('App 999 is not in the app list that GAMING-PC sent before, reading the list again.') >= 0));
     await app.page.waitForTimeout(500);
     assert.deepEqual(await startRequests(app.page), []);
     assert.deepEqual(await app.page.evaluate(() => [isInGame, pcPowerSessionStart]), [false, null]);
     assert.equal((await menuState(app.page)).view, 'Apps');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a PC whose running app the list of the TV lacks reads the list once more and resumes the app', async () => {
+  const app = await openPcList({ apps: DESKTOP_APPS });
+  try {
+    // The TV read the list of the PC; then the PC got a new app, which another device started
+    await app.page.evaluate(async () => {
+      PC_POWER_LIST_DELAY_MS = 200;
+      await hosts.HOST1.getAppListWithCacheFlush();
+      window.__sunshine.apps.push({ id: 999, title: 'New Game' });
+      window.__sunshine.currentGame = 999;
+    });
+    await takeSnackbars(app.page);
+    await choosePower(app.page, 'restartPcPower');
+    await app.page.waitForFunction(() => isInGame === true, null, { timeout: 10000 });
+    assert.equal(await app.page.evaluate(() => $('.launch-overline').text()), 'Restart the PC');
+    await app.page.waitForFunction(() => window.__sunshine.http.some((request) => request.indexOf('/resume') === 0), null, { timeout: 10000 });
+    assert.deepEqual(await startRequests(app.page), ['/resume']);
+    assert.equal(await app.page.evaluate(() => streamLaunchAppId), 999);
+    assert.ok(!(await takeSnackbars(app.page)).some((message) => message.indexOf('isn\'t in its app list') >= 0));
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a PC that runs an app and whose app list can\'t be read is asked for the list once, and the session says that it can\'t reach it', async () => {
+  const app = await openPcList({ currentGame: 104, apps: DESKTOP_APPS });
+  try {
+    await app.page.waitForFunction(() => Number(hosts.HOST1.currentGame) === 104, null, { timeout: 10000 });
+    // The TV has no copy of the list (as after a failed poll), and the PC fails every request of its list
+    await app.page.evaluate(() => {
+      const openUrl = Module.openUrl;
+      Module.openUrl = function(id, url) {
+        if (/\/applist\?/.test(url)) {
+          window.__sunshine.http.push('/applist');
+          setTimeout(() => handlePromiseMessage(id, 'reject', -1), 30);
+          return;
+        }
+        return openUrl.apply(this, arguments);
+      };
+      hosts.HOST1._memCachedApplist = null;
+      window.__requestsFrom = window.__sunshine.http.length;
+    });
+    await takeSnackbars(app.page);
+    await choosePower(app.page, 'shutdownPcPower');
+    await app.page.waitForFunction(() => window.__snackbars.length > 0, null, { timeout: 8000 });
+    assert.deepEqual(await takeSnackbars(app.page), ['Failed to connect to GAMING-PC. Make sure that Sunshine (or another GameStream host) is running on the PC.']);
+    // After the server info of the session, one request of the list: 2.3.3 in testing asked a second time (each with
+    // a limit of 10 s) before it said so
+    const requests = await app.page.evaluate(() => window.__sunshine.http.slice(window.__requestsFrom));
+    assert.deepEqual(requests.slice(requests.lastIndexOf('/serverinfo') + 1), ['/applist'], requests.join(', '));
+    assert.deepEqual(await startRequests(app.page), []);
+    assert.deepEqual(await app.page.evaluate(() => [isInGame, pcPowerSessionStart]), [false, null]);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

@@ -83,6 +83,15 @@ static void bytes_to_hex(unsigned char *in, char *out, size_t len) {
     out[len * 2] = 0;
 }
 
+// The length of the signature in the pairing secret of the host, which the host makes with the key of its
+// certificate: 256 bytes for the 2048-bit RSA key that every host makes by default, up to 512 for a 4096-bit RSA key,
+// and about 70 to 72 for an ECDSA key on P-256 (DER); 64 leaves room below that. An Ed25519 host can't pair, since the
+// signature is verified with SHA-256 (verifySignature()). moonlight-embedded (000d9da) and moonlight-qt take any
+// length; the bound keeps the buffer on the stack (gs_pair()) safe from a crafted answer of the host, as the exact
+// length of 2.1.0 did.
+#define PAIRING_SIGNATURE_MIN_BYTES 64
+#define PAIRING_SIGNATURE_MAX_BYTES 512
+
 static int hex_digit_value(char digit) {
     if (digit >= '0' && digit <= '9')
         return digit - '0';
@@ -160,17 +169,30 @@ cleanup:
     return result;
 }
 
+// Whether signature is the signature of data with the key of cert, made with SHA-256. A certificate without a key that
+// OpenSSL can read, or a key that it doesn't verify with SHA-256 (e.g. Ed25519, which has no separate digest), fails:
+// the context of the check is only used once it is set up (with OpenSSL 3 EVP_DigestVerifyFinal() crashed on one that
+// EVP_DigestVerifyInit() refused).
 static bool verifySignature(const unsigned char *data, int dataLength, unsigned char *signature, int signatureLength, X509 *cert) {
-    EVP_PKEY* pubKey = X509_get_pubkey(cert);
+    int result = 0;
     EVP_MD_CTX *mdctx = NULL;
-    mdctx = EVP_MD_CTX_create();
-    EVP_DigestVerifyInit(mdctx, NULL, EVP_sha256(), NULL, pubKey);
-    EVP_DigestVerifyUpdate(mdctx, data, dataLength);
-    int result = EVP_DigestVerifyFinal(mdctx, signature, signatureLength);
+    EVP_PKEY* pubKey = X509_get_pubkey(cert);
+    if (pubKey == NULL)
+        return false;
 
+    mdctx = EVP_MD_CTX_create();
+    if (mdctx == NULL)
+        goto cleanup;
+    if (EVP_DigestVerifyInit(mdctx, NULL, EVP_sha256(), NULL, pubKey) != 1)
+        goto cleanup;
+    if (EVP_DigestVerifyUpdate(mdctx, data, dataLength) != 1)
+        goto cleanup;
+    result = EVP_DigestVerifyFinal(mdctx, signature, signatureLength);
+
+cleanup:
     EVP_PKEY_free(pubKey);
     EVP_MD_CTX_destroy(mdctx);
-    
+
     return result > 0;
 }
 
@@ -181,8 +203,8 @@ static int pairing_hash_length(int serverMajorVersion) {
 }
 
 // Check that the host knows the PIN. The first hash_length bytes of its decrypted challenge response must be the hash
-// of our challenge (the 16 random bytes before their encryption), the signature of the host's certificate (256 bytes
-// for the 2048-bit RSA key of every host) and the secret of its pairing secret (its first 16 bytes). A host that
+// of our challenge (the 16 random bytes before their encryption), the signature of the host's certificate (its length
+// depends on the key of the host) and the secret of its pairing secret (its first 16 bytes). A host that
 // encrypted with another PIN, or one that doesn't know the PIN at all and only pretends to be the host, can't produce
 // it. The response must hold at least hash_length + 16 bytes, the hash and the challenge of the host. Returns GS_OK,
 // GS_PIN_WRONG for a hash that doesn't match, or GS_INVALID or GS_FAILED when the hash can't be computed. Ported from
@@ -527,14 +549,19 @@ int gs_pair(int serverMajorVersion, const char* address, unsigned short httpPort
     goto cleanup;
   }
 
-  // The secret of the host (16 bytes) and its signature with the key of the host's certificate (256 bytes)
-  unsigned char pairing_secret[16 + 256];
-  if (hex_to_bytes(result, pairing_secret, sizeof(pairing_secret)) != GS_OK) {
+  // The secret of the host (16 bytes) and its signature with the key of the host's certificate, of 64 to 512 bytes
+  // (PAIRING_SIGNATURE_MIN_BYTES, PAIRING_SIGNATURE_MAX_BYTES): a whole number of bytes, decoded with its own length
+  unsigned char pairing_secret[16 + PAIRING_SIGNATURE_MAX_BYTES];
+  size_t pairing_secret_digits = strlen(result);
+  size_t pairing_secret_length = pairing_secret_digits / 2;
+  if (pairing_secret_digits % 2 != 0 || pairing_secret_length < 16 + PAIRING_SIGNATURE_MIN_BYTES ||
+      pairing_secret_length > sizeof(pairing_secret) ||
+      hex_to_bytes(result, pairing_secret, pairing_secret_length) != GS_OK) {
     ret = GS_INVALID;
     goto cleanup;
   }
 
-  if (!verifySignature(pairing_secret, 16, pairing_secret+16, 256, server_cert)) {
+  if (!verifySignature(pairing_secret, 16, pairing_secret + 16, (int)(pairing_secret_length - 16), server_cert)) {
     ret = GS_FAILED;
     goto cleanup;
   }

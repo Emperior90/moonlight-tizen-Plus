@@ -30,7 +30,7 @@ var pollGenerations = {}; // Number of the latest start of the polling of each h
 var hostStatusChecks = {}; // The first request of the latest start of the polling of each host (beginBackgroundPollingOfHost()), which decides whether a stored host is online, keyed by server UID
 var hostChoiceWait = null; // The host that was chosen while its state was still unknown (hostChosen()), as { host }, or null
 var appGridGeneration = 0; // Number of the latest build of the app grid (showApps()), whose box art downloads are the only ones still wanted
-var appGridBoxArtUrls = []; // The object URLs of the box art that the app grid shows (makeBoxArtUrl() in utils.js), freed when the grid is built again
+var appGridBoxArt = { serverUid: null, urls: {} }; // The URLs of the box art of the app grid by app ID, for the host of the grid: a grid of the same host built again shows them again at once (showApps())
 var pairingCert; // Loads the generated certificate
 var myUniqueid;
 var api; // The `api` should only be set if we're in a host-specific screen, on the initial screen it should always be null
@@ -687,12 +687,26 @@ function beginBackgroundPollingOfHost(host) {
     // The fast-path ping succeeded! Mark the host online instantly to prevent the UI from
     // flashing offline in the .finally block, and to skip the redundant 0-delay poll.
     host.online = true;
+    host.pinnedKeyMismatch = false;
   }).catch(function(failedRefreshInfo) {
+    // The PC answered with its pinned key that it no longer accepts this TV (HOST_REFUSED_TV_ERROR of utils.js): it is
+    // online and not paired, so its card shows Unpaired and OK pairs it again, as after pollServer(). Its app list is
+    // of no use until then.
+    if (failedRefreshInfo === HOST_REFUSED_TV_ERROR) {
+      console.warn('%c[index.js, beginBackgroundPollingOfHost]', 'color: green;', 'Warning: ' + host.hostname + ' no longer accepts this TV.');
+      host.markRefusedByHost();
+      host.online = true;
+      host.pinnedKeyMismatch = false;
+      host._memCachedApplist = null;
+      return;
+    }
     console.error('%c[index.js, beginBackgroundPollingOfHost]', 'color: green;', 'Error: Failed to refresh server info! Returned error was: ' + failedRefreshInfo + '! Failed server was: ' + '\n', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
 
     // Set host to offline and clear the app list cache
     host.online = false;
     host._memCachedApplist = null;
+    // A device answered at the address of the PC with another key than the pinned one: only the message differs
+    host.pinnedKeyMismatch = isPinnedKeyMismatchError(failedRefreshInfo);
   }).finally(function() {
     // Update the UI after the network finishes
     onBackgroundPollResult(host);
@@ -825,10 +839,26 @@ function snackbarLog(...args) {
   showSnackbarMessage(translatedMessage, 2500);
 }
 
+// How long snackbarLogLong() shows a message: the time to read it from the couch, 1.5 s to notice it and 50 ms per
+// character of the translated text (about 20 characters a second), at least 5 s, as every message before 2.3.3 (up to
+// 70 characters), and at most 15 s (from 270 characters), since the messages that come meanwhile wait in the queue of
+// the snackbar
+const SNACKBAR_LONG_MIN_MS = 5000;
+const SNACKBAR_LONG_MAX_MS = 15000;
+const SNACKBAR_LONG_NOTICE_MS = 1500;
+const SNACKBAR_LONG_MS_PER_CHARACTER = 50;
+
+// The time that snackbarLogLong() shows a translated message for
+function getSnackbarLongTimeout(message) {
+  const time = SNACKBAR_LONG_NOTICE_MS + SNACKBAR_LONG_MS_PER_CHARACTER * String(message).length;
+  return Math.min(SNACKBAR_LONG_MAX_MS, Math.max(SNACKBAR_LONG_MIN_MS, time));
+}
+
+// Show a message that needs time to read, for as long as its translated text takes (getSnackbarLongTimeout())
 function snackbarLogLong(...args) {
   const translatedMessage = t(...args);
   console.log('%c[index.js, snackbarLogLong]', 'color: green;', ...args);
-  showSnackbarMessage(translatedMessage, 5000);
+  showSnackbarMessage(translatedMessage, getSnackbarLongTimeout(translatedMessage));
 }
 
 // Show a message for timeoutMs, e.g. one that is true only until a moment that is known in advance: the countdown of
@@ -862,7 +892,8 @@ function dismissSnackbar() {
 }
 
 // Wrap the timers of the snackbar of MDL once (dismissSnackbar()): each shown message gets a cleanup of its own, which
-// does nothing once the message ended otherwise, and a message ends once. Returns whether the snackbar is wrapped.
+// does nothing once the message ended otherwise, and a message ends once; and place each message when it shows
+// (placeSnackbar()). Returns whether the snackbar is wrapped.
 function guardSnackbarTimers(snackbar) {
   if (!snackbar) {
     return false;
@@ -892,12 +923,61 @@ function guardSnackbarTimers(snackbar) {
     this.cleanup_ = function() {
       end(id);
     };
+    placeSnackbar(this.element_);
     display.call(this);
   };
   snackbar.endShownMessage_ = function() {
     end(shown.id);
   };
   return true;
+}
+
+// Where the next message shows: while the performance statistics show in a bottom corner, never over them. Beside the
+// full statistics, at the bottom of the other side, in the column that they leave free ('left' or 'right'), and above
+// the compact line ('raised'); in the middle of the bottom otherwise ('')
+function getSnackbarPlace() {
+  const overlay = document.getElementById('performance-stats');
+  if (isInGame !== true || !overlay) {
+    return '';
+  }
+  const right = overlay.classList.contains('stats-bottom-right');
+  if (!right && !overlay.classList.contains('stats-bottom-left')) {
+    return '';
+  }
+  // The level that shows, or else, once the module started the session of the stream, the level that is about to show:
+  // a message keeps its place for its whole time, and some come before the first figures (e.g. the codec fallback
+  // while the video stream is set up) or while a step of the level waits for them. Before the session (e.g. a failed
+  // launch request, while isInGame is still true) nothing is about to show.
+  const shown = !!overlay.firstChild && getComputedStyle(overlay).display !== 'none';
+  const level = shown ? (overlay.classList.contains('is-compact') ? PERFORMANCE_STATS_COMPACT : PERFORMANCE_STATS_FULL) :
+    wasmSessionStarted === true ? getPerformanceStatsLevel() : PERFORMANCE_STATS_OFF;
+  if (level === PERFORMANCE_STATS_OFF) {
+    return '';
+  }
+  if (level === PERFORMANCE_STATS_COMPACT) {
+    return 'raised';
+  }
+  return right ? 'left' : 'right';
+}
+
+// The places of getSnackbarPlace() other than the middle, each a class 'is-…' of the snackbar (style.css)
+const SNACKBAR_PLACES = ['left', 'right', 'raised'];
+
+// Move the snackbar, which is hidden below the screen between two messages, to the place of the next message at once,
+// without the slide of its transition, so that it slides in from below there (the wrapper of displaySnackbar_() in
+// guardSnackbarTimers())
+function placeSnackbar(element) {
+  if (!element) {
+    return;
+  }
+  const place = getSnackbarPlace();
+  if (SNACKBAR_PLACES.every((name) => element.classList.contains('is-' + name) === (name === place))) {
+    return;
+  }
+  element.style.transition = 'none';
+  SNACKBAR_PLACES.forEach((name) => element.classList.toggle('is-' + name, name === place));
+  void element.offsetWidth;
+  element.style.transition = '';
 }
 
 // Handle layout elements when displaying the Hosts view
@@ -927,6 +1007,8 @@ function showHostsMode() {
   $('#main-content').removeClass('fullscreen');
   $('#listener').removeClass('fullscreen');
 
+  // A press in the app list that still waits for the PC shows nothing any more (appListVisitOf())
+  appListVisit++;
   Navigation.start();
   Controller.startWatching();
   Navigation.pop();
@@ -1075,7 +1157,10 @@ function hostChosen(host, onSuccessCallback) {
   if (!host.online) {
     // Set the flag to indicate that a host is unable to be opened due to being offline or failing to connect
     isHostOpening = false;
-    // Only show the Wake PC dialog if the user has explicitly enabled per-host Auto WOL toggle
+    // Only show the Wake PC dialog if the user has explicitly enabled per-host Auto WOL toggle. Also for a PC where a
+    // device answered with another key than the pinned one (pinnedKeyMismatch): another PC may have got its address
+    // while it sleeps, and the dialog finds it at its new address once it wakes (its polls and the scan of the network).
+    // 2.3.3 in testing skipped the dialog for it, and OK no longer woke such a PC.
     if (host.autoWolEnabled === true) {
       autoWolDialog(host, function() {
         // Success callback: The host is now online.
@@ -1086,10 +1171,16 @@ function hostChosen(host, onSuccessCallback) {
           hostChosen(host);
         }
       });
+    } else if (host.pinnedKeyMismatch === true) {
+      // Only the user can tell whether it is the PC with new keys (delete it and add it again), another PC with its
+      // address while it sleeps (wake it) or at a new address (Rescan network). The app never pairs it again by itself,
+      // since such an answer doesn't prove that it comes from the PC.
+      console.error('%c[index.js, hostChosen]', 'color: green;', 'Error: ' + host.hostname + ' answers with another key than the one pinned at its pairing.');
+      snackbarPinnedKeyMismatch(host);
     } else {
       // Let the user know what to do to bring the host back online and until then, we'll be back to the previous view.
       console.error('%c[index.js, hostChosen]', 'color: green;', 'Error: Connection to host failed or host is offline!');
-      snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', t('the PC'));
+      snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', host.hostname || t('the PC'));
     }
     return;
   }
@@ -1124,6 +1215,19 @@ function hostChosen(host, onSuccessCallback) {
     // But if the host is already paired and online, then we show the apps and navigate to the Apps view as usual.
     return openPairedHost(host);
   }
+}
+
+// Say that a paired PC no longer accepts this TV (HOST_REFUSED_TV_ERROR in utils.js): its pairing was removed or turned
+// off on the PC, so it has to be paired again from the PC list, where it shows Unpaired after its next check
+function snackbarHostRefusedTv(host) {
+  snackbarLogLong('%1$s no longer accepts this TV: its pairing was removed or turned off on the PC. Select it in the list of PCs to pair it again.', host.hostname);
+}
+
+// Say that a device answered at the address of a paired PC with another key than the one pinned at its pairing
+// (pinnedKeyMismatch of the host): another PC that got its address (while the PC sleeps, or since it got a new one), or
+// the PC with new keys, which only the user can tell apart
+function snackbarPinnedKeyMismatch(host) {
+  snackbarLogLong('%1$s answers with a different key than at its pairing: another PC may have its address now, or Sunshine was set up anew on it. If the PC is asleep, wake it from its options. Otherwise try "Rescan network", and if that doesn\'t help, delete the PC and add it again.', host.hostname);
 }
 
 // Show the apps of a paired host that is online and navigate to the Apps view (hostChosen()). Resolves once the app list
@@ -1639,7 +1743,13 @@ function pairingDialog(nvhttpHost, onSuccess, onFailure) {
   nvhttpHost.pollServer(function(returnedNvHTTPHost) {
     if (!returnedNvHTTPHost.online) {
       console.error('%c[index.js, pairingDialog]', 'color: green;', 'Error: Failed to connect to ' + nvhttpHost.hostname + '. Ensure your host PC is online!', nvhttpHost, '\n' + nvhttpHost.toString()); // Logging both object (for console) and toString-ed object (for text logs)
-      snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', nvhttpHost.hostname || t('the PC'));
+      // A device answered with another key than the pinned one (e.g. Add PC of a known PC that got new keys): no pairing
+      // with it, and its own message
+      if (returnedNvHTTPHost.pinnedKeyMismatch === true) {
+        snackbarPinnedKeyMismatch(nvhttpHost);
+      } else {
+        snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', nvhttpHost.hostname || t('the PC'));
+      }
       onFailure();
       return;
     }
@@ -1649,11 +1759,9 @@ function pairingDialog(nvhttpHost, onSuccess, onFailure) {
       return;
     }
 
-    if (nvhttpHost.currentGame != 0) {
-      snackbarLogLong('%1$s is currently in a game session. Please quit the running app or restart the computer, then try again.', nvhttpHost.hostname);
-      onFailure();
-      return;
-    }
+    // A PC that runs an app is paired as well: Sunshine pairs while it streams, as moonlight-embedded (f021439),
+    // moonlight-qt and moonlight-android try it. Up to 2.3.2 the dialog refused before any request, with a message that
+    // asked to quit the app, which a TV that isn't paired can't do. A failure below still names the running app.
 
     // Find the existing overlay and dialog elements
     var pairingOverlay = document.querySelector('#pairingDialogOverlay');
@@ -1716,13 +1824,15 @@ function pairingDialog(nvhttpHost, onSuccess, onFailure) {
       // Keep the modal opened, but change the button for "Close" (also for the translation pass of a change of the language)
       $('#cancelPairing').attr('data-i18n', 'Close').text(t('Close'));
 
-      // If the host is already in a streaming session or failed during pairing,
-      // change the dialog text element to include the hostname and display the returned error message
-      if (nvhttpHost.currentGame != 0) {
-        $('#pairingDialogText').html(t('Error: %1$s is currently busy!<br><br>You must stop the running app in order to pair with the PC.', escapeHTML(nvhttpHost.hostname)));
-      } else if (String(failedPairing) === '-7') {
+      // Change the dialog text element to include the hostname and display why the pairing failed: a wrong PIN first,
+      // then the general text for a pairing that the PC didn't confirm (PAIRING_NOT_CONFIRMED_ERROR of utils.js: it
+      // took the PIN and then refused the certificate of the TV, which no running app explains), then, on a PC that runs
+      // an app, that app (GeForce Experience can't pair while it streams, Sunshine can), else the general text
+      if (String(failedPairing) === '-7') {
         // GS_PIN_WRONG of libgamestream/errors.h: the host answered with a hash that doesn't match the PIN (gs_pair())
         $('#pairingDialogText').html(t('Error: The PIN entered on %1$s was wrong.<br><br>Please, try pairing with the PC again and enter the new PIN.', escapeHTML(nvhttpHost.hostname)));
+      } else if (failedPairing !== PAIRING_NOT_CONFIRMED_ERROR && nvhttpHost.currentGame != 0) {
+        $('#pairingDialogText').html(t('Error: %1$s is currently busy!<br><br>You must stop the running app in order to pair with the PC.', escapeHTML(nvhttpHost.hostname)));
       } else {
         $('#pairingDialogText').html(t('Error: Failed to pair with %1$s.<br><br>Please, try pairing with the PC again.', escapeHTML(nvhttpHost.hostname)));
       }
@@ -2077,20 +2187,18 @@ function hostMenuDialog(host) {
   };
 
   // The entries of the menu, in their order. An entry that can't run for the state of the host (Refresh apps of a host
-  // that is offline, Wake PC of one that is online) is left out instead of showing disabled, so the focus never lands
-  // on it, and the red Delete PC comes after the harmless entries. While the state is still unknown (right after the
-  // start of the app), Wake PC shows: its dialog closes at once if the PC turns out to be on, and Refresh apps needs it.
+  // that is offline or not paired, whose app list can't be asked; Wake PC of one that is online) is left out instead of
+  // showing disabled, so the focus never lands on it, and the red Delete PC comes after the harmless entries. While the
+  // state is still unknown (right after the start of the app), Wake PC shows: its dialog closes at once if the PC turns
+  // out to be on, and Refresh apps needs it.
   var hostMenuDialogOptions = [
     {
       id: 'refreshApps-' + host.hostname,
       icon: 'refresh',
       text: t('Refresh apps'),
-      shown: host.online === true,
+      shown: host.online === true && host.paired === true,
       action: function() {
-        // Refresh the list of apps for the target host
-        snackbarLogLong('Refreshing the list of %1$s applications...', host.hostname);
-        host.clearBoxArt();
-        host.getAppListWithCacheFlush();
+        refreshHostApps(host);
       }
     },
     {
@@ -2273,7 +2381,18 @@ function choosePcPowerApp(appList, currentGame) {
 // Read which app a PC-list session streams, after a refresh of the server info (choosePcPowerApp())
 function pickPcPowerApp(host) {
   return host.refreshServerInfo().then(function() {
-    return host.getAppList();
+    if (!host.currentGame || host.currentGame == 0) {
+      return host.getAppList();
+    }
+    // A running app that the list in the cache lacks: the list is read once more (findHostApp()); a list that can't be
+    // read then leaves the cache as it was, and the message about an app that isn't in the list follows. Without a list
+    // in the cache, findHostApp() already asked the PC for it, so its failure stands (2.3.3 in testing asked a second
+    // time, and said that the PC can't be reached only after both waits).
+    return findHostApp(host, host.currentGame).then(function() {
+      return host.getAppList();
+    }, function(failed) {
+      return host._memCachedApplist || Promise.reject(failed);
+    });
   }).then(function(appList) {
     return choosePcPowerApp(appList, host.currentGame);
   });
@@ -2322,6 +2441,12 @@ function startPcPowerSession(host, kind) {
     return;
   }
   opened.then(function() {
+    // The app list found that the PC no longer accepts this TV, and said so (showApps()): nothing to stream
+    if (!host.paired) {
+      console.warn('%c[index.js, startPcPowerSession]', 'color: green;', 'Warning: PC power: ' + kind + ' of ' + host.hostname + ': the PC no longer accepts this TV.');
+      endPcPowerSessionStart();
+      return;
+    }
     return pickPcPowerApp(host).then(function(choice) {
       // Only while the app list of this PC still shows for this session, e.g. not after RETURN to the PC list meanwhile
       if (pcPowerSessionStart !== session || api !== host || !$('#game-grid').is(':visible') || isDialogOpen || isInGame) {
@@ -2333,7 +2458,7 @@ function startPcPowerSession(host, kind) {
       }
       if (!choice) {
         endPcPowerSessionStart();
-        // An app runs that the app list doesn't have (e.g. one that another device started from its own list of Apollo),
+        // An app runs that the app list doesn't have, even after it was read once more (findHostApp()),
         // or nothing runs and the PC has no Desktop app
         if (host.currentGame && host.currentGame != 0) {
           console.warn('%c[index.js, startPcPowerSession]', 'color: green;', 'Warning: PC power: ' + kind + ' of ' + host.hostname + ': the app that runs is not in the app list.');
@@ -2360,7 +2485,11 @@ function startPcPowerSession(host, kind) {
     }, function(failed) {
       endPcPowerSessionStart();
       console.error('%c[index.js, startPcPowerSession]', 'color: green;', 'Error: PC power: ' + kind + ' of ' + host.hostname + ': failed to read its apps: ' + failed);
-      snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', host.hostname || t('the PC'));
+      if (failed === HOST_REFUSED_TV_ERROR) {
+        snackbarHostRefusedTv(host);
+      } else {
+        snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', host.hostname || t('the PC'));
+      }
     });
   });
 }
@@ -2412,6 +2541,8 @@ function deleteHostDialog(host) {
     updatePreviewData();
     // Forget the apps that were hidden for the host
     forgetHiddenApps(host.serverUid);
+    // The box art of its app grid that the app still holds goes (releaseAppGridBoxArt())
+    forgetAppGridBoxArtOf(host.serverUid);
     // If host removed, show snackbar message
     snackbarLog('%1$s has been deleted successfully.', host.hostname);
     deleteHostOverlay.style.display = 'none';
@@ -2479,6 +2610,8 @@ function deleteAllHostsDialog() {
           saveHosts();
         }
       }
+      // The box art of the app grid that the app still holds goes (releaseAppGridBoxArt())
+      forgetAppGridBoxArtOf(null);
       // If all hosts removed, show snackbar message
       snackbarLog('All PCs have been deleted.');
       // Clear the preview app cache and update Smart Hub Preview
@@ -3671,8 +3804,9 @@ function showAppsMode() {
   $('#main-header').show();
   $('#goBackBtn').show();
   updateQuitRunningAppButton(api);
-  // Tell how to open the menu of an app (menus.js)
-  $('#appMenuHint').show();
+  // Tell how to open the menu of an app (menus.js), only while there is an app to open it on (not over the illustration
+  // of an empty list or of one that couldn't be read)
+  $('#appMenuHint').toggle($('#game-grid .game-container').length > 0);
   $('#main-content').children().not('#listener, #loadingSpinner, #wasmSpinner').show();
   $('#host-grid').hide();
   $('#settings-list').hide();
@@ -3700,7 +3834,9 @@ function showAppsMode() {
 }
 
 // Show the Apps grid
-function showApps(host) {
+// options.refusalSaid: the caller said already that the PC no longer accepts this TV (stopGame()), so a list that fails
+// for that reason doesn't say it once more
+function showApps(host, options) {
   return new Promise((resolve, reject) => {
     // Safety checking should happen before attempting to show the app list
     if (!host || !host.paired) {
@@ -3732,12 +3868,12 @@ function showApps(host) {
     // Remove all game container elements from the game grid and from any other div elements
     $('#game-grid').empty();
     $('div.game-container').remove();
-    // No image shows the box art of the removed grid any more (releaseBoxArtUrl() in utils.js)
-    appGridBoxArtUrls.splice(0).forEach(function(url) {
-      if (typeof releaseBoxArtUrl === 'function') {
-        releaseBoxArtUrl(url);
-      }
-    });
+    // The box art of another host goes; that of this host that can show again stays for the tiles of the new grid, and
+    // the rest goes (releaseBoxArtUrl() in utils.js)
+    releaseAppGridBoxArt(appGridBoxArt.serverUid === host.serverUid ? function(url) {
+      return !isReusableBoxArt(url);
+    } : null);
+    appGridBoxArt.serverUid = host.serverUid;
     // The box art downloads of an earlier build of the grid that still wait are dropped (NvHTTP.getBoxArt() in utils.js)
     var gridGeneration = ++appGridGeneration;
     var isBoxArtStale = function() {
@@ -3761,13 +3897,22 @@ function showApps(host) {
           var emptyAppListImg = new Image();
           emptyAppListImg.src = 'static/res/applist_empty.svg';
           $('#game-grid').html(emptyAppListImg);
-          snackbarLogLong('Your list is currently empty. Please add your favorite apps to the list.');
+          // Every app left the list, and its box art with it; the top of the screen says what to do (showApp() in launcher.js)
+          releaseAppGridBoxArt(null);
           // Navigate to the Apps view
           showAppsMode();
           resolve();
           return;
         }
 
+        // The box art of the apps that the host no longer lists goes (by the whole list, so hidden apps keep theirs)
+        var listedIds = {};
+        appList.forEach(function(app) {
+          listedIds[app.id] = true;
+        });
+        releaseAppGridBoxArt(function(url, appId) {
+          return !listedIds[appId];
+        });
         // The favorites first, then the order of the setting 'Sort the list of apps'
         const sortedAppList = orderHostApps(host.serverUid, appList);
         const favoriteApps = loadFavoriteApps(host.serverUid);
@@ -3909,10 +4054,50 @@ function showApps(host) {
           var appEntry = (_isSmartHubSupported && _previewApps[host.serverUid]) ? _previewApps[host.serverUid].apps.find(function(a) {
             return a.id === app.id; 
           }) : null;
+          // Point the Smart Hub Preview entry of the app at its preview, for the box art behind url
+          var pointPreviewAt = function(url) {
+            // The url is an object URL of the box art (or a data URL where object URLs are missing)
+            if (_isSmartHubSupported && _previewApps[host.serverUid] && appEntry) {
+              var previewPlace = getPreviewLocation();
+
+              // Use deterministic filename so the local HTTP server route stays stable
+              var filename = SMART_HUB_PREVIEW_FILE_PREFIX + app.id + '.jpg';
+              var cacheBuster = '?v=' + Date.now();
+
+              // Determine local path from the url if it's a file URI
+              if (url.startsWith('file://')) {
+                var localPngPath = url.replace('file://', '');
+                appEntry.txtPath = localPngPath;
+              } else {
+                appEntry.txtPath = previewPlace.documentsPath + '/' + filename;
+              }
+              appEntry.imageUri = 'http://' + previewPlace.tvIp + ':' + SMART_HUB_PREVIEW_PORT + '/' + filename + cacheBuster;
+            }
+          };
+          // The box art that an earlier grid of this host showed shows again at once, set in the task that builds the grid
+          // (no read of its file, no copy of its Blob, no new URL); onerror below, set in the same task, still sees an
+          // image that refuses the object URL
+          var reusedUrl = appGridBoxArt.urls[app.id];
+          boxArtPlaceholderImg.onload = e => boxArtPlaceholderImg.classList.add('fade-in');
+          if (reusedUrl) {
+            boxArtPlaceholderImg.src = reusedUrl;
+          }
           var boxArtPromise = new Promise(function(resolveBoxArt) {
             boxArtJobs.push(function() {
               // Nothing more loads for a grid that was built again or once a stream starts (its downloads were dropped)
               if (isBoxArtStale() || isInGame === true) {
+                resolveBoxArt();
+                return;
+              }
+              // Box art that shows again only gets its Smart Hub Preview, whose file may be missing, e.g. when the grid
+              // that read the box art was built again before the preview was made (NvHTTP.queueBoxArtPreview() in utils.js)
+              if (reusedUrl) {
+                pointPreviewAt(reusedUrl);
+                // (its Blob is gone once Refresh apps freed the URL meanwhile)
+                var reusedBlob = boxArtBlob(reusedUrl);
+                if (_isSmartHubSupported && appEntry && reusedBlob && typeof host.queueBoxArtPreview === 'function') {
+                  host.queueBoxArtPreview(app.id, reusedBlob, isBoxArtStale);
+                }
                 resolveBoxArt();
                 return;
               }
@@ -3925,25 +4110,10 @@ function showApps(host) {
                   resolveBoxArt();
                   return;
                 }
-                appGridBoxArtUrls.push(resolvedPromise);
+                // Kept for the next grid of this host (isReusableBoxArt())
+                rememberAppGridBoxArt(app.id, resolvedPromise);
                 boxArtPlaceholderImg.src = resolvedPromise;
-                // The resolvedPromise is now an object URL of the box art (or a data URL where object URLs are missing).
-                if (_isSmartHubSupported && _previewApps[host.serverUid] && appEntry) {
-                  var previewPlace = getPreviewLocation();
-
-                  // Use deterministic filename so the local HTTP server route stays stable
-                  var filename = SMART_HUB_PREVIEW_FILE_PREFIX + app.id + '.jpg';
-                  var cacheBuster = '?v=' + Date.now();
-
-                  // Determine local path from resolvedPromise if it's a file URI
-                  if (resolvedPromise.startsWith('file://')) {
-                    var localPngPath = resolvedPromise.replace('file://', '');
-                    appEntry.txtPath = localPngPath;
-                  } else {
-                    appEntry.txtPath = previewPlace.documentsPath + '/' + filename;
-                  }
-                  appEntry.imageUri = 'http://' + previewPlace.tvIp + ':' + SMART_HUB_PREVIEW_PORT + '/' + filename + cacheBuster;
-                }
+                pointPreviewAt(resolvedPromise);
                 resolveBoxArt();
               }, function(failedPromise) {
                 // A download that was dropped (the grid was built again, or a stream starts) is no error
@@ -3956,7 +4126,6 @@ function showApps(host) {
             });
           });
 
-          boxArtPlaceholderImg.onload = e => boxArtPlaceholderImg.classList.add('fade-in');
           // An image that refuses the object URL of the box art gets a data URL of it instead, once (boxArtDataUrl() in
           // utils.js), so that a TV without object URLs for images still shows the box art
           boxArtPlaceholderImg.onerror = function() {
@@ -4023,8 +4192,13 @@ function showApps(host) {
         setTimeout(loadNextBoxArt, 0);
 
         Promise.all(settledPromises).then(function() {
-          // Resume background polling now that all box art downloads are complete
-          beginBackgroundPollingOfHost(host);
+          // Resume background polling now that all box art downloads are complete, but not during a stream or its start
+          // (showStreamMode() stopped it, and the app list after the stream resumes it), where its first request went out
+          // between the launch request and the start of the stream, nor for a grid that was built again, whose own build
+          // resumes it
+          if (isInGame !== true && !isBoxArtStale()) {
+            beginBackgroundPollingOfHost(host);
+          }
 
           // Wait for all Smart Hub Preview JPEGs to finish encoding and saving to disk
           // before sending the updated data to the background service.
@@ -4042,13 +4216,30 @@ function showApps(host) {
         $('#main-header').children().show();
 
         console.error('%c[index.js, showApps]', 'color: green;', 'Error: Failed to get app list from ' + host.hostname + '. Host object: ', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
+        // The PC answered the request of the list with the pinned key that it no longer accepts this TV, which marked it
+        // as not paired (getAppListWithCacheFlush() in utils.js): the top of the screen says that the list couldn't be
+        // read, and this says why, unless the caller said it already. Its card is drawn again at once (as by
+        // refreshHostApps()), so that back on the PC list it shows Unpaired before the next check of the PC, and OK pairs
+        // it again.
+        if (failedAppList === HOST_REFUSED_TV_ERROR) {
+          updateHostStatusIndicator(host);
+          if (!(options && options.refusalSaid)) {
+            snackbarHostRefusedTv(host);
+          }
+        }
         var errorAppListImg = new Image();
         errorAppListImg.src = 'static/res/applist_error.svg';
         $('#game-grid').html(errorAppListImg);
-        snackbarLogLong('Unable to retrieve your list of apps at this time. Please refresh the list of apps or try again later!');
 
         // Navigate to the Apps view
         showAppsMode();
+        // The illustration of the failed list gets the selection, so that the top of the screen says why no apps show
+        // (showApp() in launcher.js): the callers give the selection to the grid only once a list showed. Not under a
+        // dialog, whose close hands the selection back to the view below.
+        if (!isDialogOpen && (Navigation.isCurrent(Views.Apps) || Navigation.isCurrent(Views.AppsNav))) {
+          Navigation.switch();
+          Navigation.change(Views.Apps);
+        }
         reject(failedAppList);
       });
     }, abortedScan ? SCAN_ABORT_PAUSE_MS : 0);
@@ -4057,18 +4248,35 @@ function showApps(host) {
 
 // Show a confirmation with the Quit App dialog before stopping the running app
 function quitAppDialog() {
+  if (!api.paired) {
+    // A check while the app list showed found that the PC no longer accepts this TV (markRefusedByHost() of utils.js):
+    // the quit can't be sent, so this says so at once, as OK on an app does, instead of after the question
+    snackbarHostRefusedTv(api);
+    return;
+  }
   if (api.currentGame === 0) {
     // If no app is running, show snackbar message
     snackbarLog('No app is currently running.');
     return;
   } else {
-    api.getAppById(api.currentGame).then(function(currentGame) {
+    var host = api;
+    // The visit of the app list at the press: the question waits for the list when the cache lacks the running app
+    // (findHostApp()), and meanwhile the user may have left the app list, which the question then no longer fits. A
+    // press while the list didn't show with the keys (null) asks as before.
+    var pressVisit = appListVisitOf(host);
+    var ask = function(currentGame) {
+      if (pressVisit !== null && !isAppListVisitShown(host, pressVisit)) {
+        console.log('%c[index.js, quitAppDialog]', 'color: green;', 'Not asking to quit the running app of ' + host.hostname + ', since the app list no longer shows.');
+        return;
+      }
       // Find the existing overlay and dialog elements
       var quitAppOverlay = document.querySelector('#quitAppDialogOverlay');
       var quitAppDialog = document.querySelector('#quitAppDialog');
 
-      // Change the dialog text element to include the game title
-      document.getElementById('quitAppDialogText').innerHTML = t('Are you sure you want to quit %1$s? All unsaved data will be lost.', escapeHTML(currentGame.title));
+      // The running app by its title, or by the PC when the list of the PC doesn't have it (or can't be read)
+      document.getElementById('quitAppDialogText').innerHTML = currentGame ?
+        t('Are you sure you want to quit %1$s? All unsaved data will be lost.', escapeHTML(currentGame.title)) :
+        t('Are you sure you want to quit the app that is running on %1$s? All unsaved data will be lost.', escapeHTML(host.hostname));
       
       // Show the dialog and push the view
       quitAppOverlay.style.display = 'flex';
@@ -4095,12 +4303,148 @@ function quitAppDialog() {
         quitAppDialog.close();
         isDialogOpen = false;
         Navigation.pop();
-        stopGame(api, function() {
+        // With the visit of the press: no list built once more after the quit when the user left the list meanwhile
+        stopGame(host, function() {
           // After stopping the game, set the focus again, on the back button when the quit button is gone
           setTimeout(() => Navigation.switch(), 3000);
-        });
+        }, pressVisit);
       });
+    };
+    findHostApp(host, host.currentGame).then(ask, function(failed) {
+      console.error('%c[index.js, quitAppDialog]', 'color: green;', 'Error: Failed to read the app list of ' + host.hostname + ': ' + failed);
+      // The list read once more found that the PC no longer accepts this TV, which marked it as not paired
+      // (getAppListWithCacheFlush() in utils.js): the quit can't be sent, so this says so instead of the question
+      if (failed === HOST_REFUSED_TV_ERROR) {
+        updateHostStatusIndicator(host);
+        snackbarHostRefusedTv(host);
+        return;
+      }
+      // The quit doesn't need the list: ask by the name of the PC
+      ask(null);
     });
+  }
+}
+
+// Whether the app list of host shows with nothing over it, e.g. still once a request that a question waited for ended
+function isAppListShownFor(host) {
+  return api === host && isInGame !== true && !isDialogOpen && $('#game-grid').is(':visible');
+}
+
+// The visits of the app lists: counted up each time the PC list shows (showHostsMode()), which every way out of an app
+// list passes, so that the answer to a press in an app list never acts on a later visit of a list, also of the same PC
+var appListVisit = 0;
+
+// The visit of the app list of host while it shows with nothing over it and has the keys (its grid, Views.Apps, or its
+// header, Views.AppsNav), else null (e.g. a start from a deep link while a dialog is open). A press that waits for the
+// PC takes it, and what the answer shows (a question, the list built again) waits for isAppListVisitShown().
+function appListVisitOf(host) {
+  var hasKeys = typeof Views === 'undefined' || Navigation.isCurrent(Views.Apps) || Navigation.isCurrent(Views.AppsNav);
+  return hasKeys && isAppListShownFor(host) ? appListVisit : null;
+}
+
+// Whether the app list of host still shows with the keys in the visit of a press (appListVisitOf()), i.e. the user
+// neither left it (RETURN to the PC list, perhaps back again, or another PC) nor opened something over it meanwhile
+function isAppListVisitShown(host, visit) {
+  return visit !== null && appListVisitOf(host) === visit;
+}
+
+// The app with the ID appId in the app list of host, or null when the list doesn't have it. A list from the cache of the
+// host that lacks it is read once more from the host, since the app may be newer than the list that the TV read: an app
+// added or changed on the PC since (Sunshine gives an app a new ID when its name or image changes), or started from
+// another device. A list that was just read counts as it is (getAppList() reads it when the cache is empty, so the miss
+// is final then). Fails like getAppById() when the list can't be read.
+function findHostApp(host, appId) {
+  var isCached = !!host._memCachedApplist;
+  return host.getAppById(appId).then(function(app) {
+    if (app || !isCached || typeof host.getAppListWithCacheFlush !== 'function') {
+      return app;
+    }
+    console.log('%c[index.js, findHostApp]', 'color: green;', 'App ' + appId + ' is not in the app list that ' + host.hostname + ' sent before, reading the list again.');
+    return host.getAppListWithCacheFlush().then(function() {
+      return host.getAppById(appId);
+    });
+  });
+}
+
+// Close the audio output of the Web Audio backend that the key press of a start opened (startWebAudio() in startGame()),
+// for a start that ends without a stream and without leaveStreamView() (messages.js), whose removeStreamView() closes it
+// itself. A no-op with the other backends and when nothing is open (stopAudioScheduler() in audio.js).
+function closeStartAudio() {
+  if (isWebAudioBackendSelected() && typeof stopAudioScheduler === 'function') {
+    stopAudioScheduler();
+  }
+}
+
+// Read the app list of a PC anew, with its box art (Refresh apps in its menu, hostMenuDialog()), and say how it went:
+// the number of apps it lists, that it lists none, that the list couldn't be read (and what to check before the next
+// try), or that the PC no longer accepts this TV (getAppListWithCacheFlush() in utils.js marked it as not paired, which
+// its card shows at once). The box art files of the PC are deleted (clearBoxArt() in utils.js), so its next app list
+// downloads them again, and the box art of its grid that the app still holds goes as well (releaseAppGridBoxArt()).
+function refreshHostApps(host) {
+  snackbarLog('Refreshing the list of %1$s applications...', host.hostname);
+  if (appGridBoxArt.serverUid === host.serverUid) {
+    releaseAppGridBoxArt(null);
+  }
+  Promise.resolve().then(function() {
+    return host.clearBoxArt();
+  }).catch(function(error) {
+    console.warn('%c[index.js, refreshHostApps]', 'color: green;', 'Warning: Failed to clear the box art of ' + host.hostname + ': ' + error);
+  });
+  host.getAppListWithCacheFlush().then(function(appList) {
+    // No count for an empty list, which French gives the singular (0 application) and _n() the plural
+    if (appList.length === 0) {
+      snackbarLog('The app list of %1$s is up to date: no apps.', host.hostname);
+    } else {
+      snackbarLog('The app list of %1$s is up to date: %2$s.', host.hostname, _n('%1$s app', '%1$s apps', appList.length));
+    }
+  }, function(failed) {
+    console.error('%c[index.js, refreshHostApps]', 'color: green;', 'Error: Failed to read the app list of ' + host.hostname + ': ' + failed);
+    if (failed === HOST_REFUSED_TV_ERROR) {
+      updateHostStatusIndicator(host);
+      snackbarHostRefusedTv(host);
+    } else {
+      snackbarLogLong('The app list of %1$s couldn\'t be read. Make sure that Sunshine (or another GameStream host) is running on the PC, then try again.', host.hostname);
+    }
+  });
+}
+
+// Whether box art can show again in a grid of its host built later: an object URL of its Blob (makeBoxArtUrl() in
+// utils.js), but not Sunshine's default box art, which is read again each time to see whether the app got box art
+// meanwhile (NvHTTP.getBoxArt()), and not a data URL of a browser without object URLs
+function isReusableBoxArt(url) {
+  var blob = typeof boxArtBlob === 'function' ? boxArtBlob(url) : null;
+  return !!blob && blob.size !== SUNSHINE_DEFAULT_BOX_ART_SIZE;
+}
+
+// Remember the box art URL of an app of the grid, freeing an earlier one of the same app
+function rememberAppGridBoxArt(appId, url) {
+  var old = appGridBoxArt.urls[appId];
+  if (old && old !== url && typeof releaseBoxArtUrl === 'function') {
+    releaseBoxArtUrl(old);
+  }
+  appGridBoxArt.urls[appId] = url;
+}
+
+// Free the box art of the grid for which isGone(url, appId) says so, or all of it without isGone (releaseBoxArtUrl() in
+// utils.js, which leaves URLs alone that aren't its object URLs)
+function releaseAppGridBoxArt(isGone) {
+  Object.keys(appGridBoxArt.urls).forEach(function(appId) {
+    var url = appGridBoxArt.urls[appId];
+    if (!isGone || isGone(url, appId)) {
+      delete appGridBoxArt.urls[appId];
+      if (typeof releaseBoxArtUrl === 'function') {
+        releaseBoxArtUrl(url);
+      }
+    }
+  });
+}
+
+// Free the box art of the app grid when it belongs to the PC with serverUid, or to any PC for null, e.g. once the PC was
+// deleted, so that no Blob of a deleted PC stays in memory
+function forgetAppGridBoxArtOf(serverUid) {
+  if (serverUid === null || appGridBoxArt.serverUid === serverUid) {
+    releaseAppGridBoxArt(null);
+    appGridBoxArt.serverUid = null;
   }
 }
 
@@ -4121,6 +4465,9 @@ function showStreamMode() {
   }
 
   isInGame = true;
+  // No host is polled during a stream (pollServer() in utils.js asks nothing while isInGame, but its loop went on and
+  // redrew the card of the host every 5 seconds); the app list or the PC list after the stream starts it again
+  stopPollingHosts();
   fullscreenWasmModule();
   handleOnScreenOverlays();
   Navigation.stop();
@@ -4226,6 +4573,7 @@ function endLaunchWithAnswer(host, statusCode, statusMessage) {
   var kind = classifyLaunchAnswer(statusCode, statusMessage);
   console.warn('%c[index.js, endLaunchWithAnswer]', 'color: green;', 'Warning: The host answered the launch with ' + statusCode + ' (' + statusMessage + '), taken as ' + kind + '.');
   stopHeartbeatOfFailedStart('the host answered the launch with ' + statusCode);
+  closeStartAudio();
   var backToApps = function() {
     showApps(host).then(() => {
       // Scroll to the current game row
@@ -4235,7 +4583,7 @@ function endLaunchWithAnswer(host, statusCode, statusMessage) {
       if (kind === 'permission') {
         hostPermissionDialog(host, statusMessage);
       }
-    });
+    }, logFailedAppList);
   };
   if (kind === 'notice') {
     // 'App terminated.' after the Terminate tile; the other notices tell what to do, e.g. to launch the app again
@@ -4367,6 +4715,10 @@ function startGame(host, appID, restartKind, restartChange) {
     // The launch screen of a start once more still shows, which nothing else would end
     if (isRestart) {
       endStreamRestart(restartKind, 'the host is not paired', restartChange);
+    } else if (host) {
+      // A check while the app list showed found that the PC no longer accepts this TV (markRefusedByHost() of utils.js),
+      // after which OK on an app did nothing before 2.3.3
+      snackbarHostRefusedTv(host);
     }
     return;
   }
@@ -4458,9 +4810,13 @@ function startGame(host, appID, restartKind, restartChange) {
   // The app list of the host couldn't be read: getAppById() asks the host for it when the cache of the host is empty
   // (e.g. after a failed poll), and fails with that request. A start once more ends, since its launch screen still
   // shows, which stayed for good before 2.3.2. A start from the app list, where OK otherwise seemed to do nothing, says
-  // so and closes the audio scheduler that its key press opened.
-  var endWithoutAppList = function() {
+  // so and closes the audio scheduler that its key press opened; a PC that answered the list with its 401 answer, which
+  // marked it as not paired (getAppListWithCacheFlush() in utils.js), no longer accepts this TV, which it then says.
+  var endWithoutAppList = function(failedAppList) {
     endPcPowerSessionStart(launchId);
+    if (failedAppList === HOST_REFUSED_TV_ERROR) {
+      updateHostStatusIndicator(host);
+    }
     if (launchId !== streamLaunchId) {
       return;
     }
@@ -4468,11 +4824,18 @@ function startGame(host, appID, restartKind, restartChange) {
       endStreamRestart(restartKind, 'the app list of the host could not be read', restartChange);
       return;
     }
-    snackbarLogLong('Unable to retrieve your list of apps at this time. Please refresh the list of apps or try again later!');
-    if (isWebAudioBackendSelected() && typeof stopAudioScheduler === 'function') {
-      stopAudioScheduler();
+    if (failedAppList === HOST_REFUSED_TV_ERROR) {
+      snackbarHostRefusedTv(host);
+    } else {
+      snackbarLogLong('Unable to retrieve your list of apps at this time. Please refresh the list of apps or try again later!');
     }
+    closeStartAudio();
   };
+
+  // The visit of the app list at the press (appListVisitOf()): what the start shows once the PC answered (the question
+  // to quit the running app, the list built again) is dropped when the user left that list meanwhile, e.g. with RETURN
+  // to the PC list while the server info was on its way. A start once more has no press.
+  var pressVisit = isRestart ? null : appListVisitOf(host);
 
   // Refresh the server info, because the user might have quit the game
   host.refreshServerInfo().then(function(ret) {
@@ -4482,11 +4845,29 @@ function startGame(host, appID, restartKind, restartChange) {
       if (launchId !== streamLaunchId) {
         return;
       }
+      // The tile of an app that the PC no longer lists (its list was read again meanwhile, e.g. by the 10th poll or by
+      // findHostApp()), where OK threw before 2.3.3: the grid is built again from the list, while it still shows in the
+      // visit of the press. Built after RETURN, it replaced the view of the PC list, whose keys then went to the hidden
+      // grid (2.3.3 in testing). A start once more ends below.
+      if (!appToStart && !isRestart) {
+        console.warn('%c[index.js, startGame]', 'color: green;', 'Warning: App ' + appID + ' is no longer in the app list of ' + host.hostname + '.');
+        closeStartAudio();
+        if (!isAppListVisitShown(host, pressVisit)) {
+          console.log('%c[index.js, startGame]', 'color: green;', 'Not showing the app list of ' + host.hostname + ' again, since it no longer shows.');
+          return;
+        }
+        snackbarLogLong('The selected app is no longer available on this PC. Showing the current app list.');
+        showApps(host).then(function() {
+          Navigation.switch();
+          Navigation.change(Views.Apps);
+        }, logFailedAppList);
+        return;
+      }
       // The 'Permission Denied' tile of Apollo or Vibepollo is never started
       if (isHostPermissionTile(appToStart)) {
         console.warn('%c[index.js, startGame]', 'color: green;', 'Warning: Not starting the Permission Denied tile of ' + host.hostname + '.');
-        if (!isRestart && isWebAudioBackendSelected() && typeof stopAudioScheduler === 'function') {
-          stopAudioScheduler();
+        if (!isRestart) {
+          closeStartAudio();
         }
         hostPermissionDialog(host, '');
         return;
@@ -4500,13 +4881,25 @@ function startGame(host, appID, restartKind, restartChange) {
         return;
       }
       if (host.currentGame != 0 && host.currentGame != appID && !isHostTerminateTile(appToStart)) {
-        host.getAppById(host.currentGame).then(function(currentApp) {
+        var askToQuit = function(currentApp) {
+          // The question waits for the server info, and for the list when the cache lacks the running app
+          // (findHostApp()); meanwhile the user may have started something else or left the app list of the press,
+          // which the question then no longer fits. A press while the list didn't show with the keys asks as before.
+          if (launchId !== streamLaunchId || (pressVisit !== null && !isAppListVisitShown(host, pressVisit))) {
+            console.log('%c[index.js, startGame]', 'color: green;', 'Not asking to quit the running app of ' + host.hostname + ', since the app list no longer shows.');
+            if (launchId === streamLaunchId) {
+              closeStartAudio();
+            }
+            return;
+          }
           // Find the existing overlay and dialog elements
           var quitAppOverlay = document.querySelector('#quitAppDialogOverlay');
           var quitAppDialog = document.querySelector('#quitAppDialog');
 
-          // Change the dialog text element to include the game title
-          document.getElementById('quitAppDialogText').innerHTML = t('%1$s is already running. Would you like to quit it and start %2$s?', escapeHTML(currentApp.title), escapeHTML(appToStart.title));
+          // The running app by its title, or by the PC when the list of the PC doesn't have it (or can't be read)
+          document.getElementById('quitAppDialogText').innerHTML = currentApp ?
+            t('%1$s is already running. Would you like to quit it and start %2$s?', escapeHTML(currentApp.title), escapeHTML(appToStart.title)) :
+            t('Another app is running on %1$s. Would you like to quit it and start %2$s?', escapeHTML(host.hostname), escapeHTML(appToStart.title));
 
           // Show the dialog and push the view
           quitAppOverlay.style.display = 'flex';
@@ -4522,14 +4915,28 @@ function startGame(host, appID, restartKind, restartChange) {
             quitAppDialog.close();
             isDialogOpen = false;
             Navigation.pop();
+            closeStartAudio();
           });
 
           // Quit the running app if the Continue button is pressed
           $('#continueQuitApp').off('click');
           $('#continueQuitApp').on('click', function() {
             console.log('%c[index.js, startGame]', 'color: green;', 'Quitting game, closing app dialog, and returning.');
+            // The start after the quit opens its own audio output
+            closeStartAudio();
+            // The quit can take several seconds (Sunshine answers /cancel once the game closed), and RETURN meanwhile
+            // means "never mind": once the user left the app list of the press, neither the list is built again
+            // (stopGame()) nor does the view change or the new app start, which before 2.3.3 replaced the PC list
+            // with the app list and started the app there. A press while the list didn't show with the keys (null)
+            // goes on as before.
+            var isPressListShown = function() {
+              return pressVisit === null || isAppListVisitShown(host, pressVisit);
+            };
             stopGame(host, function(quitSucceeded) {
               setTimeout(() => {
+                if (!isPressListShown()) {
+                  return;
+                }
                 // Scroll to the current game row
                 Navigation.switch();
                 // Switch to Apps view
@@ -4538,9 +4945,15 @@ function startGame(host, appID, restartKind, restartChange) {
               // Start the new app only once the host quit the running one, which would otherwise ask again
               if (quitSucceeded) {
                 // Please, don't infinite loop with recursion
-                setTimeout(() => startGame(host, appID), 3000);
+                setTimeout(() => {
+                  if (!isPressListShown()) {
+                    console.log('%c[index.js, startGame]', 'color: green;', 'Not starting app ' + appID + ' after the quit, since the app list of ' + host.hostname + ' no longer shows.');
+                    return;
+                  }
+                  startGame(host, appID);
+                }, 3000);
               }
-            });
+            }, pressVisit);
             quitAppOverlay.style.display = 'none';
             quitAppDialog.close();
             isDialogOpen = false;
@@ -4548,10 +4961,22 @@ function startGame(host, appID, restartKind, restartChange) {
           });
 
           return;
-        }, function(failedCurrentApp) {
+        };
+        findHostApp(host, host.currentGame).then(askToQuit, function(failedCurrentApp) {
           console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to get the current running app from ' + host.hostname + '\n Returned error was: ' + failedCurrentApp + '!', '\n Host object: ' + '\n', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
-          endWithoutAppList();
-          return;
+          // The list read once more found that the PC no longer accepts this TV, which marked it as not paired
+          // (getAppListWithCacheFlush() in utils.js): neither the quit nor the start can be sent, so this says so
+          // instead of the question
+          if (failedCurrentApp === HOST_REFUSED_TV_ERROR) {
+            updateHostStatusIndicator(host);
+            if (launchId === streamLaunchId) {
+              snackbarHostRefusedTv(host);
+              closeStartAudio();
+            }
+            return;
+          }
+          // The quit doesn't need the list: ask by the name of the PC
+          askToQuit(null);
         });
         return;
       }
@@ -4639,7 +5064,7 @@ function startGame(host, appID, restartKind, restartChange) {
       '\n Controller type sent to the PC: ' + controllerType);
 
       // Hide on-screen overlays until the streaming session begins
-      $('#connection-warnings, #performance-stats').css('background', 'transparent').text('');
+      $('#connection-warnings, #performance-stats').text('');
 
       // Shows a loading message to launch the application and start stream mode, or what a reconnect changed
       $('#loadingSpinnerMessage').text(restartKind === STREAM_RESTART_SETTINGS ?
@@ -4757,13 +5182,16 @@ function startGame(host, appID, restartKind, restartChange) {
             }
             console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to resume app with id: ' + appID + '\n Returned error was: ' + failedResumeApp + '!');
             stopHeartbeatOfFailedStart('the resume request failed');
+            if (!isRestart) {
+              closeStartAudio();
+            }
             snackbarLog('Failed to resume %1$s', appToStart.title);
             showApps(host).then(() => {
               // Scroll to the current game row
               Navigation.switch();
               // Switch to Apps view
               Navigation.change(Views.Apps);
-            });
+            }, logFailedAppList);
             return;
           });
         }
@@ -4849,19 +5277,22 @@ function startGame(host, appID, restartKind, restartChange) {
           }
           console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to launch app with id: ' + appID + '\n Returned error was: ' + failedLaunchApp + '!');
           stopHeartbeatOfFailedStart('the launch request failed');
+          if (!isRestart) {
+            closeStartAudio();
+          }
           snackbarLog('Failed to launch %1$s', appToStart.title);
           showApps(host).then(() => {
             // Scroll to the current game row
             Navigation.switch();
             // Switch to Apps view
             Navigation.change(Views.Apps);
-          });
+          }, logFailedAppList);
           return;
         });
       });
     }, function(failedAppList) {
       console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to read the app list of ' + host.hostname + ' for app ' + appID + '! Returned error was: ' + failedAppList + '!');
-      endWithoutAppList();
+      endWithoutAppList(failedAppList);
     });
   }, function(failedRefreshInfo) {
     console.error('%c[index.js, startGame]', 'color: green;', 'Error: Failed to refresh server info! Returned error was: ' + failedRefreshInfo + ' and failed server was: ' + '\n', host, '\n' + host.toString()); // Logging both object (for console) and toString-ed object (for text logs)
@@ -4874,13 +5305,22 @@ function startGame(host, appID, restartKind, restartChange) {
       endStreamRestart(restartKind, 'the server info of the host could not be refreshed', restartChange);
       return;
     }
-    // The app list still shows, where OK otherwise seemed to do nothing, e.g. for a PC that went to sleep meanwhile
-    snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', host.hostname || t('the PC'));
-    // Close the audio scheduler that the key press opened for this start, which would otherwise keep running in the menus
-    if (isWebAudioBackendSelected() && typeof stopAudioScheduler === 'function') {
-      stopAudioScheduler();
+    // The app list still shows, where OK otherwise seemed to do nothing, e.g. for a PC that went to sleep meanwhile, or
+    // one that no longer accepts this TV
+    if (failedRefreshInfo === HOST_REFUSED_TV_ERROR) {
+      snackbarHostRefusedTv(host);
+    } else {
+      snackbarLogLong('Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.', host.hostname || t('the PC'));
     }
+    // Close the audio scheduler that the key press opened for this start, which would otherwise keep running in the menus
+    closeStartAudio();
   });
+}
+
+// Log an app list that failed to show (showApps() shows the failure on the screen itself), instead of leaving the
+// rejection unhandled
+function logFailedAppList(failedAppList) {
+  console.warn('%c[index.js, showApps]', 'color: green;', 'Warning: The app list failed to show: ' + failedAppList);
 }
 
 // How long a stream that ended at its start waits before it starts once more (retryStreamStart()), so that the failed
@@ -4923,7 +5363,7 @@ function retryStreamStart(restartKind, blockedPorts) {
   }
   // Back to the launch screen: the stream view stays, the video goes, and the stream counts as starting again
   isInGame = true;
-  $('#connection-warnings, #performance-stats').css('background', 'transparent').text('');
+  $('#connection-warnings, #performance-stats').text('');
   $('#wasm_module').css('display', 'none');
   $('body').css('backgroundColor', '');
   $('#loadingSpinner').css('display', 'inline-block');
@@ -5120,7 +5560,7 @@ function resumeStreamAfterSettingsChange(errorCode) {
   console.log('%c[index.js, resumeStreamAfterSettingsChange]', 'color: green;', 'Resuming app ' + appID + ' with the new settings in ' + SETTINGS_RESTART_DELAY_MS + ' ms.');
   // Back to the launch screen: the stream view stays, the video goes, and the stream counts as starting again
   isInGame = true;
-  $('#connection-warnings, #performance-stats').css('background', 'transparent').text('');
+  $('#connection-warnings, #performance-stats').text('');
   $('#wasm_module').css('display', 'none');
   $('body').css('backgroundColor', '');
   $('#loadingSpinner').css('display', 'inline-block');
@@ -5209,55 +5649,94 @@ function refreshCodecModesBeforeStream(host) {
 }
 
 // Stop the running app title, refresh the server info, and then return to Apps grid. The callback gets whether the
-// host quit the app
-function stopGame(host, callbackFunction) {
+// host quit the app. pressVisit, the visit of the app list at the press of a quit from the app list (appListVisitOf()),
+// drops the list and the callback once the user left that list meanwhile, e.g. with RETURN to the PC list while the PC
+// still closed the game; without it (the Stream Menu, a press while the list didn't show with the keys), the list shows
+// in any case.
+function stopGame(host, callbackFunction, pressVisit) {
   isInGame = false;
 
   if (!host.paired) {
+    // A check while the app list showed found that the PC no longer accepts this TV (markRefusedByHost() of utils.js),
+    // after which "Quit app on the PC" did nothing before 2.3.3
+    snackbarHostRefusedTv(host);
     return;
   }
 
   // Show the app list once the quit is over, also when it couldn't start (the quit after a stream that the Stream Menu
-  // ended waits for it on the loading screen), and pass to the callback whether the app is quit
-  var showAppsAfterQuit = function(quitSucceeded) {
-    showApps(host).finally(() => {
+  // ended waits for it on the loading screen), and pass to the callback whether the app is quit. A list that fails shows
+  // why itself; its rejection is only logged (finally() alone passed it on, unhandled). refusalSaid: the quit said
+  // already that the PC no longer accepts this TV, which a list that fails for that reason then doesn't say once more.
+  var showAppsAfterQuit = function(quitSucceeded, refusalSaid) {
+    if (pressVisit !== undefined && pressVisit !== null && !isAppListVisitShown(host, pressVisit)) {
+      console.log('%c[index.js, stopGame]', 'color: green;', 'Not showing the app list of ' + host.hostname + ' again after the quit, since it no longer shows.');
+      return;
+    }
+    showApps(host, { refusalSaid: refusalSaid === true }).catch(logFailedAppList).finally(() => {
       if (typeof(callbackFunction) === "function") callbackFunction(quitSucceeded);
     });
   };
 
   host.refreshServerInfo().then(function(ret) {
-    host.getAppById(host.currentGame).then(function(runningApp) {
-      if (!runningApp) {
-        snackbarLog('No app is currently running.');
-        showAppsAfterQuit(true);
-        return;
+    // Nothing runs on the PC (any more), e.g. the app was quit there meanwhile
+    if (!host.currentGame || host.currentGame == 0) {
+      snackbarLog('No app is currently running.');
+      showAppsAfterQuit(true);
+      return;
+    }
+    // The app that runs is quit also when the app list doesn't have it or can't be read (findHostApp()): /cancel quits
+    // whatever runs on the PC, and the title only names it in the messages
+    var quit = function(runningApp) {
+      var appTitle = runningApp ? runningApp.title : '';
+      if (appTitle) {
+        snackbarLog('Quitting %1$s...', appTitle);
+      } else {
+        snackbarLog('Quitting the app on %1$s...', host.hostname);
       }
-      var appTitle = runningApp.title;
-      snackbarLog('Quitting %1$s...', appTitle);
       // quitApp() refreshes the server info once the host answered and fails while the host still runs the app
       host.quitApp().then(function(ret2) {
-        snackbarLog('Successfully quit %1$s', appTitle);
+        if (appTitle) {
+          snackbarLog('Successfully quit %1$s', appTitle);
+        } else {
+          snackbarLog('Successfully quit the app on %1$s', host.hostname);
+        }
         // Refresh to show no app is currently running
         showAppsAfterQuit(true);
       }, function(failedQuitApp) {
         console.error('%c[index.js, stopGame]', 'color: green;', 'Error: Failed to quit app! Returned error was: ' + failedQuitApp + '!');
-        if (failedQuitApp === QUIT_APP_STILL_RUNNING_ERROR) {
-          snackbarLogLong('%1$s is still running on %2$s, probably because another device started it. Quit it on that device or on the PC.', appTitle, host.hostname);
-        } else {
+        var refusalSaid = failedQuitApp === HOST_REFUSED_TV_ERROR;
+        if (refusalSaid) {
+          // The refresh after /cancel: the PC no longer accepts this TV
+          snackbarHostRefusedTv(host);
+        } else if (failedQuitApp === QUIT_APP_STILL_RUNNING_ERROR) {
+          if (appTitle) {
+            snackbarLogLong('%1$s is still running on %2$s, probably because another device started it. Quit it on that device or on the PC.', appTitle, host.hostname);
+          } else {
+            snackbarLogLong('The app is still running on %1$s, probably because another device started it. Quit it on that device or on the PC.', host.hostname);
+          }
+        } else if (appTitle) {
           snackbarLogLong('Unable to quit %1$s. Check the connection to %2$s and try again.', appTitle, host.hostname);
+        } else {
+          snackbarLogLong('Unable to quit the app. Check the connection to %1$s and try again.', host.hostname);
         }
         // Refresh to show the app that still runs
-        showAppsAfterQuit(false);
+        showAppsAfterQuit(false, refusalSaid);
       });
-    }, function(failedGetApp) {
+    };
+    findHostApp(host, host.currentGame).then(quit, function(failedGetApp) {
       console.error('%c[index.js, stopGame]', 'color: green;', 'Error: Failed to get app ID! Returned error was: ' + failedGetApp + '!');
-      snackbarLogLong('Unable to quit the app. Check the connection to %1$s and try again.', host.hostname);
-      showAppsAfterQuit(false);
+      // The quit doesn't need the list: it names the PC instead of the app
+      quit(null);
     });
   }, function(failedRefreshInfo) {
     console.error('%c[index.js, stopGame]', 'color: green;', 'Error: Failed to refresh server info! Returned error was: ' + failedRefreshInfo + '!');
-    snackbarLogLong('Unable to quit the app. Check the connection to %1$s and try again.', host.hostname);
-    showAppsAfterQuit(false);
+    var refusalSaid = failedRefreshInfo === HOST_REFUSED_TV_ERROR;
+    if (refusalSaid) {
+      snackbarHostRefusedTv(host);
+    } else {
+      snackbarLogLong('Unable to quit the app. Check the connection to %1$s and try again.', host.hostname);
+    }
+    showAppsAfterQuit(false, refusalSaid);
   });
 }
 
@@ -5265,6 +5744,25 @@ function stopGame(host, callbackFunction) {
 function sendEscapeKeyToHost() {
   Module.sendKeyboardEvent(0x80 << 8 | 0x1B, 0x03, 0); // Key down
   Module.sendKeyboardEvent(0x80 << 8 | 0x1B, 0x04, 0); // Key up
+}
+
+// Whether a key event comes from a key of a PC keyboard, which the stream sends to the PC: a Windows virtual-key code
+// from 1 to 0xFF, as IsPcKeyCode() of wasm/input.cpp. The keys that only a TV has (RETURN, the color keys, CH+ and CH-,
+// Source, ...) never reach the PC.
+function isPcKeyEvent(e) {
+  return e.keyCode > 0 && e.keyCode <= 0xFF;
+}
+
+// The keys whose keydown is no user gesture for the browser, by their key name: Esc and the modifier keys (Chromium
+// counts neither as one). The pointer lock needs a user gesture, so the browser refuses it to them ('A user gesture is
+// required to request Pointer Lock.', and the module logs 'Error locking mouse').
+const NO_GESTURE_KEYS = ['Escape', 'Shift', 'Control', 'Alt', 'AltGraph', 'Meta', 'CapsLock', 'NumLock', 'ScrollLock',
+  'Fn', 'FnLock', 'Hyper', 'Super', 'Symbol', 'SymbolLock'];
+
+// Whether the keydown of a key can take the pointer lock of a stream (initSpecialKeys()): every key but Esc and the
+// modifier keys
+function canKeyLockPointer(e) {
+  return NO_GESTURE_KEYS.indexOf(e.key) < 0;
 }
 
 let indexedDB = null;
@@ -6367,7 +6865,8 @@ function parseStatsPosition(value) {
 }
 
 // Show a corner in the settings and move the statistics there, at the compact and the full level. At the top right they
-// take the place of the connection warnings, which move to the top left.
+// take the place of the connection warnings, which move to the top left, and in a right corner the Stream Menu opens
+// on the left.
 function showStatsPosition(position) {
   const chosenPosition = parseStatsPosition(position);
   const item = $('.statsPositionMenu li[data-value="' + chosenPosition + '"]');
@@ -6377,6 +6876,8 @@ function showStatsPosition(position) {
     STATS_POSITIONS.forEach((corner) => overlay.classList.toggle('stats-' + corner, corner === chosenPosition));
   }
   $('#connection-warnings').toggleClass('is-left', chosenPosition === 'top-right');
+  // The Stream Menu takes the left side while the statistics take a right corner, so that it never covers them
+  $('#streamMenuOverlay').toggleClass('is-left', chosenPosition === 'top-right' || chosenPosition === 'bottom-right');
 }
 
 // Save the corner chosen in the menu of the settings
@@ -6856,20 +7357,40 @@ function initSpecialKeys() {
     streamMenuKeyCode = null;
   });
 
+  // Lock the pointer for the stream, which sends keys and mouse buttons to the PC only while it is locked: a mouse button
+  // press on the unlocked pointer only locks it (HandleMouseDown() in wasm/input.cpp). Only while the pointer isn't locked
+  // yet, because the stream sends a mouse button press without a release for a click on the locked pointer, which would
+  // leave the left mouse button of the host held down.
+  function lockStreamPointer() {
+    if (!document.pointerLockElement) {
+      videoElement.dispatchEvent(new MouseEvent('mousedown', {
+        bubbles: true, cancelable: true, view: window, clientX: 0, clientY: 0
+      }));
+    }
+  }
+
   // Listen for keydown events on the video element
   videoElement.addEventListener('keydown', function(e) {
-    // Check if the 'Back' key has been pressed and the streaming is currently active
-    if (e.key === 'XF86Back' && isInGame === true) {
-      // Send the Escape key (ESC) to the host while streaming
+    if (isInGame !== true) {
+      return;
+    }
+    if (e.key === 'XF86Back') {
+      // RETURN sends the Escape key (ESC) to the host while streaming, and gives the stream the keys
       sendEscapeKeyToHost();
-      // Simulate mouse to move focus back to the streaming session. Only while the pointer isn't locked yet,
-      // because the stream sends a mouse button press without a release for a click on the locked pointer,
-      // which would leave the left mouse button of the host held down.
-      if (!document.pointerLockElement) {
-        videoElement.dispatchEvent(new MouseEvent('mousedown', {
-          bubbles: true, cancelable: true, view: window, clientX: 0, clientY: 0
-        }));
+      lockStreamPointer();
+    } else if (isStreamConnected && isPcKeyEvent(e)) {
+      // The first key of the PC while the pointer isn't locked (at the start of a stream, after the background, after the
+      // Stream Menu or a power command that found it unlocked) gives the stream the keys. It doesn't reach the PC itself:
+      // the module sends nothing before the lock, which comes after this event (pointerlockchange), and its release,
+      // which can come after the lock, isn't sent alone (HandleKeyUp() in wasm/input.cpp). Esc and the modifier keys
+      // leave that to the next key, since the browser refuses them the lock (canKeyLockPointer()).
+      if (canKeyLockPointer(e)) {
+        lockStreamPointer();
       }
+      // No default action of a key of the PC runs in a stream: the module prevents it while the pointer is locked and
+      // leaves it to the browser before, where Tab moved the focus off the video, after which no key reached the stream
+      // until the Stream Menu gave it back
+      e.preventDefault();
     }
   });
 }
@@ -7683,6 +8204,7 @@ function loadHTTPCertsCb() {
           revivedHost._pollCompletionCallbacks = [];
           revivedHost._consecutivePollFailures = 0;
           revivedHost._pollCount = 0;
+          revivedHost.pinnedKeyMismatch = false;
           hosts[hostUID] = revivedHost;
           addHostToGrid(revivedHost);
         }

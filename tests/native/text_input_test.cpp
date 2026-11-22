@@ -34,6 +34,9 @@ int LiSendMouseMoveEvent(short, short) {
 int LiSendHighResScrollEvent(short) {
   return 0;
 }
+int LiSendHighResHScrollEvent(short) {
+  return 0;
+}
 void MoonlightInstance::ClLogMessage(const char*, ...) {
   logCalls++;
 }

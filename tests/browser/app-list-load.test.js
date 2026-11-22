@@ -4,10 +4,11 @@
 // wasm/platform/index.js, NvHTTP.getBoxArt() and the Smart Hub previews in wasm/static/js/utils.js, the hero in
 // wasm/platform/launcher.js): the grid shows before any box art is read and the box art then loads one app per task,
 // so that a key pressed right away is handled after one of them instead of after all; the box art shows through object
-// URLs, which are freed with their grid, and as a data URL where an image refuses the object URL; the Smart Hub previews
-// are made only when the TV is idle, one at a time; and the ambient light of the hero reads the colours of the box art
-// from its Blob with createImageBitmap(), away from the main thread. Counters and stubs decide, not the time things
-// take. tests/unit/box-art-main-thread.test.js checks the parts of utils.js on their own.
+// URLs, which a grid of the same PC built again shows at once (since 2.3.3) and which are freed for another PC, an app
+// that left the list, Refresh apps, Delete PC and Remove all PCs, and as a data URL where an image refuses the object
+// URL; the Smart Hub previews are made only when the TV is idle, one at a time; and the ambient light of the hero reads
+// the colours of the box art from its Blob with createImageBitmap(), away from the main thread. Counters and stubs
+// decide, not the time things take. tests/unit/box-art-main-thread.test.js checks the parts of utils.js on their own.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -131,7 +132,7 @@ test('the grid shows before any box art is read, and a key pressed right away wa
   }
 });
 
-test('box art shows through object URLs, which are freed when the grid is built again', async () => {
+test('box art shows through object URLs, which the grid of the same PC shows again at once, and which go with another PC, an app that left the list, Refresh apps, Delete PC and Remove all PCs', async () => {
   const app = await openAppList(6, () => {
     window.__revoked = [];
     const revoke = URL.revokeObjectURL;
@@ -139,19 +140,123 @@ test('box art shows through object URLs, which are freed when the grid is built 
       window.__revoked.push(url);
       revoke.call(URL, url);
     };
+    // A box art of 680 bytes, the size of the default box art of Sunshine, for the apps listed here (by ID)
+    window.__defaultBoxArt = {};
+    const openUrl = Module.openUrl;
+    Module.openUrl = (id, url) => {
+      const boxArt = /\/appasset\?.*appid=(\d+)/.exec(url);
+      if (boxArt && window.__defaultBoxArt[boxArt[1]]) {
+        window.__http.push({ id: id, what: 'boxart ' + boxArt[1] });
+        setTimeout(() => handlePromiseMessage(id, 'resolve', new Uint8Array(680)), 0);
+        return;
+      }
+      openUrl(id, url);
+      // The app list of Refresh apps, which the requests behind it wait for
+      if (/\/applist\?/.test(url)) {
+        setTimeout(() => handlePromiseMessage(id, 'resolve', '<root status_code="200"><App><AppTitle>Other 1</AppTitle><ID>1</ID></App>' +
+          '<App><AppTitle>Other 2</AppTitle><ID>2</ID></App></root>'), 0);
+      }
+    };
   });
   const { page } = app;
+  const sources = () => page.evaluate(() => Array.from(document.querySelectorAll('#game-grid .game-container img')).map((image) => image.getAttribute('src')));
+  const boxArtRequests = () => page.evaluate(() => window.__http.filter((entry) => entry.what.indexOf('boxart ') === 0).map((entry) => entry.what));
   try {
     await boxArtShown(page, /^blob:/);
-    const first = await page.evaluate(() => Array.from(document.querySelectorAll('#game-grid .game-container img')).map((image) => image.getAttribute('src')));
+    const first = await sources();
     assert.equal(new Set(first).size, 6);
     // The hero shows the box art of the focused tile through its object URL as well
     assert.equal(await page.evaluate(() => document.getElementById('hero-poster').getAttribute('src')), first[0]);
     assert.deepEqual(await page.evaluate(() => window.__revoked), []);
-    // The grid is built again (e.g. after an app was hidden): the object URLs of the first grid are freed
+    assert.equal((await boxArtRequests()).length, 6);
+
+    // The grid of the same PC is built again (e.g. after a stream or after an app was hidden): its tiles show the same
+    // object URLs as soon as the grid shows, without a request, a read or a revoke
+    assert.deepEqual(await page.evaluate(async () => {
+      await showApps(window.__host);
+      return Array.from(document.querySelectorAll('#game-grid .game-container img')).map((image) => image.getAttribute('src'));
+    }), first);
+    await page.waitForTimeout(300);
+    assert.equal((await boxArtRequests()).length, 6);
+    assert.deepEqual(await page.evaluate(() => window.__revoked), []);
+    assert.deepEqual(await sources(), first);
+
+    // An app left the list of the PC: only its box art goes
+    await page.evaluate(async () => {
+      window.__host._memCachedApplist = window.__host._memCachedApplist.filter((entry) => entry.id !== 3);
+      await showApps(window.__host);
+    });
+    await page.waitForTimeout(300);
+    assert.deepEqual(await page.evaluate(() => window.__revoked.splice(0)), [first[2]]);
+    assert.equal((await boxArtRequests()).length, 6);
+
+    // A box art of the size of Sunshine's default is read again on the next build, to see whether the app got box art
+    await page.evaluate(async () => {
+      window.__defaultBoxArt['7'] = true;
+      window.__host._memCachedApplist = window.__host._memCachedApplist.concat([{ id: 7, title: 'App 07' }]);
+      await showApps(window.__host);
+    });
+    await page.waitForFunction(() => window.__http.filter((entry) => entry.what === 'boxart 7').length === 1, null, { timeout: 5000 });
+    await page.waitForTimeout(300);
     await page.evaluate(() => showApps(window.__host));
+    await page.waitForFunction(() => window.__http.filter((entry) => entry.what === 'boxart 7').length === 2, null, { timeout: 5000 });
+    await page.waitForTimeout(300);
+    assert.deepEqual((await boxArtRequests()).filter((request) => request !== 'boxart 7').length, 6, 'the others are not read again');
+    const kept = (await sources()).filter((source, index) => index < 5);
+    await page.evaluate(() => window.__revoked.splice(0));
+
+    // The app list of another PC frees every box art of the first one
+    await page.evaluate(async () => {
+      const other = new NvHTTP('10.0.0.3', myUniqueid || '0123456789abcdef');
+      Object.assign(other, {
+        paired: true, online: true, serverUid: 'HOST2', hostname: 'OFFICE-PC', ppkstr: 'PPK', httpPort: 47989, httpsPort: 47984,
+        _baseUrlHttps: 'https://10.0.0.3:47984', appVersion: '7.1.431.-1', gfeVersion: '', serverCodecModeSupport: 0x1F03, currentGame: 0,
+      });
+      other._memCachedApplist = [{ id: 1, title: 'Other 1' }, { id: 2, title: 'Other 2' }];
+      other.refreshServerInfo = () => Promise.resolve(true);
+      window.__other = other;
+      api = other;
+      await showApps(other);
+    });
+    assert.deepEqual((await page.evaluate(() => window.__revoked.splice(0))).filter((url) => kept.includes(url)).sort(), kept.slice().sort());
     await boxArtShown(page, /^blob:/);
-    assert.deepEqual((await page.evaluate(() => window.__revoked)).sort(), first.slice().sort());
+    const others = await sources();
+    assert.equal(others.filter((source) => kept.includes(source)).length, 0, 'the same app ID of another PC gets its own box art');
+
+    // Refresh apps of that PC frees its box art (its files are deleted, so its next list reads them again)
+    await page.evaluate(() => refreshHostApps(window.__other));
+    assert.deepEqual((await page.evaluate(() => window.__revoked.splice(0))).sort(), others.slice().sort());
+
+    // Its grid again, then Delete PC: its box art goes as well
+    await page.evaluate(() => showApps(window.__other));
+    await boxArtShown(page, /^blob:/);
+    const again = await sources();
+    await page.evaluate(() => {
+      hosts.HOST2 = window.__other;
+      deleteHostDialog(window.__other);
+      $('#continueDeleteHost').click();
+    });
+    assert.deepEqual((await page.evaluate(() => window.__revoked.splice(0))).sort(), again.slice().sort());
+    assert.deepEqual(await page.evaluate(() => appGridBoxArt), { serverUid: null, urls: {} });
+
+    // The grid of the first PC again (without the app of Sunshine's default box art), then Remove all PCs: its box art
+    // goes as well
+    await page.evaluate(async () => {
+      window.__host._memCachedApplist = window.__host._memCachedApplist.filter((entry) => entry.id !== 7);
+      api = window.__host;
+      await showApps(window.__host);
+    });
+    await boxArtShown(page, /^blob:/);
+    const last = (await sources()).filter((source) => /^blob:/.test(source));
+    assert.ok(last.length > 0);
+    await page.evaluate(() => window.__revoked.splice(0));
+    await page.evaluate(() => {
+      hosts.HOST1 = window.__host;
+      deleteAllHostsDialog();
+      $('#continueDeleteHost').click();
+    });
+    assert.deepEqual((await page.evaluate(() => window.__revoked.splice(0))).filter((url) => last.includes(url)).sort(), last.slice().sort());
+    assert.deepEqual(await page.evaluate(() => appGridBoxArt), { serverUid: null, urls: {} });
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

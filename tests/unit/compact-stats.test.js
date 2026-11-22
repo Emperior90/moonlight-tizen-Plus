@@ -106,7 +106,7 @@ test('the level of a stored or chosen value, with the true of the earlier switch
 
 test('all four ways of toggling the statistics step the level in the module', () => {
   // YELLOW on the remote and the entry of the Stream Menu call the module
-  assert.match(read('wasm/platform/remote_controller.js'), /case tvKey\.KEY_YELLOW:[\s\S]{0,200}Module\.toggleStats\(\);/);
+  assert.match(read('wasm/platform/remote_controller.js'), /case tvKey\.KEY_YELLOW:[\s\S]{0,300}Module\.toggleStats\(\);/);
   assert.match(read('wasm/platform/menus.js'), /id === 'streamMenuStats'\) \{[\s\S]{0,300}Module\.toggleStats\(\);/);
   // The gamepad combo and the keyboard combo call toggleStats() of main.cpp (tests/native/gamepad_behaviour_test.cpp and
   // input_release_test.cpp run them), which is the function the front end calls

@@ -8,7 +8,8 @@
 // until a later scan found the real PC again. Now a paired PC moves only once the new address answered the server info
 // over HTTPS with the key that was pinned at the pairing, and takes the ports and the MAC address of that answer:
 //  - a device that answers with the unique ID of a paired PC changes nothing that is stored;
-//  - the real PC at a new address is adopted;
+//  - the real PC at a new address is adopted, also when it answers there with its pinned key that it no longer accepts
+//    this TV (2.3.3);
 //  - a PC that isn't paired has no key to prove itself with and is taken as before, as is a new PC.
 // utils.js and main.js run in a vm context with a simulated network: each address answers the server info over HTTP
 // and over HTTPS as the test says, the latter only for the right pinned key. tests/browser/hostile-server-info.test.js
@@ -189,6 +190,32 @@ test('the real PC at a new address is adopted, with the ports and the MAC addres
   await scan.scan('192.168.1.77');
   assert.equal(scan.state().saved, 1);
   assert.deepEqual(scan.requests, ['http 192.168.1.77:47989']);
+});
+
+test('a device with another key at the scanned address neither marks the paired PC nor moves it', async () => {
+  // Only the polls of the PC itself set its flag for a device with another key (pinnedKeyMismatch, utils.js)
+  const scan = loadScan({ '192.168.1.66': { http: IMPOSTOR, https: IMPOSTOR, key: 'KEY-OF-THE-DEVICE' } });
+  scan.addKnownHost(true);
+  await scan.scan('192.168.1.66');
+  assert.deepEqual(scan.state(), STORED);
+  const host = scan.platform.get('hosts')[UID];
+  assert.deepEqual([host.pinnedKeyMismatch, host.paired, host.online], [false, true, false]);
+});
+
+test('the real PC at a new address that no longer accepts the TV is moved there, and nothing of its answer is taken', async () => {
+  // It answers over HTTPS with its pinned key that it doesn't accept the TV (HOST_REFUSED_TV_ERROR): that proves the
+  // PC, whose next poll there marks it not paired. Up to 2.3.2 it stayed at its old address, offline.
+  const unauthorized = '<?xml version="1.0" encoding="utf-8"?><root status_code="401" query="/serverinfo" status_message="The client is not authorized. Certificate verification failed."/>';
+  const scan = loadScan({ '192.168.1.77': { http: serverInfo({ LocalIP: '192.168.1.77', mac: 'a8:a1:59:12:ab:ce', HttpsPort: '1111' }), https: unauthorized, key: 'PPK' } });
+  scan.addKnownHost(true);
+  await scan.scan('192.168.1.77');
+  assert.deepEqual(scan.state(), Object.assign({}, STORED, { address: '192.168.1.77', baseUrlHttps: 'https://192.168.1.77:47984',
+    baseUrlHttp: 'http://192.168.1.77:47989', saved: 1 }));
+  assert.deepEqual(scan.requests, ['http 192.168.1.77:47989', 'https 192.168.1.77:47984 key PPK']);
+  const saved = JSON.parse(scan.platform.get('__saved')[0])[UID];
+  assert.deepEqual([saved.address, saved._baseUrlHttps, saved.ppkstr], ['192.168.1.77', 'https://192.168.1.77:47984', 'PPK']);
+  assert.deepEqual(scan.warnings(), []);
+  assert.equal(scan.logs().filter((text) => text.indexOf('Updating address for server UID: ' + UID + ' from 192.168.1.20 to 192.168.1.77 (the PC proved its pinned key there, and answered that it no longer accepts this TV)') >= 0).length, 1);
 });
 
 test('a paired PC that the scan finds at its own address stays as it is', async () => {

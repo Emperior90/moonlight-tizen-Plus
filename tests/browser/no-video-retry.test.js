@@ -4,8 +4,8 @@
 // retryStreamStart() in wasm/platform/index.js, called by handleMessage() in messages.js): the launch screen
 // stays, the app is resumed and the stream started once more without a message, and the message about the ports of the
 // host PC shows only when the retry ends without video as well. Only once per launch, never while Moonlight is in the
-// background, RED during the wait cancels it, a retry that can't reach the host ends like the stream it retried, and
-// a rumble that the host left on stops before the retry.
+// background, RED during the wait cancels it, a retry that can't reach the host (or whose app left the list of the host)
+// ends like the stream it retried, and a rumble that the host left on stops before the retry.
 // The host is simulated in the page; the stub of the WebAssembly module records the start requests.
 
 const { after, before, test } = require('node:test');
@@ -220,6 +220,21 @@ test('a retry that can\'t reach the host ends like the stream it retried', async
       return { events: window.__events.slice(), isInGame, dialog: isDialogOpen };
     });
     assert.deepEqual(otherApp, { events: ['message: ' + PORTS_MESSAGE, 'app list'], isInGame: false, dialog: false });
+
+    // The app left the list of the host meanwhile (e.g. renamed on the PC, which gives it a new ID): the retry ends the
+    // same way, without the message of OK on the tile of such an app ("The selected app is no longer available on this
+    // PC. …", since 2.3.3 only for a start from the app list)
+    const leftList = await app.page.evaluate(async () => {
+      window.__host.currentGame = 0;
+      await window.startStream();
+      window.__events.length = 0;
+      window.__host.getAppById = () => Promise.resolve(null);
+      window.noVideo();
+      await window.wait(400);
+      return { events: window.__events.slice(), isInGame, dialog: isDialogOpen };
+    });
+    assert.deepEqual(leftList, { events: ['message: ' + PORTS_MESSAGE, 'app list'], isInGame: false, dialog: false });
+    assert.ok(app.logs.some((line) => line.indexOf('The stream can\'t be started once more: the app 7 is not available, no longer runs or another app runs on the host') >= 0));
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

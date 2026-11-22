@@ -14,11 +14,14 @@
 //   press is closed again (the failure of the server info request in startGame())
 // - opening an app list writes no error to the console: the view of the app list used to mark a tile before the list
 //   had any (Views.Apps in wasm/platform/navigation.js)
+// - the audio output of the Web Audio backend that OK opened closes again when the start ends without a stream (since
+//   2.3.3, closeStartAudio()): after No to the question to quit the running app, after a launch or resume that the PC
+//   answered without a session (endLaunchWithAnswer()), and after a failed launch or resume request
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { SUNSHINE_HOSTS, openApp, startHarness } = require('./harness');
-const { menuState, openMenus, takeSnackbars } = require('./menu-driver');
+const { menuState, openMenus, selectItem, takeSnackbars } = require('./menu-driver');
 
 let harness;
 before(async () => {
@@ -292,5 +295,81 @@ test('opening the app list of a PC writes no error of the navigation to the cons
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
+  }
+});
+
+test('the Web Audio output that OK opened closes again when the start ends without a stream', async () => {
+  // Each case: the app that the PC runs, how the PC answers the launch or resume request (null: as usual), and the
+  // message the start ends with; 'cancel' answers the question to quit the running app with No
+  const cases = [
+    { name: 'Cancel of the question to quit the running app', currentGame: 102, answer: 'cancel', message: null },
+    { name: 'a launch answered without a session', currentGame: 0, answer: '<root status_code="503" status_message="Busy"/>', message: 'Error 503: Busy' },
+    { name: 'a failed launch request', currentGame: 0, answer: -1, message: 'Failed to launch Cyberpunk 2077' },
+    { name: 'a resume answered without a session', currentGame: 101, answer: '<root status_code="503" status_message="Busy"/>', message: 'Error 503: Busy' },
+    { name: 'a failed resume request', currentGame: 101, answer: -1, message: 'Failed to resume Cyberpunk 2077' },
+  ];
+  for (const testCase of cases) {
+    const app = await openMenus(harness, {
+      tv: TV, moduleScripts: ['sunshine-host.js'], stored: { hosts: SUNSHINE_HOSTS, audioBackend: 'WebAudio' },
+      initScripts: [`window.__sunshineConfig = { currentGame: ${testCase.currentGame} };`],
+    });
+    const { page } = app;
+    try {
+      await page.waitForFunction((game) => typeof hosts !== 'undefined' && hosts.HOST1 && hosts.HOST1.online === true &&
+        Number(hosts.HOST1.currentGame) === game, testCase.currentGame, { timeout: 10000 });
+      await selectPcCard(page);
+      await remoteKey(page, OK);
+      await appListShown(page);
+      await page.waitForTimeout(700);
+      // Record the audio output, and answer the launch or resume request as the case says
+      await page.evaluate((answer) => {
+        window.__audio = [];
+        const start = startAudioScheduler;
+        const stop = stopAudioScheduler;
+        startAudioScheduler = function() {
+          window.__audio.push('start');
+          return start.apply(this, arguments);
+        };
+        stopAudioScheduler = function() {
+          window.__audio.push('stop');
+          return stop.apply(this, arguments);
+        };
+        if (answer === 'cancel') {
+          return;
+        }
+        const openUrl = Module.openUrl;
+        Module.openUrl = function(id, url) {
+          if (/\/(launch|resume)\?/.test(url)) {
+            setTimeout(() => handlePromiseMessage(id, typeof answer === 'string' ? 'resolve' : 'reject', answer), 30);
+            return;
+          }
+          return openUrl.apply(this, arguments);
+        };
+      }, testCase.answer);
+      await selectItem(page, 'Apps', 'game-container-101', 'left', 'right');
+      await takeSnackbars(page);
+      await remoteKey(page, OK);
+      if (testCase.answer === 'cancel') {
+        await page.waitForFunction(() => $('#quitAppDialogOverlay').css('display') === 'flex' && document.activeElement &&
+          document.activeElement.id === 'cancelQuitApp', null, { timeout: 5000 });
+        // OK on No
+        await remoteKey(page, OK);
+      }
+      await page.waitForFunction(() => !isInGame && document.body.getAttribute('data-view') === 'apps' && !$('#wasmSpinner').is(':visible') &&
+        $('#quitAppDialogOverlay').css('display') !== 'flex' && $('#game-grid .game-container').length > 0, null, { timeout: 8000 });
+      await page.waitForTimeout(400);
+      const snackbars = await takeSnackbars(page);
+      if (testCase.message) {
+        assert.ok(snackbars.includes(testCase.message), testCase.name + ': ' + snackbars.join(' | '));
+      }
+      // The press opened the output, and the end of the start closed it again
+      const audio = await page.evaluate(() => ({ calls: window.__audio, isOutputOpen: !!_audContext }));
+      assert.equal(audio.calls[0], 'start', testCase.name);
+      assert.equal(audio.isOutputOpen, false, testCase.name + ': ' + audio.calls.join(', '));
+      assert.equal(await page.evaluate(() => window.__sunshine.starts.length), 0, testCase.name);
+      assert.deepEqual(app.errors, [], testCase.name);
+    } finally {
+      await app.context.close();
+    }
   }
 });

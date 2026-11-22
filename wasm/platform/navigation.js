@@ -2706,6 +2706,8 @@ const Navigation = (function() {
     push: Stack.push,
     change: Stack.change,
     pop: Stack.pop,
+    // Whether the view has the keys (the top of the stack), e.g. for showApps() in index.js; it changes nothing
+    isCurrent: (view) => Stack.get() === view,
     start: State.start,
     stop: State.stop,
     guardAccept,

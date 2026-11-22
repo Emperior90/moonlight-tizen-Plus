@@ -323,6 +323,52 @@ test('the request that looks whether an address answers rewrites only an https:/
   assert.match(read('wasm/static/js/utils.js'), /var preflightUrl = getPreflightUrl\(url, this\.httpsPort, this\.httpPort\);/);
 });
 
+test('a request whose preflight answered goes to the module once, also when the module rejects it, and a black hole not at all', async () => {
+  // fetch() answers as `preflight` says ('ok', 'refused' for a TypeError, 'abort' for the abort of its 3 seconds), and
+  // the module rejects every request with `moduleError`
+  const load = (preflight, moduleError) => {
+    const requests = [];
+    const platform = createPlatformContext({
+      globals: {
+        crypto: webcrypto,
+        sendMessage(method, params) {
+          requests.push(method + ' ' + String(params[0]) + ' ' + params[1]);
+          return Promise.reject(moduleError);
+        },
+        fetch() {
+          if (preflight === 'ok') {
+            return Promise.resolve({ ok: true, status: 200 });
+          }
+          return Promise.reject(preflight === 'abort' ? { name: 'AbortError' } : new TypeError('Failed to fetch'));
+        },
+      },
+    });
+    platform.load('wasm/static/js/utils.js');
+    installXmlStandIn(platform);
+    platform.run(`var host = new NvHTTP('192.168.1.20', 'CLIENT', '192.168.1.20'); host.httpPort = 47989; host.httpsPort = 47984;
+      host.serverUid = 'HOST1'; host.hostname = 'GAMING-PC'; host.ppkstr = 'PPK'; host.paired = true;`);
+    platform.requests = requests;
+    return platform;
+  };
+  const refresh = (platform) => platform.run('host.refreshServerInfoAtAddress("192.168.1.20").then(() => "resolved", (error) => error)');
+  // The PC answered the preflight, and the request failed in the module: its 5 seconds ran out (-1), or the key didn't
+  // match (the module sends "-100"). Up to 2.3.2 the .catch() meant for the preflight sent it a second time.
+  for (const [preflight, moduleError] of [['ok', -1], ['ok', '-100'], ['refused', -1], ['refused', '-100']]) {
+    const platform = load(preflight, moduleError);
+    assert.equal(await refresh(platform), moduleError, preflight + ' ' + moduleError);
+    assert.equal(platform.requests.length, 1, preflight + ' ' + moduleError + ': ' + platform.requests.join('\n'));
+    assert.match(platform.requests[0], /^openUrl https:\/\/192\.168\.1\.20:47984\/serverinfo\?uniqueid=CLIENT&uuid=[0-9a-f-]+ PPK$/);
+  }
+  // A black hole: no request to the module, the failure of the module (GS_FAILED), and the line that the diagnostic log
+  // hides the address in (diagnostics.test.js)
+  const platform = load('abort', -1);
+  assert.equal(await refresh(platform), -1);
+  assert.deepEqual(platform.requests, []);
+  const warnings = platform.consoleMessages.filter((message) => message.level === 'warn').map((message) => message.text);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /^%c\[utils\.js, _openUrlWithTimeout\] color: orange; Skipping dead\/hanging URL to prevent C\+\+ WASM freeze: https:\/\/192\.168\.1\.20:47984\/serverinfo\?uniqueid=CLIENT&uuid=/);
+});
+
 test('a MAC address is six pairs of hexadecimal digits, and anything else leaves the one of the host', () => {
   const platform = loadUtils();
   const isMac = platform.get('isMacAddress');
@@ -500,7 +546,11 @@ test('the answers of Sunshine, Apollo and GeForce Experience are kept as they ar
   });
   // The answers of the tests themselves: the simulated host of the browser tests and the one of host-uid.test.js
   const simulated = read('tests/browser/mocks/sunshine-host.js');
-  assert.match(simulated, /<HttpsPort>47984<\/HttpsPort><ExternalPort>47989<\/ExternalPort><mac>00:11:22:33:44:55<\/mac><LocalIP>10\.0\.0\.2<\/LocalIP>/);
+  assert.match(simulated, /<HttpsPort>47984<\/HttpsPort><ExternalPort>47989<\/ExternalPort><mac>' \+ mac \+ '<\/mac><LocalIP>10\.0\.0\.2<\/LocalIP>/);
+  // Over HTTPS its own MAC address; over HTTP the same, or 00:00:00:00:00:00 as Sunshine sends it, for a PC that doesn't
+  // know the TV
+  assert.match(simulated, /https \? serverInfo\(1, '00:11:22:33:44:55'\) : serverInfo\(state\.httpPairStatus, state\.httpMac\)/);
+  assert.match(simulated, /httpMac: config\.unpaired \? '00:00:00:00:00:00' : '00:11:22:33:44:55',/);
   const ofTests = parseOne(platform, { hostname: 'GAMING-PC', uniqueid: 'HOST1', LocalIP: '10.0.0.2', ServerCodecModeSupport: '197377' });
   assert.deepEqual([ofTests.parsed, ofTests.hostname, ofTests.serverUid, ofTests.localAddress, ofTests.macAddress, ofTests.httpsPort, ofTests.externalPort],
     [[true], 'GAMING-PC', 'HOST1', '10.0.0.2', '00:11:22:33:44:55', 47984, 47989]);
@@ -515,7 +565,8 @@ test('_parseServerInfo() keeps each field by its rule', () => {
   assert.deepEqual(unchecked, []);
   assert.match(body, /this\.localAddress = isServerAddress\(localAddress\) \? localAddress : '';/);
   assert.match(body, /if \(isServerAddress\(externIP\)\) \{/);
-  assert.match(body, /if \(isMacAddress\(macAddr\)\) \{\s+this\.macAddress = macAddr;/);
+  // The all-zero MAC address (Sunshine over HTTP) replaces no MAC address that the host has (since 2.3.3)
+  assert.match(body, /if \(isMacAddress\(macAddr\) && \(macAddr !== '00:00:00:00:00:00' \|\| !isMacAddress\(this\.macAddress\)\)\) \{\s+this\.macAddress = macAddr;/);
   assert.match(body, /var httpsPort = parsePort\(\$root\.find\('HttpsPort'\)\.text\(\)\);/);
   assert.match(body, /this\.supportedDisplayModes = parseDisplayModes\(displayModes\);/);
   // The poll takes its addresses from the checked list, and the request for a server info checks its address

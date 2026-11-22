@@ -178,7 +178,10 @@ function remoteControllerHandler(e) {
       endStartingOrRunningStream();
       break;
     case tvKey.KEY_YELLOW:
-      // Step the performance stats overlay to its next level: Off, Compact, Full, Off
+      // Step the statistics to the next level (Off, Compact, Full), once per press: a held key repeats
+      if (e.repeat) {
+        break;
+      }
       if (isInGame === true && wasmSessionStarted) {
         Module.toggleStats();
       } else if (isInGame === true) {
