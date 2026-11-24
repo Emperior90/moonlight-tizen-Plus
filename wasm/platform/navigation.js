@@ -180,6 +180,17 @@ function focusElement(target) {
   }
 }
 
+// Close, the last entry of the button mapping, scrolls its panel to the end, so that the hint below it shows too. The
+// focus scrolls only Close itself into view, and an older Chromium (e.g. the one of the tests in CI) doesn't follow a
+// scroll margin for that.
+function showMappingHintAtClose(target) {
+  const element = resolveElement(target);
+  const panel = document.getElementById('buttonMappingPanel');
+  if (element && element.id === 'buttonMappingClose' && panel) {
+    panel.scrollTop = panel.scrollHeight;
+  }
+}
+
 // Safely remove focus from an element
 function blurElement(target) {
   const element = resolveElement(target);
@@ -2120,10 +2131,12 @@ const Views = {
     up: function() {
       this.view.prevOption();
       focusElement(this.view.current());
+      showMappingHintAtClose(this.view.current());
     },
     down: function() {
       this.view.nextOption();
       focusElement(this.view.current());
+      showMappingHintAtClose(this.view.current());
     },
     left: function() {
       ButtonMappingMenu.step(resolveElement(this.view.current()), -1);

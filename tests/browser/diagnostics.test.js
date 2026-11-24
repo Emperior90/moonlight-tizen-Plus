@@ -201,7 +201,7 @@ test('a stream starts a session of the log, keeps its report, and its heartbeat 
     assert.deepEqual(run.info.slice(start + 1), [
       'Im Netz verlorene Frames: 540 von 36.000 (1,50 %)',
       'Vom TV verworfene Frames: 0, Video-Neustarts: 1, Keyframes zur Wiederherstellung: 4',
-      'FEC-Reparaturen: 900 Blöcke, 6 fehlgeschlagen',
+      'FEC-Reparaturen: 900 Blöcke, 6 erfolglos',
       // The figures of the host, and the hint of its display at 59.94 Hz with the German decimal comma
       'Bildrate des PCs (beste 30 s): 59,94 FPS, mittlere Verarbeitungslatenz des PCs: 6,1 ms',
       'WASM-Heap am Ende: 62 von 128 MB (+1 MB in dieser Sitzung)',
@@ -221,7 +221,7 @@ test('a stream starts a session of the log, keeps its report, and its heartbeat 
     assert.deepEqual(frames.slice(frames.indexOf('Letzte Sitzung: 20 min 0 s, AV1 Main10, 3840x2160, 60 FPS, 180 Mbps') + 1), [
       'Im Netz verlorene Frames: 4 von 66.400 (0,01 %)',
       'Vom TV verworfene Frames: 0, Video-Neustarts: 0, Keyframes zur Wiederherstellung: 0',
-      'FEC-Reparaturen: 25 Blöcke, 0 fehlgeschlagen',
+      'FEC-Reparaturen: 25 Blöcke, 0 erfolglos',
       'Durchschnittliche Empfangszeit pro Frame: 11,10 ms (67 % der Zeit zwischen zwei Frames), höchster Sekundenwert: 13,85 ms (83 %)',
       'Ankunftsrate der Frames: 226 Mbps',
       'Längste Zeiten pro Frame (ms): Empfang 36,0, Warten 3,1, Pacing 11,8, Rendern 4,2',
