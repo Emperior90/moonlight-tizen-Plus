@@ -2752,10 +2752,6 @@ dialog::backdrop {
 .mapping-menu {
   width: 760px;
 }
-/* Close, the last entry, scrolls the rows to their end when it gets the focus, so that the hint below it shows too */
-#buttonMappingClose {
-  scroll-margin-bottom: 120px;
-}
 .mapping-row {
   min-height: 54px;
   margin-bottom: 2px;

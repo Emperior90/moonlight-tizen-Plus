@@ -194,8 +194,9 @@ test('the full statistics translate the FEC recoveries, the worst FEC block and 
     assert.deepEqual(lines[2].match(/\d+/g), ['96', '128', '12'], locale);
     assert.deepEqual(lines[1].match(/\d+/g).sort(), ['18', '20'], locale);
   });
-  // German with the term of 'Last session' (FEC repairs), so that the line keeps one row in the box
-  assert.equal(translate('de-DE')(FEC_RECOVERIES), 'FEC-Reparaturen (Sitzung): 1234 Blöcke, 5678 Pakete (max. 12 ms, 3 langsam, 2 fehlgeschlagen)');
+  // German with the terms of 'Last session' (FEC repairs, erfolglos for failed), so that the line keeps one row in the box
+  // with room to spare: with 'fehlgeschlagen' it took 98 % of the box here and wrapped in the Chromium of the tests in CI
+  assert.equal(translate('de-DE')(FEC_RECOVERIES), 'FEC-Reparaturen (Sitzung): 1234 Blöcke, 5678 Pakete (max. 12 ms, 3 langsam, 2 erfolglos)');
   assert.equal(translate('de-DE')(WORST_FEC_BLOCK), 'Schlechtester FEC-Block: 18 von 20 Paritätspaketen genutzt');
   // The line of the log at the end of a stream (wasmplayer.cpp) is a different one and stays as it is
   const endLine = 'WASM heap top after the stream: 62 of 128 MB (+1 MB this stream)';
