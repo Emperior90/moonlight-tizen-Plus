@@ -179,6 +179,19 @@ test('the review of November 2026 moved each project to the upstream state it re
   });
   assert.match(fs.readFileSync(path.join(REPO_ROOT, 'moonlight-common-c/src/RtpVideoQueue.c'), 'utf8'), /static void addFecBlockArrival\(/);
   assert.match(fs.readFileSync(path.join(REPO_ROOT, 'moonlight-common-c/src/ControlStream.c'), 'utf8'), /logSocketQos\(client->socket/);
+  // The local patch of 2.3.4: the video receive lines and the socket of the video that never waits, with their
+  // functions and their tests, which exist
+  assert.match(note, /since 2\.3\.4 also the video receive lines of the diagnostic log and the back-to-back reads of a socket that never waits/);
+  assert.match(note, /bindUdpSocketNoWait\(\), recvUdpSocketNoWait\(\) and wakeUdpSocketReader\(\) in PlatformSockets\.c and PlatformSockets\.h \(bindUdpSocket\(\) now calls the shared bindUdpSocketOfType\(\)\), nextVideoReceiveSampleGap\(\) and wakeVideoReceiveThread\(\) before each join of the receive thread in VideoStream\.c/);
+  assert.match(note, /in VideoReceiveThreadProc\(\) and the replaced socket in startVideoStream\(\) of VideoStream\.c/);
+  ['tests/native/video_receive_test.c', 'tests/native/udp_no_wait_test.c'].forEach((file) => {
+    assert.ok(note.indexOf(file) > 0, file);
+    assert.ok(fs.existsSync(path.join(REPO_ROOT, file)), file);
+  });
+  const sockets = fs.readFileSync(path.join(REPO_ROOT, 'moonlight-common-c/src/PlatformSockets.c'), 'utf8');
+  ['SOCKET bindUdpSocketNoWait(', 'int recvUdpSocketNoWait(', 'int wakeUdpSocketReader(', 'static SOCKET bindUdpSocketOfType('].forEach((name) => assert.ok(sockets.indexOf(name) > 0, name));
+  const video = fs.readFileSync(path.join(REPO_ROOT, 'moonlight-common-c/src/VideoStream.c'), 'utf8');
+  ['static uint32_t nextVideoReceiveSampleGap(', 'static void wakeVideoReceiveThread('].forEach((name) => assert.ok(video.indexOf(name) > 0, name));
   byId['moonlight-common-c'].decisions.forEach((decision) => assert.doesNotMatch(decision.why, /not reviewed yet/));
   // The termination change of the Nightjar client is listed with the local patches
   assert.match(byId['moonlight-common-c'].note, /from host-termination\.patch of the Nightjar client \(GPL-3\.0\), tests\/native\/connection_termination_test\.c/);

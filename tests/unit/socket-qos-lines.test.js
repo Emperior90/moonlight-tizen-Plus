@@ -3,7 +3,9 @@
 // Checks the lines about the QoS of the sockets of a stream that moonlight-common-c logs since 2.3.2 (logSocketQos() of
 // moonlight-common-c/src/PlatformSockets.c; the lines themselves are run by tests/native/socket_qos_test.c):
 // - bindUdpSocket() logs the line of the video and the audio socket after the receive buffer size of the socket, with
-//   the outcome of setSocketQos(), whose options and values stay as they were (the line only reads);
+//   the outcome of setSocketQos(), whose options and values stay as they were (the line only reads); since 2.3.4 its
+//   body is bindUdpSocketOfType(), which bindUdpSocket() calls with SOCK_DGRAM and bindUdpSocketNoWait() (the socket of
+//   the video that never waits) with SOCK_DGRAM | SOCK_NONBLOCK, so that both bind and log alike;
 // - the control stream logs the line of its ENet socket right after ENet set the DSCP marking, before it connects;
 // - the redaction of the diagnostic log (wasm/platform/diagnostics.js) leaves every form of the line as it is, since it
 //   names no address, port or ID.
@@ -27,7 +29,14 @@ function functionBody(source, signature) {
 }
 
 test('bindUdpSocket() logs the QoS of the video and audio sockets after their receive buffer, and sets it as before', () => {
-  const bind = functionBody(SOCKETS, 'SOCKET bindUdpSocket(');
+  const bind = functionBody(SOCKETS, 'static SOCKET bindUdpSocketOfType(');
+  assert.match(bind, /^static SOCKET bindUdpSocketOfType\(int addressFamily, int socketType, struct sockaddr_storage\* localAddr, SOCKADDR_LEN addrLen, int bufferSize, int socketQosType\) \{/);
+  assert.match(bind, /\n    s = createSocket\(addressFamily, socketType, IPPROTO_UDP, false\);\n/);
+  // bindUdpSocket() and the socket of the video that never waits (2.3.4) share it, with only the type of the socket
+  assert.match(functionBody(SOCKETS, 'SOCKET bindUdpSocket('),
+    /^SOCKET bindUdpSocket\([^)]*\) \{\n    return bindUdpSocketOfType\(addressFamily, SOCK_DGRAM, localAddr, addrLen, bufferSize, socketQosType\);\n\}$/);
+  assert.match(functionBody(SOCKETS, 'SOCKET bindUdpSocketNoWait('),
+    /\n#ifdef SOCK_NONBLOCK\n    return bindUdpSocketOfType\(addressFamily, SOCK_DGRAM \| SOCK_NONBLOCK, localAddr, addrLen, bufferSize, socketQosType\);\n#else\n[^\n]*\n    return INVALID_SOCKET;\n#endif\n\}$/);
   const set = bind.indexOf('qosResult = setSocketQos(s, socketQosType);');
   const actual = bind.indexOf('Limelog("Actual receive buffer size: %d\\n", bufferSize);');
   const log = bind.indexOf('logSocketQos(s, addressFamily, socketQosType == SOCK_QOS_TYPE_VIDEO ? "Video" :');

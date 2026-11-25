@@ -35,7 +35,15 @@ npm run test:browser --prefix tests
 node --test tests/browser/video-defaults.test.js   # a single file
 ```
 
-Run times, measured for 2.3.2 on a machine with 4 CPUs, with the test counts of 2.3.3: the tools about 1 second, the unit tests about 30 seconds (938 tests), the native tests about 4 minutes (55 test programs with 429 tests, mostly compiling; measured without the headers of curl, so without `http_request_test`, which adds one program with 6 tests) and the browser tests about 11 minutes (603 tests, two files at a time), so `npm test` takes about 15 minutes. In CI the whole run of 2.1.0 took about 5 minutes. A single test file is the faster way while you work on one part.
+Run times, measured for 2.3.2 on a machine with 4 CPUs, with the test counts of 2.3.4: the tools about 1 second, the unit tests about 30 seconds (945 tests), the native tests about 4 minutes (57 test programs with 453 tests, mostly compiling; measured without the headers of curl, so without `http_request_test`, which adds one program with 6 tests) and the browser tests about 11 minutes (603 tests, two files at a time), so `npm test` takes about 15 minutes. In CI the whole run of 2.1.0 took about 5 minutes. A single test file is the faster way while you work on one part.
+
+## Test files added in 2.3.4
+
+| File | What it checks |
+|---|---|
+| `native/video_receive_test.c` | The video receive loop of moonlight-common-c with stand-ins for the socket, the queue, the threads and the clock: the mode at the start (receive timeout, poll before each receive, or back-to-back reads of a socket that never waits, which replaces the first socket before the threads start), the socket calls per packet in each, also of a pause, the sample of about every 64th receive at gaps that vary (frames of one size whose last packet costs most still give the average), the poll() of a sample that fails or answers an error of the socket and its time, the share of waiting packets and the times of the lines over IPv4 and IPv6, the wake before each join of a thread that reads a socket that never waits, the first-packet limit, an error and the stop, a line per minute, also one that ends in a pause, encrypted video |
+| `native/udp_no_wait_test.c` | The socket that never waits and its reads, with real UDP sockets on the loopback interface and counted `recvfrom()` and `poll()` calls: one read per waiting packet, poll only when none is waiting, a packet during the wait, a readable socket without a packet (the rest of the 100 ms is waited for, also when it keeps waking), the errors of `recvfrom()` and `poll()` that are skipped, count as nothing waiting or end the read, and the empty datagram that ends a read that waits; it ends itself after 30 s instead of hanging on a read that waits for good |
+| `unit/video-receive-lines.test.js` | The texts of the video receive lines and their longest form within a line of the log, the order of the mode decision, the sample and its poll(), the wake before each join, the socket options that are never used on the TV, the audio stream unchanged, the redaction |
 
 ## Test files added in 2.3.3
 

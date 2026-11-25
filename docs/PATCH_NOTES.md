@@ -2,6 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
+- [2.3.4](#234): pre-release, how fast the TV reads the picture at high bitrates, with everything of 2.3.3
 - [2.3.3](#233): pre-release, the remote, keyboard and mouse in a stream, pairing a PC that dropped the TV, the app list and messages
 - [2.3.2](#232): 2026-11-20, a tidier Stream Menu with F keys and PC shutdown, finer frame times, how fast frames arrive, more facts in the log and a fix for recovery keyframes
 - [2.3.1](#231): 2026-11-18, lighter sound and statistics, fewer double presses, a switch for sound on Wi-Fi, and fixes from a review and from other Moonlight clients
@@ -18,6 +19,28 @@ What changed in each version of Moonlight Plus, in short, newest first.
 **Which file?** `Moonlight-ForceGM.wgt` on Tizen 9 and newer, `Moonlight.wgt` on Tizen 5.5 to 8.
 
 **TV refuses an update?** If the author certificate doesn't match, uninstall the old app first; this loses its settings and pairing.
+
+## 2.3.4
+
+*Pre-release, in testing.* The diagnostic log tells whether the app or the Wi-Fi of the TV limits how fast a frame arrives at a high bitrate.
+
+> **Install:** by hand over 2.3.3, 2.3.2 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
+>
+> **Tested:** with simulated TVs and hosts only; the reading of the picture and its log lines need a test on a TV, as do the keys, mouse and pairing of 2.3.3.
+
+### New
+
+- The diagnostic log shows how the app reads the picture and how fast it could, every minute and at a stream's end
+- It also gives the average frame receive time of the stream and how fast its frames arrived
+
+### Changed
+
+- On a TV whose sockets take no receive timeout, waiting packets are read one after the other, without a check each
+- Where they take one, each packet still takes one call, the least there is; about every 64th gets a quick check
+
+### Also in this version
+
+- Everything of the pre-release 2.3.3 below: keys and mouse in a stream, pairing, the app list and messages
 
 ## 2.3.3
 

@@ -15,7 +15,10 @@
 // microseconds: the averages show steps finer than a millisecond, the line 'Longest frame times' the longest time of a
 // single frame in the two windows of its message, and the report of the session the longest of the stream. Also since
 // 2.3.2, the line 'Frames arrive at' gives the rate at which the data packets of the frames of the two windows arrived
-// (wasm/frame_arrival.hpp), from the arrival figures of the decode units, and the report the rate of the stream. The
+// (wasm/frame_arrival.hpp), from the arrival figures of the decode units, and the report the rate of the stream. Since
+// 2.3.4 the end of a stream with decoded frames also gives both in one line of the diagnostic log ('Frame receive of the
+// stream: ... ms on average, frames arrive at ... Mbps', or 'too few frames to tell' without a rate), next to the video
+// receive lines of moonlight-common-c; a stream without a decoded frame logs none. The
 // functions below stand in for moonlight-common-c and the rest of the module; LiGetMillis() follows a clock of the
 // test, and LiGetMicroseconds() the same clock with the microseconds that a hand-over to the player adds.
 // VidDecSetup() waits for the media pipeline of the TV, so the test sets up the state of a stream the same way instead
@@ -25,6 +28,7 @@
 
 #include "test_support.h"
 
+#include <algorithm>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -570,6 +574,16 @@ static void TheEndOfTheStreamSendsTheSessionReport() {
                         "IDR frame came 64 ms after its request\n" ? 1 : 0;
   }
   CHECK_EQ(idrLines, 1u);
+  // The frame receive time of the stream in the diagnostic log (2.3.4), without a rate: too few frames had arrival
+  // figures
+  size_t frameLines = 0;
+  for (const std::string& line : logged) {
+    frameLines += line.compare(0, 29, "Frame receive of the stream: ") == 0 ? 1 : 0;
+  }
+  CHECK_EQ(frameLines, 1u);
+  CHECK(std::find(logged.begin(), logged.end(),
+    std::string("Frame receive of the stream: 1.00 ms on average, frames arrive at: too few frames to tell\n")) !=
+    logged.end());
   const uintptr_t heapTop = (uintptr_t)sbrk(0);
   const std::string expected = "SessionReportMsg: {\"durationMs\":" + std::to_string(nowMs - 100000) +
     ",\"codec\":\"HEVC Main10\",\"width\":3840,\"height\":2160,\"fps\":60,\"bitrateKbps\":75000,\"frames\":94,"
@@ -611,7 +625,10 @@ static void TheEndOfTheStreamSendsTheSessionReport() {
     idrLines += line == "IDR frame requests of the stream: 0 sent, 0 held while an IDR frame was on its way\n" ? 1 : 0;
   }
   CHECK_EQ(idrLines, 1u);
-  // (and without a frame, no frame receive time)
+  // (and without a frame, no frame receive time, in the report or as a line of the diagnostic log)
+  for (const std::string& line : logged) {
+    CHECK(line.compare(0, 14, "Frame receive ") != 0);
+  }
   const std::string noAudio = ",\"receiveTimeX100\":0,\"receiveTimePeakX100\":0,\"receiveTimeMaxX10\":0,"
     "\"waitTimeMaxX10\":0,\"pacingDelayMaxX10\":0,\"renderTimeMaxX10\":0,\"arrivalMbps\":0,\"audioChannels\":0,"
     "\"audioLoadMsPerS\":0,"
@@ -963,9 +980,14 @@ static void TheFramesArriveAtTheirRateInTheFullStatistics() {
     std::printf("  # got %s\n", last.c_str());
   }
   // The report of the session has the rate of the whole stream, with the window that was still open
+  logged.clear();
   MoonlightInstance::VidDecCleanup();
   CHECK_EQ(JsonNumber(postedAsync.back(), "arrivalMbps"), 274L);
   CHECK(postedAsync.back().find(",\"renderTimeMaxX10\":0,\"arrivalMbps\":274,\"audioChannels\":") != std::string::npos);
+  // and so has its line in the diagnostic log (2.3.4), once
+  CHECK_EQ(std::count(logged.begin(), logged.end(),
+    std::string("Frame receive of the stream: 8.65 ms on average, frames arrive at 274 Mbps\n")), 1);
+  CHECK_EQ(JsonNumber(postedAsync.back(), "receiveTimeX100"), 865L);
 
   // Frames without arrival figures (no bytes: a frame of blocks of a single packet) don't count, not
   // even a time, and a frame whose packets all came within one step of a coarse clock counts with its bytes and a time

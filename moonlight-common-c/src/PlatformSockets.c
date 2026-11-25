@@ -239,6 +239,123 @@ int recvUdpSocket(SOCKET s, char* buffer, int size, bool useSelect,
     return err;
 }
 
+// Moonlight Plus: the errors of recvfrom() that recvUdpSocket() takes for a timeout, which on a socket that never
+// waits mean that no packet is waiting
+static bool isNoPacketWaitingError(int err) {
+    return err == EWOULDBLOCK || err == EINTR || err == EAGAIN ||
+#if defined(LC_WINDOWS)
+           err == WSA_IO_PENDING ||
+#elif defined(__EMSCRIPTEN__)
+           err == __WASI_ERRNO_AGAIN || err == __WASI_ERRNO_INTR || err == __WASI_ERRNO_TIMEDOUT ||
+#endif
+           err == ETIMEDOUT;
+}
+
+// Moonlight Plus: the error of an earlier ICMP Port Unreachable, which recvUdpSocket() skips
+static bool isSkippedReceiveError(int err) {
+#if defined(LC_WINDOWS)
+    return err == WSAECONNRESET;
+#elif defined(__EMSCRIPTEN__)
+    return err == __WASI_ERRNO_CONNREFUSED;
+#else
+    return err == ECONNREFUSED;
+#endif
+}
+
+// Moonlight Plus (since 2.3.4): recvUdpSocket() for a socket from bindUdpSocketNoWait(): a packet that is already
+// waiting is read with one recvfrom() and no poll(); only when none is waiting does poll() wait for one, up to
+// UDP_RECV_POLL_TIMEOUT_MS in all, and recvfrom() read it. Returns the size of the packet, 0 when none came within the
+// timeout (a packet of 0 bytes counts as nothing, since some sockets answer an empty read so), or a negative value for an
+// error (LastSocketError()), like recvUdpSocket() without a source address. When poll() said that the socket is readable
+// but the read found no packet, poll() waits again for the rest of the timeout, so that a 0 always means that no packet
+// came for that long (the receive thread counts it so towards its limit without a first packet) and a socket that keeps
+// waking poll() without a packet can't make each receive return at once. *waited is false when the packet was waiting
+// at the first recvfrom(), *socketCalls counts the poll() and recvfrom() calls it made.
+int recvUdpSocketNoWait(SOCKET s, char* buffer, int size, bool* waited, int* socketCalls) {
+    struct pollfd pfd;
+    uint64_t waitStartMs = 0;
+    int timeoutMs;
+    int err;
+
+    *waited = false;
+    *socketCalls = 0;
+    for (;;) {
+        (*socketCalls)++;
+        err = (int)recvfrom(s, buffer, size, 0, NULL, NULL);
+        if (err > 0) {
+            return err;
+        }
+        if (err < 0 && isSkippedReceiveError((int)LastSocketError())) {
+            continue;
+        }
+        if (err < 0 && !isNoPacketWaitingError((int)LastSocketError())) {
+            return err;
+        }
+
+        // Nothing is waiting: wait for a packet, up to 100 ms from the first wait
+        if (!*waited) {
+            waitStartMs = PltGetMillis();
+            timeoutMs = UDP_RECV_POLL_TIMEOUT_MS;
+        }
+        else {
+            // poll() said that the socket is readable, but no packet was there: wait for the rest
+            uint64_t waitedMs = PltGetMillis() - waitStartMs;
+            if (waitedMs >= UDP_RECV_POLL_TIMEOUT_MS) {
+                return 0;
+            }
+            timeoutMs = UDP_RECV_POLL_TIMEOUT_MS - (int)waitedMs;
+        }
+        pfd.fd = s;
+        pfd.events = POLLIN;
+        (*socketCalls)++;
+        err = pollSockets(&pfd, 1, timeoutMs);
+        if (err <= 0) {
+            // Timeout or error
+            return err;
+        }
+        *waited = true;
+    }
+}
+
+// Moonlight Plus (since 2.3.4): sends an empty datagram from a bound UDP socket to the socket itself, which ends a
+// recvfrom() that waits on it. The video reads a socket from bindUdpSocketNoWait() without a poll() first, so on a
+// platform that took SOCK_NONBLOCK but whose reads of it still wait, its receive thread would wait in a read for a packet
+// that never comes once the host stops sending, and the join of the thread would never return; recvUdpSocketNoWait()
+// counts the empty datagram as no packet. A socket bound to the any address is reached at the loopback address. Returns
+// 0, or SOCKET_ERROR when the socket has no address or the datagram couldn't be sent.
+int wakeUdpSocketReader(SOCKET s) {
+    struct sockaddr_storage address;
+    SOCKADDR_LEN addressLength = sizeof(address);
+    char nothing = 0;
+
+    memset(&address, 0, sizeof(address));
+    if (getsockname(s, (struct sockaddr*)&address, &addressLength) == SOCKET_ERROR) {
+        return SOCKET_ERROR;
+    }
+
+    if (address.ss_family == AF_INET) {
+        struct sockaddr_in* sin = (struct sockaddr_in*)&address;
+        if (sin->sin_addr.s_addr == htonl(INADDR_ANY)) {
+            sin->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        }
+    }
+#ifdef AF_INET6
+    else if (address.ss_family == AF_INET6) {
+        static const unsigned char anyAddress[16] = { 0 };
+        struct sockaddr_in6* sin6 = (struct sockaddr_in6*)&address;
+        if (memcmp(&sin6->sin6_addr, anyAddress, sizeof(anyAddress)) == 0) {
+            // ::1
+            ((unsigned char*)&sin6->sin6_addr)[15] = 1;
+        }
+    }
+#endif
+
+    if (sendto(s, &nothing, 0, 0, (struct sockaddr*)&address, addressLength) == SOCKET_ERROR) {
+        return SOCKET_ERROR;
+    }
+    return 0;
+}
+
 void closeSocket(SOCKET s) {
 #if defined(LC_WINDOWS)
     closesocket(s);
@@ -374,13 +491,14 @@ void logSocketQos(SOCKET s, int addressFamily, const char* name, int priorityRes
     Limelog("%s socket QoS: %s%s\n", name, priority, typeOfService);
 }
 
-SOCKET bindUdpSocket(int addressFamily, struct sockaddr_storage* localAddr, SOCKADDR_LEN addrLen, int bufferSize, int socketQosType) {
+// Moonlight Plus: bindUdpSocket() with the type of the socket given, so that bindUdpSocketNoWait() can add SOCK_NONBLOCK
+static SOCKET bindUdpSocketOfType(int addressFamily, int socketType, struct sockaddr_storage* localAddr, SOCKADDR_LEN addrLen, int bufferSize, int socketQosType) {
     SOCKET s;
     LC_SOCKADDR bindAddr;
     int err;
     int qosResult = SOCK_QOS_NO_OPTION;
 
-    s = createSocket(addressFamily, SOCK_DGRAM, IPPROTO_UDP, false);
+    s = createSocket(addressFamily, socketType, IPPROTO_UDP, false);
     if (s == INVALID_SOCKET) {
         return INVALID_SOCKET;
     }
@@ -497,6 +615,23 @@ SOCKET bindUdpSocket(int addressFamily, struct sockaddr_storage* localAddr, SOCK
     }
 
     return s;
+}
+
+SOCKET bindUdpSocket(int addressFamily, struct sockaddr_storage* localAddr, SOCKADDR_LEN addrLen, int bufferSize, int socketQosType) {
+    return bindUdpSocketOfType(addressFamily, SOCK_DGRAM, localAddr, addrLen, bufferSize, socketQosType);
+}
+
+// Moonlight Plus (since 2.3.4): bindUdpSocket() for a socket whose receive calls never wait, created with SOCK_NONBLOCK,
+// for recvUdpSocketNoWait(). On Emscripten that is the only way: fcntl(F_SETFL) of a socket aborts the module there,
+// so setSocketNonBlocking() does nothing (ENet creates its socket the same way, enet_socket_create() in unix.c).
+// INVALID_SOCKET where the platform has no SOCK_NONBLOCK.
+SOCKET bindUdpSocketNoWait(int addressFamily, struct sockaddr_storage* localAddr, SOCKADDR_LEN addrLen, int bufferSize, int socketQosType) {
+#ifdef SOCK_NONBLOCK
+    return bindUdpSocketOfType(addressFamily, SOCK_DGRAM | SOCK_NONBLOCK, localAddr, addrLen, bufferSize, socketQosType);
+#else
+    (void)addressFamily; (void)localAddr; (void)addrLen; (void)bufferSize; (void)socketQosType;
+    return INVALID_SOCKET;
+#endif
 }
 
 int setSocketNonBlocking(SOCKET s, bool enabled) {

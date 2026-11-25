@@ -23,6 +23,47 @@ static bool receivedFullFrame;
 // Receive buffer size of the video socket as reported by the OS, or 0 if unknown
 static int rtpReceiveBufferSize;
 
+// Moonlight Plus (since 2.3.4): whether startVideoStream() gave the video a socket whose receive calls never wait,
+// because the first one took no receive timeout (see VideoReceiveThreadProc())
+static bool rtpSocketNoWait;
+
+// Moonlight Plus (since 2.3.4): how the receive thread reads the socket, which its first line names: one recvfrom() per
+// packet with a receive timeout (SO_RCVTIMEO), poll() before each recvfrom() where the socket takes no timeout, or reads
+// one after the other of the packets that are waiting from a socket that never waits, with poll() only when none is
+#define VIDEO_RECV_MODE_TIMEOUT 0
+#define VIDEO_RECV_MODE_POLL 1
+#define VIDEO_RECV_MODE_NO_WAIT 2
+
+// Moonlight Plus (since 2.3.4): the lines of the receive thread in the diagnostic log, which tell whether the thread or
+// the network sets the pace at which the packets of a frame are read. About every VIDEO_RECV_SAMPLE_EVERY-th receive is
+// sampled: whether its packet was already waiting (a poll() without a timeout before it, which is timed too; a socket
+// that never waits tells it with every read) and, around it, reads of the clock, which steps in about 0.1 ms on the TV,
+// so only averages over many samples count. The gap to the next sample is drawn from VIDEO_RECV_SAMPLE_EVERY - 16 to
+// VIDEO_RECV_SAMPLE_EVERY + 15 receives (nextVideoReceiveSampleGap()), so that the sample doesn't keep falling on the
+// same packet of frames that all have the same number of packets, e.g. always or never on the last one, whose
+// depacketizer pass costs most. A line comes every VIDEO_RECV_LINE_INTERVAL_US while video comes, and one for the whole
+// stream when the thread ends.
+#define VIDEO_RECV_SAMPLE_EVERY 64
+#define VIDEO_RECV_SAMPLE_SEED 1u
+#define VIDEO_RECV_LINE_INTERVAL_US 60000000ULL
+
+typedef struct _VIDEO_RECV_FIGURES {
+    uint64_t packets;           // receives that returned a packet
+    uint64_t bytes;             // their bytes as received
+    uint64_t socketCalls;       // the poll() and recvfrom() calls of the receives
+    uint64_t checked;           // packets whose waiting is known: the sampled ones, or all on a socket that never waits
+    uint64_t checkedWaiting;    // of them, those that were waiting when the thread asked for them
+    uint64_t waitingReceives;   // sampled receives of a packet that was waiting
+    uint64_t waitingReceiveUs;  // their time, with one clock read
+    uint64_t workSamples;       // sampled packets whose other work was timed
+    uint64_t workUs;            // that time, with one clock read
+    uint64_t clockSamples;      // two clock reads in a row
+    uint64_t clockUs;
+    uint64_t checkPolls;        // the poll() calls without a timeout of the samples (not in socketCalls)
+    uint64_t checkPollUs;       // their time, with one clock read
+    uint64_t checkPollFailures; // of them, those that failed
+} VIDEO_RECV_FIGURES;
+
 // We can't request an IDR frame until the depacketizer knows
 // that a packet was lost. This timeout bounds the time that
 // the RTP queue will wait for missing/reordered packets.
@@ -46,6 +87,7 @@ void initializeVideoStream(void) {
     firstDataTimeMs = 0;
     receivedFullFrame = false;
     rtpReceiveBufferSize = 0;
+    rtpSocketNoWait = false;
 }
 
 // Clean up the video stream
@@ -85,6 +127,182 @@ static void VideoPingThreadProc(void* context) {
     }
 }
 
+// Moonlight Plus (since 2.3.4): the first line of the receive thread, which names how it reads the socket
+static void logVideoReceiveMode(int receiveMode) {
+    switch (receiveMode) {
+    case VIDEO_RECV_MODE_POLL:
+        Limelog("Video receive mode: no receive timeout, poll() before each recvfrom(); back-to-back reads off (no socket that never waits)\n");
+        break;
+    case VIDEO_RECV_MODE_NO_WAIT:
+        Limelog("Video receive mode: no receive timeout, socket that never waits; back-to-back reads on (poll() only when no packet is waiting)\n");
+        break;
+    default:
+        Limelog("Video receive mode: one recvfrom() per packet with a receive timeout of %d ms; back-to-back reads off (not needed)\n",
+                UDP_RECV_POLL_TIMEOUT_MS);
+        break;
+    }
+}
+
+// Moonlight Plus (since 2.3.4): the average of a time of the samples in microseconds, without the clock read that it
+// contains, as text with one decimal ("n/a" without a sample, *valueUs then -1)
+static void formatVideoReceiveTime(char* text, size_t size, uint64_t totalUs, uint64_t samples, double clockUs, double* valueUs) {
+    double value;
+
+    if (samples == 0) {
+        snprintf(text, size, "n/a");
+        *valueUs = -1;
+        return;
+    }
+
+    value = (double)totalUs / (double)samples - clockUs;
+    if (value < 0) {
+        value = 0;
+    }
+    else if (value > 99999.9) {
+        value = 99999.9;
+    }
+    *valueUs = value;
+    snprintf(text, size, "%.1f", value);
+}
+
+// Moonlight Plus (since 2.3.4): the line of a minute (the figures since before) or of the whole stream (before NULL),
+// which in timeout and poll mode ends with the line of the poll() calls without a timeout of its samples
+static void logVideoReceiveFigures(const VIDEO_RECV_FIGURES* now, const VIDEO_RECV_FIGURES* before, uint64_t elapsedUs, bool wholeStream) {
+    VIDEO_RECV_FIGURES d;
+    char waiting[16];
+    char readTime[16];
+    char workTime[16];
+    char capacity[16];
+    char clockText[16];
+    char pollTime[16];
+    double callsEach;
+    double clockUs;
+    double readUs;
+    double workUs;
+    double pollUs;
+    unsigned int seconds;
+    unsigned int overheadBytes;
+
+    d = *now;
+    if (before != NULL) {
+        d.packets -= before->packets;
+        d.bytes -= before->bytes;
+        d.socketCalls -= before->socketCalls;
+        d.checked -= before->checked;
+        d.checkedWaiting -= before->checkedWaiting;
+        d.waitingReceives -= before->waitingReceives;
+        d.waitingReceiveUs -= before->waitingReceiveUs;
+        d.workSamples -= before->workSamples;
+        d.workUs -= before->workUs;
+        d.clockSamples -= before->clockSamples;
+        d.clockUs -= before->clockUs;
+        d.checkPolls -= before->checkPolls;
+        d.checkPollUs -= before->checkPollUs;
+        d.checkPollFailures -= before->checkPollFailures;
+    }
+
+    if (elapsedUs == 0) {
+        elapsedUs = 1;
+    }
+    seconds = (unsigned int)((elapsedUs + 500000) / 1000000);
+    if (seconds == 0) {
+        seconds = 1;
+    }
+
+    callsEach = d.packets > 0 ? (double)d.socketCalls / (double)d.packets : 0;
+    if (callsEach > 999.99) {
+        callsEach = 999.99;
+    }
+
+    if (d.checked > 0) {
+        snprintf(waiting, sizeof(waiting), "%u", (unsigned int)((d.checkedWaiting * 100 + d.checked / 2) / d.checked));
+    }
+    else {
+        snprintf(waiting, sizeof(waiting), "n/a");
+    }
+
+    if (d.clockSamples > 0) {
+        clockUs = (double)d.clockUs / (double)d.clockSamples;
+        if (clockUs > 99999.9) {
+            clockUs = 99999.9;
+        }
+        snprintf(clockText, sizeof(clockText), "%.1f", clockUs);
+    }
+    else {
+        clockUs = 0;
+        snprintf(clockText, sizeof(clockText), "n/a");
+    }
+
+    formatVideoReceiveTime(readTime, sizeof(readTime), d.waitingReceiveUs, d.waitingReceives, clockUs, &readUs);
+    formatVideoReceiveTime(workTime, sizeof(workTime), d.workUs, d.workSamples, clockUs, &workUs);
+
+    // The rate at which the thread could take packets that are waiting, at IP level like 'Frames arrive at'
+    // (RtpVideoQueue.c): the bits of an average packet with its IP and UDP header per microsecond
+#ifdef AF_INET6
+    overheadBytes = (RemoteAddr.ss_family == AF_INET6 ? 40 : 20) + 8;
+#else
+    overheadBytes = 20 + 8;
+#endif
+    if (readUs >= 0 && workUs >= 0 && readUs + workUs > 0 && d.packets > 0) {
+        double mbps = ((double)d.bytes / (double)d.packets + overheadBytes) * 8 / (readUs + workUs);
+        if (mbps > 99999) {
+            mbps = 99999;
+        }
+        snprintf(capacity, sizeof(capacity), "%u", (unsigned int)(mbps + 0.5));
+    }
+    else {
+        snprintf(capacity, sizeof(capacity), "n/a");
+    }
+
+    if (wholeStream) {
+        Limelog("Video receive of the stream, %u s: %llu packets, %.2f socket calls each, %s%% were waiting; %s us to read a waiting packet, %s us of other work per packet: up to %s Mbps; clock read %s us\n",
+                seconds, (unsigned long long)d.packets, callsEach, waiting, readTime, workTime, capacity, clockText);
+
+        // The only socket call that the samples add, and the cost of a poll() on this platform
+        if (d.checkPolls > 0) {
+            formatVideoReceiveTime(pollTime, sizeof(pollTime), d.checkPollUs, d.checkPolls, clockUs, &pollUs);
+            Limelog("Video receive check of the stream: %llu calls of poll() without a timeout, %s us each, %llu failed\n",
+                    (unsigned long long)d.checkPolls, pollTime, (unsigned long long)d.checkPollFailures);
+        }
+    }
+    else {
+        Limelog("Video receive, last %u s: %llu packets/s, %.2f socket calls each, %s%% were waiting; %s us to read a waiting packet, %s us of other work per packet: up to %s Mbps\n",
+                seconds, (unsigned long long)(d.packets * 1000000 / elapsedUs), callsEach, waiting, readTime, workTime, capacity);
+    }
+}
+
+// Moonlight Plus (since 2.3.4): the receives until the next sample, from VIDEO_RECV_SAMPLE_EVERY - 16 to
+// VIDEO_RECV_SAMPLE_EVERY + 15 (on average about every VIDEO_RECV_SAMPLE_EVERY-th receive), from a linear congruential
+// generator (the constants of Numerical Recipes), whose top bits are random enough for this and cost one multiplication
+static uint32_t nextVideoReceiveSampleGap(uint32_t* state) {
+    *state = *state * 1664525u + 1013904223u;
+    return VIDEO_RECV_SAMPLE_EVERY - 16 + (*state >> 27);
+}
+
+// Moonlight Plus (since 2.3.4): wakes the receive thread before it is joined when it reads a socket that never waits.
+// recvUdpSocketNoWait() reads it without a poll() first, so on a platform that took SOCK_NONBLOCK but whose reads of the
+// socket still wait, the thread would wait in that read for a packet that never comes once the host stops sending, and
+// the join would never return. An empty datagram of the socket to itself ends that read and counts as no packet.
+static void wakeVideoReceiveThread(void) {
+    if (rtpSocketNoWait) {
+        wakeUdpSocketReader(rtpSocket);
+    }
+}
+
+// Moonlight Plus (since 2.3.4): the line of a minute once VIDEO_RECV_LINE_INTERVAL_US have passed since the last one,
+// if a packet of it was sampled (none during a pause of the video); a new minute starts then either way
+static void checkVideoReceiveWindow(const VIDEO_RECV_FIGURES* figures, VIDEO_RECV_FIGURES* windowStart, uint64_t* windowStartUs, uint64_t nowUs) {
+    if (nowUs - *windowStartUs < VIDEO_RECV_LINE_INTERVAL_US) {
+        return;
+    }
+
+    if (figures->workSamples > windowStart->workSamples) {
+        logVideoReceiveFigures(figures, windowStart, nowUs - *windowStartUs, false);
+    }
+    *windowStart = *figures;
+    *windowStartUs = nowUs;
+}
+
 // Receive thread proc
 static void VideoReceiveThreadProc(void* context) {
     int err;
@@ -95,6 +313,11 @@ static void VideoReceiveThreadProc(void* context) {
     bool useSelect;
     int waitingForVideoMs;
     bool encrypted;
+    int receiveMode;
+    VIDEO_RECV_FIGURES figures, windowStart;
+    uint32_t receives, nextSampleReceive, sampleState;
+    uint64_t streamStartUs, windowStartUs, workStartUs;
+    bool workSampled;
 
     encrypted = !!(EncryptionFeaturesEnabled & SS_ENC_VIDEO);
     decryptedSize = StreamConfig.packetSize + MAX_RTP_HEADER_SIZE;
@@ -103,15 +326,23 @@ static void VideoReceiveThreadProc(void* context) {
     bufferSize = decryptedSize + sizeof(RTPV_QUEUE_ENTRY);
     buffer = NULL;
 
-    if (setNonFatalRecvTimeoutMs(rtpSocket, UDP_RECV_POLL_TIMEOUT_MS) < 0) {
+    if (rtpSocketNoWait) {
+        // Moonlight Plus: startVideoStream() found no receive timeout and gave the video a socket that never waits
+        useSelect = false;
+        receiveMode = VIDEO_RECV_MODE_NO_WAIT;
+    }
+    else if (setNonFatalRecvTimeoutMs(rtpSocket, UDP_RECV_POLL_TIMEOUT_MS) < 0) {
         // SO_RCVTIMEO failed, so use select() to wait
         Limelog("Video Receive: SO_RCVTIMEO unsupported, polling before each receive\n");
         useSelect = true;
+        receiveMode = VIDEO_RECV_MODE_POLL;
     }
     else {
         // SO_RCVTIMEO timeout set for recv()
         useSelect = false;
+        receiveMode = VIDEO_RECV_MODE_TIMEOUT;
     }
+    logVideoReceiveMode(receiveMode);
 
     // Allocate a staging buffer to use for each received packet
     if (encrypted) {
@@ -127,8 +358,22 @@ static void VideoReceiveThreadProc(void* context) {
     }
 
     waitingForVideoMs = 0;
+    // Moonlight Plus: the figures of the video receive lines
+    memset(&figures, 0, sizeof(figures));
+    windowStart = figures;
+    receives = 0;
+    sampleState = VIDEO_RECV_SAMPLE_SEED;
+    nextSampleReceive = nextVideoReceiveSampleGap(&sampleState);
+    streamStartUs = 0;
+    windowStartUs = 0;
+    workStartUs = 0;
+    workSampled = false;
     while (!PltIsThreadInterrupted(&receiveThread)) {
         PRTP_PACKET packet;
+        bool sampled;
+        bool waiting;
+        bool waitingKnown;
+        uint64_t receiveStartUs;
 
         if (buffer == NULL) {
             buffer = (char*)malloc(bufferSize);
@@ -139,18 +384,114 @@ static void VideoReceiveThreadProc(void* context) {
             }
         }
 
-        err = recvUdpSocket(rtpSocket,
-                            encrypted ? encryptedBuffer : buffer,
-                            receiveSize,
-                            useSelect,
-                            NULL,
-                            NULL);
+        // Moonlight Plus: the other work since the sampled packet before ends here, and the line of a minute comes
+        if (workSampled) {
+            uint64_t nowUs = PltGetMicroseconds();
+            figures.workUs += nowUs - workStartUs;
+            figures.workSamples++;
+            workSampled = false;
+            checkVideoReceiveWindow(&figures, &windowStart, &windowStartUs, nowUs);
+        }
+
+        // Moonlight Plus: sample about every VIDEO_RECV_SAMPLE_EVERY-th receive
+        receives++;
+        sampled = receives == nextSampleReceive;
+        if (sampled) {
+            nextSampleReceive = receives + nextVideoReceiveSampleGap(&sampleState);
+        }
+        waiting = false;
+        // (a socket that never waits tells it with every read)
+        waitingKnown = receiveMode == VIDEO_RECV_MODE_NO_WAIT;
+        receiveStartUs = 0;
+        if (sampled && receiveMode != VIDEO_RECV_MODE_NO_WAIT) {
+            // Whether a packet is waiting: a poll() without a timeout, timed. A failed one leaves it unknown, and only a
+            // readable socket counts as a packet waiting, not an error that the socket reports (POLLERR and the like)
+            struct pollfd pfd;
+            int pollResult;
+            int pollError;
+            uint64_t pollStartUs = PltGetMicroseconds();
+
+            pfd.fd = rtpSocket;
+            pfd.events = POLLIN;
+            pfd.revents = 0;
+            pollResult = pollSockets(&pfd, 1, 0);
+            pollError = pollResult < 0 ? (int)LastSocketError() : 0;
+            receiveStartUs = PltGetMicroseconds();
+            figures.checkPolls++;
+            figures.checkPollUs += receiveStartUs - pollStartUs;
+            if (pollResult < 0) {
+                if (figures.checkPollFailures++ == 0) {
+                    Limelog("Video receive check: poll() without a timeout failed: %d\n", pollError);
+                }
+            }
+            else {
+                waitingKnown = true;
+                waiting = pollResult > 0 && (pfd.revents & POLLIN) != 0;
+            }
+        }
+        else if (sampled) {
+            receiveStartUs = PltGetMicroseconds();
+        }
+
+        if (receiveMode == VIDEO_RECV_MODE_NO_WAIT) {
+            // Moonlight Plus: the packets that are waiting one after the other, poll() only when none is
+            bool waited;
+            int socketCalls;
+
+            err = recvUdpSocketNoWait(rtpSocket,
+                                      encrypted ? encryptedBuffer : buffer,
+                                      receiveSize,
+                                      &waited,
+                                      &socketCalls);
+            figures.socketCalls += socketCalls;
+            waiting = !waited;
+        }
+        else {
+            err = recvUdpSocket(rtpSocket,
+                                encrypted ? encryptedBuffer : buffer,
+                                receiveSize,
+                                useSelect,
+                                NULL,
+                                NULL);
+            // Moonlight Plus: poll() and recvfrom() with useSelect (only poll() when it timed out), else one recvfrom()
+            figures.socketCalls += (useSelect && err > 0) ? 2 : 1;
+        }
+
+        // Moonlight Plus: count the packet, and time the sampled one
+        if (err > 0) {
+            figures.packets++;
+            figures.bytes += (uint64_t)err;
+            if (waitingKnown) {
+                figures.checked++;
+                if (waiting) {
+                    figures.checkedWaiting++;
+                }
+            }
+            if (sampled) {
+                uint64_t endUs = PltGetMicroseconds();
+                uint64_t clockUs = PltGetMicroseconds();
+                if (waiting) {
+                    figures.waitingReceiveUs += endUs - receiveStartUs;
+                    figures.waitingReceives++;
+                }
+                figures.clockUs += clockUs - endUs;
+                figures.clockSamples++;
+                workStartUs = clockUs;
+                workSampled = true;
+            }
+        }
+
         if (err < 0) {
             Limelog("Video Receive: recvUdpSocket() failed: %d\n", (int)LastSocketError());
             ListenerCallbacks.connectionTerminated(LastSocketFail());
             break;
         }
         else if  (err == 0) {
+            // Moonlight Plus: a pause of the video still ends the line of its minute
+            if (receivedDataFromPeer) {
+                checkVideoReceiveWindow(&figures, &windowStart, &windowStartUs, PltGetMicroseconds());
+            }
+
             if (!receivedDataFromPeer) {
                 // If we wait many seconds without ever receiving a video packet,
                 // assume something is broken and terminate the connection.
@@ -171,6 +512,10 @@ static void VideoReceiveThreadProc(void* context) {
             Limelog("Received first video packet after %d ms\n", waitingForVideoMs);
 
             firstDataTimeMs = PltGetMillis();
+
+            // Moonlight Plus: the time of the video receive lines counts from the first packet
+            streamStartUs = PltGetMicroseconds();
+            windowStartUs = streamStartUs;
         }
 
 #ifndef LC_FUZZING
@@ -244,6 +589,11 @@ static void VideoReceiveThreadProc(void* context) {
         }
     }
 
+    // Moonlight Plus: the line of the whole stream, once the thread ends (at a stop or after an error)
+    if (figures.packets > 0) {
+        logVideoReceiveFigures(&figures, NULL, PltGetMicroseconds() - streamStartUs, true);
+    }
+
     if (buffer != NULL) {
         free(buffer);
     }
@@ -304,6 +654,9 @@ void stopVideoStream(void) {
         shutdownTcpSocket(firstFrameSocket);
     }
 
+    // Moonlight Plus: a receive thread in a read of a socket that never waits
+    wakeVideoReceiveThread();
+
     PltJoinThread(&udpPingThread);
     PltJoinThread(&receiveThread);
     if ((VideoCallbacks.capabilities & (CAPABILITY_DIRECT_SUBMIT | CAPABILITY_PULL_RENDERER)) == 0) {
@@ -345,6 +698,22 @@ int startVideoStream(void* rendererContext, int drFlags) {
         return LastSocketError();
     }
 
+    // Moonlight Plus (since 2.3.4): a video socket that takes no receive timeout would make the receive thread poll()
+    // before every packet (VideoReceiveThreadProc()). A socket whose receive calls never wait lets it read the packets
+    // that are waiting one after the other and poll() only when none is, so it replaces this one now, before any thread
+    // uses it. Where the platform can't create one, the receive thread polls before each packet as before.
+    rtpSocketNoWait = false;
+    if (setNonFatalRecvTimeoutMs(rtpSocket, UDP_RECV_POLL_TIMEOUT_MS) < 0) {
+        SOCKET noWaitSocket = bindUdpSocketNoWait(RemoteAddr.ss_family, &LocalAddr, AddrLen,
+                                                  RTP_RECV_PACKETS_BUFFERED * (StreamConfig.packetSize + MAX_RTP_HEADER_SIZE),
+                                                  SOCK_QOS_TYPE_VIDEO);
+        if (noWaitSocket != INVALID_SOCKET) {
+            closeSocket(rtpSocket);
+            rtpSocket = noWaitSocket;
+            rtpSocketNoWait = true;
+        }
+    }
+
     // Remember the receive buffer size that the OS reports, which may be clamped below the request
     {
         int reportedSize = 0;
@@ -369,6 +738,7 @@ int startVideoStream(void* rendererContext, int drFlags) {
         if (err != 0) {
             VideoCallbacks.stop();
             PltInterruptThread(&receiveThread);
+            wakeVideoReceiveThread();
             PltJoinThread(&receiveThread);
             closeSocket(rtpSocket);
             VideoCallbacks.cleanup();
@@ -387,6 +757,7 @@ int startVideoStream(void* rendererContext, int drFlags) {
             if ((VideoCallbacks.capabilities & (CAPABILITY_DIRECT_SUBMIT | CAPABILITY_PULL_RENDERER)) == 0) {
                 PltInterruptThread(&decoderThread);
             }
+            wakeVideoReceiveThread();
             PltJoinThread(&receiveThread);
             if ((VideoCallbacks.capabilities & (CAPABILITY_DIRECT_SUBMIT | CAPABILITY_PULL_RENDERER)) == 0) {
                 PltJoinThread(&decoderThread);
@@ -407,6 +778,7 @@ int startVideoStream(void* rendererContext, int drFlags) {
         if ((VideoCallbacks.capabilities & (CAPABILITY_DIRECT_SUBMIT | CAPABILITY_PULL_RENDERER)) == 0) {
             PltInterruptThread(&decoderThread);
         }
+        wakeVideoReceiveThread();
         PltJoinThread(&receiveThread);
         if ((VideoCallbacks.capabilities & (CAPABILITY_DIRECT_SUBMIT | CAPABILITY_PULL_RENDERER)) == 0) {
             PltJoinThread(&decoderThread);

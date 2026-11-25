@@ -1173,6 +1173,17 @@ void MoonlightInstance::VidDecCleanup(void) {
   report.renderTimeMaxX10 = TenthsOfMs(totals.maxRenderTimeUs);
   // The rate at which the frames of the stream arrived, as the full statistics show it for their windows
   report.arrivalMbps = FrameArrivalMbps(totals.totalArrivalBytes, totals.totalArrivalTimeUs, totals.arrivalFrames);
+  // What a frame of the stream took to arrive, in the diagnostic log next to the video receive lines of
+  // moonlight-common-c (since 2.3.4): the figures of 'Average frame receive time' and 'Frames arrive at' of the report
+  if (totals.decodedFrames > 0) {
+    if (report.arrivalMbps > 0) {
+      ClLogMessage("Frame receive of the stream: %u.%02u ms on average, frames arrive at %u Mbps\n",
+        (unsigned)(report.receiveTimeX100 / 100), (unsigned)(report.receiveTimeX100 % 100), (unsigned)report.arrivalMbps);
+    } else {
+      ClLogMessage("Frame receive of the stream: %u.%02u ms on average, frames arrive at: too few frames to tell\n",
+        (unsigned)(report.receiveTimeX100 / 100), (unsigned)(report.receiveTimeX100 % 100));
+    }
+  }
   // The load of the audio thread, which AudDecCleanup() stored when the audio stream ended before this (the audio
   // stream stops before the video stream, stopAudioStream() and stopVideoStream() in Connection.c). Taking it empties
   // it, so that a stream that ends before its audio starts doesn't report the figures of the stream before it.

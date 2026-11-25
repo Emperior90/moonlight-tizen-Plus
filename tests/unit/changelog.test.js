@@ -3,8 +3,8 @@
 // Checks the layout of CHANGELOG.md, which lists every change of Moonlight Plus by the version that first had it:
 // - a section "## <version> (<date>)" for every released version of the patch notes (docs/PATCH_NOTES.md), with the
 //   same date, and "## <version> (unreleased)" for the version of res/config.xml while its patch notes call it a
-//   pre-release; newest first. A version that was only a pre-release (2.0.0) has no section of its own: its changes
-//   are part of the next release, whose section says so
+//   pre-release; newest first. A version that was only a pre-release (2.0.0, 2.3.3) has no section of its own: its
+//   changes are part of the next version, whose section says so
 // - each version holds the small headings Added, Changed, Removed and Fixed, in this order, with at least one entry,
 //   and no entry is listed twice
 // - the changelog of Moonlight Tizen 1.19.0 and earlier, the base version, is linked instead of copied
@@ -62,6 +62,20 @@ test('the changelog has a section for every release of the patch notes with its 
   assert.ok(patchNoteVersions().some((entry) => entry.version === '2.0.0' && entry.date === null));
   const release210 = versionSections().find((section) => section.heading.indexOf('2.1.0 ') === 0);
   assert.match(release210.lines.join('\n'), /Includes the pre-release 2\.0\.0/);
+  // So does the section after every other pre-release without a release of its own (2.3.3 is part of 2.3.4)
+  const versions = patchNoteVersions();
+  let included = 0;
+  versions.forEach((entry, index) => {
+    if (entry.date !== null || entry.version === APP_VERSION || index === 0) {
+      return;
+    }
+    const next = versionSections().find((section) => section.heading.split(' ')[0] === versions[index - 1].version);
+    assert.ok(next, 'a section for ' + versions[index - 1].version + ', which includes ' + entry.version);
+    assert.ok(next.lines.join('\n').indexOf('Includes the pre-release ' + entry.version + ',') >= 0 ||
+      next.lines.join('\n').indexOf('Includes the pre-release ' + entry.version + ' ') >= 0, next.heading + ' names ' + entry.version);
+    included++;
+  });
+  assert.ok(included >= 1);
 });
 
 test('each version of the changelog lists its entries under Added, Changed, Removed and Fixed, and no entry twice', () => {

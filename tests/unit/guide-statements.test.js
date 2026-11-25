@@ -54,6 +54,9 @@
 //   another key, and the horizontal wheel
 // - the messages and the overlays of a stream (2.3.3): how long a message shows, and where the Stream Menu and the
 //   messages go beside the statistics
+// - the video receive lines of the diagnostic log (2.3.4): the mode of the receive thread, the lines of a minute and of
+//   the stream with their sample of about every 64th read, the lines of the poll() calls of the samples, the line of
+//   the frame receive time, how to read them against *Frames arrive at*, and where the guide points to them
 // The release notes of a release (docs/RELEASE_NOTES.md) only give the essentials, so the statements that they
 // carried until 1.19.100 are checked in the guide and the patch notes (docs/PATCH_NOTES.md), where they are now.
 
@@ -1219,4 +1222,92 @@ test('the guide says how long a message shows and where the Stream Menu and the 
     const body = index.slice(start, index.indexOf('\n}\n', start));
     assert.ok(start > 0 && body.indexOf("$('#connection-warnings, #performance-stats').text('');") > 0, name);
   }
+});
+
+// A format of C with its conversions replaced by the given values in order, without its line break
+function formatC(format, values) {
+  let index = 0;
+  return format.replace(/\\n$/, '').replace(/%%|%(?:\.2f|02u|llu|u|d|s)/g, (conversion) => {
+    if (conversion === '%%') {
+      return '%';
+    }
+    assert.ok(index < values.length, 'a value for ' + conversion);
+    return String(values[index++]);
+  });
+}
+
+test('the guide describes the video receive lines of 2.3.4 as the code makes them', () => {
+  const video = read('moonlight-common-c/src/VideoStream.c');
+  const player = read('wasm/wasmplayer.cpp');
+  const log = guideSection('### Diagnostic log');
+  const timeoutMs = Number(/^#define UDP_RECV_POLL_TIMEOUT_MS (\d+)$/m.exec(read('moonlight-common-c/src/Limelight-internal.h'))[1]);
+  const sampleEvery = Number(/^#define VIDEO_RECV_SAMPLE_EVERY (\d+)$/m.exec(video)[1]);
+  const intervalUs = Number(/^#define VIDEO_RECV_LINE_INTERVAL_US (\d+)ULL$/m.exec(video)[1]);
+  assert.equal(timeoutMs, 100);
+  assert.equal(sampleEvery, 64);
+  assert.equal(intervalUs, 60 * 1000 * 1000);
+  // The three modes, as the receive thread logs them
+  const formatOf = (source, pattern) => {
+    const match = pattern.exec(source);
+    assert.ok(match, String(pattern));
+    return match[1];
+  };
+  const timeoutMode = formatC(formatOf(video, /Limelog\("(Video receive mode: one recvfrom\(\)[^"]*)",\s+UDP_RECV_POLL_TIMEOUT_MS\);/), [timeoutMs]);
+  const noWaitMode = formatC(formatOf(video, /Limelog\("(Video receive mode: no receive timeout, socket that never waits[^"]*)"\);/), []);
+  const pollMode = formatC(formatOf(video, /Limelog\("(Video receive mode: no receive timeout, poll\(\)[^"]*)"\);/), []);
+  assert.equal(timeoutMode, 'Video receive mode: one recvfrom() per packet with a receive timeout of 100 ms; back-to-back reads off (not needed)');
+  assert.ok(log.indexOf('At the start, *' + timeoutMode + '* on a TV whose sockets take a receive timeout') > 0, log);
+  assert.ok(log.indexOf('*' + noWaitMode + '* on a TV whose sockets take none') > 0);
+  const pollEnd = 'poll() before each recvfrom(); back-to-back reads off (no socket that never waits)';
+  assert.ok(pollMode.endsWith(pollEnd), pollMode);
+  assert.ok(log.indexOf('*… ' + pollEnd + '* means that such a socket couldn\'t be made') > 0);
+  // On a TV without a receive timeout the second socket logs its receive buffer and QoS lines too, as bindUdpSocket()
+  // does, since both share one body
+  assert.match(read('moonlight-common-c/src/PlatformSockets.c'), /SOCKET bindUdpSocketNoWait\([^)]*\) \{\n#ifdef SOCK_NONBLOCK\n    return bindUdpSocketOfType\(/);
+  assert.ok(log.indexOf('On such a TV the lines of the receive buffer and the QoS of the video socket come twice: the second set is that of the socket the stream uses') > 0);
+  // The line of a minute and the one of the stream, with the example of the guide built from the format of the code
+  const minute = formatOf(video, /Limelog\("(Video receive, last %u s: [^"]*)",/);
+  assert.ok(log.indexOf('Once a minute while the picture comes, *' + formatC(minute.slice(0, minute.indexOf(': ') + 2), [intervalUs / 1000000]) + '…*') > 0);
+  const stream = formatOf(video, /Limelog\("(Video receive of the stream, %u s: [^"]*)",/);
+  const example = formatC(stream, [312, 4973512, '1.00', '91', '3.2', '28.5', '362', '0.4']);
+  assert.equal(example, 'Video receive of the stream, 312 s: 4973512 packets, 1.00 socket calls each, 91% were waiting; 3.2 us to read a waiting packet, 28.5 us of other work per packet: up to 362 Mbps; clock read 0.4 us');
+  assert.ok(log.indexOf('e.g. *' + example + '* (an example, not a measurement)') > 0);
+  // A pause adds a call per 100 ms, two with back-to-back reads (an empty read and the poll()), and the poll() of a sample
+  // is counted apart
+  const sockets = read('moonlight-common-c/src/PlatformSockets.c');
+  assert.match(video, /figures\.socketCalls \+= \(useSelect && err > 0\) \? 2 : 1;/);
+  assert.match(sockets, /\(\*socketCalls\)\+\+;\s+err = \(int\)recvfrom\(s, buffer, size, 0, NULL, NULL\);/);
+  assert.match(sockets, /\(\*socketCalls\)\+\+;\s+err = pollSockets\(&pfd, 1, timeoutMs\);/);
+  assert.match(video, /figures\.checkPolls\+\+;/);
+  // The gaps of the samples, from VIDEO_RECV_SAMPLE_EVERY - 16 to VIDEO_RECV_SAMPLE_EVERY + 15
+  assert.match(video, /return VIDEO_RECV_SAMPLE_EVERY - 16 \+ \(\*state >> 27\);/);
+  ['the socket calls per packet (each ' + timeoutMs + ' ms without a packet adds one, two with back-to-back reads; the poll() of the check below isn\'t counted)',
+    'The app checks about every ' + sampleEvery + 'th read, at gaps that vary from ' + (sampleEvery - 16) + ' to ' + (sampleEvery + 15) + ' reads so that it doesn\'t keep checking the same packet of frames of one size: it asks the socket with poll() whether a packet is waiting (with back-to-back reads every read tells it) and reads the clock around it, which may count in steps of 0.1 ms',
+    'without the time of the clock reads themselves (*clock read*). *n/a* means there was nothing to measure.',
+    'counted like *Frames arrive at*']
+    .forEach((text) => assert.ok(log.indexOf(text) > 0, text));
+  // The lines of the poll() calls of the samples, only where the socket isn't read back to back
+  const check = formatOf(video, /Limelog\("(Video receive check of the stream: [^"]*)",/);
+  const checkFailed = formatOf(video, /Limelog\("(Video receive check: poll\(\) without a timeout failed: )%d\\n", pollError\);/);
+  assert.match(video, /if \(sampled && receiveMode != VIDEO_RECV_MODE_NO_WAIT\) \{/);
+  assert.ok(log.indexOf('Without back-to-back reads, a last line counts these poll() calls, the only socket calls that the check adds, e.g. *' + formatC(check, [4870, '2.1', 0]) + '*: their time is also what a poll() costs on the TV.') > 0);
+  assert.ok(log.indexOf('If they fail, *' + checkFailed + '…* comes once with the error, and the share of waiting packets shows *n/a*.') > 0);
+  // The line of the frame receive time of the app, with the figures of Last session
+  const frame = formatOf(player, /ClLogMessage\("(Frame receive of the stream: [^"]*frames arrive at %u Mbps)\\n",/);
+  assert.ok(log.indexOf('After it, *' + formatC(frame, [10, '52', 276]) + '*: the *Average frame receive time* and *Frames arrive at* of the stream, as *Last session* in System information gives them') > 0);
+  assert.match(player, /report\.receiveTimeX100 = AverageUsX100\(totals\.totalReassemblyTimeUs, totals\.decodedFrames\);/);
+  // How to read them: the two readings and their thresholds
+  ['To read them, compare *up to* with *Frames arrive at*. Not more than about a quarter above it (or below it), with 80 % or more of the packets waiting: the app reads as fast as it can',
+    'At least twice *Frames arrive at*, or fewer than half of the packets waiting: the app waits for the packets, so the network sets the receive time',
+    'Many waiting packets alone don\'t decide it, since Wi-Fi hands packets over in bursts.',
+    // The parity packets of a block that arrived whole cost the queue little and don't count for the rate of the frames
+    'A high share of error correction (FEC) raises *up to* by up to about that share, since its extra packets cost the app little and *Frames arrive at* leaves them out.']
+    .forEach((text) => assert.ok(log.indexOf(text) > 0, text));
+  // The pointers of the guide to them: above 150 Mbps and in the troubleshooting
+  assert.ok(guideSection('### Above 150 Mbps').indexOf('Whether the app or the Wi-Fi of the TV sets that pace, the lines *Video receive …* of the [diagnostic log](#diagnostic-log) tell after a stream (since 2.3.4).') > 0);
+  const trouble = GUIDE.split('\n').find((line) => line.indexOf('- **A long frame receive time at a high bitrate, e.g. 10 ms at 180 Mbps over Wi-Fi:**') === 0);
+  assert.ok(trouble, 'the troubleshooting bullet');
+  assert.ok(trouble.indexOf('read *Video receive of the stream* and *Frame receive of the stream* at the end of the [diagnostic log](#diagnostic-log)') > 0);
+  // The texts of the guide are the start of the lines of the code
+  assert.ok(stream.indexOf('Video receive of the stream') === 0 && frame.indexOf('Frame receive of the stream') === 0);
 });

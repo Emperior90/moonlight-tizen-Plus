@@ -1,0 +1,1340 @@
+// Checks the video receive loop of moonlight-common-c (VideoReceiveThreadProc() and startVideoStream() of
+// moonlight-common-c/src/VideoStream.c, included directly) and the lines that it logs since 2.3.4, which tell whether
+// the receive thread or the network sets the pace at which the packets of a frame are read:
+//  - the mode at the start: one recvfrom() per packet where the socket takes a receive timeout (SO_RCVTIMEO); a poll()
+//    before each recvfrom() where it takes none and no socket that never waits can be made; and the back-to-back reads
+//    of a socket that never waits (bindUdpSocketNoWait(), recvUdpSocketNoWait()), which replaces the first socket in
+//    startVideoStream() before any thread starts, so that a packet that is waiting takes one call and poll() comes
+//    only when none is;
+//  - the socket calls per packet in each mode, the sample of about every 64th receive (the gaps between the samples
+//    drawn by nextVideoReceiveSampleGap(), so that the sample doesn't keep falling on the same packet of frames of one
+//    size), the poll() without a timeout before a sample that tells whether its packet was waiting (a failed one leaves
+//    it unknown, an error of the socket is no packet waiting) and its time, the clock reads around the sample, the
+//    share of waiting packets and the times of the lines, and from them the rate at which the thread could take packets
+//    that are waiting, with the headers of IPv4 or IPv6;
+//  - what stays as it was: the limit of 10 s without a first packet in every mode, an error that ends the stream, the
+//    stop, encrypted video (the read goes to the buffer of the encrypted packet, the bytes count as received);
+//  - the wake of a receive thread that reads a socket that never waits before each join (wakeUdpSocketReader()), at the
+//    stop and when the start fails after the thread started;
+//  - one line a minute while video comes, also when it ends during a pause of the video, none for a minute without
+//    packets, one for the whole stream at the end and one for the poll() calls of the samples, each shorter than a line
+//    of the diagnostic log keeps and without an address.
+//
+// The socket, the RTP queue, the threads, the decryption and the clock are stand-ins: the receive calls follow a
+// script of entries (a packet, whether it was waiting and how long its receive took; a timeout; an error), the clock
+// is a test clock that each read moves on by clockStepUs, a receive by the time of its entry, the poll() of a sample by
+// pollUs and the RTP queue by workUs (and the extra work of the entry), and a thread is never run: the test calls the
+// entry of the receive thread itself.
+
+#include "test_support_c.h"
+
+#include "../../moonlight-common-c/src/VideoStream.c"
+
+#include <errno.h>
+#include <stdarg.h>
+#include <string.h>
+
+// What the other files of moonlight-common-c provide (Connection.c and the others)
+struct sockaddr_storage RemoteAddr;
+struct sockaddr_storage LocalAddr;
+SOCKADDR_LEN AddrLen;
+int AppVersionQuad[4];
+STREAM_CONFIGURATION StreamConfig;
+CONNECTION_LISTENER_CALLBACKS ListenerCallbacks;
+DECODER_RENDERER_CALLBACKS VideoCallbacks;
+int NegotiatedVideoFormat;
+uint32_t EncryptionFeaturesEnabled;
+uint16_t VideoPortNumber;
+SS_PING VideoPingPayload;
+
+// ---- The log ----
+
+#define MAX_LINES 64
+static char lines[MAX_LINES][512];
+// The receive calls made when each line was logged
+static int lineReceiveCalls[MAX_LINES];
+static int lineCount;
+// Every line of the receive thread that any case logged, for the check of their length and content
+static int receiveLinesSeen;
+static int receiveLinesTooLong;
+static int receiveLinesWithAddress;
+static int receiveCalls;
+
+static bool hasDottedAddress(const char* text) {
+  for (const char* c = text; *c != 0; c++) {
+    int a, b, d, e;
+    char tail;
+    if ((c == text || !(c[-1] >= '0' && c[-1] <= '9')) && sscanf(c, "%d.%d.%d.%d%c", &a, &b, &d, &e, &tail) >= 4) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static void captureLine(const char* format, ...) {
+  char line[512];
+  va_list args;
+  va_start(args, format);
+  vsnprintf(line, sizeof(line), format, args);
+  va_end(args);
+  if (strncmp(line, "Video receive", 13) == 0) {
+    receiveLinesSeen++;
+    if (strlen(line) >= 240) {
+      receiveLinesTooLong++;
+    }
+    if (hasDottedAddress(line)) {
+      receiveLinesWithAddress++;
+    }
+  }
+  if (lineCount < MAX_LINES) {
+    snprintf(lines[lineCount], sizeof(lines[lineCount]), "%s", line);
+    lineReceiveCalls[lineCount] = receiveCalls;
+    lineCount++;
+  }
+}
+
+static void printLines(void) {
+  for (int i = 0; i < lineCount; i++) {
+    printf("  #   logged: %s", lines[i]);
+  }
+}
+
+// The index of the first line from `from` on that starts with the text, or -1
+static int findLineFrom(int from, const char* start) {
+  for (int i = from; i < lineCount; i++) {
+    if (strncmp(lines[i], start, strlen(start)) == 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+static int findLine(const char* start) {
+  return findLineFrom(0, start);
+}
+
+static int countLines(const char* start) {
+  int count = 0;
+  for (int i = 0; i < lineCount; i++) {
+    if (strncmp(lines[i], start, strlen(start)) == 0) {
+      count++;
+    }
+  }
+  return count;
+}
+
+static bool hasLine(const char* text) {
+  for (int i = 0; i < lineCount; i++) {
+    if (strcmp(lines[i], text) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static void checkLine(const char* expected) {
+  if (!hasLine(expected)) {
+    printf("  # expected the line: %s", expected);
+  }
+  CHECK(hasLine(expected));
+}
+
+// The number in a line right before the text, e.g. the time before " us of other work per packet", or -1
+static double numberBefore(const char* line, const char* text) {
+  const char* end = strstr(line, text);
+  if (end == NULL) {
+    return -1;
+  }
+  const char* start = end;
+  while (start > line && start[-1] != ' ') {
+    start--;
+  }
+  double value = -1;
+  if (sscanf(start, "%lf", &value) != 1) {
+    return -1;
+  }
+  return value;
+}
+
+// The texts of the receive mode, as VideoReceiveThreadProc() is to log them
+#define MODE_TIMEOUT "Video receive mode: one recvfrom() per packet with a receive timeout of 100 ms; back-to-back reads off (not needed)\n"
+#define MODE_POLL "Video receive mode: no receive timeout, poll() before each recvfrom(); back-to-back reads off (no socket that never waits)\n"
+#define MODE_NO_WAIT "Video receive mode: no receive timeout, socket that never waits; back-to-back reads on (poll() only when no packet is waiting)\n"
+#define POLL_LINE "Video Receive: SO_RCVTIMEO unsupported, polling before each receive\n"
+#define STREAM_LINE "Video receive of the stream, "
+#define MINUTE_LINE "Video receive, last "
+#define CHECK_LINE "Video receive check of the stream: "
+#define CHECK_FAILED_LINE "Video receive check: poll() without a timeout failed: "
+
+// ---- The script of the receive calls ----
+
+#define ENTRY_PACKET 0
+#define ENTRY_TIMEOUT 1
+#define ENTRY_ERROR 2
+
+typedef struct {
+  int kind;
+  int size;              // bytes of a packet
+  bool waiting;          // whether the packet was waiting when the thread asked for it
+  uint64_t receiveUs;    // what the receive call takes on the test clock
+  uint64_t extraWorkUs;  // what the RTP queue takes for it on top of workUs
+  int socketCalls;       // the calls that recvUdpSocketNoWait() reports
+  int error;             // the errno of an error
+} ENTRY;
+
+#define MAX_ENTRIES 32768
+static ENTRY script[MAX_ENTRIES];
+static int scriptLength;
+static int scriptPosition;
+
+static void addEntry(int kind, int size, bool waiting, uint64_t receiveUs, int socketCalls, int error) {
+  CHECK(scriptLength < MAX_ENTRIES);
+  if (scriptLength >= MAX_ENTRIES) {
+    return;
+  }
+  ENTRY* entry = &script[scriptLength++];
+  entry->kind = kind;
+  entry->size = size;
+  entry->waiting = waiting;
+  entry->receiveUs = receiveUs;
+  entry->extraWorkUs = 0;
+  entry->socketCalls = socketCalls;
+  entry->error = error;
+}
+
+static void addPacket(int size, bool waiting, uint64_t receiveUs, int socketCalls) {
+  addEntry(ENTRY_PACKET, size, waiting, receiveUs, socketCalls, 0);
+}
+
+static void addTimeouts(int count, uint64_t receiveUs) {
+  for (int i = 0; i < count; i++) {
+    // A poll() timeout after a read that found nothing, for a socket that never waits
+    addEntry(ENTRY_TIMEOUT, 0, false, receiveUs, 2, 0);
+  }
+}
+
+// ---- The samples ----
+
+// The receives that the receive thread samples, with the gaps of nextVideoReceiveSampleGap() from its seed (the first
+// receive is 1)
+#define MAX_SAMPLES 1024
+static int samples[MAX_SAMPLES];
+static int sampleCount;
+
+static void computeSamples(int receives) {
+  uint32_t state = VIDEO_RECV_SAMPLE_SEED;
+  uint32_t next = nextVideoReceiveSampleGap(&state);
+  sampleCount = 0;
+  while ((int)next <= receives && sampleCount < MAX_SAMPLES) {
+    samples[sampleCount++] = (int)next;
+    next += nextVideoReceiveSampleGap(&state);
+  }
+}
+
+static bool isSample(int receive) {
+  for (int i = 0; i < sampleCount; i++) {
+    if (samples[i] == receive) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The first sampled receive from `from` on, or -1
+static int sampleFrom(int from) {
+  for (int i = 0; i < sampleCount; i++) {
+    if (samples[i] >= from) {
+      return samples[i];
+    }
+  }
+  return -1;
+}
+
+// ---- The stand-ins ----
+
+// The test clock: a read returns the time and moves it on by clockStepUs
+static uint64_t clockNowUs;
+static uint64_t clockStepUs;
+// What the RTP queue takes for a packet, and the poll() without a timeout of a sample
+static uint64_t workUs;
+static uint64_t pollUs;
+
+uint64_t PltGetMicroseconds(void) {
+  const uint64_t now = clockNowUs;
+  clockNowUs += clockStepUs;
+  return now;
+}
+uint64_t PltGetMillis(void) {
+  return 0;
+}
+
+// What happened at the start and the stop, in order, e.g. "bind:1000 timeout:1000 create:VideoRecv"
+static char events[1024];
+
+static void event(const char* name, const char* detail) {
+  if (events[0] != 0) {
+    strncat(events, " ", sizeof(events) - strlen(events) - 1);
+  }
+  strncat(events, name, sizeof(events) - strlen(events) - 1);
+  if (detail != NULL) {
+    strncat(events, ":", sizeof(events) - strlen(events) - 1);
+    strncat(events, detail, sizeof(events) - strlen(events) - 1);
+  }
+}
+
+static void socketEvent(const char* name, long long s) {
+  char detail[24];
+  snprintf(detail, sizeof(detail), "%lld", s);
+  event(name, detail);
+}
+
+static void checkEvents(const char* expected) {
+  if (strcmp(events, expected) != 0) {
+    printf("  # expected the events: %s\n", expected);
+  }
+  CHECK(strcmp(events, expected) == 0);
+}
+
+#define FIRST_SOCKET 1000
+#define NO_WAIT_SOCKET 1001
+
+// The sockets: whether the first one takes a receive timeout, whether a socket that never waits can be made, and
+// what each call got
+static bool timeoutWorks;
+static bool noWaitWorks;
+static int bindCalls;
+static int bindNoWaitCalls;
+static int bindFamily[2];
+static struct sockaddr_storage* bindLocalAddr[2];
+static SOCKADDR_LEN bindAddrLen[2];
+static int bindBufferSize[2];
+static int bindQosType[2];
+static int timeoutCalls;
+static int timeoutCallsOnFirst;
+static int closeCalls;
+static int closedSocket;
+
+SOCKET bindUdpSocket(int addressFamily, struct sockaddr_storage* localAddr, SOCKADDR_LEN addrLen, int bufferSize,
+                     int socketQosType) {
+  bindCalls++;
+  bindFamily[0] = addressFamily;
+  bindLocalAddr[0] = localAddr;
+  bindAddrLen[0] = addrLen;
+  bindBufferSize[0] = bufferSize;
+  bindQosType[0] = socketQosType;
+  socketEvent("bind", FIRST_SOCKET);
+  return FIRST_SOCKET;
+}
+SOCKET bindUdpSocketNoWait(int addressFamily, struct sockaddr_storage* localAddr, SOCKADDR_LEN addrLen, int bufferSize,
+                           int socketQosType) {
+  bindNoWaitCalls++;
+  bindFamily[1] = addressFamily;
+  bindLocalAddr[1] = localAddr;
+  bindAddrLen[1] = addrLen;
+  bindBufferSize[1] = bufferSize;
+  bindQosType[1] = socketQosType;
+  socketEvent("nowait", noWaitWorks ? NO_WAIT_SOCKET : -1);
+  return noWaitWorks ? NO_WAIT_SOCKET : INVALID_SOCKET;
+}
+void closeSocket(SOCKET s) {
+  closeCalls++;
+  closedSocket = s;
+  socketEvent("close", s);
+}
+int setNonFatalRecvTimeoutMs(SOCKET s, int timeoutMs) {
+  CHECK_EQ_INT(timeoutMs, UDP_RECV_POLL_TIMEOUT_MS);
+  timeoutCalls++;
+  if (s == FIRST_SOCKET) {
+    timeoutCallsOnFirst++;
+  }
+  socketEvent("timeout", s);
+  return timeoutWorks ? 0 : -1;
+}
+int wakeUdpSocketReader(SOCKET s) {
+  socketEvent("wake", s);
+  return 0;
+}
+SOCKET connectTcpSocket(struct sockaddr_storage* dstaddr, SOCKADDR_LEN addrlen, unsigned short port, int timeoutSec) {
+  (void)dstaddr;
+  (void)addrlen;
+  (void)port;
+  (void)timeoutSec;
+  CHECK(false);
+  return INVALID_SOCKET;
+}
+void shutdownTcpSocket(SOCKET s) {
+  (void)s;
+}
+
+// The receive calls of the script
+static int recvCalls;
+static int recvCallsWithSelect;
+static int recvCallsWithAddress;
+static int recvCallsOnOtherSocket;
+static int noWaitCalls;
+static int noWaitCallsOnOtherSocket;
+static char* lastReceiveBuffer;
+static int lastReceiveSize;
+// The bytes before the RTP header of a packet (the header of encrypted video)
+static int rtpOffset;
+
+// The next entry of the script into the buffer: the size of the packet, 0 for a timeout, -1 with errno for an error
+static int serve(char* buffer, int size, bool* waiting, int* socketCalls) {
+  CHECK(scriptPosition < scriptLength);
+  if (scriptPosition >= scriptLength) {
+    *waiting = false;
+    *socketCalls = 1;
+    return 0;
+  }
+  const ENTRY* entry = &script[scriptPosition++];
+  receiveCalls++;
+  lastReceiveBuffer = buffer;
+  lastReceiveSize = size;
+  clockNowUs += entry->receiveUs;
+  *waiting = entry->waiting;
+  *socketCalls = entry->socketCalls;
+  if (entry->kind == ENTRY_ERROR) {
+    errno = entry->error;
+    return -1;
+  }
+  if (entry->kind == ENTRY_TIMEOUT) {
+    return 0;
+  }
+  CHECK(entry->size <= size);
+  CHECK(entry->size >= rtpOffset + (int)sizeof(RTP_PACKET));
+  memset(buffer, 0, (size_t)entry->size);
+  PRTP_PACKET rtp = (PRTP_PACKET)&buffer[rtpOffset];
+  rtp->header = 0x90;
+  rtp->packetType = 96;
+  rtp->sequenceNumber = BE16((uint16_t)scriptPosition);
+  return entry->size;
+}
+
+int recvUdpSocket(SOCKET s, char* buffer, int size, bool useSelect, struct sockaddr_storage* remoteAddr,
+                  SOCKADDR_LEN* addrLen) {
+  bool waiting;
+  int socketCalls;
+  recvCalls++;
+  if (useSelect) {
+    recvCallsWithSelect++;
+  }
+  if (remoteAddr != NULL || addrLen != NULL) {
+    recvCallsWithAddress++;
+  }
+  if (s != FIRST_SOCKET) {
+    recvCallsOnOtherSocket++;
+  }
+  return serve(buffer, size, &waiting, &socketCalls);
+}
+int recvUdpSocketNoWait(SOCKET s, char* buffer, int size, bool* waited, int* socketCalls) {
+  bool waiting;
+  noWaitCalls++;
+  if (s != NO_WAIT_SOCKET) {
+    noWaitCallsOnOtherSocket++;
+  }
+  const int result = serve(buffer, size, &waiting, socketCalls);
+  *waited = !waiting;
+  return result;
+}
+
+// The poll() without a timeout of a sample: readable when the packet of the next receive is waiting, or what the case
+// sets for its first calls (a failure, or an error of the socket without a packet)
+#define POLL_AS_SCRIPTED 0
+#define POLL_FAILS 1
+#define POLL_SOCKET_ERROR 2
+static int pollCalls;
+static int pollAtReceive[MAX_SAMPLES];
+static int pollOutcome[16];
+static bool pollAlwaysFails;
+
+int pollSockets(struct pollfd* pollFds, int pollFdsCount, int timeoutMs) {
+  CHECK_EQ_INT(pollFdsCount, 1);
+  CHECK_EQ_INT(timeoutMs, 0);
+  CHECK_EQ_INT(pollFds[0].fd, FIRST_SOCKET);
+  CHECK_EQ_INT(pollFds[0].events, POLLIN);
+  const int outcome = pollAlwaysFails ? POLL_FAILS : pollCalls < 16 ? pollOutcome[pollCalls] : POLL_AS_SCRIPTED;
+  if (pollCalls < MAX_SAMPLES) {
+    pollAtReceive[pollCalls] = receiveCalls + 1;
+  }
+  pollCalls++;
+  clockNowUs += pollUs;
+  if (outcome == POLL_FAILS) {
+    errno = EINVAL;
+    return -1;
+  }
+  if (outcome == POLL_SOCKET_ERROR) {
+    pollFds[0].revents = POLLERR;
+    return 1;
+  }
+  const bool readable = scriptPosition < scriptLength && script[scriptPosition].kind == ENTRY_PACKET &&
+                        script[scriptPosition].waiting;
+  pollFds[0].revents = readable ? POLLIN : 0;
+  return readable ? 1 : 0;
+}
+
+// The threads: created but never run (one can fail); the receive thread ends once the script is used up
+static ThreadEntry receiveEntry;
+static int receiveThreadsCreated;
+static const char* failingThread;
+
+int PltCreateThread(const char* name, ThreadEntry entry, void* context, PLT_THREAD* thread) {
+  (void)context;
+  (void)thread;
+  if (failingThread != NULL && strcmp(name, failingThread) == 0) {
+    event("fail", name);
+    return -1;
+  }
+  if (strcmp(name, "VideoRecv") == 0) {
+    receiveEntry = entry;
+    receiveThreadsCreated++;
+  }
+  event("create", name);
+  return 0;
+}
+void PltInterruptThread(PLT_THREAD* thread) {
+  (void)thread;
+}
+void PltJoinThread(PLT_THREAD* thread) {
+  if (thread == &receiveThread) {
+    event("join", "VideoRecv");
+  }
+}
+bool PltIsThreadInterrupted(PLT_THREAD* thread) {
+  (void)thread;
+  return scriptPosition >= scriptLength;
+}
+void PltSleepMsInterruptible(PLT_THREAD* thread, int ms) {
+  (void)thread;
+  (void)ms;
+}
+
+// The decryption hands the ciphertext over unchanged
+static PLT_CRYPTO_CONTEXT cryptoContext;
+static int decryptCalls;
+static unsigned char* lastDecryptInput;
+static unsigned char* lastDecryptOutput;
+
+PPLT_CRYPTO_CONTEXT PltCreateCryptoContext(void) {
+  return &cryptoContext;
+}
+void PltDestroyCryptoContext(PPLT_CRYPTO_CONTEXT ctx) {
+  (void)ctx;
+}
+bool PltDecryptMessage(PPLT_CRYPTO_CONTEXT ctx, int algorithm, int flags, unsigned char* key, int keyLength,
+                       unsigned char* iv, int ivLength, unsigned char* tag, int tagLength, unsigned char* inputData,
+                       int inputDataLength, unsigned char* outputData, int* outputDataLength) {
+  (void)ctx;
+  (void)algorithm;
+  (void)flags;
+  (void)key;
+  (void)keyLength;
+  (void)iv;
+  (void)ivLength;
+  (void)tag;
+  (void)tagLength;
+  decryptCalls++;
+  lastDecryptInput = inputData;
+  lastDecryptOutput = outputData;
+  memcpy(outputData, inputData, (size_t)inputDataLength);
+  *outputDataLength = inputDataLength;
+  return true;
+}
+
+// The RTP queue takes workUs (and the extra work of the entry) for a packet and keeps it (here: frees it)
+static int queuedPackets;
+static int lastQueuedLength;
+static char* lastQueuedPacket;
+
+void RtpvInitializeQueue(PRTP_VIDEO_QUEUE queue) {
+  (void)queue;
+}
+void RtpvCleanupQueue(PRTP_VIDEO_QUEUE queue) {
+  (void)queue;
+}
+int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_QUEUE_ENTRY packetEntry) {
+  (void)queue;
+  (void)packetEntry;
+  clockNowUs += workUs + (scriptPosition > 0 ? script[scriptPosition - 1].extraWorkUs : 0);
+  queuedPackets++;
+  lastQueuedLength = length;
+  lastQueuedPacket = (char*)packet;
+  free(packet);
+  return RTPF_RET_QUEUED;
+}
+uint32_t RtpvGetCurrentFrameNumber(PRTP_VIDEO_QUEUE queue) {
+  (void)queue;
+  return 0;
+}
+void initializeVideoDepacketizer(int pktSize) {
+  (void)pktSize;
+}
+void destroyVideoDepacketizer(void) {
+}
+void stopVideoDepacketizer(void) {
+}
+bool LiWaitForNextVideoFrame(VIDEO_FRAME_HANDLE* frameHandle, PDECODE_UNIT* decodeUnit) {
+  (void)frameHandle;
+  (void)decodeUnit;
+  return false;
+}
+void LiCompleteVideoFrame(VIDEO_FRAME_HANDLE handle, int drStatus) {
+  (void)handle;
+  (void)drStatus;
+}
+
+// The renderer and the listener
+static int rendererSetup(int videoFormat, int width, int height, int redrawRate, void* context, int drFlags) {
+  (void)videoFormat;
+  (void)width;
+  (void)height;
+  (void)redrawRate;
+  (void)context;
+  (void)drFlags;
+  return 0;
+}
+static void rendererStart(void) {
+  event("start", NULL);
+}
+static void rendererStop(void) {
+}
+static void rendererCleanup(void) {
+}
+static int terminations;
+static int terminationError;
+static int terminationReceiveCalls;
+static void connectionTerminated(int errorCode) {
+  terminations++;
+  terminationError = errorCode;
+  terminationReceiveCalls = receiveCalls;
+}
+
+// ---- A stream ----
+
+#define PACKET_SIZE 1392
+// A packet of the full size as the socket gets it (the RTP header and the payload of StreamConfig.packetSize)
+#define FULL_PACKET (PACKET_SIZE + MAX_RTP_HEADER_SIZE)
+
+static void resetStream(void) {
+  memset(lines, 0, sizeof(lines));
+  lineCount = 0;
+  memset(events, 0, sizeof(events));
+  scriptLength = 0;
+  scriptPosition = 0;
+  clockNowUs = 1000000;
+  clockStepUs = 1;
+  workUs = 30;
+  pollUs = 7;
+  timeoutWorks = true;
+  noWaitWorks = true;
+  bindCalls = 0;
+  bindNoWaitCalls = 0;
+  timeoutCalls = 0;
+  timeoutCallsOnFirst = 0;
+  closeCalls = 0;
+  closedSocket = -1;
+  recvCalls = 0;
+  recvCallsWithSelect = 0;
+  recvCallsWithAddress = 0;
+  recvCallsOnOtherSocket = 0;
+  noWaitCalls = 0;
+  noWaitCallsOnOtherSocket = 0;
+  pollCalls = 0;
+  memset(pollOutcome, 0, sizeof(pollOutcome));
+  pollAlwaysFails = false;
+  receiveCalls = 0;
+  lastReceiveBuffer = NULL;
+  lastReceiveSize = 0;
+  rtpOffset = 0;
+  decryptCalls = 0;
+  queuedPackets = 0;
+  receiveEntry = NULL;
+  receiveThreadsCreated = 0;
+  failingThread = NULL;
+  terminations = 0;
+  terminationError = 0;
+  terminationReceiveCalls = -1;
+  memset(&ListenerCallbacks, 0, sizeof(ListenerCallbacks));
+  ListenerCallbacks.logMessage = captureLine;
+  ListenerCallbacks.connectionTerminated = connectionTerminated;
+  memset(&VideoCallbacks, 0, sizeof(VideoCallbacks));
+  VideoCallbacks.setup = rendererSetup;
+  VideoCallbacks.start = rendererStart;
+  VideoCallbacks.stop = rendererStop;
+  VideoCallbacks.cleanup = rendererCleanup;
+  VideoCallbacks.capabilities = 0;
+  memset(&StreamConfig, 0, sizeof(StreamConfig));
+  StreamConfig.packetSize = PACKET_SIZE;
+  StreamConfig.width = 3840;
+  StreamConfig.height = 2160;
+  StreamConfig.fps = 60;
+  memset(&RemoteAddr, 0, sizeof(RemoteAddr));
+  RemoteAddr.ss_family = AF_INET;
+  memset(&LocalAddr, 0, sizeof(LocalAddr));
+  LocalAddr.ss_family = AF_INET;
+  AddrLen = sizeof(struct sockaddr_in);
+  // A host of GFE 7 and later: no TCP socket for the first frame
+  AppVersionQuad[0] = 7;
+  NegotiatedVideoFormat = VIDEO_FORMAT_H264;
+  EncryptionFeaturesEnabled = 0;
+  VideoPortNumber = 47998;
+  computeSamples(MAX_ENTRIES);
+}
+
+// The start up to the threads, the receive thread on this thread until the script is used up (or it ends the stream),
+// and the stop
+static void runStream(void) {
+  initializeVideoStream();
+  CHECK_EQ_INT(startVideoStream(NULL, 0), 0);
+  CHECK_EQ_INT(receiveThreadsCreated, 1);
+  if (receiveEntry != NULL) {
+    event("run", NULL);
+    receiveEntry(NULL);
+  }
+  event("stop", NULL);
+  stopVideoStream();
+  destroyVideoStream();
+  if (test_current_failed) {
+    printf("  # events: %s\n", events);
+    printLines();
+  }
+}
+
+// The stream line as the receive thread is to log it, from the figures of the script: the packets and their bytes,
+// the socket calls of the receives, the checked packets and those of them that were waiting, the time to read a
+// waiting packet and of the other work per packet (without a clock read), and the time of a clock read; the rate with
+// the IP header of the family of the host and the UDP header
+static void expectedStreamLine(char* text, size_t size, unsigned int seconds, unsigned long long packets,
+                               unsigned long long bytes, unsigned long long socketCalls, unsigned long long checked,
+                               unsigned long long checkedWaiting, double readUs, double otherUs, double clockUs) {
+  const unsigned int waiting = (unsigned int)((checkedWaiting * 100 + checked / 2) / checked);
+  const unsigned int headers = (RemoteAddr.ss_family == AF_INET6 ? 40 : 20) + 8;
+  const double mbps = ((double)bytes / (double)packets + headers) * 8 / (readUs + otherUs);
+  snprintf(text, size,
+           "Video receive of the stream, %u s: %llu packets, %.2f socket calls each, %u%% were waiting; %.1f us to read "
+           "a waiting packet, %.1f us of other work per packet: up to %u Mbps; clock read %.1f us\n",
+           seconds, packets, (double)socketCalls / (double)packets, waiting, readUs, otherUs,
+           (unsigned int)(mbps + 0.5), clockUs);
+}
+
+// The line of the poll() calls of the samples
+static void expectedCheckLine(char* text, size_t size, int polls, double pollTimeUs, int failed) {
+  snprintf(text, size, "Video receive check of the stream: %d calls of poll() without a timeout, %.1f us each, %d failed\n",
+           polls, pollTimeUs, failed);
+}
+
+// ---- The tests ----
+
+static void test_the_samples_fall_about_every_64th_receive_at_gaps_that_vary(void) {
+  // The gaps of nextVideoReceiveSampleGap(): from 48 to 79 receives, each of them, about 64 on average
+  uint32_t state = VIDEO_RECV_SAMPLE_SEED;
+  int seen[32] = { 0 };
+  unsigned long long sum = 0;
+  int outside = 0;
+  for (int i = 0; i < 100000; i++) {
+    const uint32_t gap = nextVideoReceiveSampleGap(&state);
+    sum += gap;
+    if (gap < 48 || gap > 79) {
+      outside++;
+    }
+    else {
+      seen[gap - 48]++;
+    }
+  }
+  CHECK_EQ_INT(outside, 0);
+  for (int i = 0; i < 32; i++) {
+    // each about 3125 times
+    CHECK(seen[i] > 2500 && seen[i] < 3750);
+  }
+  CHECK(sum >= 6330000ULL && sum <= 6370000ULL);
+  // Of 100 gaps in a row, no gap repeats more than a few times in a row
+  state = VIDEO_RECV_SAMPLE_SEED;
+  uint32_t last = 0;
+  int run = 0;
+  int longestRun = 0;
+  for (int i = 0; i < 100; i++) {
+    const uint32_t gap = nextVideoReceiveSampleGap(&state);
+    run = gap == last ? run + 1 : 1;
+    longestRun = run > longestRun ? run : longestRun;
+    last = gap;
+  }
+  CHECK(longestRun <= 3);
+
+  // Frames that all have the same number of packets, the last of which costs the depacketizer pass (1000 us in all,
+  // 30 us for the others): the other work per packet of the samples is the average of the frame, whatever the size of
+  // the frame (with a sample at every 64th receive it would be that of one packet of the frame: 1000 us for frames of
+  // 64 packets, 222 us for frames of 320)
+  const int frameSizes[3] = { 64, 320, 288 };
+  for (int f = 0; f < 3; f++) {
+    resetStream();
+    const int frame = frameSizes[f];
+    const int packets = (32000 / frame) * frame;
+    for (int i = 1; i <= packets; i++) {
+      addPacket(FULL_PACKET, true, 5, 1);
+      if (i % frame == 0) {
+        script[scriptLength - 1].extraWorkUs = 1000 - workUs;
+      }
+    }
+    runStream();
+    const double average = ((frame - 1) * (double)workUs + 1000) / frame;
+    const int stream = findLine(STREAM_LINE);
+    CHECK(stream >= 0);
+    if (stream >= 0) {
+      const double measured = numberBefore(lines[stream], " us of other work per packet");
+      if (!(measured > average * 0.85 && measured < average * 1.15)) {
+        printf("  # frames of %d packets: %.1f us of other work measured, %.1f us on average\n", frame, measured,
+               average);
+      }
+      CHECK(measured > average * 0.85 && measured < average * 1.15);
+    }
+  }
+}
+
+static void test_timeout_mode_reads_each_packet_with_one_recvfrom_and_samples_about_every_64th(void) {
+  for (int ipv6 = 0; ipv6 <= 1; ipv6++) {
+    resetStream();
+    if (ipv6) {
+      RemoteAddr.ss_family = AF_INET6;
+      LocalAddr.ss_family = AF_INET6;
+      AddrLen = sizeof(struct sockaddr_in6);
+    }
+    for (int i = 0; i < 256; i++) {
+      addPacket(FULL_PACKET, true, 5, 1);
+    }
+    runStream();
+    CHECK_EQ_INT(recvCalls, 256);
+    CHECK_EQ_INT(recvCallsWithSelect, 0);
+    CHECK_EQ_INT(recvCallsWithAddress, 0);
+    CHECK_EQ_INT(recvCallsOnOtherSocket, 0);
+    CHECK_EQ_INT(noWaitCalls, 0);
+    CHECK_EQ_INT(queuedPackets, 256);
+    // The poll() without a timeout comes before the sampled receives only (55, 114, 178 and 248)
+    computeSamples(256);
+    CHECK_EQ_INT(pollCalls, sampleCount);
+    CHECK_EQ_INT(sampleCount, 4);
+    for (int i = 0; i < sampleCount && i < pollCalls; i++) {
+      CHECK_EQ_INT(pollAtReceive[i], samples[i]);
+    }
+    // The socket takes the timeout: no socket that never waits, the thread sets the timeout once more, and the stop
+    // joins the thread without waking it
+    CHECK_EQ_INT(bindNoWaitCalls, 0);
+    CHECK_EQ_INT(timeoutCalls, 2);
+    CHECK_EQ_INT(timeoutCallsOnFirst, 2);
+    CHECK_EQ_INT(countLines(POLL_LINE), 0);
+    checkEvents("bind:1000 timeout:1000 start create:VideoRecv create:VideoDec create:VideoPing run timeout:1000 stop "
+                "join:VideoRecv close:1000");
+    // The mode first, the stream at the end, then the poll() calls of the samples
+    const int mode = findLine(MODE_TIMEOUT);
+    const int stream = findLine(STREAM_LINE);
+    CHECK(mode >= 0);
+    CHECK(stream > mode);
+    CHECK_EQ_INT(findLine(CHECK_LINE), stream + 1);
+    CHECK_EQ_INT(countLines("Video receive mode: "), 1);
+    CHECK_EQ_INT(countLines(STREAM_LINE), 1);
+    CHECK_EQ_INT(countLines(MINUTE_LINE), 0);
+    CHECK_EQ_INT(countLines(CHECK_FAILED_LINE), 0);
+    // 5 us to read each packet (the 7 us of the poll() before it don't count), the 30 us of the queue, a clock read of
+    // 1 us; up to (1408 + 28) * 8 / 35 Mbps, over IPv6 (1408 + 48) * 8 / 35 Mbps
+    char expected[512];
+    expectedStreamLine(expected, sizeof(expected), 1, 256, 256ULL * FULL_PACKET, 256, 4, 4, 5, (double)workUs,
+                       (double)clockStepUs);
+    checkLine(expected);
+    checkLine(ipv6 ? "Video receive of the stream, 1 s: 256 packets, 1.00 socket calls each, 100% were waiting; 5.0 us to "
+                     "read a waiting packet, 30.0 us of other work per packet: up to 333 Mbps; clock read 1.0 us\n"
+                   : "Video receive of the stream, 1 s: 256 packets, 1.00 socket calls each, 100% were waiting; 5.0 us to "
+                     "read a waiting packet, 30.0 us of other work per packet: up to 328 Mbps; clock read 1.0 us\n");
+    // Each poll() of a sample took 7 us, without the clock read
+    expectedCheckLine(expected, sizeof(expected), 4, (double)pollUs, 0);
+    checkLine(expected);
+    checkLine("Video receive check of the stream: 4 calls of poll() without a timeout, 7.0 us each, 0 failed\n");
+  }
+}
+
+static void test_the_waiting_share_comes_from_the_sample_only(void) {
+  resetStream();
+  // Four samples (55, 114, 178, 248), then no more
+  const int receives = samples[3] + 20;
+  CHECK(sampleFrom(samples[3] + 1) > receives);
+  for (int i = 1; i <= receives; i++) {
+    if (isSample(i)) {
+      // The sampled packet of the second sample was not waiting, and its receive took long (it waited for the packet)
+      addPacket(FULL_PACKET, i != samples[1], i == samples[1] ? 500 : 5, 1);
+    }
+    else {
+      // The flags of the others differ on purpose: they are not looked at
+      addPacket(FULL_PACKET, (i % 3) == 0, 5, 1);
+    }
+  }
+  runStream();
+  CHECK_EQ_INT(pollCalls, 4);
+  char expected[512];
+  // 3 of the 4 sampled packets were waiting; the time to read a waiting packet is theirs only
+  expectedStreamLine(expected, sizeof(expected), 1, (unsigned long long)receives,
+                     (unsigned long long)receives * FULL_PACKET, (unsigned long long)receives, 4, 3, 5, (double)workUs,
+                     (double)clockStepUs);
+  checkLine(expected);
+  const int stream = findLine(STREAM_LINE);
+  CHECK(stream >= 0);
+  if (stream >= 0) {
+    CHECK(strstr(lines[stream], ", 75% were waiting; 5.0 us to read a waiting packet,") != NULL);
+  }
+}
+
+static void test_a_failed_poll_leaves_a_sample_out_and_a_socket_error_is_no_packet_waiting(void) {
+  // The first poll() of a sample fails, the second answers an error of the socket (POLLERR) without a packet, the
+  // others that the packet is waiting, as every packet is
+  resetStream();
+  const int receives = samples[3] + 20;
+  for (int i = 0; i < receives; i++) {
+    addPacket(FULL_PACKET, true, 5, 1);
+  }
+  pollOutcome[0] = POLL_FAILS;
+  pollOutcome[1] = POLL_SOCKET_ERROR;
+  runStream();
+  CHECK_EQ_INT(pollCalls, 4);
+  // The failure is logged once with its error, before the receive of its sample
+  char failed[128];
+  snprintf(failed, sizeof(failed), "%s%d\n", CHECK_FAILED_LINE, EINVAL);
+  checkLine(failed);
+  CHECK_EQ_INT(countLines(CHECK_FAILED_LINE), 1);
+  const int failure = findLine(CHECK_FAILED_LINE);
+  if (failure >= 0) {
+    CHECK_EQ_INT(lineReceiveCalls[failure], samples[0] - 1);
+  }
+  // Of the three samples whose waiting is known, two were waiting; the read time is theirs only
+  char expected[512];
+  expectedStreamLine(expected, sizeof(expected), 1, (unsigned long long)receives,
+                     (unsigned long long)receives * FULL_PACKET, (unsigned long long)receives, 3, 2, 5, (double)workUs,
+                     (double)clockStepUs);
+  checkLine(expected);
+  // The failed poll() is timed and counted too
+  checkLine("Video receive check of the stream: 4 calls of poll() without a timeout, 7.0 us each, 1 failed\n");
+
+  // A poll() that fails every time leaves the share unknown instead of showing that no packet was waiting
+  resetStream();
+  for (int i = 0; i < receives; i++) {
+    addPacket(FULL_PACKET, true, 5, 1);
+  }
+  pollAlwaysFails = true;
+  runStream();
+  CHECK_EQ_INT(countLines(CHECK_FAILED_LINE), 1);
+  const int stream = findLine(STREAM_LINE);
+  CHECK(stream >= 0);
+  if (stream >= 0) {
+    CHECK(strstr(lines[stream], " packets, 1.00 socket calls each, n/a% were waiting; n/a us to read a waiting packet, "
+                                "30.0 us of other work per packet: up to n/a Mbps; clock read 1.0 us\n") != NULL);
+  }
+  checkLine("Video receive check of the stream: 4 calls of poll() without a timeout, 7.0 us each, 4 failed\n");
+}
+
+static void test_poll_mode_when_no_socket_that_never_waits_can_be_made(void) {
+  resetStream();
+  timeoutWorks = false;
+  noWaitWorks = false;
+  for (int i = 0; i < 128; i++) {
+    addPacket(FULL_PACKET, true, 5, 2);
+  }
+  // A pause of 2 s: a poll() that timed out is one socket call
+  addTimeouts(20, 100000);
+  runStream();
+  // The first socket stays, and is closed at the stop only, which doesn't wake the thread
+  CHECK_EQ_INT(bindNoWaitCalls, 1);
+  checkEvents("bind:1000 timeout:1000 nowait:-1 start create:VideoRecv create:VideoDec create:VideoPing run "
+              "timeout:1000 stop join:VideoRecv close:1000");
+  CHECK_EQ_INT(closeCalls, 1);
+  CHECK_EQ_INT(closedSocket, FIRST_SOCKET);
+  // poll() before each receive, as before
+  CHECK_EQ_INT(recvCalls, 148);
+  CHECK_EQ_INT(recvCallsWithSelect, 148);
+  CHECK_EQ_INT(noWaitCalls, 0);
+  computeSamples(148);
+  CHECK_EQ_INT(pollCalls, sampleCount);
+  // (the samples fall on packets)
+  CHECK(sampleCount > 0 && samples[sampleCount - 1] <= 128);
+  const int unsupported = findLine(POLL_LINE);
+  CHECK(unsupported >= 0);
+  CHECK_EQ_INT(findLine(MODE_POLL), unsupported + 1);
+  const int stream = findLine(STREAM_LINE);
+  CHECK(stream >= 0);
+  if (stream >= 0) {
+    // 2 calls for each of the 128 packets, 1 for each of the 20 timeouts
+    CHECK(strstr(lines[stream], " 128 packets, 2.16 socket calls each, 100% were waiting;") != NULL);
+  }
+  char expected[512];
+  expectedStreamLine(expected, sizeof(expected), 2, 128, 128ULL * FULL_PACKET, 2 * 128 + 20,
+                     (unsigned long long)sampleCount, (unsigned long long)sampleCount, 5, (double)workUs,
+                     (double)clockStepUs);
+  checkLine(expected);
+  expectedCheckLine(expected, sizeof(expected), sampleCount, (double)pollUs, 0);
+  checkLine(expected);
+}
+
+static void test_back_to_back_mode_replaces_the_socket_before_the_threads_start(void) {
+  resetStream();
+  timeoutWorks = false;
+  // Bursts of 10 packets: the first of each waited (a read that found nothing, poll() and the read), the others were
+  // waiting and took one read. The packet of the first sample waited too (and its receive took long), that of the
+  // second was waiting.
+  const int packets = 200;
+  int waitedPackets = 0;
+  int socketCalls = 0;
+  for (int receive = 1; receive <= packets; receive++) {
+    const bool waited = (receive % 10 == 1 && receive != samples[1]) || receive == samples[0];
+    waitedPackets += waited ? 1 : 0;
+    socketCalls += waited ? 3 : 1;
+    addPacket(FULL_PACKET, !waited, receive == samples[0] ? 900 : 5, waited ? 3 : 1);
+  }
+  runStream();
+  // The socket that never waits is bound like the first one, and replaces it before any thread starts
+  CHECK_EQ_INT(bindCalls, 1);
+  CHECK_EQ_INT(bindNoWaitCalls, 1);
+  CHECK_EQ_INT(bindFamily[1], bindFamily[0]);
+  CHECK_EQ_INT(bindFamily[1], AF_INET);
+  CHECK(bindLocalAddr[1] == &LocalAddr);
+  CHECK(bindLocalAddr[0] == &LocalAddr);
+  CHECK_EQ_INT(bindAddrLen[1], bindAddrLen[0]);
+  CHECK_EQ_INT(bindAddrLen[1], AddrLen);
+  CHECK_EQ_INT(bindBufferSize[1], bindBufferSize[0]);
+  CHECK_EQ_INT(bindBufferSize[1], 2048 * (1392 + 16));
+  CHECK_EQ_INT(bindQosType[1], bindQosType[0]);
+  CHECK_EQ_INT(bindQosType[1], SOCK_QOS_TYPE_VIDEO);
+  // The receive thread sets no timeout on it and reads it only with recvUdpSocketNoWait(), without the poll() of a
+  // sample; the stop wakes the thread before it joins it
+  checkEvents("bind:1000 timeout:1000 nowait:1001 close:1000 start create:VideoRecv create:VideoDec create:VideoPing run "
+              "stop wake:1001 join:VideoRecv close:1001");
+  CHECK_EQ_INT(timeoutCalls, 1);
+  CHECK_EQ_INT(recvCalls, 0);
+  CHECK_EQ_INT(pollCalls, 0);
+  CHECK_EQ_INT(noWaitCalls, packets);
+  CHECK_EQ_INT(noWaitCallsOnOtherSocket, 0);
+  CHECK_EQ_INT(queuedPackets, packets);
+  CHECK_EQ_INT(countLines(POLL_LINE), 0);
+  CHECK(findLine(MODE_NO_WAIT) >= 0);
+  CHECK_EQ_INT(countLines("Video receive mode: "), 1);
+  CHECK_EQ_INT(countLines(CHECK_LINE), 0);
+  // Every packet tells whether it was waiting; only the sampled packets that were waiting count for the read time
+  CHECK(script[samples[0] - 1].waiting == false);
+  CHECK(script[samples[1] - 1].waiting == true);
+  char expected[512];
+  expectedStreamLine(expected, sizeof(expected), 1, (unsigned long long)packets,
+                     (unsigned long long)packets * FULL_PACKET, (unsigned long long)socketCalls,
+                     (unsigned long long)packets, (unsigned long long)(packets - waitedPackets), 5, (double)workUs,
+                     (double)clockStepUs);
+  checkLine(expected);
+}
+
+static void test_the_receive_thread_is_woken_before_each_join_when_it_reads_a_socket_that_never_waits(void) {
+  // A start that fails after the receive thread started: the decoder thread, then the ping thread can't be created
+  const char* const threads[2] = { "VideoDec", "VideoPing" };
+  const char* const noWait[2] = {
+    "bind:1000 timeout:1000 nowait:1001 close:1000 start create:VideoRecv fail:VideoDec wake:1001 join:VideoRecv close:1001",
+    "bind:1000 timeout:1000 nowait:1001 close:1000 start create:VideoRecv create:VideoDec fail:VideoPing wake:1001 "
+    "join:VideoRecv close:1001",
+  };
+  const char* const withTimeout[2] = {
+    "bind:1000 timeout:1000 start create:VideoRecv fail:VideoDec join:VideoRecv close:1000",
+    "bind:1000 timeout:1000 start create:VideoRecv create:VideoDec fail:VideoPing join:VideoRecv close:1000",
+  };
+  for (int t = 0; t < 2; t++) {
+    for (int mode = 0; mode < 2; mode++) {
+      resetStream();
+      timeoutWorks = mode == 0;
+      failingThread = threads[t];
+      initializeVideoStream();
+      CHECK_EQ_INT(startVideoStream(NULL, 0), -1);
+      destroyVideoStream();
+      checkEvents(mode == 0 ? withTimeout[t] : noWait[t]);
+    }
+  }
+}
+
+static void test_the_first_packet_limit_is_unchanged_in_every_mode(void) {
+  // The receive timeout, poll() before each receive, the socket that never waits
+  const char* const modeLines[3] = { MODE_TIMEOUT, MODE_POLL, MODE_NO_WAIT };
+  for (int mode = 0; mode < 3; mode++) {
+    resetStream();
+    timeoutWorks = mode == 0;
+    noWaitWorks = mode == 2;
+    // 100 receives of 100 ms without a packet are the 10 s of the limit; the rest is never asked for
+    addTimeouts(120, 100000);
+    runStream();
+    CHECK_EQ_INT(terminations, 1);
+    CHECK_EQ_INT(terminationError, ML_ERROR_NO_VIDEO_TRAFFIC);
+    CHECK_EQ_INT(terminationReceiveCalls, 100);
+    CHECK_EQ_INT(receiveCalls, 100);
+    CHECK_EQ_INT(mode == 2 ? noWaitCalls : recvCalls, 100);
+    CHECK(hasLine("Terminating connection due to lack of video traffic\n"));
+    CHECK(hasLine("No video traffic was ever received from the host!\n"));
+    // No packet, so no line of a minute, of the stream or of the samples
+    CHECK_EQ_INT(countLines(STREAM_LINE), 0);
+    CHECK_EQ_INT(countLines(MINUTE_LINE), 0);
+    CHECK_EQ_INT(countLines(CHECK_LINE), 0);
+    CHECK(findLine(modeLines[mode]) >= 0);
+  }
+}
+
+static void test_an_error_ends_the_loop_and_still_sums_the_stream_up(void) {
+  for (int noWait = 0; noWait <= 1; noWait++) {
+    resetStream();
+    timeoutWorks = noWait == 0;
+    for (int i = 0; i < 70; i++) {
+      addPacket(FULL_PACKET, true, 5, 1);
+    }
+    addEntry(ENTRY_ERROR, 0, false, 5, 1, ENETDOWN);
+    // Never read: the error ended the loop
+    for (int i = 0; i < 5; i++) {
+      addPacket(FULL_PACKET, true, 5, 1);
+    }
+    runStream();
+    CHECK_EQ_INT(terminations, 1);
+    CHECK_EQ_INT(terminationError, ENETDOWN);
+    CHECK_EQ_INT(receiveCalls, 71);
+    CHECK_EQ_INT(queuedPackets, 70);
+    char failed[128];
+    snprintf(failed, sizeof(failed), "Video Receive: recvUdpSocket() failed: %d\n", ENETDOWN);
+    CHECK(hasLine(failed));
+    CHECK_EQ_INT(countLines(STREAM_LINE), 1);
+    const int stream = findLine(STREAM_LINE);
+    CHECK(stream > findLine(failed));
+    if (stream >= 0) {
+      CHECK(strstr(lines[stream], " 70 packets, ") != NULL);
+    }
+  }
+}
+
+static void test_the_stop_ends_the_loop_with_one_stream_line(void) {
+  resetStream();
+  for (int i = 0; i < 100; i++) {
+    addPacket(FULL_PACKET, true, 5, 1);
+  }
+  addTimeouts(20, 100000);
+  runStream();
+  CHECK_EQ_INT(terminations, 0);
+  CHECK_EQ_INT(countLines(STREAM_LINE), 1);
+  CHECK_EQ_INT(countLines(MINUTE_LINE), 0);
+  const int stream = findLine(STREAM_LINE);
+  if (stream >= 0) {
+    // Logged once the script was used up, i.e. at the stop
+    CHECK_EQ_INT(lineReceiveCalls[stream], 120);
+    // 20 timeouts of 100 ms after the 100 packets: 2 s, 1.20 calls each
+    CHECK(strncmp(lines[stream], "Video receive of the stream, 2 s: 100 packets, 1.20 socket calls each, ", 71) == 0);
+  }
+
+  // A stream with timeouts only (less than the limit) logs none
+  resetStream();
+  addTimeouts(50, 100000);
+  runStream();
+  CHECK_EQ_INT(terminations, 0);
+  CHECK_EQ_INT(countLines(STREAM_LINE), 0);
+  CHECK_EQ_INT(countLines(MINUTE_LINE), 0);
+  CHECK_EQ_INT(countLines(CHECK_LINE), 0);
+}
+
+// The lines of a minute of `packets` packets of 100 ms, which the thread waits for, followed by `timeouts` timeouts of
+// 100 ms, in timeout mode, with a clock that only the receives and the 30 us of the queue move on. The check after the
+// sampled packet p comes p * 100.03 ms after the start, the first packet 100 ms after it, so a minute ends at the first
+// sample 60 s after the start of the minute (60 s after the first packet for the first one); in the pause at the first
+// timeout 60 s after it. Returns the number of lines, each with its receive and its text.
+static int expectedMinuteLines(int packets, int timeouts, int receivesAt[2], char texts[2][256]) {
+  const uint64_t perPacketUs = 100000 + 30;
+  // First minute: from the first packet (read 100 ms after the start, before the work of the queue), so the check after
+  // the sampled packet p comes p * 100.03 ms - 100 ms after it: 59.918 s for p = 600, 60.018 s for p = 601
+  CHECK(600 * perPacketUs - 100000 < 60000000ULL && 601 * perPacketUs - 100000 >= 60000000ULL);
+  const int first = sampleFrom(601);
+  CHECK(first > 0 && first <= packets);
+  uint64_t elapsedUs = (uint64_t)first * perPacketUs - 100000;
+  receivesAt[0] = first;
+  snprintf(texts[0], 256,
+           "Video receive, last %u s: %llu packets/s, 1.00 socket calls each, 0%% were waiting; n/a us to read a waiting "
+           "packet, 30.0 us of other work per packet: up to n/a Mbps\n",
+           (unsigned int)((elapsedUs + 500000) / 1000000), (unsigned long long)first * 1000000 / elapsedUs);
+  // Second minute: at a sampled packet, or in the pause
+  const int second = sampleFrom(first + 600);
+  unsigned long long minutePackets;
+  unsigned long long minuteCalls;
+  if (second > 0 && second <= packets) {
+    receivesAt[1] = second;
+    minutePackets = (unsigned long long)(second - first);
+    minuteCalls = minutePackets;
+    elapsedUs = minutePackets * perPacketUs;
+  }
+  else {
+    const uint64_t beforePauseUs = (uint64_t)(packets - first) * perPacketUs;
+    int pause = beforePauseUs >= 60000000ULL ? 1 : (int)((60000000ULL - beforePauseUs + 99999) / 100000);
+    if (pause > timeouts) {
+      return 1;
+    }
+    receivesAt[1] = packets + pause;
+    minutePackets = (unsigned long long)(packets - first);
+    minuteCalls = minutePackets + (unsigned long long)pause;
+    elapsedUs = beforePauseUs + (uint64_t)pause * 100000;
+  }
+  snprintf(texts[1], 256,
+           "Video receive, last %u s: %llu packets/s, %.2f socket calls each, 0%% were waiting; n/a us to read a waiting "
+           "packet, 30.0 us of other work per packet: up to n/a Mbps\n",
+           (unsigned int)((elapsedUs + 500000) / 1000000), minutePackets * 1000000 / elapsedUs,
+           (double)minuteCalls / (double)minutePackets);
+  return 2;
+}
+
+static void test_a_line_each_minute_while_video_comes(void) {
+  // A packet every 100 ms, which the thread waits for, for 128 s, then 70 s without video; and for 90 s, so that the
+  // second minute ends during the pause
+  const int packetCounts[2] = { 1280, 900 };
+  for (int run = 0; run < 2; run++) {
+    resetStream();
+    clockStepUs = 0;
+    pollUs = 0;
+    const int packets = packetCounts[run];
+    for (int i = 0; i < packets; i++) {
+      addPacket(FULL_PACKET, false, 100000, 1);
+    }
+    addTimeouts(700, 100000);
+    int receivesAt[2] = { -1, -1 };
+    char texts[2][256];
+    CHECK_EQ_INT(expectedMinuteLines(packets, 700, receivesAt, texts), 2);
+    runStream();
+    CHECK_EQ_INT(countLines(MINUTE_LINE), 2);
+    const int first = findLine(MINUTE_LINE);
+    const int second = first >= 0 ? findLineFrom(first + 1, MINUTE_LINE) : -1;
+    CHECK(first >= 0);
+    CHECK(second > first);
+    // Each line in full, at its receive: a minute line with the figures of the whole stream, or a missing check on a
+    // timeout, would differ in the second one
+    for (int i = 0; i < 2; i++) {
+      const int line = i == 0 ? first : second;
+      if (line < 0) {
+        continue;
+      }
+      CHECK_EQ_INT(lineReceiveCalls[line], receivesAt[i]);
+      if (strcmp(lines[line], texts[i]) != 0) {
+        printf("  # expected the line at receive %d: %s", receivesAt[i], texts[i]);
+      }
+      CHECK(strcmp(lines[line], texts[i]) == 0);
+    }
+    if (run == 0) {
+      // The first run ends its second minute at a sampled packet, the second one in the pause
+      CHECK(receivesAt[1] <= packets);
+      CHECK(strncmp(texts[1], "Video receive, last ", 20) == 0 && strstr(texts[1], " 1.00 socket calls each, ") != NULL);
+    }
+    else {
+      CHECK(receivesAt[1] > packets);
+      CHECK(strstr(texts[1], " 1.00 socket calls each, ") == NULL);
+    }
+    // No line for the minute without packets; the stream line at the end
+    const int stream = findLine(STREAM_LINE);
+    CHECK(stream > second);
+    if (stream >= 0) {
+      CHECK_EQ_INT(lineReceiveCalls[stream], packets + 700);
+    }
+    // 1280 packets of 100.03 ms and 700 timeouts of 100 ms from the first packet on: 198 s with 1.55 calls each; 900
+    // packets: 160 s with 1.78 calls each
+    checkLine(run == 0 ? "Video receive of the stream, 198 s: 1280 packets, 1.55 socket calls each, 0% were waiting; n/a us "
+                         "to read a waiting packet, 30.0 us of other work per packet: up to n/a Mbps; clock read 0.0 us\n"
+                       : "Video receive of the stream, 160 s: 900 packets, 1.78 socket calls each, 0% were waiting; n/a us "
+                         "to read a waiting packet, 30.0 us of other work per packet: up to n/a Mbps; clock read 0.0 us\n");
+  }
+}
+
+static void test_encrypted_video_is_read_into_its_own_buffer_and_counted_as_received(void) {
+  for (int noWait = 0; noWait <= 1; noWait++) {
+    resetStream();
+    timeoutWorks = noWait == 0;
+    EncryptionFeaturesEnabled = SS_ENC_VIDEO;
+    rtpOffset = (int)sizeof(ENC_VIDEO_HEADER);
+    const int received = FULL_PACKET + (int)sizeof(ENC_VIDEO_HEADER);
+    for (int i = 0; i < 128; i++) {
+      addPacket(received, true, 5, 1);
+    }
+    runStream();
+    CHECK_EQ_INT(noWait ? noWaitCalls : recvCalls, 128);
+    // The receive gets the buffer of the encrypted packet, with room for its header
+    CHECK_EQ_INT(lastReceiveSize, 1392 + 16 + (int)sizeof(ENC_VIDEO_HEADER));
+    CHECK_EQ_INT(decryptCalls, 128);
+    CHECK(lastDecryptInput == (unsigned char*)lastReceiveBuffer + sizeof(ENC_VIDEO_HEADER));
+    CHECK(lastReceiveBuffer != lastQueuedPacket);
+    CHECK(lastDecryptOutput == (unsigned char*)lastQueuedPacket);
+    CHECK_EQ_INT(lastQueuedLength, FULL_PACKET);
+    CHECK_EQ_INT(queuedPackets, 128);
+    // The bytes are those received: up to (1440 + 28) * 8 / 35 Mbps
+    char expected[512];
+    computeSamples(128);
+    // (every packet is checked on a socket that never waits, the sampled ones otherwise)
+    expectedStreamLine(expected, sizeof(expected), 1, 128, 128ULL * (unsigned long long)received, 128,
+                       noWait ? 128 : (unsigned long long)sampleCount, noWait ? 128 : (unsigned long long)sampleCount, 5,
+                       (double)workUs, (double)clockStepUs);
+    checkLine(expected);
+    const int stream = findLine(STREAM_LINE);
+    CHECK(stream >= 0);
+    if (stream >= 0) {
+      CHECK(strstr(lines[stream], ": up to 336 Mbps;") != NULL);
+    }
+  }
+  // A plain packet is read into the buffer that goes to the queue
+  resetStream();
+  addPacket(FULL_PACKET, true, 5, 1);
+  runStream();
+  CHECK(lastReceiveBuffer == lastQueuedPacket);
+  CHECK_EQ_INT(lastReceiveSize, FULL_PACKET);
+  CHECK_EQ_INT(decryptCalls, 0);
+}
+
+static void test_the_lines_fit_the_log_and_name_no_address(void) {
+  // Every line of the receive thread that the cases above logged
+  CHECK(receiveLinesSeen >= 30);
+  CHECK_EQ_INT(receiveLinesTooLong, 0);
+  CHECK_EQ_INT(receiveLinesWithAddress, 0);
+  // and long lines of a minute, of the stream and of the samples, with the times at their clamps (the longest form of
+  // each, with every number at its largest, is measured by tests/unit/video-receive-lines.test.js)
+  resetStream();
+  clockStepUs = 0;
+  workUs = 99999999;
+  pollUs = 99999999;
+  for (int i = 0; i < 1280; i++) {
+    addPacket(FULL_PACKET, true, 99999999, 1);
+  }
+  runStream();
+  CHECK(countLines(MINUTE_LINE) >= 1);
+  CHECK_EQ_INT(countLines(STREAM_LINE), 1);
+  char expected[512];
+  computeSamples(1280);
+  expectedCheckLine(expected, sizeof(expected), sampleCount, 99999.9, 0);
+  checkLine(expected);
+  const int stream = findLine(STREAM_LINE);
+  if (stream >= 0) {
+    CHECK(strstr(lines[stream], " 100% were waiting; 99999.9 us to read a waiting packet, 99999.9 us of other work per "
+                                "packet: up to 0 Mbps; clock read 0.0 us\n") != NULL);
+  }
+  CHECK_EQ_INT(receiveLinesTooLong, 0);
+  CHECK_EQ_INT(receiveLinesWithAddress, 0);
+  CHECK(hasDottedAddress("from 192.168.1.20 on"));
+}
+
+int main(void) {
+  RUN_TEST("the samples fall about every 64th receive at gaps that vary, also on frames of one size",
+           test_the_samples_fall_about_every_64th_receive_at_gaps_that_vary);
+  RUN_TEST("timeout mode reads each packet with one recvfrom() and samples about every 64th receive",
+           test_timeout_mode_reads_each_packet_with_one_recvfrom_and_samples_about_every_64th);
+  RUN_TEST("the share of waiting packets comes from the sampled receives only",
+           test_the_waiting_share_comes_from_the_sample_only);
+  RUN_TEST("a failed poll() leaves a sample out and an error of the socket is no packet waiting",
+           test_a_failed_poll_leaves_a_sample_out_and_a_socket_error_is_no_packet_waiting);
+  RUN_TEST("poll mode, with poll() before each receive, when no socket that never waits can be made",
+           test_poll_mode_when_no_socket_that_never_waits_can_be_made);
+  RUN_TEST("back-to-back mode replaces the socket before the threads start and reads it with recvUdpSocketNoWait()",
+           test_back_to_back_mode_replaces_the_socket_before_the_threads_start);
+  RUN_TEST("the receive thread is woken before each join when it reads a socket that never waits",
+           test_the_receive_thread_is_woken_before_each_join_when_it_reads_a_socket_that_never_waits);
+  RUN_TEST("the limit of 10 s without a first packet is unchanged in every mode",
+           test_the_first_packet_limit_is_unchanged_in_every_mode);
+  RUN_TEST("an error ends the loop as before and the stream is still summed up",
+           test_an_error_ends_the_loop_and_still_sums_the_stream_up);
+  RUN_TEST("the stop ends the loop with one stream line, none without a packet",
+           test_the_stop_ends_the_loop_with_one_stream_line);
+  RUN_TEST("a line each minute while video comes, also when it ends in a pause, none for a minute without packets",
+           test_a_line_each_minute_while_video_comes);
+  RUN_TEST("encrypted video is read into its own buffer and its bytes count as received",
+           test_encrypted_video_is_read_into_its_own_buffer_and_counted_as_received);
+  RUN_TEST("the lines fit a line of the diagnostic log and name no address",
+           test_the_lines_fit_the_log_and_name_no_address);
+  return test_summary();
+}
