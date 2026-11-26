@@ -56,7 +56,10 @@ test('moonlight-common-c has the microsecond clock of 82ee2d6 next to its millis
   const depacketizer = read('moonlight-common-c/src/VideoDepacketizer.c');
   assert.match(depacketizer, /qdu->decodeUnit\.receiveTimeUs = firstPacketReceiveTimeUs;\s+qdu->decodeUnit\.receiveTimeMs = firstPacketReceiveTimeUs \/ 1000;/);
   assert.match(depacketizer, /qdu->decodeUnit\.enqueueTimeUs = PltGetMicroseconds\(\);\s+qdu->decodeUnit\.enqueueTimeMs = qdu->decodeUnit\.enqueueTimeUs \/ 1000;/);
-  assert.match(read('moonlight-common-c/src/RtpVideoQueue.c'), /queue->bufferFirstRecvTimeUs = PltGetMicroseconds\(\);/);
+  // (since 2.3.5 the time at which the reader thread of VideoStream.c read the first packet of the block, on that clock,
+  // given to RtpvAddPacket() with each packet)
+  assert.match(read('moonlight-common-c/src/RtpVideoQueue.c'), /queue->bufferFirstRecvTimeUs = receiveTimeUs;/);
+  assert.match(read('moonlight-common-c/src/VideoStream.c'), /stampUs = PltGetMicroseconds\(\);/);
   // Not the rest of 82ee2d6: no RTP statistics API, and the audio queue still waits in milliseconds
   assert.doesNotMatch(limelight, /LiGetRTPAudioStats|LiGetRTPVideoStats|RTP_VIDEO_STATS/);
   assert.match(read('moonlight-common-c/src/RtpAudioQueue.c'), /block->queueTimeMs = PltGetMillis\(\);/);

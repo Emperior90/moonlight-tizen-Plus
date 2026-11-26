@@ -50,7 +50,8 @@ typedef struct _RTP_VIDEO_QUEUE {
     uint32_t lastOosFramePresentationTimestamp;
     bool receivedOosData;
 
-    // Session statistics of the FEC recovery, written only by the video receive thread and reset with the queue
+    // Session statistics of the FEC recovery, written only by the video processing thread (the receive thread up to
+    // 2.3.4) and reset with the queue
     uint32_t statRecoveredBlocks;
     uint32_t statRecoveredPackets;
     uint32_t statRecoveryFailures;
@@ -61,7 +62,7 @@ typedef struct _RTP_VIDEO_QUEUE {
     bool statBlockRecorded; // the recovery of the current FEC block was already counted
 
     // Moonlight Plus: how fast the packets of the current frame arrive, for the arrival rate of the statistics
-    // (arrivalTimeUs and arrivalBytes of DECODE_UNIT), written only by the video receive thread. Per FEC block: the
+    // (arrivalTimeUs and arrivalBytes of DECODE_UNIT), written only by the video processing thread. Per FEC block: the
     // bytes at IP level of its packets after the first one until it is complete (its data packets, and the parity
     // packets that a block with missing data packets needed); per frame: the time from the first packet of each
     // block to the packet that completed it and those bytes, summed over its blocks. packetOverheadBytes is what a
@@ -78,6 +79,7 @@ typedef struct _RTP_VIDEO_QUEUE {
 
 void RtpvInitializeQueue(PRTP_VIDEO_QUEUE queue);
 void RtpvCleanupQueue(PRTP_VIDEO_QUEUE queue);
-int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_QUEUE_ENTRY packetEntry);
+int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_QUEUE_ENTRY packetEntry,
+                  uint64_t receiveTimeUs);
 uint32_t RtpvGetCurrentFrameNumber(PRTP_VIDEO_QUEUE queue);
 void RtpvSubmitQueuedPackets(PRTP_VIDEO_QUEUE queue);

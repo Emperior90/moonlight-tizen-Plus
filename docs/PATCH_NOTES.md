@@ -33,6 +33,9 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 - Every build checks the Tizen Studio installer it downloads, and a full release needs passed tests
 - The licence notice links ENet's real repository
+- The picture is read from the network by a thread of its own, so the packets of a frame are taken as they come
+- The streaming engine is built with stronger compiler optimizations
+- Diagnostic log: two new lines show how busy the second thread is and whether its ring of packets filled up
 
 ### Also in this version
 

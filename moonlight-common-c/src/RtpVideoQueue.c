@@ -549,6 +549,7 @@ static void stageCompleteFecBlock(PRTP_VIDEO_QUEUE queue) {
                 // and use the first packet's receive time for all packets. This ends up
                 // actually being better for the measurements that the depacketizer does,
                 // since it properly handles out of order packets.
+                // (Moonlight Plus: the time the reader read the first packet of the block, since 2.3.5)
                 LC_ASSERT(queue->bufferFirstRecvTimeUs != 0);
                 entry->receiveTimeUs = queue->bufferFirstRecvTimeUs;
 
@@ -583,9 +584,9 @@ static void stageCompleteFecBlock(PRTP_VIDEO_QUEUE queue) {
 // packets counts up to the parity packet that completed it: the parity packets come right after the data packets, and
 // the slot of a missing packet counts as time without bytes, so such a block reads as much too low as packets were
 // missing (e.g. 1 of 200), rather than leaving the frames out when the Wi-Fi loses packets. A block of a single packet
-// adds nothing (no time between two packets). RtpvAddPacket() reads the clock once more per block of more than one
-// packet, at the packet that can complete it (again at a later packet if the recovery fails), as it does at the first
-// packet of the block; this changes nothing else in the queue.
+// adds nothing (no time between two packets). The times are those at which the reader read the packets, which
+// RtpvAddPacket() is given (since 2.3.5): that of the first packet of the block and that of the packet that can
+// complete it (again a later one if the recovery fails); this changes nothing else in the queue.
 static void addFecBlockArrival(PRTP_VIDEO_QUEUE queue, uint64_t endUs) {
     if (queue->receivedDataPackets + queue->receivedParityPackets > 1) {
         if (endUs > queue->bufferFirstRecvTimeUs) {
@@ -596,27 +597,35 @@ static void addFecBlockArrival(PRTP_VIDEO_QUEUE queue, uint64_t endUs) {
 }
 
 static void submitCompletedFrame(PRTP_VIDEO_QUEUE queue) {
-    while (queue->completedFecBlockList.count > 0) {
-        PRTPV_QUEUE_ENTRY entry = queue->completedFecBlockList.head;
+    PRTPV_QUEUE_ENTRY entry;
 
+    for (entry = queue->completedFecBlockList.head; entry != NULL; entry = entry->next) {
         // Parity packets should have been removed by stageCompleteFecBlock()
         LC_ASSERT(!entry->isParity);
 
         // Moonlight Plus: hand the arrival figures of the frame over with each of its packets
         entry->frameArrivalTimeUs = queue->frameArrivalTimeUs;
         entry->frameArrivalBytes = queue->frameArrivalBytes;
-
-        // Submit this packet for decoding. It will own freeing the entry now.
-        removeEntryFromList(&queue->completedFecBlockList, entry);
-        queueRtpPacket(entry);
     }
+
+    // Submit the packets of the frame for decoding, all at once (Moonlight Plus, since 2.3.5: the depacketizer takes
+    // its lock once for the frame, queueRtpPackets()). It will own freeing the entries now.
+    entry = queue->completedFecBlockList.head;
+    queue->completedFecBlockList.head = NULL;
+    queue->completedFecBlockList.tail = NULL;
+    queue->completedFecBlockList.count = 0;
+    queueRtpPackets(entry);
 }
 
 uint32_t RtpvGetCurrentFrameNumber(PRTP_VIDEO_QUEUE queue) {
     return queue->currentFrameNumber;
 }
 
-int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_QUEUE_ENTRY packetEntry) {
+// Moonlight Plus (since 2.3.5): receiveTimeUs is when the reader thread of VideoStream.c read the packet, on the
+// microsecond clock of Platform.c, so that the times of the queue are those of the arrival as the reader sees it, not
+// when the processing thread gets to the packet
+int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_QUEUE_ENTRY packetEntry,
+                  uint64_t receiveTimeUs) {
     if (isBefore16(packet->sequenceNumber, queue->nextContiguousSequenceNumber)) {
         // Reject packets behind our current buffer window
         return RTPF_RET_REJECTED;
@@ -772,7 +781,7 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         // being able to reconstruct a full frame from it.
         connectionSawFrame(queue->currentFrameNumber);
         
-        queue->bufferFirstRecvTimeUs = PltGetMicroseconds();
+        queue->bufferFirstRecvTimeUs = receiveTimeUs;
         queue->bufferLowestSequenceNumber = U16(packet->sequenceNumber - fecIndex);
         queue->nextContiguousSequenceNumber = queue->bufferLowestSequenceNumber;
         queue->receivedDataPackets = 0;
@@ -861,7 +870,7 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         if (queue->receivedDataPackets + queue->receivedParityPackets > 1) {
             queue->blockArrivalBytes += (uint32_t)length + queue->packetOverheadBytes;
             if (queue->receivedDataPackets + queue->receivedParityPackets >= queue->bufferDataPackets) {
-                arrivalEndUs = PltGetMicroseconds();
+                arrivalEndUs = receiveTimeUs;
             }
         }
         

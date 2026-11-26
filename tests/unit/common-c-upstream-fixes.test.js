@@ -168,8 +168,24 @@ test('e64327c: the lock of the depacketizer is a PLT_MUTEX, released to submit a
   const unlock = refresh.indexOf('PltUnlockMutex(&stateLock);');
   assert.ok(refresh.indexOf('PltLockMutex(&stateLock);') >= 0 && unlock > 0);
   assert.ok(unlock < refresh.indexOf('freeDecodeUnitList(') && unlock < refresh.indexOf('LiRequestIdrFrame();'));
-  assert.match(functionBody(source, 'static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,'),
-    /PltLockMutex\(&stateLock\);\s+processRtpPayloadLocked\([^;]+\);\s+PltUnlockMutex\(&stateLock\);/);
+  // One packet: queueRtpPacket() takes the lock around it. The packets of a complete frame (since 2.3.5,
+  // queueRtpPackets(), which submitCompletedFrame() of RtpVideoQueue.c calls): once for the frame, and a keyframe gives
+  // it back between its packets, so that a refresh that waits for it still lets that keyframe through
+  assert.doesNotMatch(source, /static void processRtpPayload\(/);
+  assert.match(functionBody(source, 'static void queueRtpPacketLocked(PRTPV_QUEUE_ENTRY queueEntryPtr) {'),
+    /processRtpPayloadLocked\(/);
+  assert.match(functionBody(source, 'void queueRtpPacket(PRTPV_QUEUE_ENTRY queueEntryPtr) {'),
+    /\{\s+PltLockMutex\(&stateLock\);\s+queueRtpPacketLocked\(queueEntryPtr\);\s+PltUnlockMutex\(&stateLock\);\s+\}$/);
+  const frame = functionBody(source, 'void queueRtpPackets(PRTPV_QUEUE_ENTRY firstEntry) {');
+  assert.match(frame, /\{\s+PltLockMutex\(&stateLock\);\s+while \(firstEntry != NULL\) \{/);
+  assert.match(frame, /PRTPV_QUEUE_ENTRY nextEntry = firstEntry->next;\s+queueRtpPacketLocked\(firstEntry\);\s+firstEntry = nextEntry;/);
+  assert.match(frame, /if \(firstEntry != NULL && decodingFrame && frameType == FRAME_TYPE_IDR\) \{\s+PltUnlockMutex\(&stateLock\);\s+PltLockMutex\(&stateLock\);\s+\}\s+\}\s+PltUnlockMutex\(&stateLock\);\s+\}$/);
+  assert.equal((frame.match(/PltLockMutex\(&stateLock\)/g) || []).length, 2);
+  assert.equal((frame.match(/PltUnlockMutex\(&stateLock\)/g) || []).length, 2);
+  assert.match(read('Limelight-internal.h'), /\nvoid queueRtpPacket\(PRTPV_QUEUE_ENTRY queueEntry\);\nvoid queueRtpPackets\(PRTPV_QUEUE_ENTRY firstEntry\);\n/);
+  assert.match(functionBody(read('RtpVideoQueue.c'), 'static void submitCompletedFrame(PRTP_VIDEO_QUEUE queue) {'),
+    /queue->completedFecBlockList\.count = 0;\s+queueRtpPackets\(entry\);\s+\}$/);
+  assert.doesNotMatch(read('RtpVideoQueue.c'), /queueRtpPacket\(/);
   assert.match(functionBody(source, 'void notifyFrameLost(unsigned int frameNumber, bool speculative) {'),
     /^[^{]*\{\s+PltLockMutex\(&stateLock\);[^]*PltUnlockMutex\(&stateLock\);\s+\}$/);
 });

@@ -14,6 +14,12 @@
 //  - ae6633e: RFI and IDR waits stay mutually exclusive.
 //  - 0b4a44d: a second stream in the same process (every reconnect of the Stream Menu) starts with the consecutive
 //    drop count at zero.
+// Since 2.3.5 the RTP queue hands the packets of a complete frame over at once (queueRtpPackets(), called by
+// submitCompletedFrame() of RtpVideoQueue.c), and the depacketizer takes its lock once for the frame instead of once per
+// packet; a keyframe still gives it back after each packet, so that a decoder refresh that waits for the lock gets in
+// between its packets and keeps it as before (e64327c). A refresh that waits during another frame now comes after that
+// frame, which it flushes from the queue. The slow path of H.264 and HEVC (several NAL units in the first packet of a
+// keyframe) makes the same decode unit through either function.
 // It also checks where the depacketizer tells the limit of the IDR frame requests of Moonlight Plus (IdrRequestLimit.h,
 // tests/native/idr_request_limit_test.c) that an IDR frame arrived: once, at the first packet of the keyframe.
 // And the times of a decode unit in microseconds (receiveTimeUs, enqueueTimeUs) that 2.3.2 ported from upstream 82ee2d6
@@ -65,13 +71,52 @@ static void TestFree(void* pointer) {
 }
 #define malloc(size) TestMalloc(size)
 #define free(pointer) TestFree(pointer)
+// The locks that VideoDepacketizer.c takes, counted for its stateLock (2.3.5: once per frame), and a thread that waits
+// for that lock: waitingForLock runs right after the next release of stateLock, as a thread of the decoder that waits
+// for it would get it first at the earliest
+static int stateLockCount;
+static void (*waitingForLock)(void);
+static void TestLockMutex(PLT_MUTEX* mutex);
+static void TestUnlockMutex(PLT_MUTEX* mutex);
+#define PltLockMutex(mutex) TestLockMutex(mutex)
+#define PltUnlockMutex(mutex) TestUnlockMutex(mutex)
 #include "../../moonlight-common-c/src/VideoDepacketizer.c"
+#undef PltLockMutex
+#undef PltUnlockMutex
 #undef malloc
 #undef free
 
 #include "../../moonlight-common-c/src/ByteBuffer.c"
 #include "../../moonlight-common-c/src/LinkedBlockingQueue.c"
 #include "../../moonlight-common-c/src/Platform.c"
+
+static void TestLockMutex(PLT_MUTEX* mutex) {
+  if (mutex == &stateLock) {
+    stateLockCount++;
+  }
+  PltLockMutex(mutex);
+}
+
+// The state of the depacketizer when the waiting thread got the lock
+static bool waiterSawDecodingFrame;
+static bool waiterRan;
+
+static void TestUnlockMutex(PLT_MUTEX* mutex) {
+  PltUnlockMutex(mutex);
+  if (mutex == &stateLock && waitingForLock != NULL) {
+    void (*waiter)(void) = waitingForLock;
+    waitingForLock = NULL;
+    // (read without the lock: the test runs on one thread)
+    waiterSawDecodingFrame = decodingFrame;
+    waiterRan = true;
+    waiter();
+  }
+}
+
+// Packets made by feedPacket() while preparing go into a list linked like the frame that RtpVideoQueue.c hands over
+static bool preparing;
+static PRTPV_QUEUE_ENTRY preparedHead;
+static PRTPV_QUEUE_ENTRY preparedTail;
 
 // What the other files of moonlight-common-c provide: a Sunshine host (7.1.431.-1) that streams AV1
 int AppVersionQuad[4] = {7, 1, 431, -1};
@@ -195,7 +240,26 @@ static void feedPacket(uint32_t frameIndex, uint8_t flags, const uint8_t* payloa
   entry->frameArrivalTimeUs = fakeArrivalUs;
   entry->frameArrivalBytes = fakeArrivalBytes;
   entry->presentationTimeMs = noPresentationTime ? 0 : frameIndex * 16;
+  if (preparing) {
+    entry->next = NULL;
+    if (preparedTail != NULL) {
+      preparedTail->next = entry;
+    }
+    else {
+      preparedHead = entry;
+    }
+    preparedTail = entry;
+    return;
+  }
   queueRtpPacket(entry);
+}
+
+// The packets prepared so far, handed over at once as submitCompletedFrame() of RtpVideoQueue.c does
+static void feedPrepared(void) {
+  PRTPV_QUEUE_ENTRY head = preparedHead;
+  preparedHead = preparedTail = NULL;
+  stateLockCount = 0;
+  queueRtpPackets(head);
 }
 
 // Packet `index` of the `count` packets of an AV1 frame, each with `size` bytes of picture data; the first one starts
@@ -695,7 +759,190 @@ static void ADecodeUnitCarriesTheArrivalFiguresOfItsFirstPacket(void) {
   endStream();
 }
 
+static void AFrameTakesTheLockOnceAndAKeyframeOncePerPacket(void) {
+  startWithAKeyframe(false);
+  preparing = true;
+  feedFrame(2, FRAME_TYPE_HEADER_P, 10, 100);
+  preparing = false;
+  feedPrepared();
+  CHECK_EQ_INT(stateLockCount, 1);
+  CHECK_EQ_INT(takeFrame(2, FRAME_TYPE_PFRAME, DR_OK), 1000);
+  preparing = true;
+  feedFrame(3, FRAME_TYPE_HEADER_IDR, 10, 100);
+  preparing = false;
+  feedPrepared();
+  CHECK_EQ_INT(stateLockCount, 10);
+  CHECK_EQ_INT(takeFrame(3, FRAME_TYPE_IDR, DR_OK), 1000);
+  endStream();
+}
+
+// The player rejects frame 2 on the decoder thread (DR_NEED_IDR), which asks for a refresh of the decoder
+static void rejectFrame2(void) {
+  CHECK_EQ_INT(takeFrame(2, FRAME_TYPE_PFRAME, DR_NEED_IDR), 100);
+}
+
+static void AWaitingRefreshGetsInBetweenThePacketsOfAKeyframeAndKeepsIt(void) {
+  // ARefreshWhileAKeyframeArrivesKeepsThatKeyframe with the keyframe handed over at once: the refresh, which waits for
+  // the lock, gets it after the first packet of keyframe 3, and the rest of the keyframe answers it
+  startWithAKeyframe(false);
+  feedFrame(2, FRAME_TYPE_HEADER_P, 1, 100);
+  preparing = true;
+  feedFrame(3, FRAME_TYPE_HEADER_IDR, 3, 100);
+  preparing = false;
+  waiterRan = false;
+  waitingForLock = rejectFrame2;
+  feedPrepared();
+  CHECK(waiterRan);
+  CHECK(waiterSawDecodingFrame);
+  CHECK_EQ_INT(stateLockCount, 4);
+  CHECK_EQ_INT(idrRequests, 1);
+  CHECK(strstr(logLines, "Waiting for IDR frame") == NULL);
+  CHECK_EQ_INT(LiGetPendingVideoFrames(), 1);
+  CHECK_EQ_INT(takeFrame(3, FRAME_TYPE_IDR, DR_OK), 300);
+  feedFrame(4, FRAME_TYPE_HEADER_P, 1, 100);
+  CHECK_EQ_INT(takeFrame(4, FRAME_TYPE_PFRAME, DR_OK), 100);
+  CHECK_EQ_INT(LiGetClientDroppedVideoFrames(), 0);
+  CHECK_EQ_INT(LiGetClientVideoResets(), 1);
+  CHECK_EQ_INT(idrRequests, 1);
+  endStream();
+}
+
+static void AWaitingRefreshDuringAPFrameComesAfterThatFrame(void) {
+  // The refresh gets the lock once P-frame 3 is queued, flushes it and waits for a keyframe: the frame counts as dropped
+  // by the client (flushed by the refresh rather than dropped at its end, as when the refresh came between two of its
+  // packets before 2.3.5) and as received for the connection quality warnings
+  startWithAKeyframe(false);
+  feedFrame(2, FRAME_TYPE_HEADER_P, 1, 100);
+  const int completeBefore = completeFrames;
+  preparing = true;
+  feedFrame(3, FRAME_TYPE_HEADER_P, 3, 100);
+  preparing = false;
+  waiterRan = false;
+  waitingForLock = rejectFrame2;
+  feedPrepared();
+  CHECK(waiterRan);
+  CHECK(!waiterSawDecodingFrame);
+  CHECK_EQ_INT(stateLockCount, 2);
+  CHECK_EQ_INT(completeFrames - completeBefore, 1);
+  CHECK_EQ_INT(LiGetPendingVideoFrames(), 0);
+  CHECK_EQ_INT(clientRefreshDroppedFrames, 1);
+  CHECK_EQ_INT(clientRecvDroppedFrames, 0);
+  CHECK_EQ_INT(LiGetClientDroppedVideoFrames(), 1);
+  CHECK_EQ_INT(idrRequests, 1);
+  CHECK(waitingForIdrFrame);
+  feedFrame(4, FRAME_TYPE_HEADER_IDR, 1, 100);
+  CHECK_EQ_INT(takeFrame(4, FRAME_TYPE_IDR, DR_OK), 100);
+  endStream();
+}
+
+// An HEVC frame of Sunshine in `count` packets of `size` bytes: the first one with the frame header, then (keyframe)
+// VPS, SPS and PPS and the start of the IDR slice (IDR_W_RADL), or (P-frame) the start of a TRAIL_R slice, each after a
+// start code; the others with the rest of the slice
+static void feedHevcFrame(uint32_t frameIndex, bool keyframe, int count, int size) {
+  static const uint8_t keyNals[] = {0, 0, 0, 1, 0x40, 0x01, 0x0c, 0, 0, 0, 1, 0x42, 0x01, 0x01, 0, 0, 0, 1, 0x44, 0x01, 0xc1,
+                                    0, 0, 0, 1, 0x26, 0x01, 0xaf};
+  static const uint8_t pNals[] = {0, 0, 0, 1, 0x02, 0x01, 0xd0};
+  for (int i = 0; i < count; i++) {
+    uint8_t flags = FLAG_CONTAINS_PIC_DATA;
+    int length = 0;
+    if (i == 0) {
+      const uint8_t header[8] = {0x01, 1, 0, keyframe ? FRAME_TYPE_HEADER_IDR : FRAME_TYPE_HEADER_P, 0, 0, 0, 0};
+      flags |= FLAG_SOF;
+      memcpy(payload, header, sizeof(header));
+      length = (int)sizeof(header);
+      memcpy(payload + length, keyframe ? keyNals : pNals, keyframe ? sizeof(keyNals) : sizeof(pNals));
+      length += keyframe ? (int)sizeof(keyNals) : (int)sizeof(pNals);
+    }
+    if (i == count - 1) {
+      flags |= FLAG_EOF;
+    }
+    // Slice data without a start code (bytes from 0x10 on)
+    for (int b = 0; b < size; b++) {
+      payload[length + b] = (uint8_t)(0x10 + ((i * 7 + b) % 0xe0));
+    }
+    length += size;
+    feedPacket(frameIndex, flags, payload, length);
+  }
+}
+
+// The next decode unit as text: its number, type and length, then each buffer with its type, length and bytes
+static int describeNextFrame(char* text, size_t size) {
+  VIDEO_FRAME_HANDLE handle;
+  PDECODE_UNIT decodeUnit;
+  int buffers = 0;
+  if (!LiPollNextVideoFrame(&handle, &decodeUnit)) {
+    CHECK(!"a decode unit in the queue");
+    return -1;
+  }
+  size_t used = (size_t)snprintf(text, size, "frame %d type %d length %d:", decodeUnit->frameNumber,
+                                 decodeUnit->frameType, decodeUnit->fullLength);
+  for (PLENTRY entry = decodeUnit->bufferList; entry != NULL && used < size; entry = entry->next) {
+    buffers++;
+    used += (size_t)snprintf(text + used, size - used, " [%d %d", entry->bufferType, entry->length);
+    for (int i = 0; i < entry->length && used < size; i++) {
+      used += (size_t)snprintf(text + used, size - used, " %02x", (uint8_t)entry->data[i]);
+    }
+    if (used < size) {
+      used += (size_t)snprintf(text + used, size - used, "]");
+    }
+  }
+  CHECK(used < size);
+  LiCompleteVideoFrame(handle, DR_OK);
+  return buffers;
+}
+
+static void AnHevcFrameGivesTheSameDecodeUnitThroughEitherFunction(void) {
+  static char oneByOne[2][16384];
+  static char atOnce[2][16384];
+  int buffers[2][2];
+  NegotiatedVideoFormat = VIDEO_FORMAT_H265;
+  for (int path = 0; path < 2; path++) {
+    char (*texts)[16384] = path == 0 ? oneByOne : atOnce;
+    startStream(false);
+    // A keyframe of 3 packets (the slow path: VPS, SPS and PPS copied, the slice in the packet buffer) and a P-frame of
+    // 3 packets
+    preparing = path == 1;
+    feedHevcFrame(1, true, 3, 200);
+    preparing = false;
+    if (path == 1) {
+      feedPrepared();
+      CHECK_EQ_INT(stateLockCount, 3);
+    }
+    buffers[path][0] = describeNextFrame(texts[0], sizeof(texts[0]));
+    preparing = path == 1;
+    feedHevcFrame(2, false, 3, 200);
+    preparing = false;
+    if (path == 1) {
+      feedPrepared();
+      CHECK_EQ_INT(stateLockCount, 1);
+    }
+    buffers[path][1] = describeNextFrame(texts[1], sizeof(texts[1]));
+    CHECK_EQ_INT(idrRequests, 0);
+    endStream();
+  }
+  for (int frame = 0; frame < 2; frame++) {
+    if (strcmp(oneByOne[frame], atOnce[frame]) != 0) {
+      printf("  # one by one: %.200s\n  # at once:    %.200s\n", oneByOne[frame], atOnce[frame]);
+    }
+    CHECK(strcmp(oneByOne[frame], atOnce[frame]) == 0);
+    CHECK_EQ_INT(buffers[1][frame], buffers[0][frame]);
+  }
+  // The keyframe: VPS, SPS, PPS and the picture data of the 3 packets; the P-frame: the picture data of its 3 packets
+  CHECK_EQ_INT(buffers[0][0], 6);
+  CHECK_EQ_INT(buffers[0][1], 3);
+  CHECK(strncmp(oneByOne[0], "frame 1 type 1 length ", 22) == 0);
+  CHECK(strncmp(oneByOne[1], "frame 2 type 0 length ", 22) == 0);
+  NegotiatedVideoFormat = VIDEO_FORMAT_AV1_MAIN8;
+}
+
 int main(void) {
+  RUN_TEST("a frame takes the lock once, a keyframe once per packet", AFrameTakesTheLockOnceAndAKeyframeOncePerPacket);
+  RUN_TEST("a refresh that waits for the lock gets in between the packets of a keyframe handed over at once and keeps it",
+           AWaitingRefreshGetsInBetweenThePacketsOfAKeyframeAndKeepsIt);
+  RUN_TEST("a refresh that waits for the lock during a P-frame comes after that frame and flushes it",
+           AWaitingRefreshDuringAPFrameComesAfterThatFrame);
+  RUN_TEST("an HEVC keyframe and P-frame give the same decode unit through queueRtpPacket() and queueRtpPackets()",
+           AnHevcFrameGivesTheSameDecodeUnitThroughEitherFunction);
   RUN_TEST("a frame over 32 MiB is dropped with a keyframe request", AFrameOver32MiBIsDroppedWithAKeyframeRequest);
   RUN_TEST("a frame of more than 65,536 fragments is dropped", AFrameOf65537FragmentsIsDropped);
   RUN_TEST("a packet that continues a frame whose start never came is rejected",

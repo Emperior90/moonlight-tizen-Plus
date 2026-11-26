@@ -6,7 +6,8 @@
 // (and with them the 'TransientMsg: ' branch of messages.js), no Opus encoder (the app only decodes; tests/native/run.sh
 // builds the decoder from the list of CMakeLists.txt and decodes with it), no CPPLINT.cfg, and no member of
 // MoonlightInstance that is written but never read. Every file the build names exists, the Docker build context
-// leaves out the models of opus/dnn, which nothing compiles, and the unused headers of ports/ are gone.
+// leaves out the models of opus/dnn, which nothing compiles, and the unused headers of ports/ are gone. The module is
+// compiled and linked with -O3 (since 2.3.5).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -104,4 +105,23 @@ test('every member of MoonlightInstance that the module writes is also read', ()
     'm_DecryptHostAudioEnabled', 'm_HdrModeEnabled', 'm_FullRangeEnabled', 'm_GameModeEnabled'].forEach((name) => {
     assert.equal(new RegExp('\\b' + name + '\\b').test(sources), false, name);
   });
+});
+
+test('the module is compiled and linked with -O3 (2.3.5), and the native tests keep their own level', () => {
+  // With the Emscripten 1.39 fastcomp of the build, -O3 runs Binaryen and the code generator at level 3 (the LLVM
+  // passes already ran at that level with -O2) and makes the glue code smaller (meta-DCE, shorter names between
+  // JavaScript and WebAssembly)
+  const compile = /^add_compile_options\(([^)]*)\)/m.exec(cmake());
+  assert.ok(compile, 'add_compile_options');
+  assert.match(compile[1], /(?:^|\s)-O3(?:\s|$)/);
+  assert.doesNotMatch(compile[1], /(?:^|\s)-O[012s](?:\s|$)/);
+  const link = /set_target_properties\(moonlight-wasm\s+PROPERTIES\s+LINK_FLAGS\s+"([^"]*)"/.exec(cmake());
+  assert.ok(link, 'LINK_FLAGS of moonlight-wasm');
+  assert.match(link[1], /(?:^|\s)-O3(?:\s|\\|$)/);
+  assert.doesNotMatch(link[1], /(?:^|\s)-O[012s](?:\s|\\|$)/);
+  // -flto stays with both
+  assert.match(compile[1], /(?:^|\s)-flto(?:\s|$)/);
+  assert.match(link[1], /(?:^|\s)-flto(?:\s|\\|$)/);
+  // The native tests build with -O1 and the sanitizers, whatever the module uses
+  assert.match(read('tests/native/run.sh'), /-std=gnu99 -g -O1 -fno-omit-frame-pointer/);
 });

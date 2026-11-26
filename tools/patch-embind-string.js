@@ -23,7 +23,8 @@
 const fs = require('fs');
 
 // fromWireType of std::string (UTF-8) in the output of the Samsung Emscripten 1.39.4.7, as the generated file has it
-// (whitespace removed at -O2, names kept)
+// (whitespace removed at -O2 and -O3, names kept; the meta-DCE of -O3, used since 2.3.5, renames only the imports and
+// exports between JavaScript and WebAssembly, and the Dockerfile fails the build if this text is not found)
 const ORIGINAL =
   'var endChar=HEAPU8[value+4+length];var endCharSwap=0;if(endChar!=0){endCharSwap=endChar;HEAPU8[value+4+length]=0}' +
   'var decodeStartPtr=value+4;for(var i=0;i<=length;++i){var currentBytePtr=value+4+i;if(HEAPU8[currentBytePtr]==0){' +

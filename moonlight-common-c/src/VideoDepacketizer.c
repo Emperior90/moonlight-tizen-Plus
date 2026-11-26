@@ -1310,18 +1310,6 @@ corruptFrame:
     discardCorruptFrame(frameIndex);
 }
 
-// Process an RTP Payload
-// The caller will free *existingEntry unless we NULL it
-static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
-                       uint64_t receiveTimeUs, unsigned int presentationTimeMs,
-                       uint32_t arrivalTimeUs, uint32_t arrivalBytes,
-                       PLENTRY_INTERNAL* existingEntry) {
-    PltLockMutex(&stateLock);
-    processRtpPayloadLocked(videoPacket, length, receiveTimeUs, presentationTimeMs, arrivalTimeUs, arrivalBytes,
-                            existingEntry);
-    PltUnlockMutex(&stateLock);
-}
-
 // Called by the video RTP FEC queue to notify us of a lost frame
 // if it determines the frame to be unrecoverable. This lets us
 // avoid having to wait until the next received frame to determine
@@ -1356,8 +1344,8 @@ void notifyFrameLost(unsigned int frameNumber, bool speculative) {
     PltUnlockMutex(&stateLock);
 }
 
-// Add an RTP Packet to the queue
-void queueRtpPacket(PRTPV_QUEUE_ENTRY queueEntryPtr) {
+// Add an RTP Packet to the queue, with stateLock held
+static void queueRtpPacketLocked(PRTPV_QUEUE_ENTRY queueEntryPtr) {
     int dataOffset;
     RTPV_QUEUE_ENTRY queueEntry = *queueEntryPtr;
 
@@ -1379,18 +1367,47 @@ void queueRtpPacket(PRTPV_QUEUE_ENTRY queueEntryPtr) {
     PLENTRY_INTERNAL existingEntry = (PLENTRY_INTERNAL)queueEntryPtr;
     existingEntry->allocPtr = queueEntry.packet;
 
-    processRtpPayload((PNV_VIDEO_PACKET)(((char*)queueEntry.packet) + dataOffset),
-                      queueEntry.length - dataOffset,
-                      queueEntry.receiveTimeUs,
-                      queueEntry.presentationTimeMs,
-                      queueEntry.frameArrivalTimeUs,
-                      queueEntry.frameArrivalBytes,
-                      &existingEntry);
+    processRtpPayloadLocked((PNV_VIDEO_PACKET)(((char*)queueEntry.packet) + dataOffset),
+                            queueEntry.length - dataOffset,
+                            queueEntry.receiveTimeUs,
+                            queueEntry.presentationTimeMs,
+                            queueEntry.frameArrivalTimeUs,
+                            queueEntry.frameArrivalBytes,
+                            &existingEntry);
 
     if (existingEntry != NULL) {
         // processRtpPayload didn't want this packet, so just free it
         free(existingEntry->allocPtr);
     }
+}
+
+// Add an RTP Packet to the queue
+void queueRtpPacket(PRTPV_QUEUE_ENTRY queueEntryPtr) {
+    PltLockMutex(&stateLock);
+    queueRtpPacketLocked(queueEntryPtr);
+    PltUnlockMutex(&stateLock);
+}
+
+// Moonlight Plus (since 2.3.5): add the packets of a complete frame, linked by their next pointers as the RTP queue
+// hands them over (submitCompletedFrame() of RtpVideoQueue.c), with stateLock taken once for the frame instead of
+// once per packet. The decoder thread then waits for the whole pass over the frame (a decoder refresh, the note of a
+// processed IDR frame) rather than for one packet. A keyframe still gives the lock back after each packet, so that a
+// refresh that comes while it is processed lets it through as before (upstream e64327c, dropStatePending) instead of
+// flushing it from the decode unit queue right after.
+void queueRtpPackets(PRTPV_QUEUE_ENTRY firstEntry) {
+    PltLockMutex(&stateLock);
+    while (firstEntry != NULL) {
+        // The entry becomes an entry of the depacketizer, so its next pointer is read first
+        PRTPV_QUEUE_ENTRY nextEntry = firstEntry->next;
+
+        queueRtpPacketLocked(firstEntry);
+        firstEntry = nextEntry;
+        if (firstEntry != NULL && decodingFrame && frameType == FRAME_TYPE_IDR) {
+            PltUnlockMutex(&stateLock);
+            PltLockMutex(&stateLock);
+        }
+    }
+    PltUnlockMutex(&stateLock);
 }
 
 int LiGetPendingVideoFrames(void) {

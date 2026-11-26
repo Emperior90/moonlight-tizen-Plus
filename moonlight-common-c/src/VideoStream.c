@@ -1,4 +1,5 @@
 #include "Limelight-internal.h"
+#include "VideoReceiveRing.h"
 
 #define FIRST_FRAME_MAX 1500
 #define FIRST_FRAME_TIMEOUT_SEC 10
@@ -15,6 +16,10 @@ static PPLT_CRYPTO_CONTEXT decryptionCtx;
 static PLT_THREAD udpPingThread;
 static PLT_THREAD receiveThread;
 static PLT_THREAD decoderThread;
+// Moonlight Plus (since 2.3.5): the processing thread of the video receive, and the ring between it and the receive
+// thread, which only reads the socket (VideoReceiveRing.h)
+static PLT_THREAD processThread;
+static VIDEO_RECV_RING receiveRing;
 
 static bool receivedDataFromPeer;
 static uint64_t firstDataTimeMs;
@@ -35,14 +40,15 @@ static bool rtpSocketNoWait;
 #define VIDEO_RECV_MODE_NO_WAIT 2
 
 // Moonlight Plus (since 2.3.4): the lines of the receive thread in the diagnostic log, which tell whether the thread or
-// the network sets the pace at which the packets of a frame are read. About every VIDEO_RECV_SAMPLE_EVERY-th receive is
-// sampled: whether its packet was already waiting (a poll() without a timeout before it, which is timed too; a socket
-// that never waits tells it with every read) and, around it, reads of the clock, which steps in about 0.1 ms on the TV,
-// so only averages over many samples count. The gap to the next sample is drawn from VIDEO_RECV_SAMPLE_EVERY - 16 to
-// VIDEO_RECV_SAMPLE_EVERY + 15 receives (nextVideoReceiveSampleGap()), so that the sample doesn't keep falling on the
-// same packet of frames that all have the same number of packets, e.g. always or never on the last one, whose
-// depacketizer pass costs most. A line comes every VIDEO_RECV_LINE_INTERVAL_US while video comes, and one for the whole
-// stream when the thread ends.
+// the network sets the pace at which the packets of a frame are read (since 2.3.5 the receive thread only reads the
+// packets and hands them to the processing thread, which has lines of its own). About every VIDEO_RECV_SAMPLE_EVERY-th
+// receive is sampled: whether its packet was already waiting (a poll() without a timeout before it, which is timed too;
+// a socket that never waits tells it with every read) and, around it, reads of the clock, which steps in about 0.1 ms
+// on the TV, so only averages over many samples count. The gap to the next sample is drawn from
+// VIDEO_RECV_SAMPLE_EVERY - 16 to VIDEO_RECV_SAMPLE_EVERY + 15 receives (nextVideoReceiveSampleGap()), so that the
+// sample doesn't keep falling on the same packet of frames that all have the same number of packets, e.g. always or
+// never on the last one, whose depacketizer pass costs most. A line comes every VIDEO_RECV_LINE_INTERVAL_US while video
+// comes, and one for the whole stream when the thread ends.
 #define VIDEO_RECV_SAMPLE_EVERY 64
 #define VIDEO_RECV_SAMPLE_SEED 1u
 #define VIDEO_RECV_LINE_INTERVAL_US 60000000ULL
@@ -64,6 +70,13 @@ typedef struct _VIDEO_RECV_FIGURES {
     uint64_t checkPollFailures; // of them, those that failed
 } VIDEO_RECV_FIGURES;
 
+// Moonlight Plus (since 2.3.5): the figures of the processing thread for its lines, one writer, no atomics
+typedef struct _VIDEO_PROC_FIGURES {
+    uint64_t packets;  // packets taken from the ring (every packet that the reader read)
+    uint64_t bytes;    // their bytes as received
+    uint64_t idleUs;   // the time spent looking for packets and waiting for them, from the first packet on
+} VIDEO_PROC_FIGURES;
+
 // We can't request an IDR frame until the depacketizer knows
 // that a packet was lost. This timeout bounds the time that
 // the RTP queue will wait for missing/reordered packets.
@@ -78,6 +91,13 @@ typedef struct _VIDEO_RECV_FIGURES {
 // and subsequent packet/frame bursts that follow.
 #define RTP_RECV_PACKETS_BUFFERED 2048
 
+// Moonlight Plus (since 2.3.5): the packets that the ring between the reader and the processing thread of the video
+// holds (VideoReceiveRing.h), a power of two: about 4 frames of 4K at 60 FPS and 150 Mbps. A test may set it before it
+// includes this file.
+#ifndef VIDEO_RECV_RING_PACKETS
+#define VIDEO_RECV_RING_PACKETS 1024
+#endif
+
 // Initialize the video stream
 void initializeVideoStream(void) {
     initializeVideoDepacketizer(StreamConfig.packetSize);
@@ -88,6 +108,8 @@ void initializeVideoStream(void) {
     receivedFullFrame = false;
     rtpReceiveBufferSize = 0;
     rtpSocketNoWait = false;
+    // (so that VrrDestroy() leaves a ring alone that startVideoStream() never made)
+    memset(&receiveRing, 0, sizeof(receiveRing));
 }
 
 // Clean up the video stream
@@ -143,6 +165,19 @@ static void logVideoReceiveMode(int receiveMode) {
     }
 }
 
+// Moonlight Plus (since 2.3.4): the bytes that a video packet carries on the network besides what the socket gives,
+// its IP and UDP header, for the rates of the lines at IP level like 'Frames arrive at' (RtpVideoQueue.c)
+static unsigned int videoReceiveOverheadBytes(void) {
+    unsigned int overheadBytes;
+
+#ifdef AF_INET6
+    overheadBytes = (RemoteAddr.ss_family == AF_INET6 ? 40 : 20) + 8;
+#else
+    overheadBytes = 20 + 8;
+#endif
+    return overheadBytes;
+}
+
 // Moonlight Plus (since 2.3.4): the average of a time of the samples in microseconds, without the clock read that it
 // contains, as text with one decimal ("n/a" without a sample, *valueUs then -1)
 static void formatVideoReceiveTime(char* text, size_t size, uint64_t totalUs, uint64_t samples, double clockUs, double* valueUs) {
@@ -181,7 +216,6 @@ static void logVideoReceiveFigures(const VIDEO_RECV_FIGURES* now, const VIDEO_RE
     double workUs;
     double pollUs;
     unsigned int seconds;
-    unsigned int overheadBytes;
 
     d = *now;
     if (before != NULL) {
@@ -237,14 +271,12 @@ static void logVideoReceiveFigures(const VIDEO_RECV_FIGURES* now, const VIDEO_RE
     formatVideoReceiveTime(workTime, sizeof(workTime), d.workUs, d.workSamples, clockUs, &workUs);
 
     // The rate at which the thread could take packets that are waiting, at IP level like 'Frames arrive at'
-    // (RtpVideoQueue.c): the bits of an average packet with its IP and UDP header per microsecond
-#ifdef AF_INET6
-    overheadBytes = (RemoteAddr.ss_family == AF_INET6 ? 40 : 20) + 8;
-#else
-    overheadBytes = 20 + 8;
-#endif
-    if (readUs >= 0 && workUs >= 0 && readUs + workUs > 0 && d.packets > 0) {
-        double mbps = ((double)d.bytes / (double)d.packets + overheadBytes) * 8 / (readUs + workUs);
+    // (RtpVideoQueue.c): the bits of an average packet with its IP and UDP header per microsecond. Since 2.3.5 the
+    // thread reads the clock once per packet to note when it read it, which a sampled packet takes from the clock read
+    // of its sample, so that its other work lacks it: the time of one clock read is added.
+    if (readUs >= 0 && workUs >= 0 && readUs + workUs + clockUs > 0 && d.packets > 0) {
+        double mbps = ((double)d.bytes / (double)d.packets + videoReceiveOverheadBytes()) * 8 /
+            (readUs + workUs + clockUs);
         if (mbps > 99999) {
             mbps = 99999;
         }
@@ -303,28 +335,24 @@ static void checkVideoReceiveWindow(const VIDEO_RECV_FIGURES* figures, VIDEO_REC
     *windowStartUs = nowUs;
 }
 
-// Receive thread proc
+// Receive thread proc. Moonlight Plus (since 2.3.5): it only reads the socket, notes when it read each packet and hands
+// the packet to the processing thread (VideoProcessThreadProc()) through the ring, so that it reads the next packet
+// while the one before is decrypted, corrected and put into its frame.
 static void VideoReceiveThreadProc(void* context) {
     int err;
-    int bufferSize, receiveSize, decryptedSize, minSize;
-    char* buffer;
-    char* encryptedBuffer;
-    int queueStatus;
+    int receiveSize;
     bool useSelect;
     int waitingForVideoMs;
-    bool encrypted;
     int receiveMode;
+    PVIDEO_RECV_SLOT slot;
     VIDEO_RECV_FIGURES figures, windowStart;
     uint32_t receives, nextSampleReceive, sampleState;
-    uint64_t streamStartUs, windowStartUs, workStartUs;
+    uint64_t streamStartUs, windowStartUs, workStartUs, workWaitedUs;
     bool workSampled;
 
-    encrypted = !!(EncryptionFeaturesEnabled & SS_ENC_VIDEO);
-    decryptedSize = StreamConfig.packetSize + MAX_RTP_HEADER_SIZE;
-    minSize = sizeof(RTP_PACKET) + ((EncryptionFeaturesEnabled & SS_ENC_VIDEO) ? sizeof(ENC_VIDEO_HEADER) : 0);
-    receiveSize = decryptedSize + ((EncryptionFeaturesEnabled & SS_ENC_VIDEO) ? sizeof(ENC_VIDEO_HEADER) : 0);
-    bufferSize = decryptedSize + sizeof(RTPV_QUEUE_ENTRY);
-    buffer = NULL;
+    // The packet as the socket gives it: the RTP packet, after the header of an encrypted packet with video encryption
+    receiveSize = StreamConfig.packetSize + MAX_RTP_HEADER_SIZE +
+        ((EncryptionFeaturesEnabled & SS_ENC_VIDEO) ? sizeof(ENC_VIDEO_HEADER) : 0);
 
     if (rtpSocketNoWait) {
         // Moonlight Plus: startVideoStream() found no receive timeout and gave the video a socket that never waits
@@ -344,19 +372,6 @@ static void VideoReceiveThreadProc(void* context) {
     }
     logVideoReceiveMode(receiveMode);
 
-    // Allocate a staging buffer to use for each received packet
-    if (encrypted) {
-        encryptedBuffer = (char*)malloc(receiveSize);
-        if (encryptedBuffer == NULL) {
-            Limelog("Video Receive: malloc() failed\n");
-            ListenerCallbacks.connectionTerminated(-1);
-            return;
-        }
-    }
-    else {
-        encryptedBuffer = NULL;
-    }
-
     waitingForVideoMs = 0;
     // Moonlight Plus: the figures of the video receive lines
     memset(&figures, 0, sizeof(figures));
@@ -367,27 +382,22 @@ static void VideoReceiveThreadProc(void* context) {
     streamStartUs = 0;
     windowStartUs = 0;
     workStartUs = 0;
+    workWaitedUs = 0;
     workSampled = false;
+    // Moonlight Plus (since 2.3.5): each packet is received into the buffer of a slot of the ring
+    slot = VrrFirstSlot(&receiveRing);
     while (!PltIsThreadInterrupted(&receiveThread)) {
-        PRTP_PACKET packet;
         bool sampled;
         bool waiting;
         bool waitingKnown;
         uint64_t receiveStartUs;
+        uint64_t stampUs;
 
-        if (buffer == NULL) {
-            buffer = (char*)malloc(bufferSize);
-            if (buffer == NULL) {
-                Limelog("Video Receive: malloc() failed\n");
-                ListenerCallbacks.connectionTerminated(-1);
-                break;
-            }
-        }
-
-        // Moonlight Plus: the other work since the sampled packet before ends here, and the line of a minute comes
+        // Moonlight Plus: the other work since the sampled packet before ends here, and the line of a minute comes. A
+        // wait for room in the ring after it is not work of this thread (the lines of the processing thread count it).
         if (workSampled) {
             uint64_t nowUs = PltGetMicroseconds();
-            figures.workUs += nowUs - workStartUs;
+            figures.workUs += nowUs - workStartUs - workWaitedUs;
             figures.workSamples++;
             workSampled = false;
             checkVideoReceiveWindow(&figures, &windowStart, &windowStartUs, nowUs);
@@ -403,6 +413,7 @@ static void VideoReceiveThreadProc(void* context) {
         // (a socket that never waits tells it with every read)
         waitingKnown = receiveMode == VIDEO_RECV_MODE_NO_WAIT;
         receiveStartUs = 0;
+        stampUs = 0;
         if (sampled && receiveMode != VIDEO_RECV_MODE_NO_WAIT) {
             // Whether a packet is waiting: a poll() without a timeout, timed. A failed one leaves it unknown, and only a
             // readable socket counts as a packet waiting, not an error that the socket reports (POLLERR and the like)
@@ -439,7 +450,7 @@ static void VideoReceiveThreadProc(void* context) {
             int socketCalls;
 
             err = recvUdpSocketNoWait(rtpSocket,
-                                      encrypted ? encryptedBuffer : buffer,
+                                      slot->buffer,
                                       receiveSize,
                                       &waited,
                                       &socketCalls);
@@ -448,7 +459,7 @@ static void VideoReceiveThreadProc(void* context) {
         }
         else {
             err = recvUdpSocket(rtpSocket,
-                                encrypted ? encryptedBuffer : buffer,
+                                slot->buffer,
                                 receiveSize,
                                 useSelect,
                                 NULL,
@@ -478,6 +489,12 @@ static void VideoReceiveThreadProc(void* context) {
                 figures.clockSamples++;
                 workStartUs = clockUs;
                 workSampled = true;
+                stampUs = endUs;
+            }
+            else {
+                // Moonlight Plus (since 2.3.5): when the reader read the packet, for the frame receive time and the
+                // arrival rate
+                stampUs = PltGetMicroseconds();
             }
         }
 
@@ -502,7 +519,7 @@ static void VideoReceiveThreadProc(void* context) {
                     break;
                 }
             }
-            
+
             // Receive timed out; try again
             continue;
         }
@@ -511,100 +528,297 @@ static void VideoReceiveThreadProc(void* context) {
             receivedDataFromPeer = true;
             Limelog("Received first video packet after %d ms\n", waitingForVideoMs);
 
-            firstDataTimeMs = PltGetMillis();
+            // Moonlight Plus (since 2.3.5): the time the reader read it, in milliseconds as PltGetMillis() gives it,
+            // for the limit for the first frame that the processing thread checks
+            firstDataTimeMs = stampUs / 1000;
 
             // Moonlight Plus: the time of the video receive lines counts from the first packet
-            streamStartUs = PltGetMicroseconds();
+            streamStartUs = stampUs;
             windowStartUs = streamStartUs;
         }
 
-#ifndef LC_FUZZING
-        if (!receivedFullFrame) {
-            uint64_t now = PltGetMillis();
-
-            if (now - firstDataTimeMs >= FIRST_FRAME_TIMEOUT_SEC * 1000) {
-                Limelog("Terminating connection due to lack of a successful video frame\n");
-                ListenerCallbacks.connectionTerminated(ML_ERROR_NO_VIDEO_FRAME);
-                break;
-            }
-        }
-#endif
-
-        if (err < minSize) {
-            // Runt packet
-            continue;
-        }
-
-        // Decrypt the packet into the buffer if encryption is enabled
-        if (encrypted) {
-            PENC_VIDEO_HEADER encHeader = (PENC_VIDEO_HEADER)encryptedBuffer;
-
-            // If this frame is below our current frame number, discard it before decryption
-            // to save CPU cycles decrypting FEC shards for a frame we already reassembled.
-            //
-            // Since this is happening _before_ decryption, this packet is not trusted yet.
-            // It's imperative that we do not mutate any state based on this packet until
-            // after it has been decrypted successfully!
-            //
-            // It's possible for an attacker to inject a fake packet that has any value of
-            // header fields they want, however this provides them no benefit because we will
-            // simply drop said packet here (if it's below the current frame number) or it
-            // will pass this check and be dropped during decryption (if contents is tampered)
-            // or after decryption in the RTP queue (if it's a replay of a previous authentic
-            // packet from the host).
-            //
-            // In short, an attacker spoofing this value via MITM or sending malicious values
-            // impersonating the host from off-link doesn't gain them anything. If they have
-            // a true MITM, they can DoS our connection by just dropping all our traffic, so
-            // tampering with packets to fail this check doesn't accomplish anything they
-            // couldn't already do. If they're not on-link, we just throw their malicious
-            // traffic away (as mentioned in the paragraph above) and continue accepting
-            // legitmate video traffic.
-            if (encHeader->frameNumber && LE32(encHeader->frameNumber) < RtpvGetCurrentFrameNumber(&rtpQueue)) {
-                continue;
-            }
-
-            if (!PltDecryptMessage(decryptionCtx, ALGORITHM_AES_GCM, 0,
-                                   (unsigned char*)StreamConfig.remoteInputAesKey, sizeof(StreamConfig.remoteInputAesKey),
-                                   encHeader->iv, sizeof(encHeader->iv),
-                                   encHeader->tag, sizeof(encHeader->tag),
-                                   ((unsigned char*)(encHeader + 1)), err - sizeof(ENC_VIDEO_HEADER), // The ciphertext is after the header
-                                   (unsigned char*)buffer, &err)) {
-                Limelog("Failed to decrypt video packet!\n");
-                continue;
-            }
-        }
-
-        // Convert fields to host byte-order
-        packet = (PRTP_PACKET)&buffer[0];
-        packet->sequenceNumber = BE16(packet->sequenceNumber);
-        packet->timestamp = BE32(packet->timestamp);
-        packet->ssrc = BE32(packet->ssrc);
-
-        queueStatus = RtpvAddPacket(&rtpQueue, packet, err, (PRTPV_QUEUE_ENTRY)&buffer[decryptedSize]);
-
-        if (queueStatus == RTPF_RET_QUEUED) {
-            // The queue owns the buffer
-            buffer = NULL;
+        // Moonlight Plus (since 2.3.5): hand the packet to the processing thread, which does the rest (the limit for
+        // the first frame, runts, decryption, the RTP queue), and go on with the next slot
+        slot = VrrPublish(&receiveRing, err, stampUs, &workWaitedUs);
+        if (slot == NULL) {
+            // The stream stops, or the processing thread ended
+            break;
         }
     }
+
+    // Moonlight Plus (since 2.3.5): the processing thread takes what is left in the ring, then ends
+    VrrClose(&receiveRing);
 
     // Moonlight Plus: the line of the whole stream, once the thread ends (at a stop or after an error)
     if (figures.packets > 0) {
         logVideoReceiveFigures(&figures, NULL, PltGetMicroseconds() - streamStartUs, true);
     }
+}
 
-    if (buffer != NULL) {
-        free(buffer);
+// Moonlight Plus (since 2.3.5): a count for a line, at most 4294967295, so that the line stays within the log
+static unsigned int clampedVideoCount(uint64_t value) {
+    return value > 4294967295ULL ? 4294967295U : (unsigned int)value;
+}
+
+// Moonlight Plus (since 2.3.5): the line of a minute (the figures since before) or of the whole stream (before NULL)
+// of the processing thread: its work per packet (the time it didn't look or wait for packets, over the packets), its
+// idle share, the speed it could take packets at, and the ring: the most packets in it, the times the reader found it
+// full and waited for room and how long, and the times the reader woke this thread
+static void logVideoProcessFigures(const VIDEO_PROC_FIGURES* now, const VIDEO_PROC_FIGURES* before,
+                                   const VIDEO_RECV_RING_FIGURES* ring, const VIDEO_RECV_RING_FIGURES* ringBefore,
+                                   uint64_t elapsedUs, bool wholeStream) {
+    VIDEO_PROC_FIGURES d;
+    VIDEO_RECV_RING_FIGURES r;
+    char workTime[16];
+    char idle[16];
+    char capacity[16];
+    unsigned int seconds;
+    uint64_t busyUs;
+    uint64_t idleUs;
+
+    d = *now;
+    r = *ring;
+    if (before != NULL) {
+        d.packets -= before->packets;
+        d.bytes -= before->bytes;
+        d.idleUs -= before->idleUs;
+    }
+    if (ringBefore != NULL) {
+        r.fullWaits -= ringBefore->fullWaits;
+        r.fullWaitUs -= ringBefore->fullWaitUs;
+        r.wakes -= ringBefore->wakes;
     }
 
-    if (encryptedBuffer != NULL) {
-        free(encryptedBuffer);
+    if (elapsedUs == 0) {
+        elapsedUs = 1;
+    }
+    seconds = (unsigned int)((elapsedUs + 500000) / 1000000);
+    if (seconds == 0) {
+        seconds = 1;
+    }
+    idleUs = d.idleUs < elapsedUs ? d.idleUs : elapsedUs;
+    busyUs = elapsedUs - idleUs;
+
+    if (d.packets > 0) {
+        double value = (double)busyUs / (double)d.packets;
+        if (value > 99999.9) {
+            value = 99999.9;
+        }
+        snprintf(workTime, sizeof(workTime), "%.1f", value);
+    }
+    else {
+        snprintf(workTime, sizeof(workTime), "n/a");
+    }
+
+    snprintf(idle, sizeof(idle), "%u", (unsigned int)((idleUs * 100 + elapsedUs / 2) / elapsedUs));
+
+    // The rate at which this thread could take packets, at IP level like 'Frames arrive at' (RtpVideoQueue.c): the
+    // bits of an average packet with its IP and UDP header per microsecond of its work
+    if (d.packets > 0 && busyUs > 0) {
+        double mbps = ((double)d.bytes / (double)d.packets + videoReceiveOverheadBytes()) * 8 * (double)d.packets /
+            (double)busyUs;
+        if (mbps > 99999) {
+            mbps = 99999;
+        }
+        snprintf(capacity, sizeof(capacity), "%u", (unsigned int)(mbps + 0.5));
+    }
+    else {
+        snprintf(capacity, sizeof(capacity), "n/a");
+    }
+
+    if (wholeStream) {
+        Limelog("Video processing of the stream, %u s: %llu packets, %s us of work each, idle %s%%: up to %s Mbps; ring up to %u of %u packets, full %u times for %u ms; %u wakes\n",
+                seconds, (unsigned long long)d.packets, workTime, idle, capacity, r.maxDepth, receiveRing.slotCount,
+                clampedVideoCount(r.fullWaits), clampedVideoCount((r.fullWaitUs + 500) / 1000), clampedVideoCount(r.wakes));
+    }
+    else {
+        Limelog("Video processing, last %u s: %llu packets/s, %s us of work each, idle %s%%: up to %s Mbps; ring up to %u of %u packets, full %u times for %u ms; %u wakes\n",
+                seconds, (unsigned long long)(d.packets * 1000000 / elapsedUs), workTime, idle, capacity, r.windowMaxDepth,
+                receiveRing.slotCount, clampedVideoCount(r.fullWaits), clampedVideoCount((r.fullWaitUs + 500) / 1000),
+                clampedVideoCount(r.wakes));
     }
 }
 
+// Moonlight Plus (since 2.3.5): the processing thread of the video receive. It takes the packets that the reader
+// (VideoReceiveThreadProc()) read, in their order, and does what the single receive thread did with them up to 2.3.4:
+// the limit for the first frame, runts, the decryption, the byte order and the RTP queue, which corrects errors and
+// hands complete frames to the depacketizer. Plain video goes to the RTP queue in the buffer of its slot, which then
+// gets a buffer of this thread in its place, so no packet is copied. It ends when the reader ended and the ring is
+// empty, or at the stop (VrrStop()), and stops the ring itself when it ends the stream.
+static void VideoProcessThreadProc(void* context) {
+    int bufferSize, decryptedSize, minSize;
+    char* buffer;        // encrypted: the buffer to decrypt into; plain: the buffer for the next slot
+    bool encrypted;
+    bool stopping;
+    bool startWindow;
+    uint32_t released, first, taken, i;
+    uint64_t idleUs, nowUs, streamStartUs, windowStartUs;
+    VIDEO_PROC_FIGURES figures, windowStart;
+    VIDEO_RECV_RING_FIGURES ringFigures, windowRing;
+
+    encrypted = !!(EncryptionFeaturesEnabled & SS_ENC_VIDEO);
+    decryptedSize = StreamConfig.packetSize + MAX_RTP_HEADER_SIZE;
+    minSize = sizeof(RTP_PACKET) + (encrypted ? sizeof(ENC_VIDEO_HEADER) : 0);
+    bufferSize = decryptedSize + sizeof(RTPV_QUEUE_ENTRY);
+    buffer = NULL;
+    stopping = false;
+    startWindow = false;
+    released = 0;
+    first = 0;
+    streamStartUs = 0;
+    windowStartUs = 0;
+    memset(&figures, 0, sizeof(figures));
+    windowStart = figures;
+    memset(&ringFigures, 0, sizeof(ringFigures));
+    windowRing = ringFigures;
+
+    while (!stopping) {
+        taken = VrrReleaseAndTake(&receiveRing, released, &first, &idleUs, &ringFigures, startWindow);
+        released = 0;
+        startWindow = false;
+        if (streamStartUs != 0) {
+            figures.idleUs += idleUs;
+        }
+        if (taken == 0) {
+            break;
+        }
+        if (streamStartUs == 0) {
+            // The figures count from the first packet; the wait for it isn't idle time of the stream
+            streamStartUs = PltGetMicroseconds();
+            windowStartUs = streamStartUs;
+            windowRing = ringFigures;
+        }
+
+        for (i = 0; i < taken && !stopping; i++) {
+            PVIDEO_RECV_SLOT slot = VrrSlot(&receiveRing, first + i);
+            int length = slot->length;
+            char* packetBuffer;
+            PRTP_PACKET packet;
+            int queueStatus;
+
+            figures.packets++;
+            figures.bytes += (uint64_t)length;
+
+#ifndef LC_FUZZING
+            // The limit for the first frame, by the time the reader read the packet
+            if (!receivedFullFrame && slot->receiveTimeUs / 1000 - firstDataTimeMs >= FIRST_FRAME_TIMEOUT_SEC * 1000) {
+                Limelog("Terminating connection due to lack of a successful video frame\n");
+                ListenerCallbacks.connectionTerminated(ML_ERROR_NO_VIDEO_FRAME);
+                stopping = true;
+                break;
+            }
+#endif
+
+            if (length < minSize) {
+                // Runt packet
+                continue;
+            }
+
+            if (buffer == NULL) {
+                buffer = (char*)malloc(bufferSize);
+                if (buffer == NULL) {
+                    Limelog("Video Receive: malloc() failed\n");
+                    ListenerCallbacks.connectionTerminated(-1);
+                    stopping = true;
+                    break;
+                }
+            }
+
+            // Decrypt the packet into the buffer if encryption is enabled
+            if (encrypted) {
+                PENC_VIDEO_HEADER encHeader = (PENC_VIDEO_HEADER)slot->buffer;
+
+                // If this frame is below our current frame number, discard it before decryption
+                // to save CPU cycles decrypting FEC shards for a frame we already reassembled.
+                //
+                // Since this is happening _before_ decryption, this packet is not trusted yet.
+                // It's imperative that we do not mutate any state based on this packet until
+                // after it has been decrypted successfully!
+                //
+                // It's possible for an attacker to inject a fake packet that has any value of
+                // header fields they want, however this provides them no benefit because we will
+                // simply drop said packet here (if it's below the current frame number) or it
+                // will pass this check and be dropped during decryption (if contents is tampered)
+                // or after decryption in the RTP queue (if it's a replay of a previous authentic
+                // packet from the host).
+                //
+                // In short, an attacker spoofing this value via MITM or sending malicious values
+                // impersonating the host from off-link doesn't gain them anything. If they have
+                // a true MITM, they can DoS our connection by just dropping all our traffic, so
+                // tampering with packets to fail this check doesn't accomplish anything they
+                // couldn't already do. If they're not on-link, we just throw their malicious
+                // traffic away (as mentioned in the paragraph above) and continue accepting
+                // legitmate video traffic.
+                if (encHeader->frameNumber && LE32(encHeader->frameNumber) < RtpvGetCurrentFrameNumber(&rtpQueue)) {
+                    continue;
+                }
+
+                if (!PltDecryptMessage(decryptionCtx, ALGORITHM_AES_GCM, 0,
+                                       (unsigned char*)StreamConfig.remoteInputAesKey, sizeof(StreamConfig.remoteInputAesKey),
+                                       encHeader->iv, sizeof(encHeader->iv),
+                                       encHeader->tag, sizeof(encHeader->tag),
+                                       ((unsigned char*)(encHeader + 1)), length - sizeof(ENC_VIDEO_HEADER), // The ciphertext is after the header
+                                       (unsigned char*)buffer, &length)) {
+                    Limelog("Failed to decrypt video packet!\n");
+                    continue;
+                }
+                packetBuffer = buffer;
+            }
+            else {
+                // The buffer of the slot goes to the RTP queue, and this thread's buffer takes its place in the slot
+                packetBuffer = slot->buffer;
+                slot->buffer = buffer;
+            }
+
+            // Convert fields to host byte-order
+            packet = (PRTP_PACKET)&packetBuffer[0];
+            packet->sequenceNumber = BE16(packet->sequenceNumber);
+            packet->timestamp = BE32(packet->timestamp);
+            packet->ssrc = BE32(packet->ssrc);
+
+            queueStatus = RtpvAddPacket(&rtpQueue, packet, length, (PRTPV_QUEUE_ENTRY)&packetBuffer[decryptedSize],
+                                        slot->receiveTimeUs);
+
+            if (queueStatus == RTPF_RET_QUEUED) {
+                // The queue owns the buffer
+                buffer = NULL;
+            }
+            else if (!encrypted) {
+                // The buffer of a rejected packet is this thread's now and goes into the next slot
+                buffer = packetBuffer;
+            }
+        }
+        released = taken;
+
+        // The line of a minute, if a packet of it was processed
+        nowUs = PltGetMicroseconds();
+        if (nowUs - windowStartUs >= VIDEO_RECV_LINE_INTERVAL_US) {
+            if (figures.packets > windowStart.packets) {
+                logVideoProcessFigures(&figures, &windowStart, &ringFigures, &windowRing, nowUs - windowStartUs, false);
+            }
+            windowStart = figures;
+            windowRing = ringFigures;
+            windowStartUs = nowUs;
+            startWindow = true;
+        }
+    }
+
+    if (stopping) {
+        // The reader mustn't wait for room any more, and ends at its next packet
+        VrrStop(&receiveRing);
+    }
+
+    // The line of the whole stream, once the thread ends
+    if (figures.packets > 0) {
+        logVideoProcessFigures(&figures, NULL, &ringFigures, NULL, PltGetMicroseconds() - streamStartUs, true);
+    }
+
+    free(buffer);
+}
+
 void notifyKeyFrameReceived(void) {
-    // Remember that we got a full frame successfully
+    // Remember that we got a full frame successfully (Moonlight Plus, since 2.3.5: on the processing thread, from the
+    // depacketizer, and read only there)
     receivedFullFrame = true;
 }
 
@@ -646,6 +860,9 @@ void stopVideoStream(void) {
     
     PltInterruptThread(&udpPingThread);
     PltInterruptThread(&receiveThread);
+    // Moonlight Plus (since 2.3.5): the ring stops the processing thread (VrrStop() below); this keeps the threads of
+    // the platform alike
+    PltInterruptThread(&processThread);
     if ((VideoCallbacks.capabilities & (CAPABILITY_DIRECT_SUBMIT | CAPABILITY_PULL_RENDERER)) == 0) {
         PltInterruptThread(&decoderThread);
     }
@@ -654,11 +871,14 @@ void stopVideoStream(void) {
         shutdownTcpSocket(firstFrameSocket);
     }
 
+    // Moonlight Plus (since 2.3.5): neither thread of the video receive waits for the other any more
+    VrrStop(&receiveRing);
     // Moonlight Plus: a receive thread in a read of a socket that never waits
     wakeVideoReceiveThread();
 
     PltJoinThread(&udpPingThread);
     PltJoinThread(&receiveThread);
+    PltJoinThread(&processThread);
     if ((VideoCallbacks.capabilities & (CAPABILITY_DIRECT_SUBMIT | CAPABILITY_PULL_RENDERER)) == 0) {
         PltJoinThread(&decoderThread);
     }
@@ -671,6 +891,7 @@ void stopVideoStream(void) {
         closeSocket(rtpSocket);
         rtpSocket = INVALID_SOCKET;
     }
+    VrrDestroy(&receiveRing);
 
     VideoCallbacks.cleanup();
 }
@@ -723,12 +944,40 @@ int startVideoStream(void* rendererContext, int drFlags) {
         }
     }
 
+    // Moonlight Plus (since 2.3.5): the ring between the reader and the processing thread, whose slots hold a packet
+    // as the socket gives it: with the queue entry of the RTP queue behind it (plain video, whose buffer goes to the
+    // queue), or with the header of an encrypted packet
+    {
+        int slotSize = StreamConfig.packetSize + MAX_RTP_HEADER_SIZE +
+            ((EncryptionFeaturesEnabled & SS_ENC_VIDEO) ? (int)sizeof(ENC_VIDEO_HEADER) : (int)sizeof(RTPV_QUEUE_ENTRY));
+        if (VrrInitialize(&receiveRing, VIDEO_RECV_RING_PACKETS, slotSize) != 0) {
+            Limelog("Video Receive: malloc() failed\n");
+            closeSocket(rtpSocket);
+            VideoCallbacks.cleanup();
+            return -1;
+        }
+    }
+
     VideoCallbacks.start();
+
+    // Moonlight Plus (since 2.3.5): the processing thread first, so that the start can still fail without a reader to
+    // stop
+    err = PltCreateThread("VideoProc", VideoProcessThreadProc, NULL, &processThread);
+    if (err != 0) {
+        VideoCallbacks.stop();
+        closeSocket(rtpSocket);
+        VrrDestroy(&receiveRing);
+        VideoCallbacks.cleanup();
+        return err;
+    }
 
     err = PltCreateThread("VideoRecv", VideoReceiveThreadProc, NULL, &receiveThread);
     if (err != 0) {
         VideoCallbacks.stop();
+        VrrStop(&receiveRing);
+        PltJoinThread(&processThread);
         closeSocket(rtpSocket);
+        VrrDestroy(&receiveRing);
         VideoCallbacks.cleanup();
         return err;
     }
@@ -738,9 +987,12 @@ int startVideoStream(void* rendererContext, int drFlags) {
         if (err != 0) {
             VideoCallbacks.stop();
             PltInterruptThread(&receiveThread);
+            VrrStop(&receiveRing);
             wakeVideoReceiveThread();
             PltJoinThread(&receiveThread);
+            PltJoinThread(&processThread);
             closeSocket(rtpSocket);
+            VrrDestroy(&receiveRing);
             VideoCallbacks.cleanup();
             return err;
         }
@@ -757,12 +1009,15 @@ int startVideoStream(void* rendererContext, int drFlags) {
             if ((VideoCallbacks.capabilities & (CAPABILITY_DIRECT_SUBMIT | CAPABILITY_PULL_RENDERER)) == 0) {
                 PltInterruptThread(&decoderThread);
             }
+            VrrStop(&receiveRing);
             wakeVideoReceiveThread();
             PltJoinThread(&receiveThread);
+            PltJoinThread(&processThread);
             if ((VideoCallbacks.capabilities & (CAPABILITY_DIRECT_SUBMIT | CAPABILITY_PULL_RENDERER)) == 0) {
                 PltJoinThread(&decoderThread);
             }
             closeSocket(rtpSocket);
+            VrrDestroy(&receiveRing);
             VideoCallbacks.cleanup();
             return LastSocketError();
         }
@@ -778,8 +1033,10 @@ int startVideoStream(void* rendererContext, int drFlags) {
         if ((VideoCallbacks.capabilities & (CAPABILITY_DIRECT_SUBMIT | CAPABILITY_PULL_RENDERER)) == 0) {
             PltInterruptThread(&decoderThread);
         }
+        VrrStop(&receiveRing);
         wakeVideoReceiveThread();
         PltJoinThread(&receiveThread);
+        PltJoinThread(&processThread);
         if ((VideoCallbacks.capabilities & (CAPABILITY_DIRECT_SUBMIT | CAPABILITY_PULL_RENDERER)) == 0) {
             PltJoinThread(&decoderThread);
         }
@@ -788,6 +1045,7 @@ int startVideoStream(void* rendererContext, int drFlags) {
             closeSocket(firstFrameSocket);
             firstFrameSocket = INVALID_SOCKET;
         }
+        VrrDestroy(&receiveRing);
         VideoCallbacks.cleanup();
         return err;
     }
@@ -805,7 +1063,8 @@ int startVideoStream(void* rendererContext, int drFlags) {
 }
 
 void LiGetVideoNetworkStats(PVIDEO_NETWORK_STATS stats) {
-    // The counters have a single writer, the video receive thread, so plain reads are enough for the overlay
+    // The counters have a single writer, the video processing thread (since 2.3.5), so plain reads are enough for the
+    // overlay
     stats->fecRecoveredBlocks = rtpQueue.statRecoveredBlocks;
     stats->fecRecoveredPackets = rtpQueue.statRecoveredPackets;
     stats->fecRecoveryFailures = rtpQueue.statRecoveryFailures;
