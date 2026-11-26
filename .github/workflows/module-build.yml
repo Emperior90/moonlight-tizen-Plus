@@ -1,0 +1,87 @@
+# Builds the widget file of the Standard variant in Docker with the toolchain of the release (Samsung's Emscripten 1.39.4.7
+# fastcomp and Tizen Studio, see docs/BUILD.md) whenever a source of the WebAssembly module or of the widget changes. The
+# workflow Tests builds no module: its native tests compile single files with g++ and gcc, and its browser tests use a
+# stub of the module. Twice a change passed every test and only the next release build failed (a75ccc1, 930660f); this
+# workflow shows such a change on its own push.
+# It exports the widget file to the runner and checks that it holds the module; it pushes nothing, publishes nothing and
+# needs no secret. Its result is not part of the promotion of a release: the build of the pre-release is that proof.
+name: Module build
+# The paths are the sources that the Dockerfile copies into the build (tests/unit/ci-workflows.test.js checks that every
+# COPY is covered), the Dockerfile, its ignore file and this workflow. The same list for both events; it can also be
+# started by hand from the Actions tab.
+on:
+  push:
+    paths:
+      - 'wasm/**'
+      - 'moonlight-common-c/**'
+      - 'libgamestream/**'
+      - 'opus/**'
+      - 'res/**'
+      - 'tools/patch-embind-string.js'
+      - 'CMakeLists.txt'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'LICENSE'
+      - '.github/workflows/module-build.yml'
+  pull_request:
+    paths:
+      - 'wasm/**'
+      - 'moonlight-common-c/**'
+      - 'libgamestream/**'
+      - 'opus/**'
+      - 'res/**'
+      - 'tools/patch-embind-string.js'
+      - 'CMakeLists.txt'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'LICENSE'
+      - '.github/workflows/module-build.yml'
+  workflow_dispatch:
+# By specifying the access of one of the scopes, all of those that are not specified are set to 'none'. The build only reads the repository.
+permissions:
+  contents: read
+# Cancels a running build of the same branch or pull request when a newer commit arrives, since only the latest result matters.
+concurrency:
+  group: module-build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  module-build:
+    # The runner of the release builds
+    runs-on: ubuntu-latest
+    # The build took 5 to 6 minutes without cache in the release runs of November 2026; the downloads of Tizen Studio and
+    # the Samsung Emscripten SDK come from Samsung's servers, so a server that is down turns this job red without any
+    # change of the code (its log names the download)
+    timeout-minutes: 30
+    steps:
+      # No step pushes with git: the token isn't kept in the clone, which the Dockerfile copies into the build
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The same build as the Standard step of the release workflow (release-development.yml), without a cache: the layers
+      # of Tizen Studio and the SDK are several GB
+      - name: Build the widget file (Standard variant)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: wgt
+          push: false
+          outputs: type=local,dest=out/standard
+          build-args: |
+            BUILD_TYPE=development
+            REPO_OWNER=${{ github.repository_owner }}
+            REPO_NAME=${{ github.event.repository.name }}
+            FORCE_GAME_MODE=false
+      # The widget file must hold the three files of the module that CMakeLists.txt installs
+      - name: Check the widget file
+        run: |
+          set -euo pipefail
+          ls -la out/standard/Moonlight.wgt
+          unzip -l out/standard/Moonlight.wgt | tee wgt-files.txt
+          for file in moonlight-wasm.js moonlight-wasm.wasm moonlight-wasm.worker.js; do
+            if ! awk -v name="$file" '$4 == name { found = 1 } END { exit !found }' wgt-files.txt; then
+              echo "The widget file lacks $file."
+              exit 1
+            fi
+          done
+          echo "The widget file holds the module."

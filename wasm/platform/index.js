@@ -2286,11 +2286,6 @@ function hostMenuDialog(host) {
     Navigation.pop();
   }).appendTo(hostMenuDialog);
 
-  // If the dialog element doesn't support the showModal method, register it with dialogPolyfill
-  if (!hostMenuDialog[0].showModal) {
-    dialogPolyfill.registerDialog(hostMenuDialog[0]);
-  }
-
   // Show the dialog and push the view, which moves through the entries that show and opens on the first one, whatever
   // was selected the last time
   $(hostMenuDialogOverlay).css('display', 'flex');
@@ -2346,9 +2341,6 @@ function pcPowerDialog(host) {
       startPcPowerSession(host, 'shutdown');
     }
   });
-  if (!dialog.showModal) {
-    dialogPolyfill.registerDialog(dialog);
-  }
   overlay.style.display = 'flex';
   dialog.showModal();
   isDialogOpen = true;
@@ -2700,11 +2692,6 @@ function hostDetailsDialog(host) {
     isDialogOpen = false;
     Navigation.pop();
   }).appendTo(hostDetailsDialogActions);
-
-  // If the dialog element doesn't support the showModal method, register it with dialogPolyfill
-  if (!hostDetailsDialog[0].showModal) {
-    dialogPolyfill.registerDialog(hostDetailsDialog[0]);
-  }
 
   // Show the dialog and push the view
   $(hostDetailsDialogOverlay).css('display', 'flex');
@@ -3218,12 +3205,6 @@ function updateAppDialog(latestVersion, releaseNotes) {
     Navigation.pop();
     Navigation.switch();
   });
-
-  // Check if the dialog element does not support the showModal method
-  if (!updateAppDialog[0].showModal) {
-    // Register the dialog with dialogPolyfill to enable modal functionality for older browsers
-    dialogPolyfill.registerDialog(updateAppDialog[0]);
-  }
 
   // Show the dialog and push the view
   updateAppDialogOverlay.css('display', 'flex');

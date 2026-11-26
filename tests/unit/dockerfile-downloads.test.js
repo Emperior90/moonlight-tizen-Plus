@@ -35,11 +35,6 @@ const UNCHECKED = [
       'versions are not pinned, and none of them goes into the app.',
     docs: /\n\| Ubuntu packages \| `apt` checks them against the signed package lists of the Ubuntu archive\. [^\n]*not pinned/,
   },
-  {
-    id: 'https://download.tizen.org/sdk/Installer/tizen-studio_6.1/web-cli_Tizen_Studio_6.1_ubuntu-64.bin',
-    why: 'Open: the SHA-256 of the installer of Tizen Studio 6.1 is not recorded yet. The build prints it instead.',
-    docs: /\n\| Tizen Studio 6\.1 installer \| \*\*Not checked yet\.\*\* [^\n]*prints/,
-  },
 ];
 const UNCHECKED_IDS = UNCHECKED.map((entry) => entry.id);
 

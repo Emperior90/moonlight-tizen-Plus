@@ -36,7 +36,7 @@ This helps make reviews easier and ensures contributions align with the project'
 Before opening a pull request, make sure you can build and test your changes successfully:
 
 - Please follow the [development guide](https://github.com/brightcraft/moonlight-tizen/wiki/Development-Guide) in the Wiki of Moonlight Tizen. It explains how to build the app locally and run it on your device.
-- **Run the tests** with `npm test --prefix tests` (after `npm ci --prefix tests` and `npx --prefix tests playwright install chromium` once). They need no build of the WebAssembly module, and they run on every push as well; [tests/README.md](../tests/README.md) explains them.
+- **Run the tests** with `npm test --prefix tests` (after `npm ci --prefix tests` and `npm run install:browser --prefix tests` once, which installs the Chromium of the CI). They need no build of the WebAssembly module, and they run on every push as well; [tests/README.md](../tests/README.md) explains them.
 - **Test your changes** on the target Tizen device whenever possible to ensure they work correctly in the real environment.
 - When making changes to platform-specific functionality, ensure that your changes do not introduce **regressions or affect existing Tizen behavior**.
 

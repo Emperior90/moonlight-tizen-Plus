@@ -314,7 +314,7 @@
     {
       "id": "enet",
       "name": "ENet",
-      "repo": "moonlight-stream/enet",
+      "repo": "cgutman/enet",
       "track": "submodule",
       "pinned_in": { "repo": "moonlight-stream/moonlight-common-c", "path": "enet" },
       "vendored": "bbf7185 (moonlight-common-c/enet)",

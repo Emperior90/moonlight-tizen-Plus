@@ -1,10 +1,13 @@
 #pragma once
 // Host stand-ins for the Samsung Tizen WASM Player API (samsung::wasm), with the types and members the app's native
 // code uses. Every operation succeeds and does nothing; the native tests don't play media. A test can watch the packets
-// that the app appends and choose the result of each append with TestAppendPacketHook() (see frame_pacer_test.cpp).
+// that the app appends and choose the result of each append with TestAppendPacketHook() (see frame_pacer_test.cpp), and
+// watch and refuse the tracks that the app adds, and see the media source open, with samsung::wasm::stub below (see
+// video_setup_test.cpp). Their defaults keep every operation succeeding.
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <set>
 #include <string>
 #include <vector>
 namespace samsung { namespace wasm {
@@ -21,6 +24,17 @@ template<> struct Result<void> { OperationResult operation_result; explicit oper
 struct ElementaryMediaPacket { Seconds pts; Seconds dts; Seconds duration; bool is_key_frame; size_t data_size; const void* data; uint32_t width; uint32_t height; uint32_t framerate_num; uint32_t framerate_den; SessionId session_id; };
 struct ElementaryAudioTrackConfig { std::string mimeType; std::vector<uint8_t> extradata; DecodingMode decoding_mode; SampleFormat sample_format; ChannelLayout channel_layout; uint32_t sample_rate; };
 struct ElementaryVideoTrackConfig { std::string mimeType; std::vector<uint8_t> extradata; DecodingMode decoding_mode; uint32_t width; uint32_t height; uint32_t framerate_num; uint32_t framerate_den; };
+namespace stub {
+// The video tracks that AddTrack() was asked for, in order, and the MIME types it refuses
+inline std::vector<ElementaryVideoTrackConfig> videoTracks;
+inline std::set<std::string> rejectedVideoMimes;
+// The audio tracks that AddTrack() was asked for, and whether it refuses them
+inline int audioTracks = 0;
+inline bool rejectAudioTrack = false;
+// Called by AddTrack() for a video track before it answers, and by Open() of the media source
+inline std::function<void()> onAddVideoTrack;
+inline std::function<void()> onSourceOpen;
+}
 // Called with every appended packet when set; it returns the result as a value of OperationResult of the real API
 // (e.g. 29 for a full buffer), which the app reads as a number
 using AppendPacketHook = std::function<int(const ElementaryMediaPacket&)>;
@@ -56,9 +70,22 @@ class ElementaryMediaStreamSource {
   enum class LatencyMode { kNormal, kLow, kUltraLow };
   enum class RenderingMode { kMediaElement, kVideoTexture };
   ElementaryMediaStreamSource(LatencyMode, RenderingMode) {}
-  Result<ElementaryMediaTrack> AddTrack(const ElementaryAudioTrackConfig&) { return {OperationResult::kSuccess, {}}; }
-  Result<ElementaryMediaTrack> AddTrack(const ElementaryVideoTrackConfig&) { return {OperationResult::kSuccess, {}}; }
-  void Open(std::function<void(OperationResult)>) {}
+  Result<ElementaryMediaTrack> AddTrack(const ElementaryAudioTrackConfig&) {
+    stub::audioTracks++;
+    return {stub::rejectAudioTrack ? OperationResult::kFailed : OperationResult::kSuccess, {}};
+  }
+  Result<ElementaryMediaTrack> AddTrack(const ElementaryVideoTrackConfig& config) {
+    stub::videoTracks.push_back(config);
+    if (stub::onAddVideoTrack) {
+      stub::onAddVideoTrack();
+    }
+    return {stub::rejectedVideoMimes.count(config.mimeType) > 0 ? OperationResult::kFailed : OperationResult::kSuccess, {}};
+  }
+  void Open(std::function<void(OperationResult)>) {
+    if (stub::onSourceOpen) {
+      stub::onSourceOpen();
+    }
+  }
   void Close(std::function<void(OperationResult)>) {}
   Result<void> SetListener(ElementaryMediaStreamSourceListener*) { return {OperationResult::kSuccess}; }
 };

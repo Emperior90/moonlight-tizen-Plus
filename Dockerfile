@@ -29,10 +29,9 @@ USER moonlight
 WORKDIR /home/moonlight
 
 # Install Tizen Studio CLI and configure the toolchain path
-# The installer isn't checked against a checksum yet, because its SHA-256 isn't recorded (docs/BUILD.md, "What the build
-# checks", says how to add the check). Until then the build prints the SHA-256 of the file it downloaded into its log.
+# The installer is checked against the SHA-256 that docs/BUILD.md states ("What the build checks"): another file stops the build
 RUN aria2c -x 5 -s 5 -o web-cli_Tizen_Studio_6.1_ubuntu-64.bin 'https://download.tizen.org/sdk/Installer/tizen-studio_6.1/web-cli_Tizen_Studio_6.1_ubuntu-64.bin' && \
-	sha256sum web-cli_Tizen_Studio_6.1_ubuntu-64.bin
+	echo "7f33fe09eda4eb5d50463cf997e8f676d455060720470070ae1932994413aaf4  web-cli_Tizen_Studio_6.1_ubuntu-64.bin" | sha256sum -c -
 RUN chmod a+x web-cli_Tizen_Studio_6.1_ubuntu-64.bin
 RUN ./web-cli_Tizen_Studio_6.1_ubuntu-64.bin --accept-license /home/moonlight/tizen-studio
 ENV PATH=/home/moonlight/tizen-studio/tools/ide/bin:/home/moonlight/tizen-studio/tools:${PATH}

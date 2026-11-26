@@ -233,13 +233,26 @@ function createRepository(version) {
   };
 }
 
-// Run the promotion step in the repository with a simulated pre-release v2026.1025.1200 of the given commit
-function promote(repo, runSha, releaseTag) {
-  const github = createFakeGithub({
+// A check run of the job tests of the workflow Tests, as the API lists it for a commit
+const testsRun = (status, conclusion, startedAt, slug) => ({
+  name: 'tests', status, conclusion: status === 'completed' ? conclusion : null, started_at: startedAt || '2026-10-25T12:00:00Z',
+  app: { slug: slug || 'github-actions' },
+});
+const checkRunsRoute = (sha) => 'GET ' + API_URL + '/commits/' + sha + '/check-runs?check_name=tests&per_page=100';
+
+// Run the promotion step in the repository with a simulated pre-release v2026.1025.1200 of the given commit. The workflow
+// Tests passed for both commits unless `checkRuns` gives other check runs of a commit ({ <sha>: [check runs] })
+function promote(repo, runSha, releaseTag, checkRuns) {
+  const routes = {
     ['GET ' + API_URL + '/releases/tags/v2026.1025.1200']: { status: 200, body: { id: 7, prerelease: true } },
     ['GET ' + API_URL + '/git/ref/tags/v2026.1025.1200']: { status: 200, body: { object: { sha: repo.preRelease, type: 'commit' } } },
     ['GET ' + API_URL + '/releases/7']: { status: 200, body: { html_url: 'https://github.com/owner/repo/releases/7', tag_name: releaseTag, name: 'n', prerelease: false, draft: false, assets: [] } },
+  };
+  [repo.preRelease, runSha].forEach((sha) => {
+    const runs = checkRuns && checkRuns[sha] ? checkRuns[sha] : [testsRun('completed', 'success')];
+    routes[checkRunsRoute(sha)] = { status: 200, body: { total_count: runs.length, check_runs: runs } };
   });
+  const github = createFakeGithub(routes);
   try {
     const result = runBash(stepScript('release-development.yml', 'Promote the pre-release to a full release'), {
       cwd: repo.dir,
@@ -338,6 +351,42 @@ test('the promotion refuses a commit whose app sources differ from the pre-relea
     assert.equal(result.status, 1, result.output);
     assert.ok(result.output.indexOf('of the pre-release:\nwasm/platform/index.js\n') >= 0, result.output);
     assert.equal(result.requests.filter((request) => request.method !== 'GET').length, 0);
+  } finally {
+    repo.cleanup();
+  }
+});
+
+test('the promotion stops unless the workflow Tests passed for the commit of the pre-release and the commit of the run', () => {
+  const repo = createRepository('1.19.100');
+  try {
+    repo.write('docs/RELEASE_NOTES.md', 'Final notes\n');
+    const runSha = repo.commit();
+    const cases = [
+      { name: 'no check run', sha: repo.preRelease, runs: [], result: 'missing' },
+      { name: 'a run in progress', sha: repo.preRelease, runs: [testsRun('in_progress')], result: 'in_progress' },
+      { name: 'a failed run', sha: repo.preRelease, runs: [testsRun('completed', 'failure')], result: 'failure' },
+      { name: 'a newer failed attempt after a success', sha: repo.preRelease, result: 'failure',
+        runs: [testsRun('completed', 'failure', '2026-10-25T13:00:00Z'), testsRun('completed', 'success', '2026-10-25T12:00:00Z')] },
+      { name: 'a cancelled run', sha: repo.preRelease, runs: [testsRun('completed', 'cancelled')], result: 'cancelled' },
+      { name: 'a check run named tests of another app only', sha: repo.preRelease, runs: [testsRun('completed', 'success', null, 'other-ci')], result: 'missing' },
+      { name: 'success for the pre-release, failure for the run', sha: runSha, runs: [testsRun('completed', 'failure')], result: 'failure' },
+    ];
+    cases.forEach((entry) => {
+      ['api_response.json', 'existing_ref.json', 'release_notes.md'].forEach((file) => fs.rmSync(path.join(repo.dir, file), { force: true }));
+      const result = promote(repo, runSha, 'v1.19.100', { [entry.sha]: entry.runs });
+      assert.equal(result.status, 1, entry.name + ': ' + result.output);
+      assert.ok(result.output.indexOf('The workflow Tests has not passed for commit ' + entry.sha + ' (its check run tests: ' + entry.result + ').') >= 0, entry.name + ': ' + result.output);
+      assert.match(result.output, /run it again from the Actions tab, before promoting/);
+      assert.equal(result.requests.filter((request) => request.method === 'PATCH' || request.method === 'DELETE').length, 0, entry.name + ': nothing was changed');
+    });
+    // An older failure followed by a passed run again counts as passed, for both commits
+    ['api_response.json', 'existing_ref.json', 'release_notes.md'].forEach((file) => fs.rmSync(path.join(repo.dir, file), { force: true }));
+    const rerun = [testsRun('completed', 'failure', '2026-10-25T12:00:00Z'), testsRun('completed', 'success', '2026-10-25T13:00:00Z')];
+    const passed = promote(repo, runSha, 'v1.19.100', { [repo.preRelease]: rerun, [runSha]: rerun });
+    assert.equal(passed.status, 0, passed.output);
+    assert.ok(passed.requests.some((request) => request.method === 'PATCH'), passed.output);
+    assert.ok(passed.requests.some((request) => request.url === API_URL + '/commits/' + repo.preRelease + '/check-runs?check_name=tests&per_page=100'));
+    assert.ok(passed.requests.some((request) => request.url === API_URL + '/commits/' + runSha + '/check-runs?check_name=tests&per_page=100'));
   } finally {
     repo.cleanup();
   }
@@ -458,7 +507,7 @@ function jobPermissions(workflow) {
 test('each job of the release workflow gets only the permissions that its steps use', () => {
   assert.deepEqual(jobPermissions(readWorkflow()), {
     'build-and-release': { contents: 'write' },
-    'promote-pre-release': { contents: 'write' },
+    'promote-pre-release': { contents: 'write', checks: 'read' },
   });
 });
 
@@ -481,7 +530,7 @@ test('the release builds only the widget files, writes them to the runner and pu
   assert.match(build, /if: github\.ref != 'refs\/heads\/master' && inputs\.promote_tag == ''/);
   [['Standard', 'false', 'out/standard'], ['ForceGM', 'true', 'out/forcegm']].forEach(([variant, forceGameMode, dest]) => {
     const step = stepText(workflow, 'Build the widget file (' + variant + ' variant)');
-    assert.match(step, /uses: docker\/build-push-action@v\d+/);
+    assert.match(step, /uses: docker\/build-push-action@[0-9a-f]{40} # v\d+\.\d+\.\d+\n/);
     assert.match(step, /\n\s+target: wgt\n/);
     assert.match(step, /\n\s+push: false\n/);
     assert.ok(step.indexOf('\n          outputs: type=local,dest=' + dest + '\n') > 0, step);

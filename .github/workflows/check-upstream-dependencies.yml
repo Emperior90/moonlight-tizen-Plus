@@ -23,12 +23,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # This step uses the `actions/checkout` action to check out the baseline file and the script.
+      # This step uses the `actions/checkout` action to check out the baseline file and the script, without keeping the token in the clone.
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # This step uses the `actions/setup-node` action to set up Node.js 22, whose built-in fetch the script uses. The script has no npm dependencies.
       - name: Setup Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
       # This step compares every project with its reviewed state, writes the result to the summary of the run, and opens, updates or closes the issue "Upstream changes to review".

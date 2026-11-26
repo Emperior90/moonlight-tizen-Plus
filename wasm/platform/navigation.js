@@ -1227,18 +1227,22 @@ const Views = {
     // UP/DOWN change the bitrate in coarse steps, so that e.g. 100 -> 250 Mbps takes 30 presses instead of 300.
     // The value is assigned directly, because the range input always clamps and snaps an assigned value.
     up: function() {
+      const bitrateSlider = document.getElementById('bitrateSlider');
       bitrateSlider.value = Math.min(parseFloat(bitrateSlider.max), parseFloat(bitrateSlider.value) + BITRATE_COARSE_STEP);
       bitrateSlider.dispatchEvent(new Event('input'));
     },
     down: function() {
+      const bitrateSlider = document.getElementById('bitrateSlider');
       bitrateSlider.value = Math.max(parseFloat(bitrateSlider.min), parseFloat(bitrateSlider.value) - BITRATE_COARSE_STEP);
       bitrateSlider.dispatchEvent(new Event('input'));
     },
     left: function() {
+      const bitrateSlider = document.getElementById('bitrateSlider');
       bitrateSlider.stepDown();
       bitrateSlider.dispatchEvent(new Event('input'));
     },
     right: function() {
+      const bitrateSlider = document.getElementById('bitrateSlider');
       bitrateSlider.stepUp();
       bitrateSlider.dispatchEvent(new Event('input'));
     },
@@ -1562,10 +1566,12 @@ const Views = {
     up: function() {},
     down: function() {},
     left: function() {
+      const jitterSlider = document.getElementById('jitterSlider');
       jitterSlider.stepDown();
       jitterSlider.dispatchEvent(new Event('input'));
     },
     right: function() {
+      const jitterSlider = document.getElementById('jitterSlider');
       jitterSlider.stepUp();
       jitterSlider.dispatchEvent(new Event('input'));
     },

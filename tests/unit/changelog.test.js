@@ -3,7 +3,7 @@
 // Checks the layout of CHANGELOG.md, which lists every change of Moonlight Plus by the version that first had it:
 // - a section "## <version> (<date>)" for every released version of the patch notes (docs/PATCH_NOTES.md), with the
 //   same date, and "## <version> (unreleased)" for the version of res/config.xml while its patch notes call it a
-//   pre-release; newest first. A version that was only a pre-release (2.0.0, 2.3.3) has no section of its own: its
+//   pre-release; newest first. A version that was only a pre-release (2.0.0, 2.3.3, 2.3.4) has no section of its own: its
 //   changes are part of the next version, whose section says so
 // - each version holds the small headings Added, Changed, Removed and Fixed, in this order, with at least one entry,
 //   and no entry is listed twice
@@ -62,20 +62,28 @@ test('the changelog has a section for every release of the patch notes with its 
   assert.ok(patchNoteVersions().some((entry) => entry.version === '2.0.0' && entry.date === null));
   const release210 = versionSections().find((section) => section.heading.indexOf('2.1.0 ') === 0);
   assert.match(release210.lines.join('\n'), /Includes the pre-release 2\.0\.0/);
-  // So does the section after every other pre-release without a release of its own (2.3.3 is part of 2.3.4)
+  // So does the nearest newer section after every other pre-release without a release of its own (2.3.3 and 2.3.4
+  // are part of 2.3.5): "Includes the pre-release X" or "Includes the pre-releases ..., X and Y"
   const versions = patchNoteVersions();
+  const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   let included = 0;
   versions.forEach((entry, index) => {
     if (entry.date !== null || entry.version === APP_VERSION || index === 0) {
       return;
     }
-    const next = versionSections().find((section) => section.heading.split(' ')[0] === versions[index - 1].version);
-    assert.ok(next, 'a section for ' + versions[index - 1].version + ', which includes ' + entry.version);
-    assert.ok(next.lines.join('\n').indexOf('Includes the pre-release ' + entry.version + ',') >= 0 ||
-      next.lines.join('\n').indexOf('Includes the pre-release ' + entry.version + ' ') >= 0, next.heading + ' names ' + entry.version);
+    const newer = versions.slice(0, index).map((other) => other.version).reverse();
+    const nextVersion = newer.find((version) => versionSections().some((section) => section.heading.split(' ')[0] === version));
+    assert.ok(nextVersion, 'a newer section that includes ' + entry.version);
+    const next = versionSections().find((section) => section.heading.split(' ')[0] === nextVersion);
+    const names = new RegExp('Includes the pre-releases? (?:\\d+\\.\\d+\\.\\d+(?:, | and ))*' + escape(entry.version) + '\\b');
+    assert.match(next.lines.join('\n'), names, next.heading + ' names ' + entry.version);
     included++;
   });
   assert.ok(included >= 1);
+  // 2.3.5 includes both pre-releases before it
+  const release235 = versionSections().find((section) => section.heading.indexOf('2.3.5 ') === 0);
+  assert.ok(release235, 'a section for 2.3.5');
+  assert.match(release235.lines.join('\n'), /Includes the pre-releases 2\.3\.3 and 2\.3\.4\b/);
 });
 
 test('each version of the changelog lists its entries under Added, Changed, Removed and Fixed, and no entry twice', () => {

@@ -17,6 +17,8 @@ docker buildx build --target wgt --output type=local,dest=out/forcegm \
 
 They write `out/standard/Moonlight.wgt` and `out/forcegm/Moonlight-ForceGM.wgt`. `REPO_OWNER` and `REPO_NAME` name the repository whose releases the in-app update check reads; a build of your own fork names your fork. Without `--target wgt`, `docker build` makes the full image of the build, with the Tizen Studio CLI, for your own use. The build signs the package with a certificate that it makes itself; the install methods of the [guide](GUIDE.md#installation) sign it again for your TV.
 
+The workflow *Module build* (`.github/workflows/module-build.yml`) builds the target `wgt` of the Standard variant the same way on every push and pull request that changes a source that the `Dockerfile` copies (or the `Dockerfile` itself), and checks that the widget file holds the WebAssembly module, so that a change that only the toolchain of the release rejects shows on its own push instead of in the next release. It publishes nothing.
+
 ## What the build downloads
 
 The tools of the build:
@@ -46,17 +48,17 @@ A download that was replaced or damaged should stop the build instead of going i
 | --- | --- |
 | Ubuntu 22.04 image | Pinned by its digest in both `FROM` lines of the `Dockerfile`: `sha256:74b12b11ffa550fba1929ad4d8d16533c34f6612728469671afba1b03b66881c`, the image index of `ubuntu:22.04` (all platforms) that Docker Hub served on 13 November 2026. Docker pulls the image by this digest, so a build can't get another image under the same tag. |
 | Ubuntu packages | `apt` checks them against the signed package lists of the Ubuntu archive. Their versions are not pinned: a build installs the versions of its day. |
-| Tizen Studio 6.1 installer | **Not checked yet.** Its SHA-256 is not recorded. The build prints the SHA-256 of the file it downloaded into its log. |
+| Tizen Studio 6.1 installer | Checked against its SHA-256 `7f33fe09eda4eb5d50463cf997e8f676d455060720470070ae1932994413aaf4`, the value that the release builds of 20, 24 and 25 November 2026 printed for the file they downloaded. A file with another checksum stops the build. |
 | Samsung Emscripten SDK 1.39.4.7 | Checked against its SHA-256 `448c61e0ffdcc013536600eeb2e764abfa4ec49177489a563be27e3d2a5d8f4e`, the value that the release builds of 14 and 16 November 2026 printed for the file they downloaded. A file with another checksum stops the build. |
 | OpenSSL 1.1.1d, curl 7.68.0, zlib 1.2.8 | The ports of the SDK check them against the SHA-512 checksums above. |
 
-To add the check of the Tizen Studio installer, download the file from its address above and run `sha256sum` on it. Compare the value with the one that a release build printed for this file in its log. In the `Dockerfile`, the `RUN` instruction of the download ends with `sha256sum <file>`, which prints the value. Replace that command with the check:
+To add the check of a new download, download the file from its address and run `sha256sum` on it. Compare the value with the one that a release build printed for this file in its log: until it has its check, the `RUN` instruction of the download in the `Dockerfile` ends with `sha256sum <file>`, which prints the value. Replace that command with the check:
 
 ```sh
 echo "<SHA-256>  <file>" | sha256sum -c -
 ```
 
-There are two spaces between the value and the file name. A file with another checksum then stops the build. State the value in the table above and remove the download from the list `UNCHECKED` of `tests/unit/dockerfile-downloads.test.js`: that test checks that every download of the `Dockerfile` is checked or stands on that list, and that this page states the checksums that the `Dockerfile` uses.
+There are two spaces between the value and the file name. A file with another checksum then stops the build. State the value in the table above and remove the download from the list `UNCHECKED` of `tests/unit/dockerfile-downloads.test.js` while it waited there for its check: that test checks that every download of the `Dockerfile` is checked or stands on that list, and that this page states the checksums that the `Dockerfile` uses.
 
 To take a newer image of Ubuntu, replace the digest in both `FROM` lines of the `Dockerfile` and in the table with the one that `docker buildx imagetools inspect ubuntu:22.04` prints.
 

@@ -112,6 +112,13 @@ test('every component of the package has an entry with its version and licence',
   ];
   expected.forEach(([name, licence]) => assert.match(entry(name), licence, name));
   assert.deepEqual(entries().map((item) => item.number), expected.map((item, index) => index + 1));
+  // ENet comes from the repository that the submodule of moonlight-common-c points to; moonlight-stream/enet doesn't
+  // exist (2.3.4 and earlier named it), in the notices of the widget and in those of the releases before 2.2
+  assert.match(entry('ENet 1.3.17'), /Source: https:\/\/github\.com\/cgutman\/enet \(commit bbf7185\)/);
+  [NOTICES_FILE, 'docs/licenses/THIRD-PARTY-NOTICES-before-2.2.txt'].forEach((file) => {
+    assert.ok(read(file).indexOf('moonlight-stream/enet') < 0, file);
+    assert.ok(read(file).indexOf('Source: https://github.com/cgutman/enet (commit bbf7185)') >= 0, file);
+  });
   // The OpenSSL entry repeats its acknowledgments and names the open licence issue
   const openssl = flat(entry('OpenSSL 1.1.1d'));
   assert.ok(openssl.indexOf('This product includes software developed by the OpenSSL Project for use in the OpenSSL Toolkit (http://www.openssl.org/).') >= 0);

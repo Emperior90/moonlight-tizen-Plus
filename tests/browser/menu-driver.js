@@ -11,7 +11,7 @@
 //   await doubleKey(app.page, 'ok');        // a double press, timed in the page (also doublePadButton() and timed())
 //   (await menuState(app.page)).view        // the name of the view that has the keys, e.g. 'BasicSettings'
 
-const { SUNSHINE_HOSTS, openApp } = require('./harness');
+const { SUNSHINE_HOSTS, openApp, reloadApp } = require('./harness');
 
 // The keys of the remote: the arrows and OK as real key presses of the browser, the keys that only a TV has as key
 // events with the key codes of the TV (res/platform.js)
@@ -132,19 +132,38 @@ async function openMenus(harness, options) {
   return app;
 }
 
+// Start the app of openMenus() again with what it stored (reloadApp() of the harness), with the records of the views and
+// the snackbar again, which the reload dropped
+async function reloadMenus(app) {
+  await reloadApp(app);
+  await app.page.evaluate(watchMenus);
+}
+
+// Runs in the page: send a key of the remote as the TV delivers it, with its keyCode and which (a KeyboardEvent made in
+// the page can't set them), to the focused element: keydown and keyup, or the given types, with `repeat` for the
+// auto-repeat of a held key
+function dispatchTvKeyInPage(tvKeyEvent) {
+  (tvKeyEvent.types || ['keydown', 'keyup']).forEach((type) => {
+    const event = new KeyboardEvent(type, { key: tvKeyEvent.name, repeat: !!tvKeyEvent.repeat, bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'keyCode', { value: tvKeyEvent.code });
+    Object.defineProperty(event, 'which', { value: tvKeyEvent.code });
+    (document.activeElement || document.body).dispatchEvent(event);
+  });
+}
+
+// Send a key of the remote by its code and name (e.g. 10009, 'XF86Back') to the focused element, pressed and released,
+// or only the given `types` (e.g. ['keydown']) with `repeat`. New tests use this instead of a key helper of their own.
+function tvKey(page, code, name, options) {
+  const opts = options || {};
+  return page.evaluate(dispatchTvKeyInPage, { code, name, repeat: !!opts.repeat, types: opts.types || null });
+}
+
 // Press a key of the remote and wait for the UI to settle (300 ms unless given)
 async function key(page, name, settleMs) {
   if (BROWSER_KEYS[name]) {
     await page.keyboard.press(BROWSER_KEYS[name]);
   } else if (TV_KEYS[name]) {
-    await page.evaluate(({ code, keyName }) => {
-      ['keydown', 'keyup'].forEach((type) => {
-        const event = new KeyboardEvent(type, { key: keyName, bubbles: true, cancelable: true });
-        Object.defineProperty(event, 'keyCode', { value: code });
-        Object.defineProperty(event, 'which', { value: code });
-        (document.activeElement || document.body).dispatchEvent(event);
-      });
-    }, { code: TV_KEYS[name][0], keyName: TV_KEYS[name][1] });
+    await tvKey(page, TV_KEYS[name][0], TV_KEYS[name][1]);
   } else {
     throw new Error('Unknown key of the remote: ' + name);
   }
@@ -165,6 +184,8 @@ const KEY_CODES = {
 // never a second press that came later than the sequence says. Then wait for the UI to settle (300 ms unless given).
 async function timed(page, steps, settleMs) {
   const list = steps.map((step) => (step.key ? { at: step.at, code: KEY_CODES[step.key][0], keyName: KEY_CODES[step.key][1] } : step));
+  // The keys go out with the sender of tvKey(), defined in the page for the loop below
+  await page.evaluate('window.__dispatchTvKey = ' + dispatchTvKeyInPage.toString());
   await page.evaluate((timedSteps) => new Promise((resolve) => {
     const start = performance.now();
     const end = start + Math.max.apply(null, timedSteps.map((step) => step.at));
@@ -182,12 +203,7 @@ async function timed(page, steps, settleMs) {
         return;
       }
       const step = keySteps[index];
-      ['keydown', 'keyup'].forEach((type) => {
-        const event = new KeyboardEvent(type, { key: step.keyName, bubbles: true, cancelable: true });
-        Object.defineProperty(event, 'keyCode', { value: step.code });
-        Object.defineProperty(event, 'which', { value: step.code });
-        (document.activeElement || document.body).dispatchEvent(event);
-      });
+      window.__dispatchTvKey({ code: step.code, name: step.keyName });
       index++;
       next();
     };
@@ -339,6 +355,6 @@ function rowValue(page, rowId) {
 }
 
 module.exports = {
-  PAD, THREE_HOSTS, doubleKey, doublePadButton, dropdownOptions, key, keys, menuState, openMenus, openSettingsSection, padButton, rowValue,
-  selectItem, takeSnackbars, timed,
+  PAD, THREE_HOSTS, TV_KEYS, doubleKey, doublePadButton, dropdownOptions, key, keys, menuState, openMenus, openSettingsSection, padButton,
+  reloadMenus, rowValue, selectItem, takeSnackbars, timed, tvKey,
 };

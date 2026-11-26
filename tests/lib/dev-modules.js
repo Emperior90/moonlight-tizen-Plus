@@ -49,6 +49,18 @@ function tryRequire(name) {
   return null;
 }
 
+// Return the path of a file of a development module (e.g. 'playwright-core', 'browsers.json'), found in the same
+// folders as the module itself, or null
+function resolveDevModuleFile(name, file) {
+  for (const folder of getSearchFolders()) {
+    const candidate = path.join(folder, name, file);
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 // Load a development module by name, or throw an error that explains how to install it
 function requireDevModule(name) {
   const loaded = tryRequire(name);
@@ -63,5 +75,6 @@ module.exports = {
   REPO_ROOT,
   TESTS_ROOT,
   requireDevModule,
+  resolveDevModuleFile,
   tryRequire,
 };

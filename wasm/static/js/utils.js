@@ -470,14 +470,6 @@ function getConnectedGamepadMask() {
   return mask;
 }
 
-String.prototype.toHex = function() {
-  var hex = '';
-  for (var i = 0; i < this.length; i++) {
-    hex += '' + this.charCodeAt(i).toString(16);
-  }
-  return hex;
-}
-
 // Whether a unique ID of a host is one that the app takes: 1 to 64 letters, digits, dashes and underscores, and not the
 // name of a property that every object has (constructor, toString, __proto__ and so on). GeForce Experience, Sunshine
 // and Apollo send hexadecimal digits, Sunshine and Apollo as a UUID with dashes.
@@ -838,33 +830,8 @@ function NvHTTP(address, clientUid, userEnteredAddress = '', macAddress) {
   this.supportedDisplayModes = {}; // key: y-resolution:x-resolution, value: array of supported frame rates
   this.autoWolEnabled = false; // Per-host Auto Wake-on-LAN setting
 
-  _self = this;
   console.log('%c[utils.js, NvHTTP]', 'color: gray;', 'NvHTTP Object: \n' + this);
 };
-
-function _arrayBufferToBase64(buffer) {
-  var binary = '';
-  var bytes = new Uint8Array(buffer);
-  var len = bytes.byteLength;
-
-  for (var i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-
-  return window.btoa(binary);
-}
-
-function _base64ToArrayBuffer(base64) {
-  var binary_string = window.atob(base64);
-  var len = binary_string.length;
-  var bytes = new Uint8Array(len);
-
-  for (var i = 0; i < len; i++) {
-    bytes[i] = binary_string.charCodeAt(i);
-  }
-
-  return bytes.buffer;
-}
 
 NvHTTP.prototype = {
   getUid: function() {
@@ -1138,8 +1105,8 @@ NvHTTP.prototype = {
   },
 
   _parseServerInfo: function(xmlStr) {
-    $xml = this._parseXML(xmlStr);
-    $root = $xml.find('root');
+    var $xml = this._parseXML(xmlStr);
+    var $root = $xml.find('root');
 
     if ($root.attr('status_code') != 200) {
       return false;
@@ -1278,30 +1245,14 @@ NvHTTP.prototype = {
     });
   },
 
-  getAppByName: function(appName) {
-    return this.getAppList().then(function(list) {
-      var retApp = null;
-
-      list.some(function(app) {
-        if (app.title == appName) {
-          retApp = app;
-          return true;
-        }
-        return false;
-      });
-
-      return retApp;
-    });
-  },
-
   getAppListWithCacheFlush: function() {
     return sendMessage('openUrl', [
       this._baseUrlHttps + '/applist?' + this._buildUidStr(), this.ppkstr, false, 10000
     ]).catch(error => {
       throw error;
     }).then(function(ret) {
-      $xml = this._parseXML(ret);
-      $root = $xml.find('root');
+      var $xml = this._parseXML(ret);
+      var $root = $xml.find('root');
 
       // The PC answered with the pinned key that it no longer accepts this TV (HOST_REFUSED_TV_ERROR): as after a poll,
       // the PC shows Unpaired from now on and OK on it pairs it again, and its list in the cache is of no use until then
@@ -1855,7 +1806,7 @@ NvHTTP.prototype = {
         ]).catch(function(error) {
           throw error;
         }.bind(this)).then(function(ret) {
-          $xml = this._parseXML(ret);
+          var $xml = this._parseXML(ret);
           this.paired = $xml.find('paired').html() == '1';
           if (!this.paired) {
             // The PC didn't confirm the pairing (e.g. it answered that it doesn't accept the certificate of the TV): the

@@ -1,7 +1,8 @@
 version: 2
 updates:
-  # The actions of the workflows. The test tools in tests/package.json stay pinned on purpose: a newer Playwright brings
-  # another Chromium, whose text metrics can break the layout tests.
+  # The actions of the workflows, which are pinned by the commit of a release with its version as a comment
+  # (`uses: owner/action@<sha> # vX.Y.Z`): Dependabot updates both together. The test tools in tests/package.json stay
+  # pinned on purpose: a newer Playwright brings another Chromium, whose text metrics can break the layout tests.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

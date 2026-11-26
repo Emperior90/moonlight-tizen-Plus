@@ -11,11 +11,7 @@ const SyncFunctions = {
   disableWarnings, performanceStats, refFrameInvalidation, hdrMetadata, controllerType, surroundQuality, audioQos */
   'startRequest': (...args) => Module.startStream(...args),
   // no parameters
-  'stopRequest': (...args) => Module.stopStream(...args),
-  // no parameters
   'cancelRequest': (...args) => Module.cancelRequest(...args),
-  // no parameters
-  'toggleStats': (...args) => Module.toggleStats(...args),
 };
 
 const AsyncFunctions = {

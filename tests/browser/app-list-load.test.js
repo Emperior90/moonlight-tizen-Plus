@@ -143,14 +143,15 @@ test('box art shows through object URLs, which the grid of the same PC shows aga
     // A box art of 680 bytes, the size of the default box art of Sunshine, for the apps listed here (by ID)
     window.__defaultBoxArt = {};
     const openUrl = Module.openUrl;
-    Module.openUrl = (id, url) => {
+    Module.openUrl = function(id, url) {
       const boxArt = /\/appasset\?.*appid=(\d+)/.exec(url);
       if (boxArt && window.__defaultBoxArt[boxArt[1]]) {
         window.__http.push({ id: id, what: 'boxart ' + boxArt[1] });
         setTimeout(() => handlePromiseMessage(id, 'resolve', new Uint8Array(680)), 0);
         return;
       }
-      openUrl(id, url);
+      // With every argument, which the stub of the module checks like Embind
+      openUrl.apply(this, arguments);
       // The app list of Refresh apps, which the requests behind it wait for
       if (/\/applist\?/.test(url)) {
         setTimeout(() => handlePromiseMessage(id, 'resolve', '<root status_code="200"><App><AppTitle>Other 1</AppTitle><ID>1</ID></App>' +

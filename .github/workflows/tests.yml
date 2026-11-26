@@ -1,5 +1,5 @@
-# This workflow runs the tests of the app on every push and pull request: the ES2018 syntax, EM_ASM, locale and documentation link checks, the Node unit tests, the native tests with sanitizers and the browser tests in Chromium (see `tests/README.md`).
-# It needs no build of the WebAssembly module, since the browser tests replace it with a stub and the native tests build single source files with g++ and gcc. The full Docker build stays in the release workflows.
+# This workflow runs the tests of the app on every push and pull request: the ES2018 syntax, global name, EM_ASM, locale and documentation link checks, the Node unit tests, the native tests with sanitizers and the browser tests in Chromium (see `tests/README.md`).
+# It needs no build of the WebAssembly module, since the browser tests replace it with a stub and the native tests build single source files with g++ and gcc. The full Docker build runs in the workflow Module build (`module-build.yml`) when the sources of the module change, and in the release workflow.
 name: Tests
 # Configure this workflow to be triggered by every push to any branch and by every pull request.
 on:
@@ -12,23 +12,27 @@ permissions:
 concurrency:
   group: tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
-# There is a single job in this workflow. It runs on Ubuntu 24.04, which provides g++ and gcc for the native tests. It isn't ubuntu-latest: since that became Ubuntu 26.04, the pinned Playwright (tests/package.json) can't install Chromium with its system libraries there (`playwright install --with-deps` stops at once), so the browser tests didn't run.
+# Three jobs run on Ubuntu 24.04, which provides g++ and gcc for the native tests. It isn't ubuntu-latest: since that became Ubuntu 26.04, the pinned Playwright (tests/package.json) can't install Chromium with its system libraries there (`playwright install --with-deps` stops at once), so the browser tests didn't run.
+# The checks and the browser tests run side by side, the browser tests in two shards of the test files, so that a run takes about half as long as in one job (up to 18 of its 20 minutes in 2.3.4). The job `tests` sums them up under the name that the promotion of a release (release-development.yml) reads.
 jobs:
-  tests:
+  checks:
+    name: Tools, unit and native tests
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     # Every command runs in the `tests` folder, which holds the test tools and their pinned versions (`tests/package.json`).
     defaults:
       run:
         working-directory: tests
-    # This job checks out the code, sets up Node.js with the pinned test tools and Chromium, and runs every test suite. Each suite also runs when an earlier suite failed, so that one run reports all failures, as long as the tools it needs were installed.
+    # This job checks out the code, sets up Node.js with the pinned test tools, and runs every suite but the browser tests. Each suite also runs when an earlier suite failed, so that one run reports all failures, as long as the tools it needs were installed.
     steps:
-      # This step uses the `actions/checkout` action to check out the repository's code so that it can be used in the workflow.
+      # This step uses the `actions/checkout` action to check out the repository's code so that it can be used in the workflow. No later step pushes, so the token isn't kept in the clone.
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # This step uses the `actions/setup-node` action to set up Node.js 22, with the npm cache keyed on the lockfile of the test tools.
       - name: Setup Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
           cache: npm
@@ -37,11 +41,7 @@ jobs:
       - name: Install test tools
         id: tools
         run: npm ci
-      # This step downloads the Chromium build that matches the installed Playwright version, with the system libraries it needs.
-      - name: Install Chromium for Playwright
-        id: chromium
-        run: npx playwright install --with-deps chromium
-      # This step checks that the scripts running on the TV stay within ES2018 (Chromium M69 on Tizen 5.5), that no EM_ASM block has a comma that Emscripten 1.39 can't handle, that the locale files are in sync and translated, and that the local links of the README and the documents exist.
+      # This step checks that the scripts running on the TV stay within ES2018 (Chromium M69 on Tizen 5.5) and use no name that nothing declares, that no EM_ASM block has a comma that Emscripten 1.39 can't handle, that the locale files are in sync and translated, and that the local links of the README and the documents exist.
       - name: Run the syntax, locale and link checks
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         run: npm run test:tools
@@ -57,7 +57,56 @@ jobs:
       - name: Run the native tests
         if: ${{ !cancelled() }}
         run: npm run test:native
-      # This step serves the UI of the repository with simulated Tizen APIs and runs the Playwright tests in Chromium.
+  browser:
+    name: Browser tests (${{ matrix.shard }}/2)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    # Each shard runs about half of the browser test files (`node --test --test-shard`, by file); a failing shard doesn't stop the other.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    defaults:
+      run:
+        working-directory: tests
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tests/package-lock.json
+      - name: Install test tools
+        run: npm ci
+      # This step downloads the headless Chromium build that matches the installed Playwright version, with the system libraries it needs. The tests launch Chromium headless, which uses this build.
+      - name: Install Chromium for Playwright
+        run: npm run install:browser
+      # This step serves the UI of the repository with simulated Tizen APIs and runs the Playwright tests of this shard in Chromium. It first checks that Chromium is the build that the pinned Playwright expects (`tests/tools/check-browser-build.js`), which stops the run here on another build.
       - name: Run the browser tests
-        if: ${{ !cancelled() && steps.tools.outcome == 'success' && steps.chromium.outcome == 'success' }}
+        env:
+          TEST_SHARD: ${{ matrix.shard }}/2
+          MOONLIGHT_PINNED_CHROMIUM: '1'
         run: npm run test:browser
+  tests:
+    needs: [checks, browser]
+    # Runs also when a job before it failed, so that this check fails instead of being skipped; a cancelled run stays cancelled.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # This step passes only when the checks and every browser shard passed.
+      - name: Check the results of the test jobs
+        env:
+          CHECKS_RESULT: ${{ needs.checks.result }}
+          BROWSER_RESULT: ${{ needs.browser.result }}
+        run: |
+          echo "Tools, unit and native tests: $CHECKS_RESULT"
+          echo "Browser tests: $BROWSER_RESULT"
+          if [ "$CHECKS_RESULT" != "success" ] || [ "$BROWSER_RESULT" != "success" ]; then
+            echo "The tests did not pass."
+            exit 1
+          fi

@@ -27,18 +27,25 @@ jobs:
   build-and-release:
     if: github.ref != 'refs/heads/master' && inputs.promote_tag == ''
     runs-on: ubuntu-latest
+    # The build of the Standard variant took 5 to 6 minutes without cache in the release runs of November 2026, and the
+    # ForceGM variant reuses its layers; the limit ends a hung step (the installer of Tizen Studio runs under expect
+    # without a timeout of its own)
+    timeout-minutes: 45
     # contents: write deletes the earlier pre-release of the branch and creates the new one
     permissions:
       contents: write
     steps:
+      # No step pushes with git: the token isn't kept in the clone, which the Dockerfile copies into the build
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # Both variants are built from the same tree with BUILD_TYPE=development and the repository that the built app checks
       # for updates. FORCE_GAME_MODE=false builds the Standard variant, FORCE_GAME_MODE=true the ForceGM variant, which gets
       # one metadata line injected at packaging time. The target wgt holds only the widget file, which the local output
       # writes into the folder `dest` of the runner; the second build reuses the layers of the first up to that line.
       - name: Build the widget file (Standard variant)
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           target: wgt
@@ -50,7 +57,7 @@ jobs:
             REPO_NAME=${{ github.event.repository.name }}
             FORCE_GAME_MODE=false
       - name: Build the widget file (ForceGM variant)
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           target: wgt
@@ -177,19 +184,24 @@ jobs:
   promote-pre-release:
     if: inputs.promote_tag != ''
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # contents: write edits the release and its tags; checks: read reads the result of the workflow Tests
     permissions:
       contents: write
+      checks: read
     # This job turns an existing pre-release into a full release, so that a tested build stays available: the cleanup of
     # the next pre-release of the branch only deletes pre-releases. It keeps the files of the pre-release and moves it to the
     # tag "v" + the version in `res/config.xml`, which the in-app update check compares with the installed version (the
     # timestamp of a pre-release tag would read as a newer version). The description comes from `docs/RELEASE_NOTES.md` of
-    # this commit, with the same line of links as a pre-release, and the promotion stops while the section of the version in
-    # `docs/PATCH_NOTES.md` still says Pre-release.
+    # this commit, with the same line of links as a pre-release, the promotion stops while the section of the version in
+    # `docs/PATCH_NOTES.md` still says Pre-release, and the promotion stops unless the workflow Tests passed for the commit
+    # of the pre-release and the commit of this run.
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       # A full release sends its users to the issue tracker and the guide of this fork, so the promotion warns when Issues
       # are turned off or the default branch lacks the issue forms and the guide. Turning on Issues and choosing the default
       # branch are decisions of the owner, so the warning doesn't stop the release.
@@ -276,6 +288,25 @@ jobs:
             echo "The section $app_version of docs/PATCH_NOTES.md still says Pre-release."
             echo "Date it and the section of CHANGELOG.md, and add v$app_version to RELEASES in tests/unit/patch-notes.test.js, before promoting."
             exit 1
+          fi
+
+          # The release keeps the files built from $sha and puts its tag on $GITHUB_SHA: the workflow Tests must have passed
+          # for both. Its job `tests` sums up the other jobs; the newest check run of GitHub Actions under that name counts
+          # (a run again that passed counts, a cancelled one doesn't)
+          require_tests() {
+            local commit="$1" result
+            result=$(api "$API_URL/commits/$commit/check-runs?check_name=tests&per_page=100" | jq -r '
+              [.check_runs[] | select(.app.slug == "github-actions")] | sort_by(.started_at) | last
+              | if . == null then "missing" elif .status != "completed" then .status else .conclusion end')
+            if [ "$result" != "success" ]; then
+              echo "The workflow Tests has not passed for commit $commit (its check run tests: $result)."
+              echo "Wait until it has passed, or run it again from the Actions tab, before promoting."
+              exit 1
+            fi
+          }
+          require_tests "$sha"
+          if [ "$GITHUB_SHA" != "$sha" ]; then
+            require_tests "$GITHUB_SHA"
           fi
 
           {

@@ -22,12 +22,15 @@ jobs:
   build-inputs:
     if: inputs.task == 'build-inputs'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # contents: write creates the release build-inputs and uploads its files
     permissions:
       contents: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # The URLs and checksums of docs/BUILD.md, which come from tools/ports/tizen/crypto.py, ssl.py and curl.py and
       # tools/ports/zlib.py of the Samsung Emscripten SDK 1.39.4.7; a file that doesn't match stops the job
       - name: Download and check the source archives
@@ -73,12 +76,15 @@ jobs:
   old-release-notices:
     if: inputs.task == 'old-release-notices'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # contents: write uploads the files to the releases
     permissions:
       contents: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Attach the licence notices to the releases before 2.2.0
         env:
           GH_TOKEN: ${{ github.token }}

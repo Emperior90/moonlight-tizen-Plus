@@ -261,6 +261,20 @@ function commitLines(server, dep, commits) {
 }
 
 // The commits from reviewed_through to head through the compare API, newest first, or a problem with the history
+// The owner/repo of a submodule URL of GitHub (https or ssh, with or without .git), or of a relative URL such as
+// ../enet next to the repository that pins it; null without a URL or for another server
+function submoduleRepo(url, pinnedIn) {
+  if (typeof url !== 'string' || url === '') {
+    return null;
+  }
+  const relative = /^\.\.\/([\w.-]+?)(?:\.git)?\/?$/.exec(url);
+  if (relative) {
+    return `${pinnedIn.split('/')[0]}/${relative[1]}`;
+  }
+  const match = /^(?:https:\/\/github\.com\/|git@github\.com:)([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/.exec(url);
+  return match ? match[1] : null;
+}
+
 async function compareCommits(client, server, dep, base, head) {
   const comparison = await client.get(`/repos/${dep.repo}/compare/${base}...${head}`);
   const link = `${server}/${dep.repo}/compare/${base}...${head}`;
@@ -320,6 +334,12 @@ const CHECKS = {
     const content = await client.get(`/repos/${dep.pinned_in.repo}/contents/${dep.pinned_in.path}`);
     if (!content || content.type !== 'submodule' || !content.sha) {
       throw new Error(`${dep.pinned_in.repo}/${dep.pinned_in.path} is not a submodule`);
+    }
+    // GitHub names the repository of the submodule: one that the baseline doesn't watch is an error of its own instead
+    // of a compare that fails (the baseline named moonlight-stream/enet, which doesn't exist, up to 2.3.4)
+    const target = submoduleRepo(content.submodule_git_url, dep.pinned_in.repo);
+    if (target !== null && target.toLowerCase() !== dep.repo.toLowerCase()) {
+      throw new Error(`${dep.pinned_in.repo}/${dep.pinned_in.path} points to ${target}, but the baseline watches ${dep.repo}`);
     }
     if (content.sha === dep.reviewed_through) {
       return { pending: false, latest: content.sha };
@@ -532,7 +552,7 @@ async function run(env, io) {
   return 0;
 }
 
-module.exports = { MARKER, ISSUE_TITLE, validateBaselines, plain, compareVersions, createClient, checkDependency, buildIssueBody, run };
+module.exports = { MARKER, ISSUE_TITLE, validateBaselines, plain, compareVersions, createClient, submoduleRepo, checkDependency, buildIssueBody, run };
 
 if (require.main === module) {
   run(process.env).then((code) => {

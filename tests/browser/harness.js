@@ -4,12 +4,47 @@
 // with settings already stored in IndexedDB, like an existing install), and read what the settings screen shows and
 // what the app stored.
 
+const { afterEach } = require('node:test');
 const fs = require('fs');
 const path = require('path');
-const { requireDevModule } = require('../lib/dev-modules');
+const { REPO_ROOT, requireDevModule } = require('../lib/dev-modules');
+const { readEmbindArity } = require('../lib/embind-arity');
 const { startServer } = require('./server');
 
 const { chromium } = requireDevModule('playwright');
+
+// How many arguments each function of the WebAssembly module takes, read from its Embind bindings in wasm/*.cpp: the
+// stub of the module (mocks/moonlight-wasm.js) throws on another count, as Embind does on the TV
+const EMBIND_ARITY = readEmbindArity(REPO_ROOT);
+
+// Every test fails when a page that it opened had an uncaught error or an unhandled promise rejection, or called a
+// function of the module with a wrong number of arguments, also when its own assertions passed: such an error is a bug
+// of the app that a test only finds by chance. A test that causes one on purpose opens the app with
+// `openApp(harness, { allowErrors: true })` and asserts `app.errors` itself. The hook is registered on the root of each
+// test file, which runs it after each of its tests; it checks the errors that came since its last check.
+const openedApps = [];
+afterEach(() => {
+  const fresh = [];
+  openedApps.forEach((app) => {
+    const errors = app.errors.slice(app.checkedErrors);
+    app.checkedErrors = app.errors.length;
+    if (!app.allowErrors) {
+      fresh.push.apply(fresh, errors);
+    }
+  });
+  for (let i = openedApps.length - 1; i >= 0; i--) {
+    if (openedApps[i].closed) {
+      openedApps.splice(i, 1);
+    }
+  }
+  if (fresh.length > 0) {
+    const counts = new Map();
+    fresh.forEach((message) => counts.set(message, (counts.get(message) || 0) + 1));
+    const listed = [...counts].map(([message, count]) => (count > 1 ? `${message} (${count} times)` : message));
+    throw new Error('Uncaught errors in the page: ' + listed.join(' | ') + '. Fix them, or open the app with ' +
+      'openApp(harness, { allowErrors: true }) where the test causes them on purpose and assert app.errors.');
+  }
+});
 
 // IndexedDB layout of the app (wasm/platform/index.js: dbName, dbVersion, storeName). Values are stored as JSON text.
 const DB_NAME = 'GameStreamingDB';
@@ -179,10 +214,15 @@ function appUrl(baseUrl, tvOptions) {
 // Open the app in a fresh browser profile on a simulated TV, optionally with settings stored beforehand.
 // Resolves once the app finished starting, or once it logged the given `readySignals` instead, e.g. for a start that
 // stops early on purpose. `moduleScripts` names files of mocks/ whose code runs right after the stub of the WebAssembly
-// module, e.g. the simulated host of sunshine-host.js. `app.logs` collects the console, `app.errors` the uncaught errors.
+// module, e.g. the simulated host of sunshine-host.js. `app.logs` collects the console, `app.errors` the uncaught errors
+// and the calls of the module with a wrong number of arguments, which fail the test unless `allowErrors` is set.
 async function openApp(harness, options) {
   const opts = options || {};
   const context = await harness.browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  // The number of arguments of each function of the module, for its stub
+  await context.addInitScript((arity) => {
+    window.__embindArity = arity;
+  }, EMBIND_ARITY);
   // Keep the tests off the real network: the app scans the local subnet for hosts on startup
   await context.route('**/*', (route) => {
     if (route.request().url().indexOf(harness.baseUrl + '/') === 0) {
@@ -211,8 +251,22 @@ async function openApp(harness, options) {
   }
 
   const page = await context.newPage();
-  const app = { context, page, logs: [], errors: [], url: appUrl(harness.baseUrl, opts.tv) };
-  page.on('console', (message) => app.logs.push(message.text()));
+  const app = {
+    context, page, logs: [], errors: [], url: appUrl(harness.baseUrl, opts.tv), allowErrors: !!opts.allowErrors, checkedErrors: 0, closed: false,
+  };
+  openedApps.push(app);
+  context.on('close', () => {
+    app.closed = true;
+  });
+  page.on('console', (message) => {
+    const text = message.text();
+    app.logs.push(text);
+    // The stub of the module logs a call with a wrong number of arguments before it throws, also where the app
+    // catches the error
+    if (message.type() === 'error' && text.indexOf('BindingError:') === 0) {
+      app.errors.push(text);
+    }
+  });
   page.on('pageerror', (error) => app.errors.push(error.message));
 
   if (opts.stored) {
@@ -304,6 +358,7 @@ function readOtherSettings(page) {
 module.exports = {
   DB_NAME,
   DROPDOWN_OK_WAIT_MS,
+  EMBIND_ARITY,
   STORE_NAME,
   SUNSHINE_HOSTS,
   VIDEO_KEYS,

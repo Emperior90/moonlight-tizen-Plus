@@ -275,7 +275,8 @@ test('the failure of a start request whose launch is over already shows nothing 
 });
 
 test('an uncaught error and an unhandled promise rejection of the page reach the diagnostic log', async () => {
-  const app = await openWithHost();
+  // The errors are made on purpose here, and asserted below
+  const app = await openWithHost({ allowErrors: true });
   try {
     const lines = await app.page.evaluate(async () => {
       console.error('a line of console.error');

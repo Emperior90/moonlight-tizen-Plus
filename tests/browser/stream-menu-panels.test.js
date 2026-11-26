@@ -12,6 +12,7 @@
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
+const { fakeHostScript } = require('./fake-host');
 const { openApp, startHarness } = require('./harness');
 const { forEachTextWidth } = require('./text-stress');
 
@@ -55,45 +56,21 @@ function simulatedGamepads() {
   };
 }
 
-// Open the app with a simulated host and a stream of app 8 that reached 'Connection Established', like
-// stream-menu.test.js. window.__startStream() starts the next stream the same way. The module calls get their time
+// Open the app with a simulated host (fake-host.js, whose launch and resume wait for the test) and a stream of app 8 that
+// reached 'Connection Established', like stream-menu.test.js. window.__startStream() starts the next stream the same way. The module calls get their time
 // (performance.now()) in `at`, the views that Navigation pushes, pops and changes go to window.__navigation, showApps()
 // and showHosts() are counted, and the keys that would reach the keyboard handler of the stream go to window.__videoKeys.
 // The snackbar messages go to window.__snackbarMessages; with options.realSnackbar the snackbar shows them as well.
 async function openStreaming(options) {
   const opts = options || {};
-  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, initScripts: [simulatedGamepads], stored: opts.stored });
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, initScripts: [simulatedGamepads, fakeHostScript], stored: opts.stored });
   if (opts.gamepad) {
     await app.page.evaluate((id) => window.__connectPad(0, id), XBOX_ID);
   }
   await app.page.evaluate(async (realSnackbar) => {
-    window.__hostCalls = [];
     window.__showApps = 0;
     window.__showHosts = 0;
-    const record = (name) => window.__hostCalls.push(name);
-    let launch = null;
-    const host = {
-      paired: true, online: true, serverUid: 'HOST1', hostname: 'GAMING-PC', address: '10.0.0.2', httpPort: 47989, currentGame: 0,
-      appVersion: '7.1.431.-1', gfeVersion: '', serverCodecModeSupport: 0x1F03,
-      refreshServerInfo: () => {
-        record('refresh');
-        return Promise.resolve();
-      },
-      getAppById: (id) => Promise.resolve(id ? { id: id, title: 'Game ' + id } : null),
-      launchApp: () => new Promise((resolve) => {
-        launch = resolve;
-      }),
-      resumeApp: () => new Promise((resolve) => {
-        launch = resolve;
-      }),
-      quitApp: () => {
-        record('quit');
-        host.currentGame = 0;
-        return Promise.resolve();
-      },
-      toString: () => 'GAMING-PC',
-    };
-    window.__host = host;
+    const host = window.__createFakeHost({ holdLaunch: true });
     api = host;
     showApps = () => {
       window.__showApps++;
@@ -143,7 +120,7 @@ async function openStreaming(options) {
     window.__startStream = async () => {
       startGame(host, 8);
       await new Promise((resolve) => setTimeout(resolve, 100));
-      launch('<root status_code="200" status_message="OK"><sessionUrl0>rtsp://10.0.0.2:48010</sessionUrl0></root>');
+      window.__launch.resolve(window.__fakeHostStartAnswer);
       await new Promise((resolve) => setTimeout(resolve, 300));
       host.currentGame = 8;
       handleMessage('Connection Established');

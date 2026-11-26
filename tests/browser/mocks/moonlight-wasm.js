@@ -95,6 +95,46 @@
     record('wakeOnLan', arguments);
   };
 
+  // Embind on the TV throws when a function of the module gets another number of arguments than its C++ function
+  // takes. The harness reads those numbers from the bindings in wasm/*.cpp (tests/lib/embind-arity.js) into
+  // window.__embindArity; each function then checks the count of a call, also one that a test or a mock of a host put
+  // in later (Module.openUrl = ...), logs the error with console.error, which fails the test (browser/harness.js), and
+  // throws it like Embind. A function that a test reads first and calls from its own keeps its own check.
+  var arity = window.__embindArity;
+  var checkedCall = function(name, implementation) {
+    if (typeof implementation !== 'function') {
+      return implementation;
+    }
+    return function() {
+      if (arguments.length !== arity[name]) {
+        var message = 'function ' + name + ' called with ' + arguments.length + ' arguments, expected ' + arity[name] + ' args!';
+        console.error('BindingError: ' + message);
+        var error = new Error(message);
+        error.name = 'BindingError';
+        throw error;
+      }
+      return implementation.apply(this, arguments);
+    };
+  };
+  if (arity) {
+    Object.keys(arity).forEach(function(name) {
+      if (typeof Module[name] !== 'function') {
+        throw new Error('The stub of the module has no function ' + name + ', which the module binds');
+      }
+      var current = checkedCall(name, Module[name]);
+      Object.defineProperty(Module, name, {
+        configurable: true,
+        enumerable: true,
+        get: function() {
+          return current;
+        },
+        set: function(value) {
+          current = checkedCall(name, value);
+        },
+      });
+    });
+  }
+
   // The real runtime calls this once the module is compiled and its threads are ready, which the simulated TV can delay
   // (wasmStartMs, see tv-mock.js)
   var startMs = window.__tvMock && isFinite(window.__tvMock.config.wasmStartMs) ? window.__tvMock.config.wasmStartMs : 50;

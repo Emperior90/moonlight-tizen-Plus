@@ -26,6 +26,7 @@
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
+const { fakeHostScript } = require('./fake-host');
 const { openApp, readStorage, startHarness, waitForStorage } = require('./harness');
 
 const XBOX_ID = 'Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)';
@@ -61,15 +62,15 @@ function simulatedGamepads() {
   };
 }
 
-// Open the app on a simulated TV with a simulated host that answers the launch and resume requests at once, and start a
-// stream of app 8 that reaches 'Connection Established'. The host records its requests and the start requests of the
-// module in window.__events, stopStream() ends the stream like the module ('streamTerminated: 0' at once), and a listener
+// Open the app on a simulated TV with a simulated host (fake-host.js) that answers the launch and resume requests at
+// once, and start a stream of app 8 that reaches 'Connection Established'. The host records its requests (without its
+// refreshes) and the start requests of the module in window.__events, stopStream() ends the stream like the module ('streamTerminated: 0' at once), and a listener
 // on the video element records the keys that would reach the keyboard handler of the stream (window.__videoKeys). The
 // reconnect waits 100 ms instead of 1 s.
 async function openStreaming(options) {
   const opts = options || {};
   const app = await openApp(harness, {
-    tv: Object.assign({ tv: 's90c', conn: 'wifi' }, opts.tv), initScripts: [simulatedGamepads],
+    tv: Object.assign({ tv: 's90c', conn: 'wifi' }, opts.tv), initScripts: [simulatedGamepads, fakeHostScript],
     stored: Object.assign({ bitrate: '40', autoAdjustBitrate: false }, opts.stored),
   });
   if (opts.gamepad) {
@@ -79,29 +80,7 @@ async function openStreaming(options) {
     SETTINGS_RESTART_DELAY_MS = 100;
     window.__events = [];
     const record = (event) => window.__events.push(event);
-    const ok = '<root status_code="200" status_message="OK"><sessionUrl0>rtsp://10.0.0.2:48010</sessionUrl0></root>';
-    const host = {
-      paired: true, online: true, serverUid: 'HOST1', hostname: 'GAMING-PC', address: '10.0.0.2', httpPort: 47989, currentGame: 0,
-      appVersion: '7.1.431.-1', gfeVersion: '', serverCodecModeSupport: 0x1F03,
-      refreshServerInfo: () => Promise.resolve(),
-      getAppById: (id) => Promise.resolve(id ? { id: id, title: 'Game ' + id } : null),
-      launchApp: (appId) => {
-        record('launch');
-        host.currentGame = appId;
-        return Promise.resolve(ok);
-      },
-      resumeApp: () => {
-        record('resume');
-        return Promise.resolve(ok);
-      },
-      quitApp: () => {
-        record('quit');
-        host.currentGame = 0;
-        return Promise.resolve();
-      },
-      toString: () => 'GAMING-PC',
-    };
-    window.__host = host;
+    const host = window.__createFakeHost({ record: (name) => name !== 'refresh' && record(name) });
     api = host;
     showApps = () => {
       record('app list');

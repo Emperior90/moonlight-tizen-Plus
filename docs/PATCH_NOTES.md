@@ -2,8 +2,9 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
-- [2.3.4](#234): pre-release, how fast the TV reads the picture at high bitrates, with everything of 2.3.3
-- [2.3.3](#233): pre-release, the remote, keyboard and mouse in a stream, pairing a PC that dropped the TV, the app list and messages
+- [2.3.5](#235): pre-release, checks of the build and the tests, with everything of 2.3.3 and 2.3.4
+- [2.3.4](#234): pre-release only, its changes come with 2.3.5
+- [2.3.3](#233): pre-release only, its changes come with 2.3.5
 - [2.3.2](#232): 2026-11-20, a tidier Stream Menu with F keys and PC shutdown, finer frame times, how fast frames arrive, more facts in the log and a fix for recovery keyframes
 - [2.3.1](#231): 2026-11-18, lighter sound and statistics, fewer double presses, a switch for sound on Wi-Fi, and fixes from a review and from other Moonlight clients
 - [2.3.0](#230): 2026-11-08, smoother motion, a picture refresh in the Stream Menu and a longer guide
@@ -20,9 +21,26 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 **TV refuses an update?** If the author certificate doesn't match, uninstall the old app first; this loses its settings and pairing.
 
+## 2.3.5
+
+*Pre-release, in testing.* Checks of the build and the tests, for the changes that follow.
+
+> **Install:** by hand over 2.3.4, 2.3.3, 2.3.2 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
+>
+> **Tested:** with simulated TVs and hosts only; the changes of 2.3.4 and 2.3.3 still need a test on a TV.
+
+### Changed
+
+- Every build checks the Tizen Studio installer it downloads, and a full release needs passed tests
+- The licence notice links ENet's real repository
+
+### Also in this version
+
+- Everything of the pre-releases 2.3.4 and 2.3.3 below
+
 ## 2.3.4
 
-*Pre-release, in testing.* The diagnostic log tells whether the app or the Wi-Fi of the TV limits how fast a frame arrives at a high bitrate.
+*Pre-release only; its changes come with 2.3.5.* The diagnostic log tells whether the app or the TV's Wi-Fi limits how fast a frame arrives at a high bitrate.
 
 > **Install:** by hand over 2.3.3, 2.3.2 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >
@@ -44,7 +62,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ## 2.3.3
 
-*Pre-release, in testing.* The remote's arrows and OK reach the PC without RETURN, a PC that dropped the TV pairs again, and the app list and messages get fixes.
+*Pre-release only; its changes come with 2.3.5.* Arrows and OK reach the PC without RETURN, a PC that dropped the TV pairs again, and the app list gets fixes.
 
 > **Install:** by hand over 2.3.2 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >

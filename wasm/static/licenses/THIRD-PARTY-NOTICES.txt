@@ -102,7 +102,7 @@ Components under other licences:
 
 [4] ENet 1.3.17, the reliable UDP library (the Moonlight fork of ENet, vendored in moonlight-common-c/enet; compiled
     into moonlight-wasm.wasm)
-    Source: https://github.com/moonlight-stream/enet (commit bbf7185)
+    Source: https://github.com/cgutman/enet (commit bbf7185)
     Licence: MIT license
 
 Copyright (c) 2002-2020 Lee Salzman

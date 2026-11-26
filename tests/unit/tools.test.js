@@ -1,7 +1,8 @@
 'use strict';
 
 // Checks that the checkers in tests/tools catch what they are meant to catch, so a broken checker can't let newer
-// JavaScript, a split EM_ASM block, a broken link of the documents or a broken translation through unnoticed.
+// JavaScript, a name that nothing declares, a split EM_ASM block, a broken link of the documents, a broken translation or
+// a browser test run on another Chromium than the CI's through unnoticed.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -12,6 +13,8 @@ const es2018 = require('../tools/check-es2018');
 const emAsm = require('../tools/check-em-asm');
 const markdownLinks = require('../tools/check-markdown-links');
 const i18nCheck = require('../tools/i18n-check');
+const browserBuild = require('../tools/check-browser-build');
+const globalNames = require('../tools/check-globals');
 
 // Write the source into a temporary file, run the check on it and remove the file again
 function checkSource(name, source, check) {
@@ -283,4 +286,108 @@ test('the i18n check reads the languages of i18n.js and wants a locale file and 
     i18nCheck.checkLocaleSet(appLocales.concat([{ code: 'pt-BR', name: '' }]), ['de-DE', 'en-US', 'pt-BR'], ['de-DE', 'pt-BR']),
   ];
   problems.forEach((list, i) => assert.equal(list.length, 1, i + ': ' + list.join('\n')));
+});
+
+test('the check of the Chromium build reads the build of the pinned Playwright', () => {
+  // Playwright 1.56.1 of tests/package.json runs its headless shell of build 1194, Chromium 141.0.7390.37: a new
+  // Playwright updates this pair and tests/README.md ("The Chromium of the CI")
+  assert.deepEqual(browserBuild.expectedBuild(), { revision: '1194', browserVersion: '141.0.7390.37', playwright: '1.56.1' });
+  const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
+  assert.ok(readme.indexOf('Chromium 141.0.7390.37 (build 1194)') >= 0, 'the README names the pinned build');
+});
+
+test('the check of the Chromium build passes the pinned build and warns on another one, an error only in the CI', () => {
+  const expected = { revision: '1194', browserVersion: '141.0.7390.37', playwright: '1.56.1' };
+  assert.deepEqual(browserBuild.decide('141.0.7390.37', expected, {}), { exitCode: 0, line: 'Chromium 141.0.7390.37 (build 1194), the one of the CI.' });
+  assert.equal(browserBuild.decide('141.0.7390.37', expected, { MOONLIGHT_PINNED_CHROMIUM: '1' }).exitCode, 0);
+  const local = browserBuild.decide('157.0.8103.78', expected, {});
+  assert.equal(local.exitCode, 0, 'a machine without the pinned build can still run the tests');
+  assert.match(local.line, /^Warning: the browser tests run on Chromium 157\.0\.8103\.78, but Playwright 1\.56\.1 and the CI use Chromium 141\.0\.7390\.37 \(build 1194\)/);
+  assert.match(local.line, /text widths and layout differ, so a layout test can pass here and fail in CI/);
+  assert.match(local.line, /npm run install:browser --prefix tests/);
+  // CI=true alone doesn't make it an error: only the variable that the workflow Tests sets
+  assert.equal(browserBuild.decide('157.0.8103.78', expected, { CI: 'true' }).exitCode, 0);
+  const ci = browserBuild.decide('157.0.8103.78', expected, { MOONLIGHT_PINNED_CHROMIUM: '1' });
+  assert.equal(ci.exitCode, 1);
+  assert.match(ci.line, /^Error: /);
+  assert.deepEqual(browserBuild.compareBuild('141.0.7390.38', expected, false).ok, false, 'another patch version is another build');
+});
+
+// Check scripts of one page as one global scope: `files` maps file names to sources, in the order the page loads them
+const checkGlobals = (files, handlers) => globalNames.checkSources(loaded.acorn,
+  Object.keys(files).map((file) => ({ file, text: files[file] })), handlers || []).map((problem) => problem.message);
+
+test('the global name check accepts names that another script declares, and the usual scopes', { skip: acornMissing }, () => {
+  assert.deepEqual(checkGlobals({
+    'a.js': [
+      'var shared = 1;',
+      'function helper(value) { return value; }',
+      'const LIMIT = 3;',
+      'class Box {}',
+      'window.fromWindow = function() {};',
+    ].join('\n'),
+    'b.js': [
+      'helper(shared + LIMIT);',
+      'new Box();',
+      'fromWindow();',
+      'function later({ a, b: [c] }, d = a, ...rest) { var e; for (let i = 0; i < 2; i++) { e = i + c + d + rest.length; } return e; }',
+      'try { later({ a: 1, b: [2] }); } catch (error) { console.log(error); }',
+      'const user = { name: 1, helper };',
+      'user.name = user.other;',
+      'outer: for (const key in user) { if (key) { continue outer; } }',
+      // A name of the TV or a library behind typeof
+      'if (typeof notOnEveryTv === "function") { notOnEveryTv(); }',
+      'var flag = typeof maybeThere === "boolean" ? maybeThere : false;',
+      'typeof neverRead;',
+      'hoisted();',
+      'function hoisted() { return arguments.length; }',
+      'Module = {};',
+    ].join('\n'),
+  }), []);
+});
+
+test('the global name check reports undeclared names, implicit globals and block-scoped names used outside', { skip: acornMissing }, () => {
+  assert.deepEqual(checkGlobals({
+    'a.js': [
+      'function parse(text) {',
+      '  $xml = text;',
+      '  return $xml;',
+      '}',
+      'if (true) { let inner = 1; }',
+      'inner;',
+      'missingFunction();',
+      'process.exit(1);',
+      'Buffer.from("x");',
+      '$ = null;',
+    ].join('\n'),
+  }), [
+    'a.js:2: $xml is assigned, but nothing declares it (an implicit global)',
+    'a.js:3: $xml is used, but nothing declares it',
+    'a.js:6: inner is used, but nothing declares it',
+    'a.js:7: missingFunction is used, but nothing declares it',
+    'a.js:8: process is used, but nothing declares it',
+    'a.js:9: Buffer is used, but nothing declares it',
+    'a.js:10: $ is assigned, but nothing declares it (an implicit global)',
+  ]);
+  // A guard on another name or another branch doesn't count
+  assert.deepEqual(checkGlobals({ 'a.js': 'if (typeof other === "function") { maybe(); } else { other(); }' }), [
+    'a.js:1: maybe is used, but nothing declares it',
+    'a.js:1: other is used, but nothing declares it',
+  ]);
+});
+
+test('the global name check reports an inline handler of the page that calls a missing function', { skip: acornMissing }, () => {
+  assert.deepEqual(checkGlobals({ 'a.js': 'function handleSettingsView(name) { return name; }' }, [
+    { file: 'index.html', line: 4, code: "handleSettingsView('basicSettings')" },
+    { file: 'index.html', line: 9, code: 'handleRemoved(event)' },
+  ]), ['index.html:9: the inline handler "handleRemoved(event)" uses handleRemoved, but nothing declares it']);
+  // The handlers of wasm/index.html, read from the page
+  const handlers = globalNames.listHandlers(path.join(__dirname, '..', '..'));
+  assert.ok(handlers.length >= 9, JSON.stringify(handlers));
+  assert.ok(handlers.some((handler) => handler.code === "handleSettingsView('basicSettings')"));
+  // The scripts of the page, in its order, without the libraries and the webapis.js of the TV
+  const scripts = globalNames.listScripts(path.join(__dirname, '..', '..'));
+  assert.equal(scripts[0], 'res/platform.js');
+  assert.ok(scripts.indexOf('wasm/platform/index.js') > 0 && scripts.indexOf('wasm/static/js/utils.js') > scripts.indexOf('wasm/platform/index.js'));
+  assert.ok(!scripts.some((file) => /\.min\.js$|webapis/.test(file)), scripts.join(', '));
 });

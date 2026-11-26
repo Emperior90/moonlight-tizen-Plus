@@ -8,6 +8,7 @@
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
+const { installFakeHost: installSharedFakeHost } = require('./fake-host');
 const { openApp, startHarness } = require('./harness');
 
 let harness;
@@ -20,8 +21,9 @@ after(async () => {
   }
 });
 
-// Install a simulated host whose launch reply the test releases by hand, and a RED key press helper
-function installFakeHost(page) {
+// Install a simulated host (fake-host.js) whose launch reply the test releases by hand, and a RED key press helper
+async function installFakeHost(page) {
+  await installSharedFakeHost(page);
   return page.evaluate(() => {
     window.setupHost = () => {
       window.__calls = { stop: 0, refresh: 0, showApps: 0 };
@@ -35,28 +37,15 @@ function installFakeHost(page) {
         window.__calls.showApps++;
         return Promise.resolve();
       };
-      window.__launch = null;
-      window.__host = {
-        paired: true, serverUid: 'HOST1', address: '10.0.0.2', httpPort: 47989, currentGame: 0, appVersion: '7.1.431.-1', gfeVersion: '', serverCodecModeSupport: 0x1F03,
-        refreshServerInfo() {
-          window.__calls.refresh++;
-          return Promise.resolve();
+      window.__createFakeHost({
+        holdLaunch: true,
+        record: (name) => {
+          if (name === 'refresh') {
+            window.__calls.refresh++;
+          }
         },
-        getAppById(id) {
-          return Promise.resolve({ id: id, title: 'Game ' + id });
-        },
-        launchApp() {
-          return new Promise((resolve, reject) => {
-            window.__launch = { resolve, reject };
-          });
-        },
-        resumeApp() {
-          return new Promise((resolve, reject) => {
-            window.__launch = { resolve, reject };
-          });
-        },
-      };
-      window.__ok = '<root status_code="200" status_message="OK"><sessionUrl0>rtsp://10.0.0.2:48010</sessionUrl0></root>';
+      });
+      window.__ok = window.__fakeHostStartAnswer;
     };
     window.teardownHost = () => {
       Module.stopStream = window.__origStop;

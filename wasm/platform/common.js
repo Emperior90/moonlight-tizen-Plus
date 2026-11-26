@@ -71,18 +71,6 @@ var common = (function() {
   }
 
   /**
-   * Return true when |s| starts with the string |prefix|.
-   *
-   * @param {string} s The string to search.
-   * @param {string} prefix The prefix to search for in |s|.
-   */
-  function startsWith(s, prefix) {
-    // indexOf would search the entire string, lastIndexOf(p, 0) only checks at
-    // the first index, see: https://stackoverflow.com/a/4579228
-    return s.lastIndexOf(prefix, 0) === 0;
-  }
-
-  /**
    * Called when the Wasm module sends a message to JavaScript (via
    * PPB_Messaging.PostMessage())
    *
@@ -92,18 +80,6 @@ var common = (function() {
    *     the data sent from the Wasm module.
    */
   function handleMessage(message_event) {
-    if (typeof message_event.data === 'string') {
-      for (var type in defaultMessageTypes) {
-        if (defaultMessageTypes.hasOwnProperty(type)) {
-          if (startsWith(message_event.data, type + ':')) {
-            func = defaultMessageTypes[type];
-            func(message_event.data.slice(type.length + 1));
-            return;
-          }
-        }
-      }
-    }
-
     if (typeof window.handleMessage !== 'undefined') {
       window.handleMessage(message_event);
     } else {

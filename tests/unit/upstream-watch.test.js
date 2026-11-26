@@ -107,6 +107,8 @@ test('the baseline file is valid and names every project the owner asked for', (
   assert.equal(byId['moonlight-tizen'].repo, 'brightcraft/moonlight-tizen');
   assert.equal(byId['moonlight-common-c'].repo, 'moonlight-stream/moonlight-common-c');
   assert.deepEqual([byId.enet.track, byId.enet.pinned_in], ['submodule', { repo: 'moonlight-stream/moonlight-common-c', path: 'enet' }]);
+  // The submodule of moonlight-common-c points to cgutman/enet (moonlight-stream/enet doesn't exist)
+  assert.equal(byId.enet.repo, 'cgutman/enet');
   assert.deepEqual([byId.opus.repo, byId.opus.track], ['xiph/opus', 'tags']);
   assert.deepEqual([byId.libgamestream.repo, byId.libgamestream.path], ['moonlight-stream/moonlight-embedded', 'libgamestream']);
   // Sunshine moved from LizardByte/Sunshine to SunshineStream/Sunshine (the old name redirects)
@@ -394,6 +396,35 @@ test('a submodule that upstream moved is compared in the repository of the submo
   assert.ok(body.indexOf(`[compare](https://github.test/up/enet/compare/${sha('4')}...${sha('5')})`) >= 0);
   const current = await runWatch([dep], Object.assign({ 'GET /repos/up/common-c/contents/enet': ok({ type: 'submodule', sha: sha('4') }) }, NO_ISSUES));
   assert.deepEqual(current.github.writes(), []);
+});
+
+test('a submodule whose URL names another repository than the baseline gives an error line naming both', async () => {
+  const dep = {
+    id: 'enet', name: 'ENet', repo: 'up/enet', track: 'submodule', pinned_in: { repo: 'up/common-c', path: 'enet' },
+    vendored: 'bbf7185', reviewed_through: sha('4'), decisions: [],
+  };
+  const pinned = (url) => Object.assign({ 'GET /repos/up/common-c/contents/enet': ok({ type: 'submodule', sha: sha('4'), submodule_git_url: url }) }, NO_ISSUES);
+  // The repository of the baseline, in any form GitHub writes it, is the one compared
+  ['https://github.com/up/enet.git', 'https://github.com/UP/Enet', 'git@github.com:up/enet.git', '../enet', '../enet.git'].forEach((url) => {
+    assert.equal(watch.submoduleRepo(url, 'up/common-c').toLowerCase(), 'up/enet', url);
+  });
+  for (const url of ['https://github.com/up/enet.git', '../enet']) {
+    const current = await runWatch([dep], pinned(url));
+    assert.equal(current.code, 0, url);
+    assert.deepEqual(current.github.writes(), [], url);
+    assert.ok(!current.warnings.some((line) => /points to/.test(line)), current.warnings.join('\n'));
+  }
+  // Another repository: an error line instead of a compare in the wrong one
+  const other = await runWatch([dep, BRANCH_DEP], Object.assign(pinned('https://github.com/other/enet.git'), {
+    'GET /repos/up/common-c/commits/master': ok(commit(sha('a'), 'Reviewed')),
+  }));
+  assert.ok(other.warnings.some((line) => line === '::warning title=enet::up/common-c/enet points to other/enet, but the baseline watches up/enet'), other.warnings.join('\n'));
+  assert.ok(!other.github.requests.some((request) => /compare/.test(request.route)), 'no compare');
+  // A relative URL resolves next to the repository that pins it
+  assert.equal(watch.submoduleRepo('../enet', 'up/common-c'), 'up/enet');
+  // Without the field (or for another server), the check stays as it was
+  assert.equal(watch.submoduleRepo(undefined, 'up/common-c'), null);
+  assert.equal(watch.submoduleRepo('https://gitlab.com/up/enet.git', 'up/common-c'), null);
 });
 
 test('new release tags are listed newest first, without release candidates', async () => {

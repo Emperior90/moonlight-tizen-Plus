@@ -24,6 +24,7 @@
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
+const { fakeHostScript } = require('./fake-host');
 const { openApp, startHarness } = require('./harness');
 const { forEachTextWidth } = require('./text-stress');
 const { FULL_TEXT } = require('./full-stats-text');
@@ -72,8 +73,9 @@ function simulatedGamepads() {
   };
 }
 
-// Open the app with a simulated host and start a stream of app 8 that reaches 'Connection Established'. The host
-// records its calls in window.__hostCalls, showApps() and the snackbar are recorded, and a listener on the video
+// Open the app with a simulated host (fake-host.js, whose launch waits for the test) and start a stream of app 8 that
+// reaches 'Connection Established'. The host records its calls in window.__hostCalls, showApps() and the snackbar are
+// recorded, and a listener on the video
 // element records the keys that would reach the keyboard handler of the stream (window.__videoKeys). The mouse button
 // presses on the video, with which the page asks the module for the pointer lock, are counted from before 'Connection
 // Established' on (window.__videoMouseDowns), and a RIGHT on the video before it counts its presses in
@@ -81,34 +83,13 @@ function simulatedGamepads() {
 // the audio configuration 5.1.
 async function openStreaming(options) {
   const opts = options || {};
-  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, initScripts: [simulatedGamepads], stored: opts.stored });
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, initScripts: [simulatedGamepads, fakeHostScript], stored: opts.stored });
   if (opts.gamepad) {
     await app.page.evaluate((id) => window.__connectPad(0, id), XBOX_ID);
   }
   await app.page.evaluate(async () => {
-    window.__hostCalls = [];
     window.__showApps = 0;
-    const record = (name) => window.__hostCalls.push(name);
-    let launch = null;
-    const host = {
-      paired: true, online: true, serverUid: 'HOST1', hostname: 'GAMING-PC', address: '10.0.0.2', httpPort: 47989, currentGame: 0,
-      appVersion: '7.1.431.-1', gfeVersion: '', serverCodecModeSupport: 0x1F03,
-      refreshServerInfo: () => {
-        record('refresh');
-        return Promise.resolve();
-      },
-      getAppById: (id) => Promise.resolve(id ? { id: id, title: 'Game ' + id } : null),
-      launchApp: () => new Promise((resolve) => {
-        launch = resolve;
-      }),
-      quitApp: () => {
-        record('quit');
-        host.currentGame = 0;
-        return Promise.resolve();
-      },
-      toString: () => 'GAMING-PC',
-    };
-    window.__host = host;
+    const host = window.__createFakeHost({ holdLaunch: true });
     api = host;
     showApps = () => {
       window.__showApps++;
@@ -120,7 +101,7 @@ async function openStreaming(options) {
 
     startGame(host, 8);
     await new Promise((resolve) => setTimeout(resolve, 100));
-    launch('<root status_code="200" status_message="OK"><sessionUrl0>rtsp://10.0.0.2:48010</sessionUrl0></root>');
+    window.__launch.resolve(window.__fakeHostStartAnswer);
     await new Promise((resolve) => setTimeout(resolve, 300));
     // The host runs app 8 from now on
     host.currentGame = 8;
