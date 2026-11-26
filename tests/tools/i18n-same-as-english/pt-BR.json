@@ -12,7 +12,6 @@
     "60 FPS",
     "30 FPS",
     "Experimental",
-    "Stereo",
     "H.264",
     "HEVC",
     "AV1",
@@ -54,6 +53,9 @@
     "START",
     "SELECT + START + LB + RB",
     "SELECT + LB + RB + X",
-    "PCs"
+    "PCs",
+    "Apps",
+    "%1$s app",
+    "%1$s apps"
   ]
 }

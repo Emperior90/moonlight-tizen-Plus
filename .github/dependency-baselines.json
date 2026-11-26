@@ -9,8 +9,8 @@
       "track": "branch",
       "branch": "master",
       "vendored": "v1.19.0 (4bb3134), the base version of Moonlight Plus",
-      "reviewed_through": "8b3049a9e1731c12a7ab150a1cb01aba449abded",
-      "reviewed_on": "2026-11-16",
+      "reviewed_through": "9033032463e6010b0e9b68d7d03397b864965fcf",
+      "reviewed_on": "2026-11-26",
       "note": "The app this fork is based on. Its maintainer announced with 1.20.0 that 2026 is the final year of its active development, with a final update and a final announcement perhaps in December, and it still vendors moonlight-common-c 8599b60.",
       "decisions": [
         {
@@ -93,6 +93,11 @@
           "commits": ["99aada9", "8b3049a"],
           "decision": "skipped",
           "why": "A setting that swaps the left and right mouse buttons during a stream (pull request #194, merged on 11 November). Not taken in 2.3.1, which left the mouse for a later version, and not in 2.3.3 either, whose mouse fixes (a click after the movement before it, the horizontal wheel) add no setting; take it when a setting for it is wanted and record it as taken then."
+        },
+        {
+          "commits": ["9033032"],
+          "decision": "skipped",
+          "why": "The README of Moonlight Tizen only (17 November). It points the TVs of 2019 with Tizen 5.0 to the community fork WMP/moonlight-tizen50, which the README and the guide of Moonlight Plus name since 2.3.5 as a separate project that Moonlight Plus has not tried, and it asks a fork to credit the original project and to say in its README where it comes from, which the README of Moonlight Plus does (its first paragraph, About Moonlight Tizen and Credits)."
         }
       ]
     },
@@ -103,8 +108,8 @@
       "track": "branch",
       "branch": "master",
       "vendored": "8599b60 (2024-06-10, the version of Moonlight Tizen 1.19.0) with the commits taken below and the patches of this fork (moonlight-common-c/)",
-      "reviewed_through": "94c65fd364d17b223f00a8763c9a5d94a66cb8dd",
-      "reviewed_on": "2026-11-16",
+      "reviewed_through": "b4ee1cea3d19e13c0b37c26585e6b1ee174effcb",
+      "reviewed_on": "2026-11-26",
       "note": "The streaming library, with patches of this fork (stats, reference frame invalidation, a faster rs.c, ML_ERROR_RTSP_DECRYPT_FAILED for an RTSP answer that doesn't decrypt with the key of the start, tests/native/rtsp_decrypt_error_test.c; since 2.3.1 a limit of the IDR frame requests while an IDR frame is on its way, src/IdrRequestLimit.h with its use in ControlStream.c and VideoDepacketizer.c, PltWaitForEventTimeout() in Platform.c (declared in PlatformThreads.h), connectionReceivedIdrFrame() (declared in Limelight-internal.h) and the public LiGetIdrFrameRequestStats() in Limelight.h, which the app calls, tests/native/idr_request_limit_test.c; since 2.3.1 also disableAudioQos of STREAM_CONFIGURATION in Limelight.h, which SdpGenerator.c reads to ask the host for the audio of a local stream without QoS while the video keeps it, for the setting Prioritize sound on Wi-Fi, tests/native/sdp_audio_qos_test.c; since 2.3.1 also the termination reason of the host reported before the ENet peer is disconnected, and the termination callback claimed under a PLT_MUTEX, from host-termination.patch of the Nightjar client (GPL-3.0), tests/native/connection_termination_test.c; since 2.3.2 the microsecond clock and the microsecond times of a video frame from 82ee2d6, see its decision; since 2.3.2 also the arrival figures of a frame for the rate at which frames arrive, addFecBlockArrival() and its call with the clock read before reconstructFrame() in RtpvAddPacket() of RtpVideoQueue.c, the fields of RTP_VIDEO_QUEUE and RTPV_QUEUE_ENTRY in RtpVideoQueue.h, the two parameters and statics in VideoDepacketizer.c and arrivalTimeUs and arrivalBytes of DECODE_UNIT in Limelight.h, tests/native/frame_arrival_test.c; since 2.3.2 also the QoS line of each socket in the diagnostic log, logSocketQos() and the result of setSocketQos() in PlatformSockets.c and PlatformSockets.h, called from bindUdpSocket() and from startControlStream() in ControlStream.c, tests/native/socket_qos_test.c; since 2.3.4 also the video receive lines of the diagnostic log and the back-to-back reads of a socket that never waits, the receive mode, the sampled figures and their lines in VideoReceiveThreadProc() and the replaced socket in startVideoStream() of VideoStream.c, bindUdpSocketNoWait(), recvUdpSocketNoWait() and wakeUdpSocketReader() in PlatformSockets.c and PlatformSockets.h (bindUdpSocket() now calls the shared bindUdpSocketOfType()), nextVideoReceiveSampleGap() and wakeVideoReceiveThread() before each join of the receive thread in VideoStream.c, tests/native/video_receive_test.c and tests/native/udp_no_wait_test.c; since 2.3.5 also the two threads of the video receive: the ring of src/VideoReceiveRing.h, the reader VideoReceiveThreadProc() and the processing thread VideoProcessThreadProc() with their lines in VideoStream.c, the receive time as a parameter of RtpvAddPacket() in RtpVideoQueue.c and RtpVideoQueue.h, and one lock per frame with queueRtpPackets() in VideoDepacketizer.c (declared in Limelight-internal.h), called from submitCompletedFrame() in RtpVideoQueue.c, tests/native/video_receive_ring_test.c and tests/native/video_receive_threads_test.c). Port commits one at a time and keep the local patches; never replace the folder.",
       "decisions": [
         {
@@ -308,6 +313,11 @@
           "commits": ["94c65fd"],
           "decision": "skipped",
           "why": "The README of upstream only (it no longer names the Chrome client)."
+        },
+        {
+          "commits": ["b4ee1ce"],
+          "decision": "skipped",
+          "why": "MPEG-2 and H.263+ as Sunshine protocol extensions (#175, 22 November), with the choice of the codec in the RTSP handshake moved into chooseVideoFormat() of a new VideoFormats.c. The app asks only for H.264, HEVC and AV1, and the player of the TV has no use for the two old codecs. The new choice also takes HEVC Main and AV1 Main 8 only when the host lists them (or lists no codec), and ends the handshake when the host and the client share no codec, where this copy falls back to H.264; take it only with a native test of the codec choice and a check on a TV."
         }
       ]
     },
@@ -399,7 +409,7 @@
       "track": "releases",
       "vendored": "nothing (the host); the app uses its features",
       "reviewed_through": "v2026.914.233613",
-      "reviewed_on": "2026-11-16",
+      "reviewed_on": "2026-11-26",
       "note": "New host features that the app could ask for or explain. The repository moved from LizardByte/Sunshine (which redirects) to SunshineStream/Sunshine, and it deletes the tags of its pre-releases: v2026.1028.122642, reviewed through until 2.3.0, and v2026.1115.54751 and v2026.1115.163045 of 15 November were gone on 16 November. So reviewed_through stays at a stable release (v2026.914.233613, the release marked Latest on 16 November), and a pre-release that was read gets a decision by its tag; a release whose tag was deleted simply no longer comes up. Move reviewed_through only to a stable release. Sunshine publishes a stable release by turning a pre-release into a full release under the same tag, so a newer full release is reported even when its tag has a decision (check-upstream-dependencies.js); then move reviewed_through to it and update the guide lines that say a feature is only in a pre-release.",
       "decisions": [
         {
@@ -418,6 +428,11 @@
           "tags": ["v2026.1116.25010"],
           "decision": "skipped",
           "why": "Pre-release of 16 November. Over v2026.1115.211404 it only adds MiniUPnPc 2.3.4 to the Flatpak (#6111) and a seat suffix for the virtual input devices on Linux (#6109); nothing for a client."
+        },
+        {
+          "tags": ["v2026.1122.180652", "v2026.1123.40502", "v2026.1126.5025"],
+          "decision": "skipped",
+          "why": "Tags of 22, 23 and 26 November, checked with git log (the tags of 21 November were gone on 26 November, and v2026.1122.180652, an ancestor of v2026.1123.40502, was gone later that day). Over v2026.1116.25010 they add dependency updates, fixes of the Linux build and packaging and of the Windows packaging (#6187), documentation, encoders for MPEG-2 and H.263+ (#5194, with moonlight-common-c b4ee1ce), and in v2026.1126.5025 the ENet control socket of a host set to both address families that has no IPv6 address, which could not be bound before (#6164); nothing that this app asks for or explains."
         }
       ]
     },
@@ -428,20 +443,25 @@
       "track": "pull",
       "pull": 5917,
       "vendored": "nothing",
-      "reviewed_through": "31044d8af7f8fdb0795c6bc2e460eed8ccb07782",
+      "reviewed_through": "f8cebd0ebff24a534ab0d35ed21901cd54210df4",
       "reviewed_state": "open",
-      "reviewed_on": "2026-11-16",
+      "reviewed_on": "2026-11-26",
       "note": "The host side of Dolby passthrough to a soundbar. Vibeshine ships AC-3 and E-AC-3 in its stable releases since 2.0.2, with the same negotiation as fidoboy's fork; Moonlight Plus still waits for a check on a TV before it offers Dolby.",
       "decisions": [
         {
           "commits": ["bf9ce40"],
           "decision": "skipped",
-          "why": "Dolby passthrough waits for the surround check on a TV (guide, section 11) and for this pull request to be merged, or for Vibeshine to ship it in a stable release, since the protocol can still change."
+          "why": "Dolby passthrough waits for the surround check on a TV (the guide, Surround sound with a soundbar) and for this pull request to be merged, or for Vibeshine to ship it in a stable release, since the protocol can still change."
         },
         {
           "commits": ["31044d8"],
           "decision": "skipped",
           "why": "Only merges master into the branch of the pull request (8 November); its AC-3 and E-AC-3 changes are still those of bf9ce40. GitHub still had a merge ref for the pull request on 16 November, so it was open."
+        },
+        {
+          "commits": ["f8cebd0"],
+          "decision": "skipped",
+          "why": "54 commits of 21 to 25 November over 31044d8: review feedback, a Dolby packet limit of 2560 bytes (one AC-3 frame at 640 kbit/s) that the encoder and the audio transport share, the quality of Dolby taken from the request of the client (its high quality flag of the ANNOUNCE) instead of a setting of the host, tests, and merges of master. GitHub still had a merge ref for the pull request on 26 November, so it was open. Dolby passthrough still waits for the surround check on a TV."
         }
       ]
     }

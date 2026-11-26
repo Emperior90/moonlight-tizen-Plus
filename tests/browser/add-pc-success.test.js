@@ -209,7 +209,7 @@ test('a wrong PIN is reported with Close, and the next attempt of Add PC pairs, 
     await enterAddressAndContinue(page, '10.0.0.2');
     await page.waitForFunction(() => $('#cancelPairing').text().trim() === 'Close', null, { timeout: 5000 });
     const dialog = await page.evaluate(() => document.getElementById('pairingDialogText').textContent);
-    assert.equal(dialog, 'Error: The PIN entered on GAMING-PC was wrong.Please, try pairing with the PC again and enter the new PIN.');
+    assert.equal(dialog, 'Error: The PIN entered on GAMING-PC was wrong.Please try pairing with the PC again and enter the new PIN.');
     let state = await pcState(page);
     assert.deepEqual(state.cards, []);
     assert.equal(state.pairingOpen, true);

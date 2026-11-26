@@ -61,6 +61,10 @@
 //   same key closes the menu of a PC, RIGHT and LEFT between the list of the sections and a section, the keys of the
 //   address field of Add PC, B on the launch screen, Exit and Restart on Cancel, and the question of Quit app on the PC
 //   in the Stream Menu
+// - the first start of the guide (2.3.5): the scan of the /24 network on port 47989, Add PC with its number fields or
+//   its text field, the pairing with a PIN of four digits, the troubleshooting rows of the failed pairings and of an
+//   app list that couldn't be read, No sound at all; and the README, which claims no tested surround output and, like
+//   the guide, names the separate fork for Tizen 5.0
 // The release notes of a release (docs/RELEASE_NOTES.md) only give the essentials, so the statements that they
 // carried until 1.19.100 are checked in the guide and the patch notes (docs/PATCH_NOTES.md), where they are now.
 
@@ -1403,4 +1407,68 @@ test('the guide and the controller page describe the keys in the menus of 2.3.5 
   assert.match(menus, /const STREAM_MENU_PANELS = \{[^}]*streamMenuQuit: 'streamQuitPanel' \};/);
   assert.match(menus, /\} else if \(id === 'streamMenuDisconnect' \|\| id === 'streamQuitConfirm'\) \{[\s\S]{0,200}quitAppAfterStream = id === 'streamQuitConfirm';/);
   assert.match(read('wasm/index.html'), /<div id="streamQuitPanel"[^>]*>[\s\S]{0,600}<button type="button" id="streamQuitCancel"[\s\S]{0,400}<button type="button" id="streamQuitConfirm"/);
+});
+
+test('the guide describes the first start, the failed pairings, an unreadable app list and no sound as the code does them (2.3.5)', () => {
+  const index = read('wasm/platform/index.js');
+  const english = JSON.parse(read('wasm/static/locales/en-US.json'));
+  // A section of its own in the installation, before the part on the regular Moonlight app, listed in the contents
+  const installation = GUIDE.slice(GUIDE.indexOf('\n## Installation\n'), GUIDE.indexOf('\n## The screens of the app\n'));
+  assert.ok(installation.indexOf('\n### Install the file\n') < installation.indexOf('\n### First start\n') &&
+    installation.indexOf('\n### First start\n') < installation.indexOf('\n### Next to the regular Moonlight app\n'), 'the order of the sections');
+  assert.ok(GUIDE.indexOf('[first start](#first-start)') > 0, 'the contents list');
+  const first = guideSection('### First start');
+  // The search of the start: the /24 network of the TV on port 47989 (wasm/static/js/mdns-browser/main.js)
+  const scanner = read('wasm/static/js/mdns-browser/main.js');
+  assert.match(scanner, /Scan the \/24 subnet/);
+  assert.match(scanner, /discoveredHost\.httpPort = 47989;/);
+  assert.match(first, /asks every address of the \/24 network of the TV on port 47989/);
+  // The empty PC list says what the search does (launcher.js)
+  assert.ok(english['Moonlight finds PCs that run Sunshine (or another GameStream host) on your network. You can also add one by its address.']);
+  assert.match(first, /the empty PC list says so/);
+  // Add PC: four number fields by default, preset to the network of the TV, the text field for a name, an IPv6 address
+  // or a port, and the PC joins the list only once it is paired
+  assert.match(index, /const defaultIpAddressFieldMode = true;/);
+  assert.match(index, /return \[Number\(parts\[0\]\), Number\(parts\[1\]\), Number\(parts\[2\]\), 0\];/);
+  assert.equal(english['- Four number fields for an IPv4 address. Turn it off to type a name, an IPv6 address or a port.'],
+    '- Four number fields for an IPv4 address. Turn it off to type a name, an IPv6 address or a port.');
+  assert.match(first, /four number fields for an IPv4 address, preset to the network of the TV/);
+  assert.match(first, /turn off Settings → General → \*Numeric PC address input\* first/);
+  assert.match(index, /pairingDialog\(_nvhttpHost, function\(\) \{\s+\/\/ Add the host to the grid after successful pairing\s+addHostToGrid\(_nvhttpHost\);/);
+  assert.match(first, /the PC joins the list once it is paired/);
+  // The PIN has four digits (generatePairingPin() of utils.js), and the app list opens after the pairing (hostChosen())
+  assert.match(read('wasm/static/js/utils.js'), /return String\('0000' \+ cryptoRand\(10000\)\)\.slice\(-4\);/);
+  assert.match(first, /The dialog shows a PIN of four digits\./);
+  assert.match(first, /The dialog closes once the PC confirms the pairing, and the app list of the PC opens\./);
+  // The rows of the troubleshooting quote the texts of the app
+  const troubleshooting = guideSection('## Troubleshooting');
+  [['Error: Failed to pair with %1$s.<br><br>Please try pairing with the PC again.', '| "Error: Failed to pair with …" |'],
+    ['Error: %1$s is currently busy!<br><br>You must stop the running app in order to pair with the PC.', '| "Error: … is currently busy! …" |'],
+    ['A pairing request is currently in progress. Please wait for it to timeout or finish before trying again.', '| "A pairing request is currently in progress. …" |'],
+    ['Unable to retrieve your list of apps at this time. Please refresh the list of apps or try again later!', '| "Unable to retrieve your list of apps at this time. …"'],
+    ['The app list of %1$s couldn\'t be read. Make sure that Sunshine (or another GameStream host) is running on the PC, then try again.', ' or "The app list of … couldn\'t be read. …" |'],
+  ].forEach(([key, row]) => {
+    assert.equal(english[key], key);
+    assert.ok(troubleshooting.indexOf(row) > 0, row);
+  });
+  // No sound at all: the backend Disabled turns it off, the Opus decoder line of the log, the line of the statistics
+  assert.match(read('wasm/index.html'), /<li class="mdl-menu__item" data-value="Disabled" data-i18n="Disabled">Disabled<\/li>/);
+  assert.match(troubleshooting, /- \*\*No sound at all:\*\* check Settings → Audio Settings → \*Audio backend\*: \*Disabled\* turns the sound off\./);
+  assert.match(troubleshooting, /if the \[diagnostic log\]\(#diagnostic-log\) shows \*Creating the Opus decoder failed\*, choose Stereo/);
+});
+
+test('the README claims no tested surround output, and the README and the guide point owners of Tizen 5.0 TVs elsewhere (2.3.5)', () => {
+  const readme = read('README.md');
+  const improvements = readme.slice(readme.indexOf('## Main improvements'), readme.indexOf('## Requirements'));
+  // The guide says that nobody has confirmed discrete 5.1 from the app on a TV (pinned above), so the README doesn't
+  // list it as working, and it promises no 7.1, which the guide calls experimental
+  assert.doesNotMatch(improvements, /5\.1 through a soundbar|7\.1/);
+  assert.match(improvements, /a check of what reaches your soundbar \(5\.1 from the app is still untested on a TV\)/);
+  assert.ok(improvements.indexOf('(docs/GUIDE.md#surround-sound-with-a-soundbar)') > 0);
+  // The package needs Tizen 5.5 (res/config.xml); a separate community fork exists for Tizen 5.0, which this fork names
+  // as such without vouching for it
+  assert.match(read('res/config.xml'), /required_version="5\.5"/);
+  for (const [file, text] of [['README.md', readme], ['docs/GUIDE.md', GUIDE]]) {
+    assert.ok(text.indexOf('For the TVs of 2019 with Tizen 5.0, Moonlight Tizen points to [moonlight-tizen50](https://github.com/WMP/moonlight-tizen50), a separate community fork that Moonlight Plus has not tried.') > 0, file);
+  }
 });

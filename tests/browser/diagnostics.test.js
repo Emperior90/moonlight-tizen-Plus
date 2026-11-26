@@ -156,6 +156,40 @@ test('the diagnostic log under About: app and native lines, secrets hidden, scro
   }
 });
 
+// The note above the log (index.html), in English
+const LOG_NOTE = 'Kept only in the memory of the TV. The PIN, the encryption keys of the stream, the ID of the TV, the RTSP address, the public IP ' +
+  'address and the MAC addresses are hidden. Local addresses and the names of the PCs stay visible. UP and DOWN scroll.';
+
+test('the note of the diagnostic log names what it hides and what stays, in two lines in every language, also with 10 % wider text', async () => {
+  for (const locale of ['en_US', 'de_DE', 'es_ES', 'fr_FR', 'pt_BR']) {
+    const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi', locale } });
+    try {
+      await app.page.evaluate(() => $('#settingsBtn').trigger('click'));
+      await app.page.waitForFunction(() => $('#settings-list').is(':visible') && !$('#wasmSpinner').is(':visible'));
+      await app.page.evaluate(() => {
+        handleSettingsView('aboutSettings');
+        $('#diagnosticLogBtn').trigger('click');
+      });
+      await app.page.waitForFunction(() => document.getElementById('diagnosticLogDialog').open);
+      const text = await app.page.evaluate(() => document.querySelector('#diagnosticLogDialog .dialog-note').textContent);
+      assert.equal(text, await app.page.evaluate((key) => t(key), LOG_NOTE), locale);
+      if (locale === 'en_US') {
+        assert.equal(text, LOG_NOTE);
+      }
+      await forEachTextWidth(app.page, async (stress) => {
+        const note = await app.page.evaluate(() => {
+          const element = document.querySelector('#diagnosticLogDialog .dialog-note');
+          return Math.round(element.getBoundingClientRect().height / parseFloat(getComputedStyle(element).lineHeight));
+        });
+        assert.ok(note <= 2, locale + stress + ': ' + note + ' lines');
+      });
+      assert.deepEqual(app.errors, [], locale);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
 test('a stream starts a session of the log, keeps its report, and its heartbeat ends with it', async () => {
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi', locale: 'de_DE' } });
   try {

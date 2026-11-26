@@ -4,9 +4,9 @@
   const LANGUAGE_SETTING_KEY = 'languagePreference';
   const SOURCE_LOCALE = 'en-US';
   // The languages of the app, in the order of the language menu after Auto. Each one is named in its own language, so
-  // that it can be found whatever language the app shows. Every language costs about 60 KB in the package, so the
-  // list stays short (docs/TRANSLATING.md). A locale file in static/locales needs its entry here, and the other way
-  // round (tests/tools/i18n-check.js).
+  // that it can be found whatever language the app shows. Every language costs about 80 KB on the TV and 25 KB in the
+  // download, so the list stays short (docs/TRANSLATING.md). A locale file in static/locales needs its entry here, and
+  // the other way round (tests/tools/i18n-check.js).
   const LOCALES = [
     { code: 'en-US', name: 'English' },
     { code: 'de-DE', name: 'Deutsch' },

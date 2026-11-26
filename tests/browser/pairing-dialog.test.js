@@ -66,7 +66,7 @@ test('a wrong PIN is reported as such, and the log names the host without the PI
     const pin = await app.page.evaluate(() => window.__pin);
     assert.match(pin, /^\d{4}$/);
     const dialog = await failPairing(app, '-7');
-    assert.equal(dialog.text, 'Error: The PIN entered on OFFICE was wrong.Please, try pairing with the PC again and enter the new PIN.');
+    assert.equal(dialog.text, 'Error: The PIN entered on OFFICE was wrong.Please try pairing with the PC again and enter the new PIN.');
     assert.equal(dialog.button, 'Close');
     assert.ok(app.logs.some((line) => line.indexOf('Sending pairing request to OFFICE') >= 0));
     assert.deepEqual(app.logs.filter((line) => line.indexOf('Sending pairing request') >= 0 && line.indexOf(pin) >= 0), []);
@@ -81,7 +81,7 @@ test('another pairing failure keeps the general message', async () => {
   try {
     await openPairingDialog(app);
     const dialog = await failPairing(app, '-1');
-    assert.equal(dialog.text, 'Error: Failed to pair with OFFICE.Please, try pairing with the PC again.');
+    assert.equal(dialog.text, 'Error: Failed to pair with OFFICE.Please try pairing with the PC again.');
     assert.equal(dialog.button, 'Close');
     assert.deepEqual(app.errors, []);
   } finally {
@@ -191,7 +191,7 @@ test('a wrong PIN on a PC that runs an app is reported as a wrong PIN, another f
   try {
     await openPairingDialog(app, 101);
     let dialog = await failPairing(app, '-7');
-    assert.equal(dialog.text, 'Error: The PIN entered on OFFICE was wrong.Please, try pairing with the PC again and enter the new PIN.');
+    assert.equal(dialog.text, 'Error: The PIN entered on OFFICE was wrong.Please try pairing with the PC again and enter the new PIN.');
     assert.equal(dialog.button, 'Close');
     await app.page.evaluate(() => document.getElementById('cancelPairing').click());
     await openPairingDialog(app, 101);
@@ -202,7 +202,7 @@ test('a wrong PIN on a PC that runs an app is reported as a wrong PIN, another f
     // PAIRING_NOT_CONFIRMED_ERROR of utils.js: the general message
     await openPairingDialog(app, 101);
     dialog = await failPairing(app, 'PAIRING_NOT_CONFIRMED');
-    assert.equal(dialog.text, 'Error: Failed to pair with OFFICE.Please, try pairing with the PC again.');
+    assert.equal(dialog.text, 'Error: Failed to pair with OFFICE.Please try pairing with the PC again.');
     assert.equal(dialog.button, 'Close');
     assert.deepEqual(app.errors, []);
   } finally {
@@ -235,7 +235,7 @@ test('a pairing that the PC doesn\'t confirm is a failure: Close, no key, the ge
       pairs: window.__sunshine.pairs.length,
       challenges: window.__sunshine.requests.filter((request) => request.path === '/pair').length,
     }));
-    assert.equal(state.text, 'Error: Failed to pair with GAMING-PC.Please, try pairing with the PC again.');
+    assert.equal(state.text, 'Error: Failed to pair with GAMING-PC.Please try pairing with the PC again.');
     assert.deepEqual([state.open, state.view, state.dataView], [true, 'PairingDialog', 'hosts']);
     assert.deepEqual(state.snackbars, ['Failed to pair with GAMING-PC']);
     assert.deepEqual([state.key, state.paired, state.pairs, state.challenges], [null, false, 1, 1]);

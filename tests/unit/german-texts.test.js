@@ -1,7 +1,8 @@
 'use strict';
 
 // Checks the German texts (wasm/static/locales/de-DE.json) beyond what tests/tools/i18n-check.js checks for every
-// language: the informal "du" throughout, the terms of the glossary in docs/TRANSLATING.md, the key names as they are
+// language: the informal "du" throughout, the terms of the glossary in docs/TRANSLATING.md (PC, never Rechner,
+// Computer or Maschine), the key names as they are
 // printed on the remote and the gamepad, and the names the texts refer to (settings, menu entries) as the German UI
 // shows them.
 
@@ -43,6 +44,8 @@ test('the German texts use the terms of the glossary', () => {
   // The game mode of the TV, which the ForceGM variant asks for, stays Spielmodus
   assert.match(german['ForceGM variant detected: the app asks the TV for its Game Mode, so the Ultra low latency mode setting stays off here and the decoder uses the Low Latency mode.'],
     /Spielmodus des TVs.*Ultra-Low-Latency-Modus/);
+  // The PC is a PC (glossary: host, host PC), not a Rechner, Computer or Maschine
+  assert.deepEqual(keys.filter((key) => /\b(Rechner|Computer|Maschine)/.test(german[key])).map((key) => german[key]), []);
   // TV for the television (der TV, des TVs), as in the German UI of Samsung
   assert.deepEqual(keys.filter((key) => /Fernseher/.test(german[key])), []);
   // A typographic ellipsis instead of three dots

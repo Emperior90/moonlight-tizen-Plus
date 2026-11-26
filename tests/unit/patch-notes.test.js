@@ -173,3 +173,11 @@ test('the patch notes link the base version and the changelog', () => {
   assert.ok(text.indexOf('](https://github.com/brightcraft/moonlight-tizen/releases)') >= 0, 'the releases of Moonlight Tizen');
   assert.ok(text.indexOf('](../CHANGELOG.md)') >= 0, 'the changelog');
 });
+
+test('the patch notes put the defect of the recovery keyframes of 2.3.2 where it was, in the compiler of the app, not in the TV', () => {
+  // CHANGELOG.md: the compare-exchange of a 64-bit value in the runtime of Samsung's Emscripten 1.39 (fastcomp), which is
+  // compiled into the app
+  assert.match(fs.readFileSync(path.join(REPO_ROOT, 'CHANGELOG.md'), 'utf8'), /__atomic_compare_exchange_8` in `system\/lib\/pthread\/library_pthread_asmjs\.c` of the SDK/);
+  assert.doesNotMatch(PATCH_NOTES, /TV runtime defect/);
+  assert.ok(PATCH_NOTES.indexOf("- *Session recovery keyframes* no longer counts restarts of the PC's encoder as recoveries (a compiler defect)\n") > 0);
+});

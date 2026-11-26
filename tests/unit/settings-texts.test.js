@@ -32,6 +32,9 @@ test('English and Brazilian Portuguese say controller, PC and mouse emulation', 
   for (const current of ['Add PC', 'Delete PC', 'Delete All PCs', 'PCs', 'PC Details', 'Remove all PCs', 'As on the PC']) {
     assert.ok(Object.prototype.hasOwnProperty.call(english, current), current);
   }
+  // Since 2.3.5 no English text calls the PC a machine or a computer, or asks to open the host again; and the leftovers of
+  // upstream are gone: the comma of "Please, try" and the "(all GPUs)" of Sunshine, which moonlight-qt no longer says
+  assert.deepEqual(keys.filter((key) => /\b(machine|computer)s?\b|open the host again|Please, |\(all GPUs\)/i.test(key) || /Operating System/.test(key)), []);
   assert.deepEqual(keys.filter((key) => /\bgamepads?\b/i.test(portuguese[key])), []);
   assert.equal(portuguese['Controller'], 'Controle');
   assert.equal(portuguese['Add PC'], 'Adicionar PC');

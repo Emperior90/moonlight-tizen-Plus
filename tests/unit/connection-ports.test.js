@@ -123,7 +123,7 @@ test('the progress line of a stage is one sentence in each language, and the ove
     'de-DE': ['RTSP-Handshake wird gestartet …', 'Steuer-Stream-Initialisierung wird gestartet …'],
     'es-ES': ['Iniciando negociación RTSP…', 'Iniciando inicialización del flujo de control…'],
     'fr-FR': ['Démarrage : négociation RTSP…', 'Démarrage : initialisation du flux de contrôle…'],
-    'pt-BR': ['Iniciando handshake RTSP...', 'Iniciando inicialização do fluxo de controle...'],
+    'pt-BR': ['Iniciando handshake RTSP…', 'Iniciando inicialização do fluxo de controle…'],
   };
   Object.keys(expected).forEach((locale) => {
     const app = loadMessages(locale);
@@ -140,8 +140,8 @@ test('the progress line of a stage is one sentence in each language, and the ove
   // German
   assert.match(read('wasm/index.html'), /<div class="hero-overline launch-overline" data-i18n="Starting">Starting<\/div>/);
   assert.equal(readLocale('de-DE')['Starting'], 'Wird gestartet');
-  // The ellipsis of the glossary in German, Spanish and French
-  ['de-DE', 'es-ES', 'fr-FR'].forEach((locale) => assert.ok(/…$/.test(readLocale(locale)['Starting the %1$s...']), locale));
+  // The ellipsis of the glossaries in German, Spanish, French and Brazilian Portuguese
+  ['de-DE', 'es-ES', 'fr-FR', 'pt-BR'].forEach((locale) => assert.ok(/…$/.test(readLocale(locale)['Starting the %1$s...']), locale));
 });
 
 test('a stream that ends with an error of no other message names the error code, which a report of the problem needs', () => {

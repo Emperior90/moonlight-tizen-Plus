@@ -420,8 +420,8 @@ test('the AV1 entry with the note stays selectable, the field shows the codec, a
     menu = await readCodecMenu(page);
     assert.deepEqual([menu.av1, menu.field], ['AV1 (pode não ser suportado por esta TV)', 'AV1']);
     const lines = await readSystemInfoLines(page);
-    assert.ok(lines.indexOf('Decodificadores de Vídeo (verificação do MediaSource): H.264: Sim, HEVC: Sim, HEVC Main10: Sim, AV1: Não, AV1 Main10: Não') >= 0, lines.join('\n'));
-    assert.ok(lines.indexOf('Modo de Latência Ultrabaixa (Modo Jogo): Desconhecido') >= 0, lines.join('\n'));
+    assert.ok(lines.indexOf('Decodificadores de vídeo (verificação do MediaSource): H.264: Sim, HEVC: Sim, HEVC Main10: Sim, AV1: Não, AV1 Main10: Não') >= 0, lines.join('\n'));
+    assert.ok(lines.indexOf('Modo de latência ultrabaixa (Modo Jogo): Desconhecido') >= 0, lines.join('\n'));
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

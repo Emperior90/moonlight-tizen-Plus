@@ -6,7 +6,9 @@
 //   Opus, libgamestream, the Sunshine releases and Sunshine pull request 5917), matches the vendored versions of
 //   submodulesVer.txt, and records as taken every upstream commit that the changelog says was ported; the review of
 //   16 November 2026 moved Moonlight Tizen to 8b3049a, moonlight-common-c to 94c65fd and ENet to 98dbb89 with a
-//   decision for every commit in between, and keeps Sunshine (now SunshineStream/Sunshine) at its stable release
+//   decision for every commit in between, and keeps Sunshine (now SunshineStream/Sunshine) at its stable release; the
+//   review of 26 November 2026 (2.3.5) moved Moonlight Tizen to 9033032, moonlight-common-c to b4ee1ce and pull request
+//   5917 to f8cebd0, and recorded the Sunshine tags of 22 to 26 November
 // - the checker of the file finds a commit with two decisions, a decision without its reason or version, and states
 //   that the script can't compare
 // - the script against a simulated GitHub API: new commits on a branch, commits that touch a folder, a moved submodule,
@@ -137,6 +139,9 @@ test('the baseline file starts from the vendored versions of submodulesVer.txt',
 // The upstream commits that the review of 16 November 2026 read, oldest first (git log of each project): Moonlight Tizen
 // after ce18df8 up to 8b3049a, moonlight-common-c after 5d3c0ec up to 94c65fd
 const TIZEN_COMMITS_TO_8B3049A = ['973a61b', 'a2d0009', '72caff4', '6da5b7f', '0ef676b', '087df40', '90b4a04', '99aada9', '8b3049a'];
+// The review of 26 November 2026 for 2.3.5 read one more commit of each: the README of Moonlight Tizen (9033032) and the
+// MPEG-2 and H.263+ negotiation of moonlight-common-c (b4ee1ce), both skipped
+const TIZEN_COMMITS_TO_9033032 = TIZEN_COMMITS_TO_8B3049A.concat(['9033032']);
 const COMMON_C_COMMITS_TO_94C65FD = [
   'c7dff22', '4853e70', '7d61e2d', 'f050b13', '41d6c1d', 'f462147', '134eee4', '7bf16de', '2e18599', 'ee160c9', 'e80a786',
   '3387805', 'a84a69a', 'bf71226', '348d5d1', '4aa7ea4', '3b6ee9d', 'b0deb0a', '7fd0f25', '7d884fa', 'c3360b7', 'edb4e9e',
@@ -149,15 +154,17 @@ test('the review of November 2026 moved each project to the upstream state it re
   const byId = Object.fromEntries(readBaselines().dependencies.map((dep) => [dep.id, dep]));
   const decisionsOf = (dep, hash) => dep.decisions.filter((decision) => (decision.commits || []).indexOf(hash) >= 0);
   const expectOneDecision = (id, hashes) => hashes.forEach((hash) => assert.equal(decisionsOf(byId[id], hash).length, 1, `${id} ${hash}`));
-  assert.equal(byId['moonlight-tizen'].reviewed_through, '8b3049a9e1731c12a7ab150a1cb01aba449abded');
-  expectOneDecision('moonlight-tizen', TIZEN_COMMITS_TO_8B3049A);
-  assert.equal(byId['moonlight-common-c'].reviewed_through, '94c65fd364d17b223f00a8763c9a5d94a66cb8dd');
+  assert.equal(byId['moonlight-tizen'].reviewed_through, '9033032463e6010b0e9b68d7d03397b864965fcf');
+  expectOneDecision('moonlight-tizen', TIZEN_COMMITS_TO_9033032);
+  assert.equal(decisionsOf(byId['moonlight-tizen'], '9033032')[0].decision, 'skipped');
+  assert.match(decisionsOf(byId['moonlight-tizen'], '9033032')[0].why, /WMP\/moonlight-tizen50/);
+  assert.equal(byId['moonlight-common-c'].reviewed_through, 'b4ee1cea3d19e13c0b37c26585e6b1ee174effcb');
   assert.equal(COMMON_C_COMMITS_TO_94C65FD.length, 47);
-  expectOneDecision('moonlight-common-c', COMMON_C_COMMITS_TO_94C65FD);
+  expectOneDecision('moonlight-common-c', COMMON_C_COMMITS_TO_94C65FD.concat(['b4ee1ce']));
   // The commits ported in 2.3.1 are taken, the C11 atomics and the protocol extensions skipped
   ['bf71226', '348d5d1', 'e64327c', 'ae6633e', '0b4a44d', '74a61b9', '18922a1', 'a84a69a', 'dc09c9f', '134eee4', '7bf16de', '2e18599', 'ee160c9', '4aa7ea4']
     .forEach((hash) => assert.deepEqual([decisionsOf(byId['moonlight-common-c'], hash)[0].decision, decisionsOf(byId['moonlight-common-c'], hash)[0].in], ['taken', '2.3.1'], hash));
-  ['b0deb0a', 'c7dff22', '4853e70', '0d92c94'].forEach((hash) => assert.equal(decisionsOf(byId['moonlight-common-c'], hash)[0].decision, 'skipped', hash));
+  ['b0deb0a', 'c7dff22', '4853e70', '0d92c94', 'b4ee1ce'].forEach((hash) => assert.equal(decisionsOf(byId['moonlight-common-c'], hash)[0].decision, 'skipped', hash));
   // The skipped microsecond series carries the warning about its audio queue, and no decision says any more that the
   // commits after 5d3c0ec wait for a review
   assert.match(decisionsOf(byId['moonlight-common-c'], '82ee2d6')[0].why, /handleMissingPackets\(\) in RtpAudioQueue\.c compares an age in microseconds/);
@@ -219,8 +226,13 @@ test('the review of November 2026 moved each project to the upstream state it re
   assert.equal(byId.sunshine.reviewed_through, 'v2026.914.233613');
   assert.match(byId.sunshine.note, /deletes the tags of its pre-releases/);
   assert.match(byId.sunshine.note, /a newer full release is reported even when its tag has a decision/);
-  assert.deepEqual(byId.sunshine.decisions.map((decision) => decision.tags[0]), ['v2026.516.143833', 'v2026.1115.211404', 'v2026.1116.25010']);
-  assert.deepEqual([byId['sunshine-pr-5917'].reviewed_through, byId['sunshine-pr-5917'].reviewed_state], ['31044d8af7f8fdb0795c6bc2e460eed8ccb07782', 'open']);
+  assert.deepEqual(byId.sunshine.decisions.map((decision) => decision.tags[0]), ['v2026.516.143833', 'v2026.1115.211404', 'v2026.1116.25010', 'v2026.1122.180652']);
+  // The review of 26 November read the tags of 22, 23 and 26 November (the one of 22 November was gone later that day)
+  assert.deepEqual(byId.sunshine.decisions[3].tags, ['v2026.1122.180652', 'v2026.1123.40502', 'v2026.1126.5025']);
+  assert.equal(byId.sunshine.decisions[3].decision, 'skipped');
+  assert.deepEqual([byId['sunshine-pr-5917'].reviewed_through, byId['sunshine-pr-5917'].reviewed_state], ['f8cebd0ebff24a534ab0d35ed21901cd54210df4', 'open']);
+  // The decisions name the sections of the guide by their heading, which have no numbers since 2.3.0
+  Object.values(byId).forEach((dep) => dep.decisions.forEach((decision) => assert.doesNotMatch(decision.why, /guide, section \d/, dep.id)));
   // libgamestream of moonlight-embedded, reviewed once for 2.3.3 through 33142e5: the length of the signature of the host
   // (000d9da) and pairing while the PC is busy (f021439) taken, the rest skipped, each commit once
   const libgamestream = byId.libgamestream;

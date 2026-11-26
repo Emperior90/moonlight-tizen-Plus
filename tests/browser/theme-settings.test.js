@@ -451,7 +451,7 @@ test('each settings section carries its colour into the header, its tile, the fo
     // The name follows a change of the language
     await app.page.evaluate(() => i18n.setLanguage('pt-BR'));
     await app.page.waitForTimeout(400);
-    assert.equal(await app.page.evaluate(() => document.getElementById('header-section').textContent), 'Configurações Básicas');
+    assert.equal(await app.page.evaluate(() => document.getElementById('header-section').textContent), 'Configurações básicas');
     // Back to the list of the sections: no section in the header
     await app.page.evaluate(() => resetSettingsView());
     assert.deepEqual(await app.page.evaluate(() => [document.body.hasAttribute('data-section'),

@@ -2,7 +2,8 @@
 
 // Checks the Spanish and French texts (wasm/static/locales/es-ES.json, fr-FR.json) beyond what tests/tools/i18n-check.js
 // checks for every language: the form of address (Spanish "tú", French "vous"), the terms of the glossary in
-// docs/TRANSLATING.md, the punctuation of each language (¿ and ¡ in Spanish, a no-break space before : ; ? ! and inside
+// docs/TRANSLATING.md (the PC, never a serveur or a machine; "hôte" only for the hostname and host software such as
+// "un autre hôte GameStream"; "televisor" and "téléviseur" for the TV), the punctuation of each language (¿ and ¡ in Spanish, a no-break space before : ; ? ! and inside
 // « » in French), the key names as they are printed on the remote and the gamepad, and the names the texts refer to
 // (settings, menu entries) as the translated UI shows them. The German texts are checked in german-texts.test.js.
 
@@ -107,8 +108,16 @@ test('the Spanish and French texts use the terms of the glossary', () => {
   // The game mode of the TV, which the ForceGM variant asks for, keeps its name
   assert.match(spanish['ForceGM variant detected: the app asks the TV for its Game Mode, so the Ultra low latency mode setting stays off here and the decoder uses the Low Latency mode.'], /Modo Juego/);
   assert.match(french['ForceGM variant detected: the app asks the TV for its Game Mode, so the Ultra low latency mode setting stays off here and the decoder uses the Low Latency mode.'], /mode Jeu/);
-  const hostSoftware = /host ?name|Hostname|Wolf|host audio/;
+  const hostSoftware = /host ?name|Hostname|GameStream host|the other host|Wolf|host audio/;
   assert.deepEqual(keys.filter((key) => /hôte/.test(french[key]) && !hostSoftware.test(key)).map((key) => french[key]), []);
+  // The television is a televisor and a téléviseur, also in the entry of the audio backend (since 2.3.5)
+  assert.deepEqual(matching(spanish, /\bTVs?\b/), []);
+  assert.deepEqual(matching(french, /\bTVs?\b/), []);
+  assert.equal(spanish['TV media player (EMSS)'], 'Reproductor integrado (EMSS)');
+  assert.equal(french['TV media player (EMSS)'], 'Lecteur du téléviseur (EMSS)');
+  // Host software is an hôte in French (un autre hôte GameStream), never a serveur, and the PC never a machine
+  assert.deepEqual(matching(french, /\bserveurs?\b|\bmachines?\b|\bordinateurs?\b/i), []);
+  assert.match(french['Failed to connect to %1$s. Make sure that Sunshine (or another GameStream host) is running on the PC.'], /\(ou un autre hôte GameStream\)/);
   // A typographic ellipsis instead of three dots, and the decimal comma
   [spanish, french].forEach((texts) => {
     assert.deepEqual(matching(texts, /\.\.\./), []);

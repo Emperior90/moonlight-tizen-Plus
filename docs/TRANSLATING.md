@@ -10,6 +10,7 @@ The app shows its texts in English, German, Spanish, French or Brazilian Portugu
 - [German glossary](#german-glossary)
 - [Spanish glossary](#spanish-glossary)
 - [French glossary](#french-glossary)
+- [Brazilian Portuguese glossary](#brazilian-portuguese-glossary)
 - [Adding a language](#adding-a-language)
 
 ## How the languages work
@@ -17,11 +18,11 @@ The app shows its texts in English, German, Spanish, French or Brazilian Portugu
 - The English texts are the keys. `wasm/static/locales/en-US.json` maps each English text to itself, and every other locale file maps the same keys to its translation. The app doesn't load `en-US.json` (English needs no dictionary), and the build leaves it and `i18n-sync.js` out of the widget (`CMakeLists.txt`); both stay in the repository for the tools and for you.
 - `wasm/platform/i18n.js` lists the languages in `LOCALES`, each with the name it has in its own language (*English*, *Deutsch*, *Español*, *Français*, *Português (Brasil)*), in the order of the language menu after *Auto*.
 - With *Auto* the app takes the language of the TV (`tizen.systeminfo` `LOCALE`, else the languages of the browser): first the locale itself, then a locale of the same language, so de-AT and de-CH get German, es-MX, es-US and es-419 get Spanish, fr-CA, fr-BE and fr-CH get French, and pt-PT gets Brazilian Portuguese. The other languages of Spain (ca, eu, gl) are languages of their own and get English. Any other language gets English. A stored language that the app no longer has counts as *Auto*.
-- Each language adds about 60 KB to the package, so the app keeps to a few languages that its users need.
+- Each language adds about 80 KB to the app on the TV and about 25 KB to the download (the package is compressed), so the app keeps to a few languages that its users need.
 
 ## Adding or changing a text
 
-1. Use the English text in the code: `t('Text')`, `snackbarLog('Text')`, `warningDialog('Title', 'Text')` or `data-i18n="Text"` in `wasm/index.html`.
+1. Use the English text in the code, as a literal text in one of the calls or attributes that `i18n-sync.js` collects: `t('Text')`; `_n('%1$s app', '%1$s apps', count)` for a singular and a plural (two keys); `snackbarLog('Text')`, `snackbarLogLong('Text')` and `snackbarLogFor(timeoutMs, 'Text')` (the key after the time) for a message at the bottom of the screen; `warningDialog('Title', 'Text')` (two keys); and in `wasm/index.html` `data-i18n="Text"` for the text of an element (`data-param` fills its `%1$s`), `data-i18n-placeholder="Text"` for the placeholder of a text field and `data-i18n-aria-label="Text"` for the name of a button, which the Voice Guide of the TV reads. A text that the code puts together or passes in a variable isn't collected: give it a call of its own with the literal text.
 2. Run `node wasm/static/js/i18n-sync.js`. It collects the texts of `wasm/`, writes them to `en-US.json` and adds a new key to every other locale file with the English text.
 3. Translate the new keys in every locale file by hand.
 4. Run `node tests/tools/i18n-check.js` (part of `npm test --prefix tests`). It fails if a locale file is out of sync, misses a key or has a key too many, still has the English text of a key, or changes a placeholder, an HTML tag, a line break, the leading dash of a help text or the spaces at its start or end. A text that is really the same as in English (a codec name, a number, a key name) goes into `tests/tools/i18n-same-as-english/<locale>.json`.
@@ -104,7 +105,7 @@ The Spanish texts address the user with the informal *tú* (*Selecciona*, *Pulsa
 | key (of a PC, kept from the pairing) | clave | *con una clave distinta*; not *tecla*, which is a key of the remote or a keyboard |
 | gamepad, controller | mando | *Mandos* |
 | remote | mando a distancia | |
-| TV | televisor | |
+| TV | televisor | *el televisor*; the entry of the audio backend is *Reproductor integrado (EMSS)*, since *del televisor* has no room there |
 | settings | Ajustes | sections: *Ajustes básicos*, *Ajustes de vídeo*, *Ajustes de audio*, *Ajustes de entrada*, *General*, *Ajustes avanzados*, *Acerca de*; the block *Experimental* |
 | Auto | Automático | |
 | On, Off | Activado, Desactivado | |
@@ -143,12 +144,12 @@ The French texts address the user with *vous*, as the menus of French TVs do (*S
 
 | English | French | Note |
 |---|---|---|
-| host, host PC | PC | *Ajouter un PC*, *Supprimer tous les PC*; *hôte* only for the hostname and for host software (*nom d’hôte*, *hôtes de type Wolf*, *audio de l’hôte*) |
+| host, host PC | PC | *Ajouter un PC*, *Supprimer tous les PC*; *hôte* only for the hostname and for host software (*nom d’hôte*, *un autre hôte GameStream*, *hôtes de type Wolf*, *audio de l’hôte*), never *serveur* |
 | pair, pairing | associer, association | |
 | key (of a PC, kept from the pairing) | clé | *avec une clé différente*; not *touche*, which is a key of the remote or a keyboard |
 | gamepad, controller | manette | |
 | remote | télécommande | |
-| TV | téléviseur | |
+| TV | téléviseur | also *Lecteur du téléviseur (EMSS)*, the entry of the audio backend |
 | settings | Paramètres | sections: *Paramètres de base*, *Paramètres vidéo*, *Paramètres audio*, *Paramètres des commandes*, *Général*, *Paramètres avancés*, *À propos*; the block *Expérimental* |
 | Auto | Automatique | |
 | On, Off | Activé, Désactivé | |
@@ -182,6 +183,51 @@ The French texts address the user with *vous*, as the menus of French TVs do (*S
 Put a no-break space (U+00A0) before : ; ? ! and inside « » (*« Afficher les applications masquées »*), so that the sign never starts a line, and use the typographic apostrophe (*l’application*). Write *par exemple*, decimal commas (*0,5 Mbps*) and a typographic ellipsis without a space (*Démarrage…*).
 
 `tests/unit/spanish-french-texts.test.js` checks the *tú* and the *vous*, the punctuation of each language, the main terms of these tables and the key names.
+
+## Brazilian Portuguese glossary
+
+The Brazilian Portuguese texts address the user with *você* (*Selecione*, *Pressione*, *Você tem certeza de que deseja …?*). This glossary records the terms that the texts use since 2.3.5. A native speaker hasn't reviewed it yet: a correction is welcome on the issue tracker.
+
+| English | Brazilian Portuguese | Note |
+|---|---|---|
+| host, host PC | PC | *Adicionar PC*, *Excluir todos os PCs*, *o PC*; *host* only for the host name and for host software: *nome do host*, *outro host GameStream*, *hosts do tipo Wolf*, *áudio do host*; not *computador* or *máquina* |
+| pair, pairing | parear, pareamento | *pareado*; not *emparelhar* |
+| key (of a PC, kept from the pairing) | chave | *com uma chave diferente*; not *tecla*, which is a key of the remote or a keyboard |
+| app, apps | app, apps | *o app*, *Encerrar o app no PC*, *Mostrar apps ocultos*; not *aplicativo* |
+| gamepad, controller | controle | *Controles*; not *gamepad* |
+| remote | controle remoto | |
+| TV | TV | *a TV*, *da TV*, *esta TV* |
+| settings | Configurações | sections: *Configurações básicas*, *Configurações de vídeo*, *Configurações de áudio*, *Configurações de entrada*, *Geral*, *Configurações avançadas*, *Sobre*; the block *Experimental* |
+| Auto | Automático | |
+| On, Off | Ligado, Desligado | |
+| stream, streaming | transmissão, transmitir | *a transmissão*, *durante a transmissão*; not *stream* (the window title *Moonlight Game Streaming* stays) |
+| Stream Menu | Menu da transmissão | |
+| shortcuts, function keys | atalhos de teclado, teclas de função | key names such as *Alt + Tab* and *F1* stay |
+| shut down, restart (the PC) | desligar, reiniciar | |
+| resume, quit | retomar, encerrar | *Sair do Moonlight* for leaving the app |
+| hide, hidden | ocultar, oculto | |
+| wake | despertar | *Despertar PC* |
+| frame, keyframe | quadro, quadro-chave | FPS stays |
+| frame rate | taxa de quadros | |
+| bitrate | taxa de bits | Mbps stays; not *bitrate* |
+| Stereo | Estéreo | *Som surround 5.1*, *Som surround 7.1* |
+| game mode (of the TV) | Modo Jogo | |
+| Ultra low latency mode (the setting) | modo de latência ultrabaixa | |
+| rumble | vibração | |
+| mouse emulation | emulação de mouse | |
+| button mapping | mapeamento de botões | |
+| stick | analógico | *analógico esquerdo*, *analógico direito* |
+| input test | teste de entrada | |
+| diagnostic log | log de diagnóstico | |
+| session | sessão | |
+| performance statistics | estatísticas de desempenho | levels: *Desligado*, *Compacto*, *Completo* |
+| Support (button) | Suporte | |
+| remote keys | OK, RETURN, Play/Pause, CH+, CH-, VOL+, VOL-, MUTE | the arrows *CIMA*, *BAIXO*, *ESQUERDA*, *DIREITA*, the color keys *VERMELHO* and *AMARELO* (*botão VERMELHO* in a sentence) |
+| gamepad keys | A, B, X, Y, SELECT, START, LB, RB | *D-PAD*, *ANALÓGICO ESQ.* |
+
+Labels, titles and the names of sections are in sentence case, as in Spanish and French (*Configurações avançadas*, *Ver detalhes*); product names and *Modo Jogo* keep their capitals, and so do *Menu da transmissão* and the sections when a sentence names them. Quotes are “ ” (*“Mostrar apps ocultos”*). Write *por exemplo*, decimal commas (*0,5 Mbps*) and a typographic ellipsis without a space (*Carregando…*).
+
+`tests/unit/portuguese-texts.test.js` checks the *você*, the main terms of this table, the typography and the key names.
 
 ## Adding a language
 

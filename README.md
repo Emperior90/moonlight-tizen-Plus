@@ -17,7 +17,7 @@ Moonlight Plus is an unofficial fork of [Moonlight Tizen](https://github.com/bri
 - **Stream Menu** on Play/Pause or Select + Start: change the bitrate in a game, type text, send shortcuts and F1 to F12 to the PC, or shut it down ([Stream Menu](docs/GUIDE.md#stream-menu-and-app-menu)).
 - **Statistics and diagnostics** that show whether the host, the network or the TV causes a problem ([statistics](docs/GUIDE.md#performance-statistics)).
 - **Controllers:** Select and Start in the menus, rumble, mouse emulation, a button mapping and an input test ([controllers](docs/CONTROLLERS.md)).
-- **Audio and languages:** 5.1 through a soundbar, and English, German, Spanish, French or Brazilian Portuguese ([audio](docs/GUIDE.md#audio), [languages](docs/GUIDE.md#language)).
+- **Audio and languages:** surround sound with a lighter mode for the TV and a check of what reaches your soundbar (5.1 from the app is still untested on a TV), and English, German, Spanish, French or Brazilian Portuguese ([audio](docs/GUIDE.md#audio), [soundbar](docs/GUIDE.md#surround-sound-with-a-soundbar), [languages](docs/GUIDE.md#language)).
 
 What changed in each version, in short: [patch notes](docs/PATCH_NOTES.md). Every detail: [changelog](CHANGELOG.md).
 
@@ -31,7 +31,7 @@ What changed in each version, in short: [patch notes](docs/PATCH_NOTES.md). Ever
 
 ## Requirements
 
-- **TV:** a Samsung Smart TV with Tizen 5.5 or newer (model year 2020 or later), including Tizen 10 of the models of 2026, which Moonlight Plus has not been tested on yet (see [Installation](#installation)).
+- **TV:** a Samsung Smart TV with Tizen 5.5 or newer (model year 2020 or later), including Tizen 10 of the models of 2026, which Moonlight Plus has not been tested on yet (see [Installation](#installation)). For the TVs of 2019 with Tizen 5.0, Moonlight Tizen points to [moonlight-tizen50](https://github.com/WMP/moonlight-tizen50), a separate community fork that Moonlight Plus has not tried.
 - **Host:** a PC with [Sunshine](https://github.com/SunshineStream/Sunshine) and a GPU with a hardware video encoder.
 - **Network:** the host PC on a cable, the TV on 5 GHz Wi-Fi or Ethernet. Most Samsung TVs have a 100 Mbps Ethernet port, so Wi-Fi allows higher bitrates.
 - **Controller (optional):** see [Controllers](docs/CONTROLLERS.md).
@@ -62,7 +62,7 @@ Moonlight Plus installs **next to** the regular Moonlight app, with its own sett
 - [Guide](docs/GUIDE.md): installation, the screens, the optimal settings, the Stream Menu, finding your bitrate, host settings, HDR, audio, performance statistics, System information, known limits and troubleshooting
 - [Controllers](docs/CONTROLLERS.md): supported controllers, modes, buttons, controller type, rumble and mouse emulation
 - [Patch notes](docs/PATCH_NOTES.md): what changed in each version, in short, with every detail in the [changelog](CHANGELOG.md)
-- [Translating](docs/TRANSLATING.md): the languages of the app, the rules and the German, Spanish and French glossaries for translators, and how to add a text or a language
+- [Translating](docs/TRANSLATING.md): the languages of the app, the rules and the German, Spanish, French and Brazilian Portuguese glossaries for translators, and how to add a text or a language
 - [Building](docs/BUILD.md): the build commands of the releases and everything that the build downloads, with its source
 
 ---

@@ -41,12 +41,12 @@ What changed in each version of Moonlight Plus, in short, newest first.
 - The action buttons of the settings line up with the menus, and the PC details read as a table
 - The button mapping fades out at its bottom while more rows follow, and its arrows line up
 - No network scan at the start when every PC in the list answers; *Wake PC* scans less and says what to check
+- The guide explains the first start and failed pairings, and Brazilian Portuguese uses one word for each thing
 
 ### Fixed
 
-- Controllers no longer act on the PC while Moonlight is in the background
+- Controllers no longer act on the PC while Moonlight is in the background, and help texts keep their first letter
 - Esc of a keyboard works as RETURN in the menus, and a held RETURN goes back one step only
-- The help texts of the settings can no longer lose their first letter
 - A failed update check no longer waits a day, a stuck loading screen says why, and *Delete PC* deletes its box art
 
 ### Also in this version
@@ -136,7 +136,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 - The TV waits at most 120 seconds for that answer (as Moonlight for PC), then a message says what to check
 - An unreadable answer, e.g. from Sunshine after an error, ends the start at once with a message
 - RED during *Starting…* returns to the app list within seconds, also while the PC holds the start
-- *Session recovery keyframes* no longer counts restarts of the PC's encoder as recoveries (a TV runtime defect)
+- *Session recovery keyframes* no longer counts restarts of the PC's encoder as recoveries (a compiler defect)
 - *Average frame pacing delay* no longer rises a little with every frame that the TV's player rejects
 
 ## 2.3.1

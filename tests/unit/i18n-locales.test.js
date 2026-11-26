@@ -3,8 +3,10 @@
 // Checks the languages of wasm/platform/i18n.js: the list of languages (only those the owner chose, each named in its
 // own language, each with its locale file), the language that a language tag of the TV or the browser gets (the
 // locale itself, else the locale of the same language, else English), and the language that the app takes from the
-// TV (tizen.systeminfo LOCALE first, the browser languages when the TV doesn't answer). The language menu and the
-// German UI run in tests/browser/language.test.js.
+// TV (tizen.systeminfo LOCALE first, the browser languages when the TV doesn't answer). Since 2.3.5 also the size of a
+// language that docs/TRANSLATING.md and docs/GUIDE.md give, against the locale files (raw and deflated as in the .wgt),
+// and that docs/TRANSLATING.md names every call and attribute whose texts wasm/static/js/i18n-sync.js collects. The
+// language menu and the German UI run in tests/browser/language.test.js.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -14,8 +16,8 @@ const { REPO_ROOT } = require('../lib/dev-modules');
 const { loadPlatformScripts, plain } = require('./helpers/platform-loader');
 
 const LOCALES_DIR = path.join(REPO_ROOT, 'wasm/static/locales');
-// The languages that the owner chose, by their own names. Every language costs about 60 KB in the package, so no
-// other language joins without a decision of the owner.
+// The languages that the owner chose, by their own names. Every language costs about 80 KB on the TV and 25 KB in the
+// download, so no other language joins without a decision of the owner.
 const CHOSEN_LANGUAGES = {
   'en-US': 'English',
   'de-DE': 'Deutsch',
@@ -136,4 +138,44 @@ test('every language keeps the key names as printed on the remote, the keyboard 
   // Brazilian Portuguese named RETURN two ways in one release
   const portuguese = read('pt-BR');
   assert.deepEqual(Object.keys(portuguese).filter((key) => /RETORNAR|Reproduzir\/Pausar|SELETO/i.test(portuguese[key])), []);
+});
+
+test('the documents give the size of a language as its locale file has it, on the TV and in the compressed download', () => {
+  const zlib = require('zlib');
+  const sizes = Object.keys(CHOSEN_LANGUAGES).filter((locale) => locale !== 'en-US').map((locale) => {
+    const file = fs.readFileSync(path.join(LOCALES_DIR, locale + '.json'));
+    // The .wgt is a zip file, whose entries are deflated
+    return { locale, kb: file.length / 1024, packedKb: zlib.deflateRawSync(file, { level: 9 }).length / 1024 };
+  });
+  for (const file of ['docs/TRANSLATING.md', 'docs/GUIDE.md']) {
+    const text = fs.readFileSync(path.join(REPO_ROOT, file), 'utf8');
+    const match = /adds about (\d+) KB to the app on the TV and about (\d+) KB to the download/.exec(text);
+    assert.ok(match, file);
+    sizes.forEach((size) => {
+      // Within a fifth of the figure, so that it holds until the texts grow by about a quarter
+      assert.ok(size.kb >= 0.8 * match[1] && size.kb <= 1.25 * match[1], file + ' ' + JSON.stringify(size));
+      assert.ok(size.packedKb >= 0.8 * match[2] && size.packedKb <= 1.25 * match[2], file + ' ' + JSON.stringify(size));
+    });
+    assert.doesNotMatch(text, /about 60 KB/, file);
+  }
+  assert.doesNotMatch(fs.readFileSync(path.join(REPO_ROOT, 'wasm/platform/i18n.js'), 'utf8'), /about 60 KB/);
+});
+
+test('docs/TRANSLATING.md names every call and attribute whose texts i18n-sync.js collects', () => {
+  const sync = fs.readFileSync(path.join(REPO_ROOT, 'wasm/static/js/i18n-sync.js'), 'utf8');
+  const translating = fs.readFileSync(path.join(REPO_ROOT, 'docs/TRANSLATING.md'), 'utf8');
+  const step = translating.slice(translating.indexOf('## Adding or changing a text'), translating.indexOf('\n2. Run '));
+  // The patterns of extractFromContent(): a new one fails here until the step names it
+  const patterns = sync.match(/const \w+Pattern = \//g) || [];
+  assert.equal(patterns.length, 9, patterns.join(' '));
+  [['\\bt\\(', "`t('Text')`"], ['\\b_n\\(', '`_n('], ['snackbarLog(?:Long)?\\(', "`snackbarLog('Text')`"], ['snackbarLog(?:Long)?\\(', "`snackbarLogLong('Text')`"],
+    ['snackbarLogFor\\(', "`snackbarLogFor(timeoutMs, 'Text')`"], ['warningDialog\\(', "`warningDialog('Title', 'Text')`"],
+    ['data-i18n\\s*=', '`data-i18n="Text"`'], ['data-i18n-placeholder', '`data-i18n-placeholder="Text"`'], ['data-i18n-aria-label', '`data-i18n-aria-label="Text"`'],
+  ].forEach(([pattern, named]) => {
+    assert.ok(sync.indexOf(pattern) > 0, pattern);
+    assert.ok(step.indexOf(named) > 0, named);
+  });
+  // The name of a button is what the Voice Guide of the TV reads (refreshUI() of i18n.js sets aria-label)
+  assert.match(fs.readFileSync(path.join(REPO_ROOT, 'wasm/platform/i18n.js'), 'utf8'), /element\.setAttribute\('aria-label', param \? t\(key, param\) : t\(key\)\);/);
+  assert.match(step, /the name of a button, which the Voice Guide of the TV reads/);
 });

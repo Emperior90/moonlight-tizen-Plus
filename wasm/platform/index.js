@@ -1801,7 +1801,7 @@ function pairingDialog(nvhttpHost, onSuccess, onFailure) {
     // Change the dialog text element to include the random PIN number, in bold (style.css shows it large)
     $('#pairingDialogText').html(
       t('Please enter the following PIN on the target PC: %1$s<br><br>', '<b>' + randomNumber + '</b>') + 
-      t('If your host PC is running Sunshine (all GPUs), navigate to the Sunshine Web UI to enter the PIN.<br><br>') + 
+      t('If your host PC is running Sunshine, navigate to the Sunshine Web UI to enter the PIN.<br><br>') + 
       t('This dialog will close once the pairing is complete.')
     );
 
@@ -1857,11 +1857,11 @@ function pairingDialog(nvhttpHost, onSuccess, onFailure) {
       // an app, that app (GeForce Experience can't pair while it streams, Sunshine can), else the general text
       if (String(failedPairing) === '-7') {
         // GS_PIN_WRONG of libgamestream/errors.h: the host answered with a hash that doesn't match the PIN (gs_pair())
-        $('#pairingDialogText').html(t('Error: The PIN entered on %1$s was wrong.<br><br>Please, try pairing with the PC again and enter the new PIN.', escapeHTML(nvhttpHost.hostname)));
+        $('#pairingDialogText').html(t('Error: The PIN entered on %1$s was wrong.<br><br>Please try pairing with the PC again and enter the new PIN.', escapeHTML(nvhttpHost.hostname)));
       } else if (failedPairing !== PAIRING_NOT_CONFIRMED_ERROR && nvhttpHost.currentGame != 0) {
         $('#pairingDialogText').html(t('Error: %1$s is currently busy!<br><br>You must stop the running app in order to pair with the PC.', escapeHTML(nvhttpHost.hostname)));
       } else {
-        $('#pairingDialogText').html(t('Error: Failed to pair with %1$s.<br><br>Please, try pairing with the PC again.', escapeHTML(nvhttpHost.hostname)));
+        $('#pairingDialogText').html(t('Error: Failed to pair with %1$s.<br><br>Please try pairing with the PC again.', escapeHTML(nvhttpHost.hostname)));
       }
       onFailure();
     });
@@ -3591,8 +3591,8 @@ function wakeOnLanWarningDialog(host) {
   document.getElementById('warningDialogTitle').innerHTML = t('Wake-on-LAN Warning');
   document.getElementById('warningDialogText').innerHTML = t(
     'The MAC address of %1$s (%2$s) appears to be randomly generated.', escapeHTML(host.hostname), escapeHTML(host.macAddress)) + '<br><br>' +
-    t('The Operating System may be using a random MAC address instead of the physical network card address.') + ' ' +
-    t('Wake-on-LAN may be unable to wake up the machine since the MAC address does not match the one from the network card.');
+    t('The operating system may be using a random MAC address instead of the physical network card address.') + ' ' +
+    t('Wake-on-LAN may be unable to wake up the PC since the MAC address does not match the one from the network card.');
 
   // Dynamically swap buttons: show "Continue" and change "Close" to act as Cancel
   $('#continueWarning').show();
@@ -4689,7 +4689,7 @@ function classifyLaunchAnswer(statusCode, statusMessage) {
 // permissions only to the first client paired with it (Apollo README), so a TV paired later may see the apps without
 // starting them, or neither.
 function hostPermissionDialog(host, hostMessage) {
-  var text = t('%1$s doesn\'t allow this TV to start apps. In the web UI of Apollo or Vibepollo, open the paired devices (Device Management or Client Management) and allow "List Apps", "Launch Apps" and the input permissions for this TV. Then open the host again.', host.hostname);
+  var text = t('%1$s doesn\'t allow this TV to start apps. In the web UI of Apollo or Vibepollo, open the paired devices (Device Management or Client Management) and allow "List Apps", "Launch Apps" and the input permissions for this TV. Then open the PC again.', host.hostname);
   if (hostMessage) {
     text += '\n\n' + t('The PC says: %1$s', hostMessage);
   }
