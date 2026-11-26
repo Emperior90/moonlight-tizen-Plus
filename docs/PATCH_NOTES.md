@@ -40,11 +40,14 @@ What changed in each version of Moonlight Plus, in short, newest first.
 - Mouse emulation moves the pointer slowly just past the centre, and at shallow angles
 - *Quit app on the PC* in the Stream Menu asks first, and Exit and Restart open on *Cancel*
 - B of a controller cancels a starting stream, and CH+ closes the menu of a PC again
+- The action buttons of the settings line up with the menus, and the PC details read as a table
+- The button mapping fades out at its bottom while more rows follow, and its arrows line up
 
 ### Fixed
 
 - Controllers no longer act on the PC while Moonlight is in the background
 - Esc of a keyboard works as RETURN in the menus, and a held RETURN goes back one step only
+- The help texts of the settings can no longer lose their first letter
 
 ### Also in this version
 

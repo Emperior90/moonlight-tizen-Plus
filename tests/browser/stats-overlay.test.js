@@ -303,7 +303,7 @@ test('the ForceGM variant says so in the line, and the help text of the setting 
   const app = await openApp(harness, { tv: Object.assign({ forceGM: true }, TV), stored: { performanceStats: 2 } });
   try {
     const help = await app.page.evaluate(() => $('#selectPerformanceStats').closest('.setting-option').find('.mdl-list__item-text-body').text().trim());
-    assert.equal(help, '- Compact shows one line with the main figures over the stream, updated every second. Full shows every figure, ' +
+    assert.equal(help, 'Compact shows one line with the main figures over the stream, updated every second. Full shows every figure, ' +
       'updated every 2 seconds. While streaming, the YELLOW key and the Stream Menu switch between Off, Compact and Full.');
     await startStream(app);
     await sendFullStats(app.page, FULL_TEXT);

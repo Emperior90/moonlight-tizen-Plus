@@ -2659,6 +2659,10 @@ function hostDetailsDialog(host) {
     class: 'mdl-dialog'
   }).appendTo(hostDetailsDialogOverlay);
 
+  // The badge of the dialogs, with the PC of its card
+  $('<span>', { class: 'dialog-badge', 'aria-hidden': 'true' })
+    .html('<svg class="icon"><use xlink:href="#i-pc"/></svg>').appendTo(hostDetailsDialog);
+
   // Add a dialog title named Host Details
   $('<h3>', {
     id: 'hostDetailsDialogTitle-' + host.serverUid,
@@ -2672,25 +2676,41 @@ function hostDetailsDialog(host) {
     class: 'mdl-dialog__content'
   }).appendTo(hostDetailsDialog);
 
-  // Add a paragraph with multiple lines of text
-  $('<p>', {
+  // The details as rows of a label and a value: the label is the text of its key before the value (e.g. 'Name: ' or
+  // 'Nom : '), and a value that the PC never reported shows a dash (before 2.3.5: NULL, 'undefined' for a MAC address that
+  // no answer of the PC had, and the ID 0 while no game runs)
+  var hostDetailsText = $('<table>', {
     id: 'hostDetailsDialogText-' + host.serverUid,
-    class: 'host-details-text',
-    html: [
-      t('Name: %1$s', escapeHTML(host.hostname)),
-      // The state itself decides, not its text: escapeHTML() returns a text, and 'false' counted as true. Unknown until
-      // the PC answered for the first time since the start of the app (loadHTTPCertsCb()).
-      t('State: %1$s', host.online === true ? t('ONLINE') : (host.online === false ? t('OFFLINE') : t('Unknown'))),
-      t('Active Address: %1$s', escapeHTML(host.address) && escapeHTML(host.externalPort) ? escapeHTML(host.address) + ':' + escapeHTML(host.externalPort) : t('NULL')),
-      t('UUID: %1$s', escapeHTML(host.serverUid) ? escapeHTML(host.serverUid) : t('NULL')),
-      t('Local Address: %1$s', escapeHTML(host.localAddress) && escapeHTML(host.externalPort) ? escapeHTML(host.localAddress) + ':' + escapeHTML(host.externalPort) : t('NULL')),
-      t('MAC Address: %1$s', escapeHTML(host.macAddress) ? escapeHTML(host.macAddress) : t('NULL')),
-      t('Pair State: %1$s', host.paired ? t('PAIRED') : t('UNPAIRED')),
-      t('Running Game ID: %1$s', escapeHTML(host.currentGame)),
-      t('HTTP Port: %1$s', escapeHTML(host.httpPort) ? escapeHTML(host.httpPort) : t('NULL')),
-      t('HTTPS Port: %1$s', escapeHTML(host.httpsPort) ? escapeHTML(host.httpsPort) : t('NULL'))
-    ].join('<br>')
+    class: 'host-details-text'
   }).appendTo(hostDetailsDialogContent);
+  var detailValue = function(value) {
+    return value === undefined || value === null || value === '' || value === 0 || value === '0' ? '\u2014' : String(value);
+  };
+  var withPort = function(address) {
+    return address && host.externalPort ? address + ':' + host.externalPort : '';
+  };
+  [
+    [t('Name: %1$s'), host.hostname],
+    // The state itself decides, not its text: unknown until the PC answered for the first time since the start of the app
+    // (loadHTTPCertsCb())
+    [t('State: %1$s'), host.online === true ? t('ONLINE') : (host.online === false ? t('OFFLINE') : t('Unknown'))],
+    [t('Active Address: %1$s'), withPort(host.address)],
+    [t('UUID: %1$s'), host.serverUid],
+    [t('Local Address: %1$s'), withPort(host.localAddress)],
+    [t('MAC Address: %1$s'), host.macAddress],
+    [t('Pair State: %1$s'), host.paired ? t('PAIRED') : t('UNPAIRED')],
+    [t('Running Game ID: %1$s'), host.currentGame],
+    [t('HTTP Port: %1$s'), host.httpPort],
+    [t('HTTPS Port: %1$s'), host.httpsPort]
+  ].forEach(function(detail) {
+    // The text of the key with its value left out (%1$s): the template itself, as t() returns it without values
+    var template = detail[0];
+    var at = template.indexOf('%1$s');
+    $('<tr>')
+      .append($('<th>', { scope: 'row', text: template.slice(0, at).trim() }))
+      .append($('<td>', { text: detailValue(detail[1]) + template.slice(at + 4) }))
+      .appendTo(hostDetailsText);
+  });
 
   // Create the actions section inside the dialog
   var hostDetailsDialogActions = $('<div>', {

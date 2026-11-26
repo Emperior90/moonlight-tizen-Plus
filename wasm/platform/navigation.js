@@ -180,14 +180,25 @@ function focusElement(target) {
   }
 }
 
-// Close, the last entry of the button mapping, scrolls its panel to the end, so that the hint below it shows too. The
-// focus scrolls only Close itself into view, and an older Chromium (e.g. the one of the tests in CI) doesn't follow a
-// scroll margin for that.
-function showMappingHintAtClose(target) {
+// The focused entry of the button mapping stays in view above the fade at the bottom of its panel, which shows while more
+// rows follow (#buttonMappingPanel::after in style.css, updateMore() in button_mapping.js): the browser only scrolls the
+// focused entry to the bottom edge, under the fade. Close, the last entry, scrolls the panel to its end, so that the hint
+// below it shows too; an older Chromium (e.g. the one of the tests in CI) doesn't follow a scroll margin for that.
+function keepMappingFocusInView(target) {
   const element = resolveElement(target);
   const panel = document.getElementById('buttonMappingPanel');
-  if (element && element.id === 'buttonMappingClose' && panel) {
+  if (!element || !panel) {
+    return;
+  }
+  if (element.id === 'buttonMappingClose') {
     panel.scrollTop = panel.scrollHeight;
+  } else if (panel.scrollTop + panel.clientHeight < panel.scrollHeight - 1) {
+    // The height of the fade from the stylesheet, and the scroll event that updates its class comes only later
+    const fade = parseFloat(getComputedStyle(panel, '::after').height) || 0;
+    const below = element.getBoundingClientRect().bottom - (panel.getBoundingClientRect().bottom - fade);
+    if (below > 0) {
+      panel.scrollTop += Math.ceil(below);
+    }
   }
 }
 
@@ -2186,12 +2197,12 @@ const Views = {
     up: function() {
       this.view.prevOption();
       focusElement(this.view.current());
-      showMappingHintAtClose(this.view.current());
+      keepMappingFocusInView(this.view.current());
     },
     down: function() {
       this.view.nextOption();
       focusElement(this.view.current());
-      showMappingHintAtClose(this.view.current());
+      keepMappingFocusInView(this.view.current());
     },
     left: function() {
       ButtonMappingMenu.step(resolveElement(this.view.current()), -1);

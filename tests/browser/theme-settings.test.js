@@ -152,6 +152,45 @@ test('the help text runs across each row, a switch label shows only without help
   }
 });
 
+test('every help text of the settings starts with its first letter in every language, without the dash of its key, also after a change of the language', async () => {
+  // With Web Audio, so that the line about it shows below the help text of the audio backend
+  const app = await openApp(harness, { tv: TV, stored: { audioBackend: 'WebAudio', audioConfig: '51Surround' } });
+  try {
+    for (const language of LANGUAGES.concat([null])) {
+      await openSettings(app.page, language || 'en-US');
+      const texts = await app.page.evaluate((sections) => {
+        const result = [];
+        sections.forEach((name) => {
+          handleSettingsView(name);
+          document.querySelectorAll('#' + name + ' .setting-option > .mdl-list__item-text-body').forEach((element) => {
+            const text = element.textContent.trim();
+            if (element.offsetParent === null || !text) {
+              return;
+            }
+            const style = getComputedStyle(element);
+            // No rule of the stylesheet shrinks the first letter (2.3.4: ::first-letter at font size 0 hid the dash and,
+            // in a browser that counts the space after it into the first letter, the letter after it too)
+            result.push({ text: text.slice(0, 12), letter: /^\p{Lu}/u.test(text),
+              shown: getComputedStyle(element, '::first-letter').fontSize === style.fontSize });
+          });
+        });
+        return result;
+      }, CATEGORIES);
+      const where = (language || 'en-US (again)') + ' ' + JSON.stringify(texts.filter((entry) => !entry.letter || !entry.shown));
+      // The 35 help texts of the markup, of which the rows of the Web Audio note and the audio configuration hide one
+      assert.ok(texts.length >= 30, where + ' ' + texts.length);
+      assert.deepEqual(texts.filter((entry) => !entry.letter || !entry.shown), [], where);
+    }
+    // The lines of the navigation guide keep the dash of their keys
+    const guide = await app.page.evaluate(() => Array.prototype.filter.call(document.querySelectorAll('#navGuideDialog [data-i18n^="\u2014 "]'),
+      (element) => element.textContent.indexOf('\u2014 ') !== 0).length);
+    assert.equal(guide, 0);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
 test('the line about Web Audio takes its own lines below the help text of the audio backend in every language, also with 10 % wider text', async () => {
   for (const language of LANGUAGES) {
     const app = await openApp(harness, { tv: TV, stored: { audioBackend: 'WebAudio', audioConfig: '51Surround' } });
@@ -173,14 +212,14 @@ test('the line about Web Audio takes its own lines below the help text of the au
             acrossRow: Math.abs(box.width - (rowBox.width - 56)) < 2,
             notCut: element.scrollWidth <= element.clientWidth + 1,
             lines: Math.round(box.height / parseFloat(style.lineHeight)),
-            // It reads like the help text above it, with its leading dash hidden as well
+            // It reads like the help text above it, and starts with its first letter as well: the dash of its key is gone
             sameLook: [style.fontSize, style.fontWeight, style.color].join() === [helpStyle.fontSize, helpStyle.fontWeight, helpStyle.color].join(),
-            dash: element.textContent.trim().indexOf('- ') === 0 && getComputedStyle(element, '::first-letter').fontSize === '0px',
+            firstLetter: /^\p{Lu}/u.test(element.textContent.trim()) && getComputedStyle(element, '::first-letter').fontSize === style.fontSize,
             // The control of the row stays on the line of its title
             control: Math.abs(row.querySelector(':scope > div[id]').getBoundingClientRect().top - row.querySelector(':scope > label').getBoundingClientRect().top) < 40 };
         });
         const where = (language || 'en-US') + stress + ' ' + JSON.stringify(note);
-        assert.deepEqual([note.shown, note.belowHelp, note.insideRow, note.acrossRow, note.notCut, note.sameLook, note.dash, note.control],
+        assert.deepEqual([note.shown, note.belowHelp, note.insideRow, note.acrossRow, note.notCut, note.sameLook, note.firstLetter, note.control],
           [true, true, true, true, true, true, true, true], where);
         assert.ok(note.lines >= 1 && note.lines <= 2, where);
         // The other rows of the section keep their layout next to it
@@ -248,6 +287,51 @@ test('a badge stays on the line of its title in every language: the button of th
           assert.deepEqual(button, { lines: expectedLines, inside: true }, where);
         } else {
           assert.ok(button.lines <= 2 && button.inside, where + ' ' + JSON.stringify(button));
+        }
+      });
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
+test('the actions of the settings are as wide as the menus, so that the column of the controls lines up, and a longer text takes a second line inside its button, also with 10 % wider text', async () => {
+  for (const language of LANGUAGES) {
+    const app = await openApp(harness, { tv: TV });
+    try {
+      await openSettings(app.page, language);
+      await forEachTextWidth(app.page, async (stress) => {
+        const where = (language || 'en-US') + stress;
+        const controls = [];
+        for (const category of CATEGORIES) {
+          controls.push(...await app.page.evaluate((name) => {
+            handleSettingsView(name);
+            return Array.prototype.filter.call(document.querySelectorAll('#' + name + ' .setting-option .mdl-button'), (button) => button.offsetParent !== null &&
+              button.id !== 'systemInfoBtn').map((button) => {
+              const rect = button.getBoundingClientRect();
+              const span = button.querySelector('span');
+              return { id: button.id, left: Math.round(rect.left), width: Math.round(rect.width), height: Math.round(rect.height),
+                lines: span ? Math.round(span.getBoundingClientRect().height / parseFloat(getComputedStyle(span).lineHeight)) : 1,
+                inside: button.scrollWidth <= button.clientWidth + 1 && (!span || span.scrollWidth <= span.clientWidth + 1) };
+            });
+          }, category));
+        }
+        const actions = controls.filter((control) => !/^select/.test(control.id) && control.id !== 'optimalSettingsBtn');
+        const menus = controls.filter((control) => /^select/.test(control.id));
+        // The seven actions: the button mapping, the input test, Remove all PCs, the diagnostic log, the navigation guide,
+        // the update check and the restart
+        assert.equal(actions.length, 7, where + ' ' + JSON.stringify(actions));
+        // As wide as the menus and at the same place (2.3.4: up to 651 px in French, a ragged column)
+        actions.concat(menus).forEach((control) => assert.deepEqual([control.width, control.left], [menus[0].width, menus[0].left],
+          where + ' ' + JSON.stringify(control)));
+        // A long text takes two lines inside its button, never more and never out of it
+        actions.forEach((action) => assert.ok(action.lines <= 2 && action.inside && action.height <= 80, where + ' ' + JSON.stringify(action)));
+        // The main action of the settings keeps its own width: one line in English
+        const optimal = controls.filter((control) => control.id === 'optimalSettingsBtn')[0];
+        assert.ok(optimal.width > menus[0].width, where + ' ' + JSON.stringify(optimal));
+        if (!language && !stress) {
+          assert.equal(optimal.lines, 1, where);
         }
       });
       assert.deepEqual(app.errors, []);

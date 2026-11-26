@@ -12,9 +12,9 @@
 //    in both languages, such as "HEVC", and for pt-BR the texts that were untranslated when this check was added).
 //    So every new UI string needs a translation in every language.
 // 5. Fails if a translation loses or adds a placeholder (%1$s), an HTML tag (<br>, <b>), a line break, the dash that
-//    starts a help text or a dash line of the navigation guide (the stylesheet hides the first letter of a help text),
-//    or a space at the start or end, and if a text has a character reference such as &amp;, which the translation
-//    pass of data-i18n elements would show as it is (it sets their text, not their HTML).
+//    starts a help text or a dash line of the navigation guide (the app removes the dash when it shows a help text,
+//    refreshUI() in i18n.js), or a space at the start or end, and if a text has a character reference such as &amp;,
+//    which the translation pass of data-i18n elements would show as it is (it sets their text, not their HTML).
 //
 // Usage: node tests/tools/i18n-check.js
 

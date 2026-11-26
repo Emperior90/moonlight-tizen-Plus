@@ -11,6 +11,7 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { startHarness, openApp } = require('./harness');
+const { tvKey } = require('./menu-driver');
 
 let harness;
 before(async () => {
@@ -280,6 +281,27 @@ test('the input test opens with a gamepad and names a missing controller', async
     await app.page.waitForTimeout(300);
     assert.equal(await app.page.evaluate(() => InputTest.isOpen()), true);
     await remoteKey(app.page, ...RETURN);
+    await app.page.waitForTimeout(800);
+    assert.equal(await app.page.evaluate(() => InputTest.isOpen()), false);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('the input test, a dialog without a control of its own, takes the focus itself without a focus ring of the browser', async () => {
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, initScripts: [simulatedGamepads] });
+  try {
+    await openInputTest(app.page);
+    const dialog = await app.page.evaluate(() => {
+      const element = document.getElementById('inputTestDialog');
+      const style = getComputedStyle(element);
+      return { focused: document.activeElement === element, focusVisible: element.matches(':focus-visible'), outline: style.outlineStyle };
+    });
+    // 2.3.4: outline 'auto', the ring of the browser around the whole dialog
+    assert.deepEqual(dialog, { focused: true, focusVisible: true, outline: 'none' });
+    // RETURN still leaves the test, after it showed
+    await tvKey(app.page, ...RETURN);
     await app.page.waitForTimeout(800);
     assert.equal(await app.page.evaluate(() => InputTest.isOpen()), false);
     assert.deepEqual(app.errors, []);

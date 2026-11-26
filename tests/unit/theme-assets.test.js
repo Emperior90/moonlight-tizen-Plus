@@ -155,6 +155,29 @@ test('the icons are symbols of one sprite on a 24 px grid, referenced with xlink
   assert.match(html, /<symbol id="i-stop"[^>]*><rect [^>]*fill="currentColor"\/><\/symbol>/);
 });
 
+test('an action and its dialog show the same icon, and an icon of the settings stands for one kind of action', () => {
+  const html = read(INDEX_HTML);
+  // The icon of the first <use> after an id or a selector in the page
+  const iconAfter = (marker) => {
+    const at = html.indexOf(marker);
+    assert.ok(at >= 0, marker);
+    return /xlink:href="#(i-[a-z-]+)"/.exec(html.slice(at))[1];
+  };
+  // Restart the Moonlight app quickly and its dialog Restart Moonlight (2.3.4: the button i-refresh, the dialog i-restore,
+  // the icon of Restore Defaults)
+  assert.equal(iconAfter('id="restartAppDialog"'), iconAfter('id="restartAppBtn"'));
+  assert.equal(iconAfter('id="restartAppBtn"'), 'i-refresh');
+  // i-restore stands for a reset to the defaults: Restore Defaults (its button and dialog) and Reset this controller
+  assert.equal(iconAfter('id="restoreDefaultsBtn"'), 'i-restore');
+  assert.equal(iconAfter('id="restoreDefaultsDialog"'), 'i-restore');
+  assert.equal(iconAfter('id="buttonMappingReset"'), 'i-restore');
+  assert.equal((html.match(/xlink:href="#i-restore"/g) || []).length, 3);
+  // The diagnostic log is a document, not the information icon of the About section (2.3.4: i-info for both)
+  assert.equal(iconAfter('id="diagnosticLogBtn"'), 'i-log');
+  assert.equal(iconAfter('cat-info'), 'i-info');
+  assert.equal((html.match(/xlink:href="#i-info"/g) || []).length, 1);
+});
+
 test('no Material icon ligature, icon font or icon stylesheet is left', () => {
   // Ligature icons were <i class="material-icons">name</i> in the page and in the scripts
   const scanned = listFiles('wasm').filter((file) => /\.(html|js|css)$/.test(file) && !/material\.min\.(css|js)$/.test(file) &&
@@ -235,10 +258,19 @@ test('the Manrope face lists exactly the characters of its font file, and that f
   assert.deepEqual(Array.from(missing), []);
 });
 
+test('no rule of the stylesheet styles a first letter: the help texts show without the dash of their keys (refreshUI() in i18n.js)', () => {
+  const css = cssWithoutComments('wasm/static/css/style.css');
+  // 2.3.4 hid the dash with ::first-letter at font size 0, which hid the letter after it too in a browser that counts the
+  // space after a dash into the first letter (CSS Pseudo-Elements 4)
+  assert.doesNotMatch(css, /first-letter/);
+  const i18n = read('wasm/platform/i18n.js');
+  assert.match(i18n, /classList\.contains\('mdl-list__item-text-body'\)/);
+});
+
 test('texts are at least 16 px, and every weight of the theme lies in the weight range of the Manrope face', () => {
   const css = cssWithoutComments('wasm/static/css/style.css');
   const decls = declarations(css);
-  // 0 hides the dash of the help texts (::first-letter) and the space between chips
+  // 0 hides the space between chips
   const sizes = decls.filter((decl) => decl.property === 'font-size' && decl.value !== '0').map((decl) => decl.value);
   sizes.forEach((size) => assert.match(size, /^\d+(px|rem)$/, size));
   // 1rem is 16 px, the default size of the page

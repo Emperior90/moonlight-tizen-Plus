@@ -19,7 +19,11 @@
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
+const { REPO_ROOT } = require('../lib/dev-modules');
 const { startHarness } = require('./harness');
+const { forEachTextWidth } = require('./text-stress');
 const { PAD, THREE_HOSTS, doubleKey, doublePadButton, key, menuState, openMenus, padButton, selectItem, takeSnackbars, timed } = require('./menu-driver');
 
 let harness;
@@ -42,8 +46,8 @@ async function openWithPcs(options) {
 
 // The overlays of the PC menus that exist, and the lines of the open PC details about the state of the PC
 const pcMenuOverlays = (page) => page.evaluate(() => Array.prototype.map.call(document.querySelectorAll('[id^="hostMenuDialogOverlay-"]'), (overlay) => overlay.id));
-const pcDetails = (page) => page.evaluate(() => document.querySelector('.host-details-text').innerHTML.split('<br>')
-  .filter((line) => /^(Name|State|Pair State): /.test(line)));
+const pcDetails = (page) => page.evaluate(() => Array.prototype.map.call(document.querySelectorAll('.host-details-text tr'),
+  (row) => row.cells[0].textContent + ' ' + row.cells[1].textContent).filter((line) => /^(Name|State|Pair State): /.test(line)));
 
 // The lines that the navigation wrote to the console as errors, e.g. 'Cannot mark the unresolved target'
 const navigationErrors = (app) => app.consoleErrors.filter((line) => line.indexOf('navigation.js') >= 0);
@@ -455,6 +459,67 @@ test('Refresh apps says how many apps the PC lists, or that the list couldn\'t b
       'GAMING-PC no longer accepts this TV: its pairing was removed or turned off on the PC. Select it in the list of PCs to pair it again.']);
     assert.deepEqual(await page.evaluate(() => [hosts.HOST1.paired, hosts.HOST1._memCachedApplist, $('#host-container-HOST1 .host-chips').text()]),
       [false, null, 'UNPAIRED']);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('the PC details show the badge of a PC and two columns, labels and values, with a dash for what the PC never reported, in every language', async () => {
+  const app = await openWithPcs();
+  const { page } = app;
+  try {
+    for (const locale of ['en-US', 'de-DE', 'es-ES', 'fr-FR', 'pt-BR']) {
+      const texts = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'wasm/static/locales', locale + '.json'), 'utf8'));
+      await page.evaluate((language) => i18n.setLanguage(language), locale);
+      await page.waitForTimeout(400);
+      await forEachTextWidth(page, async (stress) => {
+        const where = locale + stress;
+        // A PC that never reported its MAC address, with no game running
+        const details = await page.evaluate(() => {
+          const host = Object.assign(Object.create(Object.getPrototypeOf(hosts.HOST1)), hosts.HOST1, { macAddress: undefined, currentGame: 0 });
+          hostDetailsDialog(host);
+          const dialog = document.getElementById('hostDetailsDialog-HOST1');
+          const rows = Array.prototype.map.call(dialog.querySelectorAll('.host-details-text tr'), (row) => {
+            // Where the texts of the cells end and start, without their padding
+            const range = document.createRange();
+            range.selectNodeContents(row.cells[0]);
+            const label = range.getBoundingClientRect();
+            range.selectNodeContents(row.cells[1]);
+            const value = range.getBoundingClientRect();
+            return { label: row.cells[0].textContent, value: row.cells[1].textContent, labelRight: label.right, valueLeft: value.left,
+              labelColour: getComputedStyle(row.cells[0]).color, valueColour: getComputedStyle(row.cells[1]).color };
+          });
+          const probe = document.createElement('span');
+          document.body.appendChild(probe);
+          probe.style.color = 'var(--text-3)';
+          const text3 = getComputedStyle(probe).color;
+          probe.style.color = 'var(--text)';
+          const text = getComputedStyle(probe).color;
+          probe.remove();
+          const result = { badge: (dialog.querySelector('.dialog-badge use') || { getAttribute: () => null }).getAttribute('xlink:href'), rows, text3, text,
+            fits: dialog.scrollWidth <= dialog.clientWidth + 1 };
+          $('#closeHostDetails').trigger('click');
+          return result;
+        });
+        assert.equal(details.badge, '#i-pc', where);
+        // The labels are the texts of the keys up to their value, e.g. 'Nom\u00a0:' in French
+        const labels = ['Name: %1$s', 'State: %1$s', 'Active Address: %1$s', 'UUID: %1$s', 'Local Address: %1$s', 'MAC Address: %1$s',
+          'Pair State: %1$s', 'Running Game ID: %1$s', 'HTTP Port: %1$s', 'HTTPS Port: %1$s'].map((key) => texts[key].replace('%1$s', '').trim());
+        assert.deepEqual(details.rows.map((row) => row.label), labels, where);
+        const values = details.rows.map((row) => row.value);
+        assert.deepEqual([values[0], values[1], values[5], values[6], values[7], values[8], values[9]],
+          ['GAMING-PC', texts.ONLINE, '\u2014', texts.PAIRED, '\u2014', '47989', '47984'], where);
+        // 2.3.4: NULL (KEINE, NUL, NULO), 'undefined' for the MAC address and the game ID 0
+        values.forEach((value) => assert.doesNotMatch(value, /^(NULL|KEINE|NUL|NULO|undefined|0)$/, where));
+        // One column of values, right of the column of labels, in the colours of the theme
+        assert.ok(Math.max(...details.rows.map((row) => row.valueLeft)) - Math.min(...details.rows.map((row) => row.valueLeft)) <= 1, where);
+        details.rows.forEach((row) => assert.ok(row.labelRight + 20 <= row.valueLeft, where + ' ' + JSON.stringify(row)));
+        assert.deepEqual([...new Set(details.rows.map((row) => row.labelColour))], [details.text3], where);
+        assert.deepEqual([...new Set(details.rows.map((row) => row.valueColour))], [details.text], where);
+        assert.equal(details.fits, true, where);
+      });
+    }
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

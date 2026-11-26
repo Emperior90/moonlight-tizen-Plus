@@ -34,6 +34,7 @@
     <symbol id="i-speaker" viewBox="0 0 24 24"><path d="M3.5 9.4h3.6l4.9-4v13.2l-4.9-4H3.5zM15.6 8.9a4.4 4.4 0 0 1 0 6.2M18.3 6.2a8.2 8.2 0 0 1 0 11.6"/></symbol>
     <symbol id="i-video" viewBox="0 0 24 24"><rect x="2.8" y="4.5" width="18.4" height="15" rx="2.6"/><path d="M10 9.2v5.6l4.6-2.8z"/></symbol>
     <symbol id="i-chip" viewBox="0 0 24 24"><rect x="6.3" y="6.3" width="11.4" height="11.4" rx="2"/><rect x="9.7" y="9.7" width="4.6" height="4.6" rx=".8"/><path d="M9.6 2.8v3.5M14.4 2.8v3.5M9.6 17.7v3.5M14.4 17.7v3.5M2.8 9.6h3.5M2.8 14.4h3.5M17.7 9.6h3.5M17.7 14.4h3.5"/></symbol>
+    <symbol id="i-log" viewBox="0 0 24 24"><path d="M14 3.5H7.2a1.7 1.7 0 0 0-1.7 1.7v13.6a1.7 1.7 0 0 0 1.7 1.7h9.6a1.7 1.7 0 0 0 1.7-1.7V8z"/><path d="M14 3.5V8h4.5M8.8 12.5h6.4M8.8 16h4.4"/></symbol>
     <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5"/><path d="M12 11v5.6M12 7.7v.1"/></symbol>
     <symbol id="i-tv" viewBox="0 0 24 24"><rect x="2.5" y="4.3" width="19" height="13.2" rx="2.2"/><path d="M8 20.6h8M12 7.6l1 2.1 2.1 1-2.1 1-1 2.1-1-2.1-2.1-1 2.1-1z"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 6.8h15M9.6 3.8h4.8M6.4 6.8l.9 12.4a1.6 1.6 0 0 0 1.6 1.4h6.2a1.6 1.6 0 0 0 1.6-1.4l.9-12.4M10 10.6v6M14 10.6v6"/></symbol>
@@ -473,7 +474,7 @@
                 - Choose the button that each button of a controller presses in games, for all controllers or for one, and calibrate worn sticks. The menus keep the usual buttons.
               </span>
               <div id="buttonMappingMenu">
-                <button type="button" id="buttonMappingBtn" class="mdl-button mdl-js-button" aria-label="Button mapping" data-i18n-aria-label="Button mapping">
+                <button type="button" id="buttonMappingBtn" class="mdl-button mdl-js-button setting-action" aria-label="Button mapping" data-i18n-aria-label="Button mapping">
                   <span data-i18n="Change the buttons of the controllers">
                     Change the buttons of the controllers
                   </span>
@@ -487,7 +488,7 @@
                 - Shows every key of the remote and every button, trigger and stick of the controllers as the TV reports them.
               </span>
               <div id="inputTestMenu">
-                <button type="button" id="inputTestBtn" class="mdl-button mdl-js-button" aria-label="Input test" data-i18n-aria-label="Input test">
+                <button type="button" id="inputTestBtn" class="mdl-button mdl-js-button setting-action" aria-label="Input test" data-i18n-aria-label="Input test">
                   <span data-i18n="Test the remote and the controllers">
                     Test the remote and the controllers
                   </span>
@@ -552,7 +553,7 @@
               <label data-i18n="Remove all PCs">Remove all PCs</label>
               <span class="mdl-list__item-text-body"></span>
               <div id="removeAllHostsMenu">
-                <button type="button" id="removeAllHostsBtn" class="mdl-button mdl-js-button" aria-label="Remove all PCs" data-i18n-aria-label="Remove all PCs">
+                <button type="button" id="removeAllHostsBtn" class="mdl-button mdl-js-button setting-action" aria-label="Remove all PCs" data-i18n-aria-label="Remove all PCs">
                   <span data-i18n="Remove all saved PCs from the list">
                     Remove all saved PCs from the list
                   </span>
@@ -674,11 +675,11 @@
                 - The log of this session and the one before, kept only in the memory of the TV, for a report of a problem.
               </span>
               <div id="diagnosticLogMenu">
-                <button type="button" id="diagnosticLogBtn" class="mdl-button mdl-js-button" aria-label="Diagnostic log" data-i18n-aria-label="Diagnostic log">
+                <button type="button" id="diagnosticLogBtn" class="mdl-button mdl-js-button setting-action" aria-label="Diagnostic log" data-i18n-aria-label="Diagnostic log">
                   <span data-i18n="Show the diagnostic log">
                     Show the diagnostic log
                   </span>
-                  <svg class="icon" aria-hidden="true"><use xlink:href="#i-info"/></svg>
+                  <svg class="icon" aria-hidden="true"><use xlink:href="#i-log"/></svg>
                 </button>
               </div>
             </div>
@@ -688,7 +689,7 @@
                 - The keys of the remote, the keyboard and the controllers in each view and during a stream.
               </span>
               <div id="navigationGuideMenu">
-                <button type="button" id="navigationGuideBtn" class="mdl-button mdl-js-button" aria-label="Navigation guide" data-i18n-aria-label="Navigation guide">
+                <button type="button" id="navigationGuideBtn" class="mdl-button mdl-js-button setting-action" aria-label="Navigation guide" data-i18n-aria-label="Navigation guide">
                   <span data-i18n="Discover navigation controls for all input devices">
                     Discover navigation controls for all input devices
                   </span>
@@ -702,7 +703,7 @@
                 - Find out if a new application update is available.
               </span>
               <div id="checkForUpdatesMenu">
-                <button type="button" id="checkUpdatesBtn" class="mdl-button mdl-js-button" aria-label="Check for updates" data-i18n-aria-label="Check for updates">
+                <button type="button" id="checkUpdatesBtn" class="mdl-button mdl-js-button setting-action" aria-label="Check for updates" data-i18n-aria-label="Check for updates">
                   <span data-i18n="Check for new Moonlight updates">
                     Check for new Moonlight updates
                   </span>
@@ -716,7 +717,7 @@
                 - If you encounter issues, here you can restart the app to resolve them.
               </span>
               <div id="restartAppMenu">
-                <button type="button" id="restartAppBtn" class="mdl-button mdl-js-button" aria-label="Restart the application" data-i18n-aria-label="Restart the application">
+                <button type="button" id="restartAppBtn" class="mdl-button mdl-js-button setting-action" aria-label="Restart the application" data-i18n-aria-label="Restart the application">
                   <span data-i18n="Restart the Moonlight app quickly">
                     Restart the Moonlight app quickly
                   </span>
@@ -1059,7 +1060,7 @@
   </div>
   <div id="restartAppDialogOverlay" class="dialog-overlay">
     <dialog id="restartAppDialog" class="mdl-dialog">
-      <span class="dialog-badge" aria-hidden="true"><svg class="icon"><use xlink:href="#i-restore"/></svg></span>
+      <span class="dialog-badge" aria-hidden="true"><svg class="icon"><use xlink:href="#i-refresh"/></svg></span>
       <h3 id="restartAppDialogTitle" class="mdl-dialog__title" data-i18n="Restart Moonlight">Restart Moonlight</h3>
       <div class="mdl-dialog__content">
         <p id="restartAppDialogText">

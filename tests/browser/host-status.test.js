@@ -271,12 +271,14 @@ test('the Running state of the last session doesn\'t show, and the PC details sa
     assert.equal(state.chips, '');
     const details = await app.page.evaluate(() => {
       hostDetailsDialog(hosts.HOST1);
-      const text = document.getElementById('hostDetailsDialogText-HOST1').innerHTML.split('<br>');
+      const text = Array.prototype.map.call(document.querySelectorAll('#hostDetailsDialogText-HOST1 tr'),
+        (row) => row.cells[0].textContent + ' ' + row.cells[1].textContent);
       $('#closeHostDetails').trigger('click');
       return text;
     });
     assert.ok(details.indexOf('State: Unknown') >= 0, JSON.stringify(details));
-    assert.ok(details.indexOf('Running Game ID: 0') >= 0, JSON.stringify(details));
+    // No game runs: a dash, as for every value that the PC didn't report (2.3.4: the ID 0)
+    assert.ok(details.indexOf('Running Game ID: \u2014') >= 0, JSON.stringify(details));
 
     await app.page.evaluate(() => window.__sunshine.release());
     await app.page.waitForFunction(() => hosts.HOST1.online === true, null, { timeout: 3000 });

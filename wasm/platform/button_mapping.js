@@ -329,6 +329,36 @@ const ButtonMappingMenu = (function() {
     }
     // A calibration needs a controller that is connected
     $('#buttonMappingCalibrate').prop('hidden', !selected.connected);
+    updateMore();
+  }
+
+  // The arrows of the rows line up: the stepper of each row is as wide as the stepper of the first row with the longest
+  // name of a button in this language (or None) between its arrows (--mapping-stepper-width, style.css). The first row
+  // gets its own text back afterwards.
+  function alignSteppers() {
+    const panel = document.getElementById('buttonMappingPanel');
+    const value = document.getElementById('buttonMappingValue0');
+    if (!panel || !value) {
+      return;
+    }
+    panel.style.removeProperty('--mapping-stepper-width');
+    const text = value.textContent;
+    let widest = 0;
+    MAPPED_BUTTON_NAMES.map((name, index) => targetName(index)).concat(targetName(MAPPED_BUTTON_NONE)).forEach((name) => {
+      value.textContent = name;
+      widest = Math.max(widest, value.parentElement.getBoundingClientRect().width);
+    });
+    value.textContent = text;
+    panel.style.setProperty('--mapping-stepper-width', Math.ceil(widest) + 'px');
+  }
+
+  // A fade at the bottom of the rows while more of them follow below (has-more in style.css). A panel that doesn't show
+  // keeps its class: open() renders the rows before the panel shows, and the fade would then fade in again at each open.
+  function updateMore() {
+    const panel = document.getElementById('buttonMappingPanel');
+    if (panel && panel.clientHeight > 0) {
+      panel.classList.toggle('has-more', panel.scrollTop + panel.clientHeight < panel.scrollHeight - 1);
+    }
   }
 
   function open() {
@@ -338,6 +368,12 @@ const ButtonMappingMenu = (function() {
     $('#buttonCalibrationPanel').hide();
     render();
     $('#buttonMappingOverlay').css('display', 'flex');
+    const panel = document.getElementById('buttonMappingPanel');
+    panel.scrollTop = 0;
+    // The fade follows the scrolling, also of the browser itself when the focus moves
+    panel.onscroll = updateMore;
+    alignSteppers();
+    updateMore();
     isDialogOpen = true;
     Views.ButtonMappingMenu.view.index = 0;
     Navigation.push(Views.ButtonMappingMenu);

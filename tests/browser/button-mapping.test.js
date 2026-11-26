@@ -11,6 +11,8 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { startHarness, openApp, readStorage, reloadApp, waitForStorage } = require('./harness');
+const { tvKey } = require('./menu-driver');
+const { forEachTextWidth } = require('./text-stress');
 
 let harness;
 before(async () => {
@@ -518,5 +520,113 @@ test('the stored face button swaps of an earlier version become the mapping for 
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
+  }
+});
+
+// The brightest colour value of the pixels of a region of the screen
+async function brightest(page, clip) {
+  const png = await page.screenshot({ clip });
+  return page.evaluate(async (base64) => {
+    const image = new Image();
+    image.src = 'data:image/png;base64,' + base64;
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    canvas.getContext('2d').drawImage(image, 0, 0);
+    const data = canvas.getContext('2d').getImageData(0, 0, image.width, image.height).data;
+    let most = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      most = Math.max(most, data[i], data[i + 1], data[i + 2]);
+    }
+    return most;
+  }, png.toString('base64'));
+}
+
+// The panel of the button mapping: whether more rows follow below, the fade at its bottom, where the focus is, and where
+// the arrows of the rows start
+const panelState = (page) => page.evaluate(() => {
+  const panel = document.getElementById('buttonMappingPanel');
+  const rect = panel.getBoundingClientRect();
+  const fade = getComputedStyle(panel, '::after');
+  const steppers = Array.from(panel.querySelectorAll('.mapping-row .overlay-menu-stepper'));
+  return {
+    focus: document.activeElement.id, focusBottom: document.activeElement.getBoundingClientRect().bottom,
+    left: rect.left, width: rect.width, bottom: rect.bottom,
+    more: panel.scrollTop + panel.clientHeight < panel.scrollHeight - 1,
+    fade: { content: fade.content, position: fade.position, height: parseFloat(fade.height), opacity: fade.opacity },
+    arrows: steppers.map((stepper) => Math.round(stepper.firstElementChild.getBoundingClientRect().left)),
+    ends: steppers.map((stepper) => Math.round(stepper.getBoundingClientRect().right)),
+    cut: Array.from(panel.querySelectorAll('.mapping-row .overlay-menu-value')).filter((value) => value.scrollWidth > value.clientWidth + 1).map((value) => value.id),
+  };
+});
+
+// Wait until the fade of the panel has the given opacity, at most 2 seconds: its transition takes 0.2 s, which a busy
+// machine draws later. The assertion that follows says what it showed.
+const fadeSettled = (page, opacity) => page.waitForFunction((value) =>
+  getComputedStyle(document.getElementById('buttonMappingPanel'), '::after').opacity === value, opacity, { timeout: 2000 }).catch(() => {});
+
+test('the rows of the button mapping fade out at the bottom while more follow, the focus stays above the fade, and the arrows of every row line up in every language', async () => {
+  for (const language of [null, 'de-DE', 'es-ES', 'fr-FR', 'pt-BR']) {
+    const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
+    const page = app.page;
+    try {
+      if (language) {
+        await page.evaluate((locale) => i18n.setLanguage(locale), language);
+        await page.waitForTimeout(400);
+      }
+      // The widest name of every language: what each row of the first controller presses, one after the other
+      await openMapping(page);
+      await forEachTextWidth(page, async (stress) => {
+        const where = (language || 'en-US') + stress;
+        // Open again, since the width of the names is measured when the panel opens. The fade shows at once, without
+        // fading in again at each open (updateMore() in button_mapping.js leaves a hidden panel alone)
+        const opacityAtOpen = await page.evaluate(() => {
+          ButtonMappingMenu.close();
+          ButtonMappingMenu.open();
+          return getComputedStyle(document.getElementById('buttonMappingPanel'), '::after').opacity;
+        });
+        await page.waitForTimeout(300);
+        let state = await panelState(page);
+        // 2.3.4: the last row that shows was cut through its text, with nothing that said that more follow
+        assert.deepEqual([state.more, state.fade.content, state.fade.position, state.fade.height, state.fade.opacity],
+          [true, '""', 'sticky', 56, '1'], where + ' ' + JSON.stringify(state));
+        assert.equal(opacityAtOpen, '1', where);
+        // The row that the panel cuts at the bottom (above its bottom padding of 18 px) is faded out, not cut in half
+        assert.ok(await brightest(page, { x: Math.round(state.left) + 20, y: Math.round(state.bottom) - 26, width: Math.round(state.width) - 40,
+          height: 8 }) < 120, where);
+        // The arrows of all rows start at the same place, every value fits between them, and the right arrows end at the
+        // edge of the rows (2.3.4: the left arrows from 1001 to 1207 px in Brazilian Portuguese)
+        assert.ok(Math.max(...state.arrows) - Math.min(...state.arrows) <= 1, where + ' ' + JSON.stringify(state.arrows));
+        assert.ok(Math.max(...state.ends) - Math.min(...state.ends) <= 1, where + ' ' + JSON.stringify(state.ends));
+        assert.deepEqual(state.cut, [], where);
+        // DOWN through every entry: while more follow, the focused one stays above the fade; Close shows the end of the
+        // panel, and the fade is gone
+        for (let presses = 0; presses < 20 && state.focus !== 'buttonMappingClose'; presses++) {
+          await tvKey(page, ...DOWN);
+          await page.waitForTimeout(60);
+          state = await panelState(page);
+          if (state.more) {
+            assert.ok(state.focusBottom <= state.bottom - state.fade.height + 1, where + ' ' + JSON.stringify(state));
+          }
+        }
+        assert.equal(state.focus, 'buttonMappingClose', where);
+        await fadeSettled(page, '0');
+        state = await panelState(page);
+        assert.deepEqual([state.more, state.fade.opacity], [false, '0'], where);
+        // UP back to the first entry, which scrolls the panel back to its top: the fade comes back
+        for (let presses = 0; presses < 20 && state.focus !== 'buttonMappingSelect'; presses++) {
+          await tvKey(page, ...UP);
+          await page.waitForTimeout(60);
+          state = await panelState(page);
+        }
+        await fadeSettled(page, '1');
+        state = await panelState(page);
+        assert.deepEqual([state.focus, state.more, state.fade.opacity], ['buttonMappingSelect', true, '1'], where);
+      });
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.context.close();
+    }
   }
 });

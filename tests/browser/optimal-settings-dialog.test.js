@@ -209,7 +209,8 @@ test('the button is the first of the basic settings, with its generic label and 
     });
     assert.deepEqual(button, {
       label: 'Optimal settings for this TV',
-      help: '- Applies the best image quality this TV supports (its highest resolution up to 4K, HEVC, and HDR if the TV supports it) with a bitrate that matches its network connection.',
+      // Without the dash that starts its key (refreshUI() in i18n.js)
+      help: 'Applies the best image quality this TV supports (its highest resolution up to 4K, HEVC, and HDR if the TV supports it) with a bitrate that matches its network connection.',
       // The name for the Voice Guide of the TV is the label of the row, which every language has (an English text of
       // its own, 'Apply the optimal settings for this TV', before 2.3.1)
       ariaLabel: 'Optimal settings for this TV',

@@ -870,6 +870,12 @@ body:not([data-view="hosts"]):not([data-view="apps"]) .launcher-hero {
   padding: 30px var(--safe-x) 80px;
   overflow-x: hidden;
   overflow-y: auto;
+  /* The glow of a focused card in the first row reaches above the top of the grid, which cuts it: a ramp over the top
+     10 px fades it out there instead of ending in a hard edge. It ends above the ring of a focused card, which reaches up
+     to 11 px below the top in the app grid (30 px of padding, less the growth of a 348 px tile by scale(1.07) and the
+     7 px of the ring) and 15 px in the PC grid (2.3.5) */
+  -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0) 0, #000 10px);
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0) 0, #000 10px);
 }
 #host-grid {
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -1399,11 +1405,6 @@ body:not([data-view="hosts"]):not([data-view="apps"]) .launcher-hero {
 .setting-option.is-current > .mdl-list__item-text-body, .setting-option.is-current .mdl-switch__label {
   color: var(--text-2);
 }
-/* Hide the "- " that starts the help texts (their locale keys) */
-.setting-option > .mdl-list__item-text-body::first-letter {
-  font-size: 0;
-  margin-right: -5px;
-}
 .setting-option > div[id], #removeAllHostsMenu {
   grid-column: 2;
   grid-row: 1;
@@ -1415,7 +1416,7 @@ body:not([data-view="hosts"]):not([data-view="apps"]) .launcher-hero {
   justify-self: stretch;
   margin-top: 12px;
 }
-/* Menus (value and chevron) and actions (text and icon), on one line */
+/* Menus (value and chevron) and actions (text and icon), on one line (an action of .setting-action below may take two) */
 .setting-option .mdl-button {
   display: flex;
   align-items: center;
@@ -1432,6 +1433,12 @@ body:not([data-view="hosts"]):not([data-view="apps"]) .launcher-hero {
   text-align: left;
   white-space: nowrap;
   transition: transform var(--t-focus) var(--ease);
+}
+/* The actions (a text and an icon) are as wide as the menus, so that the column of the controls lines up; a longer text
+   takes two lines (2.3.5). The main action of the settings (#optimalSettingsBtn) keeps its own width. */
+.setting-option .setting-action {
+  width: 440px;
+  white-space: normal;
 }
 .setting-option [id^="select"] {
   width: 440px;
@@ -1730,6 +1737,12 @@ body:not([data-view="hosts"]):not([data-view="apps"]) .launcher-hero {
 dialog::backdrop {
   background: transparent;
 }
+/* A dialog without a control of its own (the input test) takes the focus itself when it opens: no ring of the browser
+   around it. Only :focus, which every engine of the TVs knows (an unknown selector such as :focus-visible in the list
+   would drop the whole rule in Chromium 69). */
+dialog:focus {
+  outline: none;
+}
 .mdl-dialog, .large-dialog {
   width: 1000px;
   max-width: calc(100% - 192px);
@@ -1859,6 +1872,29 @@ dialog::backdrop {
   font-size: 22px;
   font-weight: 600;
   line-height: 1.5;
+}
+/* The details of a PC (hostDetailsDialog() in index.js): the labels in a column of their own, the values in the colour
+   of the text */
+.host-details-text {
+  border-collapse: collapse;
+  font-size: 22px;
+  line-height: 1.4;
+}
+.host-details-text th, .host-details-text td {
+  padding: 4px 0;
+  text-align: left;
+  vertical-align: top;
+}
+.host-details-text th {
+  padding-right: 28px;
+  color: var(--text-3);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.host-details-text td {
+  color: var(--text);
+  font-weight: 700;
+  word-break: break-all;
 }
 #warningDialogText b, #pairingDialogText b {
   color: #fff;
@@ -2757,6 +2793,29 @@ dialog::backdrop {
   margin-bottom: 2px;
   padding-top: 6px;
   padding-bottom: 6px;
+}
+/* The arrows of all rows line up: each stepper is as wide as the one with the longest name of a button in the language
+   of the app (alignSteppers() in button_mapping.js), and its value sits in the middle between its arrows */
+.mapping-row .overlay-menu-stepper {
+  justify-content: space-between;
+  min-width: var(--mapping-stepper-width, 0);
+}
+/* While more rows follow below, the bottom of the list fades out into the panel (updateMore() in button_mapping.js); the
+   focused row stays above the fade (keepMappingFocusInView() in navigation.js) */
+#buttonMappingPanel::after {
+  content: '';
+  position: sticky;
+  bottom: -18px;
+  display: block;
+  height: 56px;
+  margin: -56px -16px 0;
+  background: linear-gradient(180deg, rgba(20, 25, 50, 0), #141932 85%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+#buttonMappingPanel.has-more::after {
+  opacity: 1;
 }
 #buttonCalibrationPanel {
   display: none;

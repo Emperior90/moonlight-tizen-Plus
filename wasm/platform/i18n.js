@@ -265,6 +265,9 @@
     }
   }
 
+  // The dash and space at the start of the key of a help text of the settings
+  const HELP_TEXT_DASH = /^- /;
+
   function refreshUI() {
     document.querySelectorAll('[data-i18n]').forEach((element) => {
       const key = element.getAttribute('data-i18n');
@@ -272,7 +275,11 @@
       if (!key) {
         return;
       }
-      element.textContent = param ? t(key, param) : t(key);
+      const text = param ? t(key, param) : t(key);
+      // A help text of the settings shows without the '- ' that starts its key in every language (tests/tools/i18n-check.js
+      // keeps it there). A stylesheet can't hide it: ::first-letter takes the letter after the dash as well in a browser
+      // that follows the current CSS rules for punctuation, which then hid it too (before 2.3.5).
+      element.textContent = element.classList.contains('mdl-list__item-text-body') ? text.replace(HELP_TEXT_DASH, '') : text;
     });
 
     document.querySelectorAll('[data-i18n-placeholder]').forEach((element) => {

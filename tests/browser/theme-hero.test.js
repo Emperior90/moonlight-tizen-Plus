@@ -17,6 +17,7 @@
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { openApp, startHarness } = require('./harness');
+const { tvKey } = require('./menu-driver');
 const { forEachTextWidth } = require('./text-stress');
 
 let harness;
@@ -849,5 +850,63 @@ test('the button Quit app on the PC only shows while an app runs, and the header
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
+  }
+});
+
+// The colours of a column of pixels through the glow above a focused card in the first row of a grid: from 16 px above
+// the top of the grid down to the card, and where its ring and the top of the grid are
+const glowColumn = async (page, gridId) => {
+  const where = await page.evaluate((id) => {
+    const card = document.querySelector('#' + id + ' .mdl-card.hovered') || document.activeElement;
+    const rect = card.getBoundingClientRect();
+    return { x: Math.round(rect.left + rect.width / 2), cardTop: rect.top, gridTop: document.getElementById(id).getBoundingClientRect().top };
+  }, gridId);
+  const top = Math.round(where.gridTop) - 16;
+  const column = await pixels(page, { x: where.x, y: top, width: 1, height: Math.round(where.cardTop) - top + 2 });
+  return { column, top, gridTop: where.gridTop, ringTop: where.cardTop - 7, cardTop: where.cardTop };
+};
+
+// The largest change of colour between two neighbouring pixels of the column above the ring of the card
+const largestStep = (glow) => {
+  let largest = 0;
+  for (let i = 1; glow.top + i < glow.ringTop - 1; i++) {
+    largest = Math.max(largest, ...[0, 1, 2].map((channel) => Math.abs(glow.column[i][channel] - glow.column[i - 1][channel])));
+  }
+  return largest;
+};
+
+test('the glow of a focused card in the first row fades out at the top of the PC and app grids instead of ending in a hard edge, and its ring stays whole', async () => {
+  const hostsApp = await openApp(harness, { tv: TV });
+  try {
+    await installHosts(hostsApp.page);
+    await tvKey(hostsApp.page, 39, 'ArrowRight');
+    await hostsApp.page.waitForTimeout(400);
+    const glow = await glowColumn(hostsApp.page, 'host-grid');
+    const where = 'PCs: ' + JSON.stringify({ step: largestStep(glow), top: glow.top, gridTop: glow.gridTop, ringTop: glow.ringTop });
+    // The ring of the card lies inside the grid, below the fade
+    assert.ok(glow.ringTop - glow.gridTop >= 10, where);
+    // 2.3.4: a step of 29 of 255 at the top of the grid, where the glow was cut
+    assert.ok(largestStep(glow) <= 12, where);
+    // The white ring of the card: its first whole pixel, below the fade
+    assert.ok(isWhite(glow.column[Math.ceil(glow.ringTop) - glow.top]), where);
+    assert.deepEqual(hostsApp.errors, []);
+  } finally {
+    await hostsApp.context.close();
+  }
+  const appsApp = await openAppList(0, [{ id: 31, title: 'A White Cover', art: cover(600, 800, '#ffffff', '#ffffff') }]);
+  try {
+    await focusApp(appsApp.page, 'A White Cover');
+    await appsApp.page.waitForTimeout(400);
+    const glow = await glowColumn(appsApp.page, 'game-grid');
+    const where = 'apps: ' + JSON.stringify({ step: largestStep(glow), top: glow.top, gridTop: glow.gridTop, ringTop: glow.ringTop });
+    assert.ok(glow.ringTop - glow.gridTop >= 10, where);
+    assert.ok(largestStep(glow) <= 12, where);
+    // The white ring (its first whole pixel) and the white cover below the fade: the tile of a 348 px row grows the most,
+    // so its ring comes closest to the top (a ramp of 14 px dimmed it)
+    assert.ok(isWhite(glow.column[Math.ceil(glow.ringTop) - glow.top]), where);
+    assert.ok(isWhite(glow.column[Math.round(glow.cardTop + 1) - glow.top]), where);
+    assert.deepEqual(appsApp.errors, []);
+  } finally {
+    await appsApp.context.close();
   }
 });

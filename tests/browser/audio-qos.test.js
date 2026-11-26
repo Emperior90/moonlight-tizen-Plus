@@ -14,7 +14,8 @@ const { openApp, readStorage, reloadApp, startHarness, waitForStorage } = requir
 
 const TV = { tv: 's90c', conn: 'wifi' };
 const LABEL = 'Prioritize sound on Wi-Fi';
-const HELP = '- On the home network, asks the PC to send the sound with priority (DSCP), like the picture. Turn it off if ' +
+// The help text as the row shows it: without the dash that starts its key (refreshUI() in i18n.js)
+const HELP = 'On the home network, asks the PC to send the sound with priority (DSCP), like the picture. Turn it off if ' +
   'only the sound crackles or drops out over Wi-Fi while the picture is clean: some routers handle prioritized sound badly.';
 
 let harness;
