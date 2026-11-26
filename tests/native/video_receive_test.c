@@ -33,7 +33,7 @@
 //    packet) leaves its buffer with the processing thread, which puts it into the slot of the next packet: no buffer is
 //    in two slots and none is lost; an encrypted one leaves the buffer it was decrypted into for the next decryption;
 //  - the lines of the processing thread from chosen figures: the work per packet from the time it was busy, the idle
-//    share and the part of it that it looked again for packets, the rate, and the counts of the ring of the minute.
+//    share (the time it waited for packets), the rate, and the counts of the ring of the minute.
 //
 // The socket, the RTP queue, the threads, the mutexes, the decryption and the clock are stand-ins: the receive calls
 // follow a script of entries (a packet, whether it was waiting and how long its receive took; a timeout; an error), the
@@ -937,7 +937,7 @@ static void expectedProcessLine(char* text, size_t size, unsigned long long pack
     snprintf(rate, sizeof(rate), "n/a");
   }
   snprintf(text, size,
-           "Video processing of the stream, %u s: %llu packets, %.1f us of work each, idle 0%% (looking 0%%): up to %s "
+           "Video processing of the stream, %u s: %llu packets, %.1f us of work each, idle 0%%: up to %s "
            "Mbps; ring up to %llu of 32768 packets, full 0 times for 0 ms; 0 wakes\n",
            seconds, packets, (double)elapsedUs / (double)packets, rate, packets);
 }
@@ -1080,9 +1080,9 @@ static void test_timeout_mode_reads_each_packet_with_one_recvfrom_and_samples_ab
     // all the packets, as the reader ran first here
     expectedProcessLine(expected, sizeof(expected), 256, 256ULL * FULL_PACKET, 256 * workUs);
     checkLine(expected);
-    checkLine(ipv6 ? "Video processing of the stream, 1 s: 256 packets, 30.0 us of work each, idle 0% (looking 0%): up "
+    checkLine(ipv6 ? "Video processing of the stream, 1 s: 256 packets, 30.0 us of work each, idle 0%: up "
                      "to 388 Mbps; ring up to 256 of 32768 packets, full 0 times for 0 ms; 0 wakes\n"
-                   : "Video processing of the stream, 1 s: 256 packets, 30.0 us of work each, idle 0% (looking 0%): up "
+                   : "Video processing of the stream, 1 s: 256 packets, 30.0 us of work each, idle 0%: up "
                      "to 382 Mbps; ring up to 256 of 32768 packets, full 0 times for 0 ms; 0 wakes\n");
     // After the lines of the reader, once
     CHECK(findLine(PROCESS_LINE) > findLine(CHECK_LINE));
@@ -1627,9 +1627,9 @@ static void test_the_processing_thread_logs_a_line_each_minute_of_its_time(void)
   CHECK_EQ_INT(countLines(PROCESS_MINUTE_LINE), 1);
   // 1504 packets in 60.16 s: 25 packets/s, 40,000 us each, up to (1408 + 28) * 8 * 1504 / 60160000 = 0.29 Mbps; the
   // ring held all 2100 packets in that minute
-  checkLine("Video processing, last 60 s: 25 packets/s, 40000.0 us of work each, idle 0% (looking 0%): up to 0 Mbps; "
+  checkLine("Video processing, last 60 s: 25 packets/s, 40000.0 us of work each, idle 0%: up to 0 Mbps; "
             "ring up to 2100 of 32768 packets, full 0 times for 0 ms; 0 wakes\n");
-  checkLine("Video processing of the stream, 84 s: 2100 packets, 40000.0 us of work each, idle 0% (looking 0%): up to 0 "
+  checkLine("Video processing of the stream, 84 s: 2100 packets, 40000.0 us of work each, idle 0%: up to 0 "
             "Mbps; ring up to 2100 of 32768 packets, full 0 times for 0 ms; 0 wakes\n");
   const int minute = findLine(PROCESS_MINUTE_LINE);
   CHECK(minute >= 0 && minute < findLine(PROCESS_LINE));
@@ -1686,38 +1686,36 @@ static void test_a_packet_that_the_queue_rejects_leaves_its_buffer_for_the_next_
 
 static void test_the_lines_of_the_processing_thread_from_chosen_figures(void) {
   // logVideoProcessFigures() itself, with figures that the cases above can't make (the processing thread runs after
-  // the reader there, so it never waits, looks or is woken, and the ring is never full)
+  // the reader there, so it never waits or is woken, and the ring is never full)
   resetStream();
   receiveRing.slotCount = 1024;
-  // A minute of 1,200,000 packets of 1408 bytes, idle 24 of its 60 s, 9 s of them looking again: busy 36 s, so 30 us
-  // of work per packet and up to (1408 + 28) * 8 / 30 = 383 Mbps; the counts of the ring are those of the minute (full
-  // 7 - 4 times for 9600 - 2100 us, 2500 - 2000 wakes), its most packets those since the start of the minute
-  const VIDEO_PROC_FIGURES before = { .packets = 300000, .bytes = 300000ULL * 1408, .idleUs = 6000000, .lookUs = 3000000 };
-  const VIDEO_PROC_FIGURES now = { .packets = 1500000, .bytes = 1500000ULL * 1408, .idleUs = 30000000,
-                                   .lookUs = 12000000 };
+  // A minute of 1,200,000 packets of 1408 bytes, idle 24 of its 60 s: busy 36 s, so 30 us of work per packet and up to
+  // (1408 + 28) * 8 / 30 = 383 Mbps; the counts of the ring are those of the minute (full 7 - 4 times for 9600 - 2100
+  // us, 2500 - 2000 wakes), its most packets those since the start of the minute
+  const VIDEO_PROC_FIGURES before = { .packets = 300000, .bytes = 300000ULL * 1408, .idleUs = 6000000 };
+  const VIDEO_PROC_FIGURES now = { .packets = 1500000, .bytes = 1500000ULL * 1408, .idleUs = 30000000 };
   const VIDEO_RECV_RING_FIGURES ringBefore = { .maxDepth = 250, .windowMaxDepth = 180, .fullWaits = 4, .fullWaitUs = 2100,
                                                .wakes = 2000 };
   const VIDEO_RECV_RING_FIGURES ringNow = { .maxDepth = 300, .windowMaxDepth = 212, .fullWaits = 7, .fullWaitUs = 9600,
                                             .wakes = 2500 };
   logVideoProcessFigures(&now, &before, &ringNow, &ringBefore, 60000000, false);
-  checkLine("Video processing, last 60 s: 20000 packets/s, 30.0 us of work each, idle 40% (looking 15%): up to 383 Mbps; "
+  checkLine("Video processing, last 60 s: 20000 packets/s, 30.0 us of work each, idle 40%: up to 383 Mbps; "
             "ring up to 212 of 1024 packets, full 3 times for 8 ms; 500 wakes\n");
-  // The whole stream of 75 s: idle 30 s, 12 s of them looking, the most packets in the ring and every count since the
-  // start
+  // The whole stream of 75 s: idle 30 s, the most packets in the ring and every count since the start
   logVideoProcessFigures(&now, NULL, &ringNow, NULL, 75000000, true);
-  checkLine("Video processing of the stream, 75 s: 1500000 packets, 30.0 us of work each, idle 40% (looking 16%): up to "
+  checkLine("Video processing of the stream, 75 s: 1500000 packets, 30.0 us of work each, idle 40%: up to "
             "383 Mbps; ring up to 300 of 1024 packets, full 7 times for 10 ms; 2500 wakes\n");
-  // Idle at most the time of the line and looking at most the idle time: nothing left for work, so no rate
-  const VIDEO_PROC_FIGURES clamped = { .packets = 3, .bytes = 3 * 1408, .idleUs = 5000000, .lookUs = 7000000 };
+  // Idle at most the time of the line: nothing left for work, so no rate
+  const VIDEO_PROC_FIGURES clamped = { .packets = 3, .bytes = 3 * 1408, .idleUs = 5000000 };
   const VIDEO_RECV_RING_FIGURES ringFew = { .maxDepth = 3, .windowMaxDepth = 3, .fullWaits = 1, .fullWaitUs = 12,
                                             .wakes = 1 };
   logVideoProcessFigures(&clamped, NULL, &ringFew, NULL, 1000000, true);
-  checkLine("Video processing of the stream, 1 s: 3 packets, 0.0 us of work each, idle 100% (looking 100%): up to n/a "
+  checkLine("Video processing of the stream, 1 s: 3 packets, 0.0 us of work each, idle 100%: up to n/a "
             "Mbps; ring up to 3 of 1024 packets, full 1 times for 0 ms; 1 wakes\n");
-  const VIDEO_PROC_FIGURES moreLookThanIdle = { .packets = 1000, .bytes = 1000 * 1408, .idleUs = 1000000,
-                                                .lookUs = 3000000 };
-  logVideoProcessFigures(&moreLookThanIdle, NULL, &ringFew, NULL, 10000000, true);
-  checkLine("Video processing of the stream, 10 s: 1000 packets, 9000.0 us of work each, idle 10% (looking 10%): up to 1 "
+  // A tenth idle: 9 s of work for 1000 packets
+  const VIDEO_PROC_FIGURES tenthIdle = { .packets = 1000, .bytes = 1000 * 1408, .idleUs = 1000000 };
+  logVideoProcessFigures(&tenthIdle, NULL, &ringFew, NULL, 10000000, true);
+  checkLine("Video processing of the stream, 10 s: 1000 packets, 9000.0 us of work each, idle 10%: up to 1 "
             "Mbps; ring up to 3 of 1024 packets, full 1 times for 0 ms; 1 wakes\n");
   receiveRing.slotCount = 0;
 }
@@ -1750,9 +1748,9 @@ static void test_the_lines_fit_the_log_and_name_no_address(void) {
   }
   // The processing thread: a line after each batch of 32 packets of 100 s, with the work at its clamp
   CHECK_EQ_INT(countLines(PROCESS_MINUTE_LINE), 1280 / VRR_BATCH);
-  CHECK(hasLine("Video processing, last 3200 s: 0 packets/s, 99999.9 us of work each, idle 0% (looking 0%): up to 0 "
+  CHECK(hasLine("Video processing, last 3200 s: 0 packets/s, 99999.9 us of work each, idle 0%: up to 0 "
                 "Mbps; ring up to 1280 of 32768 packets, full 0 times for 0 ms; 0 wakes\n"));
-  checkLine("Video processing of the stream, 128000 s: 1280 packets, 99999.9 us of work each, idle 0% (looking 0%): up "
+  checkLine("Video processing of the stream, 128000 s: 1280 packets, 99999.9 us of work each, idle 0%: up "
             "to 0 Mbps; ring up to 1280 of 32768 packets, full 0 times for 0 ms; 0 wakes\n");
   CHECK_EQ_INT(receiveLinesTooLong, 0);
   CHECK_EQ_INT(receiveLinesWithAddress, 0);
@@ -1791,7 +1789,7 @@ int main(void) {
            test_the_processing_thread_logs_a_line_each_minute_of_its_time);
   RUN_TEST("a packet that the RTP queue rejects leaves its buffer for the next one: no buffer in two slots, none lost",
            test_a_packet_that_the_queue_rejects_leaves_its_buffer_for_the_next_one);
-  RUN_TEST("the lines of the processing thread from chosen figures: work, idle, looking, rate and the ring of the minute",
+  RUN_TEST("the lines of the processing thread from chosen figures: work, idle, rate and the ring of the minute",
            test_the_lines_of_the_processing_thread_from_chosen_figures);
   RUN_TEST("the lines fit a line of the diagnostic log and name no address",
            test_the_lines_fit_the_log_and_name_no_address);

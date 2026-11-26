@@ -12,6 +12,12 @@
 //    ones): the buffer stays with the processing thread, and the reader never receives into the buffer of a packet that
 //    the processing thread hasn't handed to the queue yet (no buffer in two slots);
 //  - the idle share of the processing thread: high when it waits for packets, and without the wait for its first one;
+//    it waits as soon as the ring is empty (no look again for packets, no looking share in its line), and the reader
+//    wakes it for the next packet;
+//  - no packet waits in the ring while the processing thread sleeps: after bursts of 1, 37 and 300 packets, each followed
+//    by a read that waits for the socket, in each of the three receive modes (the receive timeout, poll() before each
+//    receive, and the poll() of a socket that never waits once none is waiting), the processing thread took every packet
+//    of the burst and waits with the ring empty while the reader still waits in its read; then the stop while both wait;
 //  - the stop while the reader waits for room, while the processing thread waits for packets, and while the reader of a
 //    socket that never waits waits in its read (woken by wakeUdpSocketReader()), also in the three failed starts after
 //    the reader started; a failed start of the reader stops and joins the processing thread and frees the ring;
@@ -304,6 +310,10 @@ void PltWaitForConditionVariable(PLT_COND* cond, PLT_MUTEX* mutex) {
 #define ENTRY_PACKET 0
 #define ENTRY_TIMEOUT 1
 #define ENTRY_ERROR 2
+// A read that waits for the socket until the test lets it go, or the stop ends it (the interrupt of the thread, which
+// the receive timeout or the timeout of poll() lets the reader see; the wake of a socket that never waits); it returns
+// no packet
+#define ENTRY_HOLD 3
 
 typedef struct {
   int kind;
@@ -326,6 +336,11 @@ static int rtpOffset;
 static bool timeoutWorks;
 static bool noWaitWorks;
 static bool readerWoken;
+// The reads of ENTRY_HOLD entries that the reader began and ended, and the test lets the one it waits in go (under
+// testMutex)
+static int holdsBegun;
+static int holdsEnded;
+static bool holdReleased;
 static int closeCalls;
 // Whether the processing thread handed each entry to the RTP queue (under testMutex); with checkBusyBuffers (a case
 // whose packets all go to the queue), the receives into the buffer of a packet that it hadn't handed over yet
@@ -437,6 +452,28 @@ static int serve(char* buffer, int size, bool noWait) {
     scriptPosition++;
     errno = ENETDOWN;
     return -1;
+  }
+  if (entry->kind == ENTRY_HOLD) {
+    pthread_mutex_lock(&testMutex);
+    holdsBegun++;
+    pthread_cond_broadcast(&testCond);
+    while (!holdReleased && !(noWait ? readerWoken : PltIsThreadInterrupted(&receiveThread))) {
+      struct timespec deadline;
+      clock_gettime(CLOCK_REALTIME, &deadline);
+      deadline.tv_nsec += 1000000;
+      if (deadline.tv_nsec >= 1000000000) {
+        deadline.tv_sec++;
+        deadline.tv_nsec -= 1000000000;
+      }
+      pthread_cond_timedwait(&testCond, &testMutex, &deadline);
+    }
+    readerWoken = false;
+    holdReleased = false;
+    holdsEnded++;
+    pthread_cond_broadcast(&testCond);
+    pthread_mutex_unlock(&testMutex);
+    scriptPosition++;
+    return 0;
   }
   CHECK(entry->size <= size);
   if (checkBusyBuffers) {
@@ -699,6 +736,9 @@ static void resetStream(void) {
   timeoutWorks = true;
   noWaitWorks = true;
   readerWoken = false;
+  holdsBegun = 0;
+  holdsEnded = 0;
+  holdReleased = false;
   closeCalls = 0;
   memset(handedToQueue, 0, sizeof(handedToQueue));
   checkBusyBuffers = false;
@@ -974,10 +1014,11 @@ static void test_the_wait_for_the_first_packet_is_no_idle_time(void) {
   }
 }
 
-static void test_packets_a_millisecond_apart_make_the_processing_thread_look_then_wait(void) {
-  // 100 packets about 1 ms apart (a receive timeout of the stand-in between them), more than the look of the processing
-  // thread lasts: after each packet it looks again for about 0.1 ms, then waits, and the next packet wakes it. Its line
-  // shows the idle time with the looks in it (about a tenth of the time) and a wake for nearly every packet
+static void test_packets_a_millisecond_apart_make_the_processing_thread_wait_and_the_reader_wake_it(void) {
+  // 100 packets about 1 ms apart (a receive timeout of the stand-in between them): after each packet the processing
+  // thread finds the ring empty and waits at once, and the next packet wakes it. Its line shows a high idle share, no
+  // looking share (the test version of 2.3.5 looked again for packets for at least 0.1 ms before it waited, on the
+  // CPU), and a wake for nearly every packet
   resetStream();
   for (int i = 0; i < 100; i++) {
     addPackets(1, FULL_PACKET);
@@ -992,11 +1033,124 @@ static void test_packets_a_millisecond_apart_make_the_processing_thread_look_the
   const int process = findLine(PROCESS_LINE);
   CHECK(process >= 0);
   if (process >= 0) {
-    const long long idle = numberAfter(lines[process], " idle ");
-    const long long looking = numberAfter(lines[process], "(looking ");
-    CHECK(idle >= 50);
-    CHECK(looking >= 1 && looking <= idle);
+    CHECK(numberAfter(lines[process], " idle ") >= 50);
+    CHECK(strstr(lines[process], "looking") == NULL);
+    CHECK(strstr(lines[process], "%: up to ") != NULL);
     CHECK(numberBefore(lines[process], " wakes\n") >= 50);
+  }
+}
+
+// The hold that the test waits for (counted from 1)
+static int holdOfTheTest;
+
+static bool readerHoldsInItsRead(void) {
+  return holdsBegun >= holdOfTheTest;
+}
+
+static bool readerLeftItsRead(void) {
+  return holdsEnded >= holdOfTheTest;
+}
+
+// Waits until the reader is in the read of hold `hold`, or (leave) until it left it
+static bool waitForHold(int hold, bool leave) {
+  pthread_mutex_lock(&testMutex);
+  holdOfTheTest = hold;
+  const bool reached = waitUntil(leave ? readerLeftItsRead : readerHoldsInItsRead);
+  pthread_mutex_unlock(&testMutex);
+  return reached;
+}
+
+// Lets the reader go on from the hold it waits in, and waits until it left hold `hold`
+static bool releaseHold(int hold) {
+  pthread_mutex_lock(&testMutex);
+  holdReleased = true;
+  pthread_cond_broadcast(&testCond);
+  pthread_mutex_unlock(&testMutex);
+  return waitForHold(hold, true);
+}
+
+// Waits up to 3 s (testMutex not held) until the RTP queue got `count` packets
+static bool waitForQueuedSoon(int count) {
+  for (int i = 0; i < 3000; i++) {
+    pthread_mutex_lock(&testMutex);
+    const bool reached = queuedPackets >= count;
+    pthread_mutex_unlock(&testMutex);
+    if (reached) {
+      return true;
+    }
+    usleep(1000);
+  }
+  return false;
+}
+
+static void test_no_packet_waits_in_the_ring_while_the_reader_waits_for_the_socket_in_each_mode(void) {
+  // Bursts of 1, 37 and 300 packets, each followed by a read that waits for the socket (the receive timeout of 100 ms,
+  // the poll() before each receive, or the poll() of a socket that never waits once none is waiting): while the reader
+  // waits there, the processing thread must have every packet of the burst and wait with the ring empty, since the reader
+  // woke it for the first packet it published after it began to wait. A hand-over that woke it only for a batch of
+  // packets would leave the last packets of a frame in the ring until the next frame. Each burst starts once the
+  // processing thread waits (the reader waits in a read before it too), so that its first packet must wake it. Then the
+  // stop while the reader waits in its read and the processing thread waits for packets: both end, and the line counts
+  // every packet
+  static const char* const modes[3] = { "receive timeout", "poll() before each receive", "socket that never waits" };
+  static const int bursts[3] = { 1, 37, 300 };
+  for (int mode = 0; mode < 3; mode++) {
+    resetStream();
+    timeoutWorks = mode == 0;
+    noWaitWorks = mode == 2;
+    addEntry(ENTRY_HOLD, 0);
+    for (int b = 0; b < 3; b++) {
+      addPackets(bursts[b], FULL_PACKET);
+      addEntry(ENTRY_HOLD, 0);
+    }
+    initializeVideoStream();
+    CHECK_EQ_INT(startVideoStream(NULL, 0), 0);
+    // The first burst comes once the processing thread waits for its first packet
+    CHECK(waitForHold(1, false));
+    CHECK(waitForRing(processorWaitsForPackets));
+    CHECK(releaseHold(1));
+    int total = 0;
+    int wrong = 0;
+    for (int b = 0; b < 3; b++) {
+      total += bursts[b];
+      CHECK(waitForHold(b + 2, false));
+      // The reader waits for the socket: within 3 s every packet of the burst reaches the queue, and the processing
+      // thread waits with nothing left in the ring, while the reader still waits in its read
+      const bool queued = waitForQueuedSoon(total);
+      const bool waiting = waitForRing(processorWaitsForPackets);
+      PltLockMutex(&receiveRing.mutex);
+      const uint32_t left = receiveRing.head - receiveRing.tail;
+      const bool processorWaiting = receiveRing.processorWaiting;
+      PltUnlockMutex(&receiveRing.mutex);
+      pthread_mutex_lock(&testMutex);
+      const bool stillInItsRead = holdsEnded < b + 2;
+      const int queuedNow = queuedPackets;
+      pthread_mutex_unlock(&testMutex);
+      if (!queued || !waiting || !processorWaiting || left != 0 || !stillInItsRead) {
+        if (wrong++ == 0) {
+          printf("  # %s, burst of %d: %d of %d packets queued, the processing thread waits %d, %u packets left in the "
+                 "ring, the reader in its read %d\n", modes[mode], bursts[b], queuedNow, total, processorWaiting,
+                 left, stillInItsRead);
+        }
+      }
+      if (b < 2) {
+        // (the processing thread waits: the next burst starts with a wait of it)
+        CHECK(releaseHold(b + 2));
+      }
+    }
+    CHECK_EQ_INT(wrong, 0);
+    // The stop while the reader waits for the socket after the last burst and the processing thread waits for packets
+    stopStream();
+    CHECK_EQ_INT(queuedPackets, total);
+    CHECK_EQ_INT(terminations, 0);
+    const int process = findLine(PROCESS_LINE);
+    CHECK(process >= 0);
+    if (process >= 0) {
+      CHECK_EQ_INT(numberAfter(strstr(lines[process], " s: "), " s: "), total);
+    }
+    if (test_current_failed) {
+      printf("  # (the mode: %s)\n", modes[mode]);
+    }
   }
 }
 
@@ -1156,8 +1310,11 @@ int main(void) {
            test_the_stop_wakes_a_processing_thread_that_waits_for_packets);
   RUN_TEST("the wait for the first packet is no idle time of the processing thread",
            test_the_wait_for_the_first_packet_is_no_idle_time);
-  RUN_TEST("packets a millisecond apart make the processing thread look again, then wait, and the reader wake it",
-           test_packets_a_millisecond_apart_make_the_processing_thread_look_then_wait);
+  RUN_TEST("packets a millisecond apart make the processing thread wait at once, and the reader wake it for each",
+           test_packets_a_millisecond_apart_make_the_processing_thread_wait_and_the_reader_wake_it);
+  RUN_TEST("no packet waits in the ring while the reader waits for the socket after a burst, in each receive mode, and "
+           "the stop while both wait",
+           test_no_packet_waits_in_the_ring_while_the_reader_waits_for_the_socket_in_each_mode);
   RUN_TEST("the reader of a socket that never waits is woken at the stop and at the three failed starts after it",
            test_the_reader_of_a_socket_that_never_waits_is_woken_at_the_stop_and_at_a_failed_start);
   RUN_TEST("the limit of 10 s for the first frame ends the stream on the processing thread, by the read times",

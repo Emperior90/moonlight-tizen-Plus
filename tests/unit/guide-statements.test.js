@@ -1345,36 +1345,40 @@ test('the guide describes the two threads of the video receive and the processin
   assert.match(video, /figures\.workUs \+= nowUs - workStartUs - workWaitedUs;/);
   assert.match(video, /\* 8 \/\s+\(readUs \+ workUs \+ clockUs\);/);
   assert.match(video, /workStartUs = clockUs;\s+workSampled = true;\s+stampUs = endUs;/);
-  ['and of everything else the reading thread does for a packet until it reads the next one (it only hands the packet to a second thread, and a wait for room between them doesn\'t count here); and from these, with one clock read per packet for noting when it read the packet, the speed at which the reading thread could take packets that are waiting, counted like *Frames arrive at*.']
+  ['and of everything else the reading thread does for a packet until it reads the next one (it only hands the packet to a second thread and wakes that thread when it waits for packets, and a wait for room between them doesn\'t count here); and from these, with one clock read per packet for noting when it read the packet, the speed at which the reading thread could take packets that are waiting, counted like *Frames arrive at*.']
     .forEach((text) => assert.ok(log.indexOf(text) > 0, text));
   // The processing thread: its lines once a minute and at the end, the example built from the format of the code
   const process = formatOf(/Limelog\("(Video processing of the stream, %u s: [^"]*)\\n",/);
   const minute = formatOf(/Limelog\("(Video processing, last %u s: [^"]*)\\n",/);
   assert.ok(minute.indexOf('Video processing, last ') === 0);
   assert.match(video, /if \(nowUs - windowStartUs >= VIDEO_RECV_LINE_INTERVAL_US\) \{\s+if \(figures\.packets > windowStart\.packets\) \{\s+logVideoProcessFigures\(/);
-  const example = formatC(process, [312, 4973512, '14.2', '77', '38', '809', 212, ringPackets, 0, 0, 19054]);
-  assert.equal(example, 'Video processing of the stream, 312 s: 4973512 packets, 14.2 us of work each, idle 77% (looking 38%): up to 809 Mbps; ring up to 212 of 1024 packets, full 0 times for 0 ms; 19054 wakes');
-  // (the example is one stream: 14.2 us of work for each of its packets leave 77 % of its 312 s idle)
+  const example = formatC(process, [312, 4973512, '14.2', '77', '809', 212, ringPackets, 0, 0, 2104381]);
+  assert.equal(example, 'Video processing of the stream, 312 s: 4973512 packets, 14.2 us of work each, idle 77%: up to 809 Mbps; ring up to 212 of 1024 packets, full 0 times for 0 ms; 2104381 wakes');
+  // (the example is one stream: 14.2 us of work for each of its packets leave 77 % of its 312 s idle, and the reader
+  // woke the thread for 42 % of its packets, so its wakes read as 'close to half the packets')
   assert.equal(Math.round(100 - 14.2 * 4973512 / 312e6 * 100), 77);
+  assert.equal(Math.round(2104381 / 4973512 * 100), 42);
   assert.ok(log.indexOf('A second thread does the work on the packets that the first one reads, with a ring of ' + ringPackets + ' packets between them. Its lines come once a minute and at the end, e.g. *' + example + '* (an example, not a measurement)') > 0);
   // No packet is dropped: a reader that finds the ring full waits for room
   assert.match(ring, /while \(ring->head - ring->tail == ring->slotCount && !ring->stopped\) \{\s+ring->readerWaiting = true;\s+PltWaitForConditionVariable\(&ring->roomCond, &ring->mutex\);/);
   assert.doesNotMatch(ring.replace(/\/\/.*$/gm, ''), /drop/i);
-  // The wakes are those of a waiting processing thread by the reader
+  // The wakes are those of a waiting processing thread by the reader, for the first packet it publishes after the
+  // thread began to wait
   assert.match(ring, /if \(ring->processorWaiting\) \{\s+ring->processorWaiting = false;\s+ring->figures\.wakes\+\+;\s+PltSignalConditionVariable\(&ring->packetsCond\);/);
-  // It looks again for more than VRR_LINGER_US (0.1 ms) before it waits, and its line counts that time apart, as part
-  // of the idle time; it takes up to VRR_BATCH packets at once, which stay in the ring until it gives them back
-  assert.match(ring, /#define VRR_LINGER_US 100\n/);
-  assert.match(ring, /nowUs - startUs <= VRR_LINGER_US && checks < VRR_LINGER_CHECKS\) \{/);
-  assert.match(ring, /\*lookUs = nowUs - startUs;/);
-  assert.match(video, /figures\.idleUs \+= idleUs;\s+figures\.lookUs \+= lookUs;/);
+  // It waits as soon as the ring is empty, asleep: no look again for packets (the test version of 2.3.5 looked for at
+  // least 0.1 ms on the CPU first), so its idle time runs from finding the ring empty to running again after the wake;
+  // it takes up to VRR_BATCH packets at once, which stay in the ring until it gives them back
+  assert.match(ring, /startUs = PltGetMicroseconds\(\);\s+PltLockMutex\(&ring->mutex\);\s+while \(ring->head == ring->tail && !ring->stopped && !ring->closed\) \{\s+ring->processorWaiting = true;\s+PltWaitForConditionVariable\(&ring->packetsCond, &ring->mutex\);/);
+  assert.doesNotMatch(ring.replace(/\/\/.*$/gm, ''), /LINGER|lookUs/);
+  assert.match(video, /figures\.idleUs \+= idleUs;\s+\}/);
+  assert.doesNotMatch(video.replace(/\/\/.*$/gm, ''), /lookUs/);
   assert.match(ring, /#define VRR_BATCH 32\n/);
   assert.match(ring, /ring->tail \+= released;/);
   assert.match(ring, /depth = ring->head - ring->tail;/);
-  ['the packets it took (as many as the reading thread read, unless some were left at the end), its time per packet (error correction, decryption, putting the frame together at its last packet), the share of the time it had nothing to do (*idle*) and, in brackets, the part of it that it spent looking for the next packet before it waited (*looking*: it looks for at least 0.1 ms, so that the reading thread needn\'t wake it for each packet of a frame, and keeps a core of the TV busy meanwhile), the speed at which it could take packets, counted like *Frames arrive at*',
-    'then the most packets in the ring at once (counting the up to 32 that the second thread was working on), how often the ring was full and for how long the reading thread waited for room (no packet is dropped: they wait in the receive buffer of the TV), and how often the reading thread had to wake it (at least about once per frame, since it waits between the frames).',
+  ['the packets it took (as many as the reading thread read, unless some were left at the end), its time per packet (error correction, decryption, putting the frame together at its last packet), the share of the time it had nothing to do (*idle*: it waits for the next packet asleep, without keeping a core of the TV busy; the share runs until it runs again after the reading thread woke it, so it also holds the time the TV takes to wake it, which costs some CPU), the speed at which it could take packets, counted like *Frames arrive at*',
+    'then the most packets in the ring at once (counting the up to 32 that the second thread was working on), how often the ring was full and for how long the reading thread waited for room (no packet is dropped: they wait in the receive buffer of the TV), and how often the reading thread had to wake it (it waits as soon as it has nothing to do, and the reading thread wakes it for the next packet: at least about once per frame, and up to once per packet when it is done with each packet before the next one comes).',
     'With two threads, the slower of the two sets the pace, and the share of waiting packets is that of the reading thread only: compare the lower of the two *up to* with *Frames arrive at*. When the second thread\'s *up to* is the lower one and not more than about a quarter above *Frames arrive at* (or below it), the second thread sets the receive time, whatever the share of waiting packets: it can be the limit within each frame and still be idle between the frames.',
-    'A *ring up to* well above the 32 packets that it takes at once shows it too, and a ring that was *full* shows it at its worst. A high *looking* share at a high bitrate means that it kept a core busy while the frames came; *wakes* close to the number of packets mean that the packets came further apart than its look, e.g. at a low bitrate, and each wake delays a packet a little.']
+    'A *ring up to* well above the 32 packets that it takes at once shows it too, and a ring that was *full* shows it at its worst. *Wakes* close to half the packets or more mean that it was often done with a packet before the next one came, so it waited between the packets of a frame; far fewer mean that the packets came in bursts, which it worked through one after the other, or that it was still busy, with a packet or with waking up, when the next one came (compare its *up to* with *Frames arrive at*). Each wake delays its packet a little, by the time the TV takes to wake the thread, and costs the reading thread a little of its *other work per packet*.']
     .forEach((text) => assert.ok(log.indexOf(text) > 0, text));
   // The rows of the statistics stay true: the times are still when the app reads the packets (the reader notes them),
   // and the receive time ends when the second thread has put the frame together, so a slower second thread raises it

@@ -74,8 +74,7 @@ typedef struct _VIDEO_RECV_FIGURES {
 typedef struct _VIDEO_PROC_FIGURES {
     uint64_t packets;  // packets taken from the ring (every packet that the reader read)
     uint64_t bytes;    // their bytes as received
-    uint64_t idleUs;   // the time spent looking for packets and waiting for them, from the first packet on
-    uint64_t lookUs;   // of it, the time spent looking again for packets before a wait (the thread is on the CPU)
+    uint64_t idleUs;   // the time from finding no packet to running again after the wake, from the first packet on
 } VIDEO_PROC_FIGURES;
 
 // We can't request an IDR frame until the depacketizer knows
@@ -562,10 +561,11 @@ static unsigned int clampedVideoCount(uint64_t value) {
 }
 
 // Moonlight Plus (since 2.3.5): the line of a minute (the figures since before) or of the whole stream (before NULL)
-// of the processing thread: its work per packet (the time it didn't look or wait for packets, over the packets), its
-// idle share with the part of it that it looked again for packets before it waited (on the CPU, VrrReleaseAndTake()),
-// the speed it could take packets at, and the ring: the most packets in it (with those of the batch it works on), the
-// times the reader found it full and waited for room and how long, and the times the reader woke this thread
+// of the processing thread: its work per packet (the time it didn't wait for packets, over the packets), its idle share
+// (from finding no packet to running again after the wake, VrrReleaseAndTake(): the wait and the time to wake it), the
+// speed it could take packets at, and the ring: the most packets in it (with those of the batch it works on), the
+// times the reader found it full and waited for room and how long, and the times the reader woke this thread (it waits
+// as soon as the ring is empty, so up to once per packet)
 static void logVideoProcessFigures(const VIDEO_PROC_FIGURES* now, const VIDEO_PROC_FIGURES* before,
                                    const VIDEO_RECV_RING_FIGURES* ring, const VIDEO_RECV_RING_FIGURES* ringBefore,
                                    uint64_t elapsedUs, bool wholeStream) {
@@ -573,12 +573,10 @@ static void logVideoProcessFigures(const VIDEO_PROC_FIGURES* now, const VIDEO_PR
     VIDEO_RECV_RING_FIGURES r;
     char workTime[16];
     char idle[16];
-    char look[16];
     char capacity[16];
     unsigned int seconds;
     uint64_t busyUs;
     uint64_t idleUs;
-    uint64_t lookUs;
 
     d = *now;
     r = *ring;
@@ -586,7 +584,6 @@ static void logVideoProcessFigures(const VIDEO_PROC_FIGURES* now, const VIDEO_PR
         d.packets -= before->packets;
         d.bytes -= before->bytes;
         d.idleUs -= before->idleUs;
-        d.lookUs -= before->lookUs;
     }
     if (ringBefore != NULL) {
         r.fullWaits -= ringBefore->fullWaits;
@@ -602,7 +599,6 @@ static void logVideoProcessFigures(const VIDEO_PROC_FIGURES* now, const VIDEO_PR
         seconds = 1;
     }
     idleUs = d.idleUs < elapsedUs ? d.idleUs : elapsedUs;
-    lookUs = d.lookUs < idleUs ? d.lookUs : idleUs;
     busyUs = elapsedUs - idleUs;
 
     if (d.packets > 0) {
@@ -617,7 +613,6 @@ static void logVideoProcessFigures(const VIDEO_PROC_FIGURES* now, const VIDEO_PR
     }
 
     snprintf(idle, sizeof(idle), "%u", (unsigned int)((idleUs * 100 + elapsedUs / 2) / elapsedUs));
-    snprintf(look, sizeof(look), "%u", (unsigned int)((lookUs * 100 + elapsedUs / 2) / elapsedUs));
 
     // The rate at which this thread could take packets, at IP level like 'Frames arrive at' (RtpVideoQueue.c): the
     // bits of an average packet with its IP and UDP header per microsecond of its work
@@ -634,14 +629,14 @@ static void logVideoProcessFigures(const VIDEO_PROC_FIGURES* now, const VIDEO_PR
     }
 
     if (wholeStream) {
-        Limelog("Video processing of the stream, %u s: %llu packets, %s us of work each, idle %s%% (looking %s%%): up to %s Mbps; ring up to %u of %u packets, full %u times for %u ms; %u wakes\n",
-                seconds, (unsigned long long)d.packets, workTime, idle, look, capacity, r.maxDepth,
+        Limelog("Video processing of the stream, %u s: %llu packets, %s us of work each, idle %s%%: up to %s Mbps; ring up to %u of %u packets, full %u times for %u ms; %u wakes\n",
+                seconds, (unsigned long long)d.packets, workTime, idle, capacity, r.maxDepth,
                 receiveRing.slotCount, clampedVideoCount(r.fullWaits), clampedVideoCount((r.fullWaitUs + 500) / 1000),
                 clampedVideoCount(r.wakes));
     }
     else {
-        Limelog("Video processing, last %u s: %llu packets/s, %s us of work each, idle %s%% (looking %s%%): up to %s Mbps; ring up to %u of %u packets, full %u times for %u ms; %u wakes\n",
-                seconds, (unsigned long long)(d.packets * 1000000 / elapsedUs), workTime, idle, look, capacity,
+        Limelog("Video processing, last %u s: %llu packets/s, %s us of work each, idle %s%%: up to %s Mbps; ring up to %u of %u packets, full %u times for %u ms; %u wakes\n",
+                seconds, (unsigned long long)(d.packets * 1000000 / elapsedUs), workTime, idle, capacity,
                 r.windowMaxDepth, receiveRing.slotCount, clampedVideoCount(r.fullWaits),
                 clampedVideoCount((r.fullWaitUs + 500) / 1000), clampedVideoCount(r.wakes));
     }
@@ -660,7 +655,7 @@ static void VideoProcessThreadProc(void* context) {
     bool stopping;
     bool startWindow;
     uint32_t released, first, taken, i;
-    uint64_t idleUs, lookUs, nowUs, streamStartUs, windowStartUs;
+    uint64_t idleUs, nowUs, streamStartUs, windowStartUs;
     VIDEO_PROC_FIGURES figures, windowStart;
     VIDEO_RECV_RING_FIGURES ringFigures, windowRing;
 
@@ -681,12 +676,11 @@ static void VideoProcessThreadProc(void* context) {
     windowRing = ringFigures;
 
     while (!stopping) {
-        taken = VrrReleaseAndTake(&receiveRing, released, &first, &idleUs, &lookUs, &ringFigures, startWindow);
+        taken = VrrReleaseAndTake(&receiveRing, released, &first, &idleUs, &ringFigures, startWindow);
         released = 0;
         startWindow = false;
         if (streamStartUs != 0) {
             figures.idleUs += idleUs;
-            figures.lookUs += lookUs;
         }
         if (taken == 0) {
             break;
