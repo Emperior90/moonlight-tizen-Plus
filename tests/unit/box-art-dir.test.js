@@ -1,7 +1,8 @@
 'use strict';
 
 // Checks the name of the directory that holds the box art of a host in the private storage of the app
-// (getBoxArtDirName() of wasm/static/js/utils.js, used by NvHTTP.getBoxArt() and NvHTTP.clearBoxArt()). The directory
+// (getBoxArtDirName() of wasm/static/js/utils.js, used by NvHTTP.getBoxArt() and NvHTTP.clearBoxArt(), and since 2.3.5
+// by deleteFilesOfDeletedHosts() for Delete PC and Delete All PCs). The directory
 // was 'wgt-private/' plus the name of the host as the host sent it, for a host that isn't paired over plain HTTP from
 // whatever device answered: getBoxArt() creates it and writes files into it, and clearBoxArt() deletes it with
 // everything in it. A name such as '..' or '.' or one with a slash named another directory than the one meant, e.g.
@@ -29,9 +30,9 @@ TestFileReader.prototype.readAsDataURL = function() {
   }
 };
 
-// utils.js with a file system of the TV that has no files and records what is asked of it, and a host that answers a
-// box art download at once
-function loadUtils() {
+// utils.js with a file system of the TV that has the given files in its documents directory (none by default) and
+// records what is asked of it, and a host that answers a box art download at once
+function loadUtils(documents = []) {
   const calls = [];
   const platform = createPlatformContext({
     globals: {
@@ -54,15 +55,18 @@ function loadUtils() {
     createDirectory(directory) {
       calls.push('createDirectory ' + directory);
     },
-    deleteDirectory(directory, recursive) {
+    deleteDirectory(directory, recursive, onSuccess) {
       calls.push('deleteDirectory ' + directory + ' ' + recursive);
+      if (onSuccess) {
+        onSuccess();
+      }
     },
     deleteFile(file) {
       calls.push('deleteFile ' + file);
     },
     listDirectory(directory, onSuccess) {
       calls.push('listDirectory ' + directory);
-      onSuccess([]);
+      onSuccess(documents.slice());
     },
   };
   platform.load('wasm/static/js/utils.js');
@@ -151,11 +155,28 @@ test('the box art of a host is read, written and cleared in that directory only'
   }
 });
 
+test('the files of a deleted host go from its directory only, also for a name of dots, and the previews that no other host lists', async () => {
+  const { platform, calls } = loadUtils(['preview-s90c-101.jpg', 'preview-s90c-102.jpg', 'preview-555.jpg', 'notes.txt']);
+  platform.context.__uid = UID;
+  await platform.run(`(function() {
+    deleteFilesOfDeletedHosts([{ hostname: '..', serverUid: __uid }, { hostname: '../../documents', serverUid: __uid }],
+      [{ hostname: 'OFFICE-PC', serverUid: 'A1B2C3D4E5F60718' }], { 102: true });
+  })()`);
+  assert.deepEqual(plain(calls), [
+    'deleteDirectory wgt-private/host-' + UID + ' true',
+    'deleteDirectory wgt-private/.._.._documents true',
+    'listDirectory documents',
+    'deleteFile documents/preview-s90c-101.jpg',
+  ]);
+});
+
 test('no path is built from the name of a host as it is', () => {
   const utils = fs.readFileSync(path.join(REPO_ROOT, 'wasm/static/js/utils.js'), 'utf8');
   assert.equal((utils.match(/var boxArtDir = 'wgt-private\/' \+ getBoxArtDirName\(this\.hostname, this\.serverUid\);/g) || []).length, 2);
-  // The private storage is named in these two places only, and the other scripts build no path of the file system
-  assert.equal((utils.match(/'wgt-private/g) || []).length, 2);
+  // The files of a deleted host (deleteFilesOfDeletedHosts(), since 2.3.5)
+  assert.equal((utils.match(/var boxArtDir = 'wgt-private\/' \+ getBoxArtDirName\(host\.hostname, host\.serverUid\);/g) || []).length, 1);
+  // The private storage is named in these three places only, and the other scripts build no path of the file system
+  assert.equal((utils.match(/'wgt-private/g) || []).length, 3);
   ['wasm/platform/index.js', 'wasm/platform/menus.js', 'wasm/platform/launcher.js', 'wasm/platform/navigation.js', 'wasm/static/js/mdns-browser/main.js'].forEach((file) => {
     const source = fs.readFileSync(path.join(REPO_ROOT, file), 'utf8');
     assert.equal(/wgt-private/.test(source), false, file);

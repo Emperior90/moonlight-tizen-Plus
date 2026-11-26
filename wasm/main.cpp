@@ -15,6 +15,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <http.h>
 #include <pairing.h>
 #include <iostream>
 
@@ -639,11 +640,10 @@ MessageResult MoonlightInstance::StopStream() {
   return MessageResult::Resolve();
 }
 
-extern "C" void http_cancel_request();
-
 MessageResult MoonlightInstance::CancelRequest() {
-  ClLogMessage("%s: Canceling any ongoing HTTP request...\n", __func__);
-  // Begin canceling the HTTP request
+  ClLogMessage("%s: Canceling the HTTP requests handed over so far...\n", __func__);
+  // Cancel the request that runs and any that still waits behind another job of the HTTP thread (libgamestream/http.c):
+  // the JS queue hands over one request at a time, so this is the one that JS gave up on
   http_cancel_request();
 
   return MessageResult::Resolve();
@@ -668,8 +668,10 @@ void MoonlightInstance::STUN(int callbackId) {
 // deviceName is the URL-encoded name that the host shows for this TV (pairingDeviceName() in wasm/static/js/utils.js),
 // which gs_pair() checks once more before it puts it into the requests
 void MoonlightInstance::Pair_private(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber,
-                                     std::string deviceName) {
+                                     std::string deviceName, int requestNumber) {
   char* ppkstr = NULL;
+  // Every request of this pairing has its number, so a cancel ends the pairing, also while it waited
+  http_begin_request(requestNumber);
   int err = gs_pair(atoi(serverMajorVersion.c_str()), address.c_str(), (unsigned short)httpPort, randomNumber.c_str(),
                     deviceName.c_str(), &ppkstr);
 
@@ -687,8 +689,10 @@ void MoonlightInstance::Pair_private(int callbackId, std::string serverMajorVers
 void MoonlightInstance::Pair(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber,
                              std::string deviceName) {
   ClLogMessage("%s with host address: %s:%d\n", __func__, address.c_str(), httpPort);
+  // Numbered on the main thread as it is handed over, like OpenUrl() in http.cpp
+  int requestNumber = http_hand_over_request();
   m_Dispatcher.post_job(std::bind(&MoonlightInstance::Pair_private, this, callbackId, serverMajorVersion, address, httpPort, randomNumber,
-                                  deviceName), false);
+                                  deviceName, requestNumber), false);
 }
 
 void MoonlightInstance::WakeOnLan(int callbackId, std::string macAddress, std::string subnetBroadcast) {

@@ -9,6 +9,10 @@
 //   polling threw away the callback of the dialog before (the model of
 //   fork-research/repro/wol_callback_race.js), and also when the background polling is the first to reach the PC,
 // - the dialog sends the request again while it waits, and stops once it is closed,
+// - since 2.3.5 the dialog scans the network when it opens and then at most every WOL_SCAN_INTERVAL_MS (30 seconds)
+//   instead of before every poll, the polling of the hosts pauses while it waits (the ends of the scan at startup and of
+//   Rescan network don't restart it meanwhile) and resumes once it closes, and after WOL_HINT_DELAY_MS (90 seconds) it
+//   says what to check on the PC and keeps waiting,
 // - a callback of a poll that throws neither keeps the other callbacks from the result nor keeps later polls from
 //   starting,
 // - the dialog opens on Cancel, so that OK closes it: it used to open on the switch 'Always wake this PC automatically',
@@ -52,7 +56,7 @@ async function takeFocus(page) {
 // its server info refresh takes refreshMs and its address check (selectServerAddress(), the request of every poll)
 // pollMs, and both fail until window.__pcAwake is true. Its Wake-on-LAN request answers with `wol` ('ok' or an error
 // text to reject with). The requests, the polls and the callbacks of the dialog are recorded in window.__events, and
-// the scan of the network that the dialog runs before each poll is window.__scan (a pending promise) or none.
+// the scan of the network that the dialog runs now and then before a poll is window.__scan (a pending promise) or none.
 async function openWithOfflineHost(options) {
   const opts = Object.assign({ refreshMs: 50, pollMs: 50, wol: 'ok' }, options);
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
@@ -102,6 +106,13 @@ const dialogState = (page) => page.evaluate(() => ({
 
 const events = (page) => page.evaluate(() => window.__events.slice());
 
+// The events up to the close of the dialog (its cancel or success): since 2.3.5 the polling of the hosts resumes once
+// it closed, whose refresh and polls of the host follow
+const eventsUntilClosed = (page) => page.evaluate(() => {
+  const end = window.__events.findIndex((entry) => entry === 'cancel' || entry === 'success');
+  return end < 0 ? window.__events.slice() : window.__events.slice(0, end + 1);
+});
+
 test('after a failed request, OK closes the dialog, which names the error and another way to wake the PC', async () => {
   const app = await openWithOfflineHost({ wol: 'Failed to create socket' });
   try {
@@ -116,7 +127,7 @@ test('after a failed request, OK closes the dialog, which names the error and an
     await app.page.evaluate(() => $('#cancelAutoWol').trigger('click'));
     state = await dialogState(app.page);
     assert.deepEqual([state.open, state.overlay, state.isDialogOpen], [false, 'none', false]);
-    assert.deepEqual(await events(app.page), ['wol', 'cancel'], 'one request, no poll after the failure');
+    assert.deepEqual(await eventsUntilClosed(app.page), ['wol', 'cancel'], 'one request, no poll after the failure');
     assert.ok(app.logs.some((line) => line.indexOf('Wake-on-LAN request failed: Failed to create socket') >= 0));
     assert.deepEqual(app.errors, []);
   } finally {
@@ -140,7 +151,7 @@ test('after a failed request, OK is selected, so that OK on the remote closes th
     assert.deepEqual([state.open, state.overlay, state.isDialogOpen], [false, 'none', false]);
     assert.equal(await app.page.evaluate(() => document.querySelector('#autoWolCheckboxSwitch').checked), autoWolBefore,
       'OK did not switch Auto-WOL');
-    assert.deepEqual(await events(app.page), ['wol', 'cancel']);
+    assert.deepEqual(await eventsUntilClosed(app.page), ['wol', 'cancel']);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
@@ -157,7 +168,7 @@ test('after a failed request, RETURN closes the dialog as well', async () => {
     await remoteKey(app.page, ...RETURN);
     const state = await dialogState(app.page);
     assert.deepEqual([state.open, state.overlay, state.isDialogOpen], [false, 'none', false]);
-    assert.deepEqual(await events(app.page), ['wol', 'cancel']);
+    assert.deepEqual(await eventsUntilClosed(app.page), ['wol', 'cancel']);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
@@ -188,15 +199,16 @@ test('the dialog closes once the PC answers, also when its poll ran while the sc
       await new Promise((resolve) => setTimeout(resolve, 300));
       window.__pcAwake = true;
     });
-    // The dialog polls again 1 second after its first poll ended, which reaches the PC; the background polling would
-    // only poll again after 5 seconds
+    // The dialog polls again 1 second after its first poll ended, which reaches the PC
     await app.page.waitForFunction(() => window.__events.indexOf('success') >= 0, null, { timeout: 3000 }).catch(() => {});
     const state = await dialogState(app.page);
-    const recorded = await events(app.page);
+    const recorded = await eventsUntilClosed(app.page);
     assert.deepEqual([state.open, state.isDialogOpen], [false, false], 'the dialog closed: ' + JSON.stringify(recorded));
-    // The first poll of the dialog, which the background polling joined after its refresh at the end of the scan,
-    // and the next poll of the dialog, which reached the PC
-    assert.deepEqual(recorded, ['poll', 'refresh failed', 'poll', 'success']);
+    // The first poll of the dialog after the scan, and its next poll, which reached the PC. Since 2.3.5 the end of the
+    // scan doesn't restart the background polling while the dialog waits (up to 2.3.4 its refresh came between them,
+    // and its poll joined the one of the dialog), and the callback of the dialog is still not lost.
+    assert.deepEqual(recorded, ['poll', 'poll', 'success']);
+    assert.equal(recorded.indexOf('refresh failed'), -1, 'the polling of the hosts pauses while the dialog waits');
     assert.equal(await app.page.evaluate(() => window.__host.online), true);
     assert.equal(await app.page.evaluate(() => window.__host._pollCompletionCallbacks.length), 0);
     assert.ok(app.logs.some((line) => line.indexOf('GAMING-PC is online, closing the Wake PC dialog.') >= 0));
@@ -221,7 +233,7 @@ test('the dialog closes when the background polling reaches the PC first', async
     await app.page.waitForFunction(() => window.__events.indexOf('success') >= 0, null, { timeout: 2000 }).catch(() => {});
     const state = await dialogState(app.page);
     assert.deepEqual([state.open, state.overlay, state.isDialogOpen], [false, 'none', false]);
-    assert.deepEqual(await events(app.page), ['wol', 'refresh ok', 'success'], 'the dialog itself never polled');
+    assert.deepEqual(await eventsUntilClosed(app.page), ['wol', 'refresh ok', 'success'], 'the dialog itself never polled');
     // Only the open dialog is notified: a later report of the background polling closes nothing
     assert.equal(await app.page.evaluate(() => wolDialogWait), null);
     assert.deepEqual(app.errors, []);
@@ -246,9 +258,114 @@ test('the dialog sends the request again while it waits, and stops once it is cl
     });
     assert.ok(sent.whileOpen >= 3, 'the first request and again every 100 ms: ' + sent.whileOpen);
     assert.equal(sent.afterClose, sent.whileOpen, 'no request after the dialog closed');
-    assert.deepEqual((await events(app.page)).filter((entry) => entry !== 'wol'), ['cancel']);
+    // The dialog never polled (its scan never ended); after the close the polling of the hosts resumes (since 2.3.5)
+    assert.equal((await events(app.page)).filter((entry) => entry !== 'wol')[0], 'cancel');
     assert.deepEqual(app.errors, []);
   } finally {
+    await app.page.evaluate(() => stopPollingHosts());
+    await app.context.close();
+  }
+});
+
+// Count the scans of the network in window.__scans, which wait for window.__scan as before
+const countScans = (page) => page.evaluate(() => {
+  window.__scans = 0;
+  startSubnetScanner = () => {
+    window.__scans++;
+    return window.__scan || Promise.resolve();
+  };
+});
+
+test('the dialog scans the network when it opens, then at most every WOL_SCAN_INTERVAL_MS, and polls in between', async () => {
+  const app = await openWithOfflineHost();
+  try {
+    await countScans(app.page);
+    await app.page.evaluate(async () => {
+      WOL_SCAN_INTERVAL_MS = 60000;
+      window.openWolDialog();
+      await new Promise((resolve) => setTimeout(resolve, 2600));
+    });
+    // A poll about every second (each 1 second after the one before ended), and one scan, when the dialog opened: up to
+    // 2.3.4 a scan of 254 addresses before every poll
+    const polls = (await events(app.page)).filter((entry) => entry === 'poll').length;
+    assert.equal(await app.page.evaluate(() => window.__scans), 1);
+    assert.ok(polls >= 2, 'polls: ' + polls);
+    // Once the interval passed, the next poll scans first again
+    await app.page.evaluate(async () => {
+      WOL_SCAN_INTERVAL_MS = 500;
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+    });
+    const scanCount = await app.page.evaluate(() => window.__scans);
+    const allPolls = (await events(app.page)).filter((entry) => entry === 'poll').length;
+    assert.ok(scanCount >= 2 && scanCount <= 4, 'scans: ' + scanCount);
+    assert.ok(scanCount < allPolls, 'fewer scans (' + scanCount + ') than polls (' + allPolls + ')');
+    await app.page.evaluate(() => $('#cancelAutoWol').trigger('click'));
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.page.evaluate(() => stopPollingHosts());
+    await app.context.close();
+  }
+});
+
+test('the polling of the hosts pauses while the dialog waits, also past the end of a scan, and resumes once it is closed', async () => {
+  const app = await openWithOfflineHost();
+  try {
+    const seen = await app.page.evaluate(async () => {
+      window.__scan = new Promise((resolve) => {
+        window.__finishScan = resolve;
+      });
+      startPollingHosts();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const before = Object.keys(activePolls);
+      // Rescan network runs, and the dialog opens meanwhile (Wake PC in the menu of the PC) and waits for the same scan
+      const rescan = rescanNetwork();
+      window.openWolDialog();
+      const during = Object.keys(activePolls);
+      window.__finishScan();
+      await rescan;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      // The end of the scan didn't restart the polling, and the dialog polls its host itself
+      const afterScan = Object.keys(activePolls);
+      const dialogPolled = window.__events.indexOf('poll') >= 0;
+      $('#cancelAutoWol').trigger('click');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const afterClose = Object.keys(activePolls);
+      stopPollingHosts();
+      return { before, during, afterScan, dialogPolled, afterClose };
+    });
+    assert.deepEqual(seen, { before: ['HOST1'], during: [], afterScan: [], dialogPolled: true, afterClose: ['HOST1'] });
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('the dialog says what to check on the PC once it waited WOL_HINT_DELAY_MS, and keeps waiting', async () => {
+  const app = await openWithOfflineHost();
+  try {
+    await app.page.evaluate(async () => {
+      WOL_HINT_DELAY_MS = 300;
+      window.openWolDialog();
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    });
+    let state = await dialogState(app.page);
+    assert.equal(state.text, 'Wake-on-LAN request sent to GAMING-PC.Waiting for the host PC to wake up and connect to the network...');
+    await app.page.waitForTimeout(300);
+    state = await dialogState(app.page);
+    assert.deepEqual([state.open, state.button], [true, 'Cancel']);
+    assert.equal(state.text, 'Wake-on-LAN request sent to GAMING-PC.Waiting for the host PC to wake up and connect to the network...' +
+      'GAMING-PC hasn\'t answered yet. Check that Wake-on-LAN is on in its BIOS or UEFI and in the settings of its network adapter, and that Sunshine starts with the PC.');
+    assert.ok(app.logs.some((line) => /GAMING-PC hasn't answered \d+ seconds after the Wake-on-LAN request\./.test(line)));
+    // It still waits for the PC, and closes once the PC answers
+    await app.page.evaluate(async () => {
+      window.__pcAwake = true;
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    });
+    assert.equal((await dialogState(app.page)).open, false);
+    assert.deepEqual(await eventsUntilClosed(app.page).then((list) => list.slice(-1)), ['success']);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.page.evaluate(() => stopPollingHosts());
     await app.context.close();
   }
 });

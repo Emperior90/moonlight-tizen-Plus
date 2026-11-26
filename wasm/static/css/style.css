@@ -149,6 +149,13 @@ button, .mdl-button, .mdl-menu__item, .mdl-textfield__input, .mdl-switch__label,
 #wasmSpinner > .bar2, #wasmSpinner > .bar3 {
   display: none;
 }
+/* A start that can't go on (showStartupFailure() in index.js) shows its message without the moving bar */
+#wasmSpinner.startup-failed {
+  background: none;
+}
+#wasmSpinner.startup-failed > .bar {
+  display: none;
+}
 .launch-bar::after {
   content: '';
   display: block;

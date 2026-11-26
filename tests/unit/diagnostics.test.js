@@ -167,7 +167,7 @@ test('the log hides the public IP address and the MAC addresses, but keeps the a
   // What support needs stays: the all-zero MAC, local and link-local addresses, times and other hex numbers
   ['Not sending a magic packet: the MAC address of the host is unknown (00:00:00:00:00:00)', 'Invalid MAC address format: 00-00-00-00-00-00',
     'Found host with IP address: 192.168.1.20', 'Looking for the external IPv4 address of GAMING-PC...', 'fe80::1a2b:3c4d at 12:34:56',
-    'Error: External IPv4 address lookup failed!', 'aa:bb:cc:dd:ee', 'external port: 47989']
+    'Error: External IPv4 address lookup failed after 3012 ms!', 'aa:bb:cc:dd:ee', 'external port: 47989']
     .forEach((text) => assert.equal(redact(text), text));
   // The native lines of the module are hidden the same way
   app.module.nativeLog = app.clock.now + '\tSent 6 of 6 magic packets to MAC address: 3c:7c:3f:12:ab:cd (subnet broadcast: 192.168.1.255)\n';

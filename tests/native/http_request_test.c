@@ -4,8 +4,10 @@
 // works again, and the log line of a request leaves out its query, which holds the remote input key of a launch
 // (rikey) and the secrets of the pairing. An IPv6 address in brackets is replaced by a name that curl resolves to it,
 // and only where it is the host of the URL: brackets in the path or the query are no address (up to 2.3.0 the first
-// '[' and ']' anywhere in the URL were taken for one). The curl functions below replace libcurl, so no network is
-// needed.
+// '[' and ']' anywhere in the URL were taken for one). Since 2.3.5 a cancel (http_cancel_request()) applies to every
+// request handed over to the HTTP thread so far (http_hand_over_request()), also to one that still waits behind another
+// job, and the next request no longer clears it at its start: up to 2.3.4 a request that the app cancelled while it
+// waited behind the STUN lookup ran anyway. The curl functions below replace libcurl, so no network is needed.
 //
 // Build with: -lssl -lcrypto
 
@@ -39,7 +41,13 @@ static struct {
   char url[1024];
   // The first entry of CURLOPT_RESOLVE, or empty
   char resolve[256];
+  // How often curl_easy_perform() ran, and the progress function of the request
+  int performs;
+  curl_progress_callback progress;
 } transfer;
+
+// Whether the simulated main thread cancels while the transfer runs (after its first chunk)
+static int cancelWhileRunning;
 
 static int curlHandle;
 
@@ -57,6 +65,8 @@ CURLcode curl_easy_setopt(CURL* curl, CURLoption option, ...) {
     transfer.writeData = va_arg(args, void*);
   } else if (option == CURLOPT_URL) {
     snprintf(transfer.url, sizeof(transfer.url), "%s", va_arg(args, const char*));
+  } else if (option == CURLOPT_PROGRESSFUNCTION) {
+    transfer.progress = va_arg(args, curl_progress_callback);
   } else if (option == CURLOPT_RESOLVE) {
     struct curl_slist* list = va_arg(args, struct curl_slist*);
     snprintf(transfer.resolve, sizeof(transfer.resolve), "%s", list != NULL ? list->data : "");
@@ -68,8 +78,15 @@ CURLcode curl_easy_setopt(CURL* curl, CURLoption option, ...) {
 // Hand the answer over in chunks of 16 KiB (CURL_MAX_WRITE_SIZE), and stop when the callback takes less
 CURLcode curl_easy_perform(CURL* curl) {
   (void)curl;
+  transfer.performs++;
   const size_t chunk = 16 * 1024;
   for (size_t offset = 0; offset < transfer.answerSize; offset += chunk) {
+    if (offset > 0 && cancelWhileRunning) {
+      http_cancel_request();
+    }
+    if (transfer.progress != NULL && transfer.progress(NULL, 0, (double)offset, 0, 0) != 0) {
+      return CURLE_ABORTED_BY_CALLBACK;
+    }
     size_t length = transfer.answerSize - offset < chunk ? transfer.answerSize - offset : chunk;
     size_t taken = transfer.write((char*)transfer.answer + offset, 1, length, transfer.writeData);
     PHTTP_DATA data = (PHTTP_DATA)transfer.writeData;
@@ -271,6 +288,47 @@ static void test_brackets_outside_the_host_are_no_address(void) {
   }
 }
 
+// A request that the main thread cancelled while it still waited for the HTTP thread (e.g. behind the STUN lookup)
+// never goes out, although the request clears nothing at its start any more, and one handed over after the cancel runs
+static void test_cancel_of_a_waiting_request(void) {
+  PHTTP_DATA data = http_create_data();
+  char* answer = make_answer(100);
+  int waiting = http_hand_over_request();
+  int alsoWaiting = http_hand_over_request();
+  http_cancel_request();
+  int later = http_hand_over_request();
+  http_begin_request(waiting);
+  CHECK_EQ_INT(request(data, "http://10.0.0.2:47989/serverinfo?uniqueid=1", answer, 100), GS_FAILED);
+  CHECK_EQ_INT(transfer.performs, 0);
+  CHECK(strstr(lastOutput, "/serverinfo?...") != NULL);
+  http_begin_request(alsoWaiting);
+  CHECK_EQ_INT(request(data, "http://10.0.0.2:47989/serverinfo?uniqueid=1", answer, 100), GS_FAILED);
+  CHECK_EQ_INT(transfer.performs, 0);
+  http_begin_request(later);
+  CHECK_EQ_INT(request(data, "http://10.0.0.2:47989/serverinfo?uniqueid=1", answer, 100), GS_OK);
+  CHECK_EQ_INT(transfer.performs, 1);
+  CHECK_EQ_INT(data->size, 100);
+  free(answer);
+  http_free_data(data);
+}
+
+// A cancel while a request runs ends it through the progress function, and the next request runs whole
+static void test_cancel_of_a_running_request(void) {
+  PHTTP_DATA data = http_create_data();
+  size_t size = 64 * 1024;
+  char* answer = make_answer(size);
+  http_begin_request(http_hand_over_request());
+  cancelWhileRunning = 1;
+  CHECK_EQ_INT(request(data, "http://10.0.0.2:47989/applist", answer, size), GS_FAILED);
+  cancelWhileRunning = 0;
+  CHECK_EQ_INT(transfer.performs, 1);
+  http_begin_request(http_hand_over_request());
+  CHECK_EQ_INT(request(data, "http://10.0.0.2:47989/applist", answer, size), GS_OK);
+  CHECK(data->size == size);
+  free(answer);
+  http_free_data(data);
+}
+
 int main(void) {
   RUN_TEST("an answer up to the limit of 4 MiB is read whole", test_answer_within_the_limit);
   RUN_TEST("an answer over the limit fails with GS_RESPONSE_TOO_LARGE and the buffer stays within it",
@@ -280,5 +338,8 @@ int main(void) {
            test_log_leaves_out_the_query);
   RUN_TEST("an IPv6 address in brackets as the host is replaced by a name that curl resolves to it", test_ipv6_host_is_rewritten);
   RUN_TEST("brackets in the path or the query of a URL are no IPv6 address", test_brackets_outside_the_host_are_no_address);
+  RUN_TEST("a request cancelled while it waited never goes out, and one handed over after the cancel runs",
+           test_cancel_of_a_waiting_request);
+  RUN_TEST("a cancel while a request runs ends it, and the next request runs", test_cancel_of_a_running_request);
   return test_summary();
 }

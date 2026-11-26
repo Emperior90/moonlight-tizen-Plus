@@ -44,6 +44,9 @@ typedef struct _HTTP_DATA {
 PHTTP_DATA http_create_data();
 int http_request(const char* url, const char* ppkstr, PHTTP_DATA data);
 void http_free_data(PHTTP_DATA data);
+int http_hand_over_request();
+void http_cancel_request();
+void http_begin_request(int number);
 
 #ifdef __cplusplus
 }

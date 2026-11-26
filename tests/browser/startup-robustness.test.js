@@ -7,10 +7,18 @@
 //   unique ID, which keep the pairing with every host, and the bitrate preset state).
 // - A dialog that opens before the first translation pass of i18n.js, which rewrote every element with a data-i18n
 //   attribute and so reset the title and text of the dialog to its placeholders (e.g. 'Warning').
+// - Since 2.3.5, a database that can't be opened (openIndexDB() calls back after an error, a block or a throw, so the
+//   restart text of a failed read shows), a pairing certificate that the module can't make (makeCert) and a stored one
+//   that it can't load (httpInit): each ends the loading screen with a message, without the moving bar, and no request
+//   goes to a PC. Up to 2.3.4 the first and the last stayed on 'Loading Moonlight...' for good, and the second threw
+//   on the missing certificate and polled the stored PCs anyway.
+// - Since 2.3.5, a write that IndexedDB aborts (e.g. with a QuotaExceededError on a full flash memory, which fires only
+//   the abort event) is logged, and so is a new certificate that can't be stored; the start asks once for persistent
+//   storage and logs the answer.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
-const { openApp, pick, readStorage, readVideoSettings, startHarness, waitForStorage } = require('./harness');
+const { SUNSHINE_HOSTS, openApp, pick, readStorage, readVideoSettings, startHarness, waitForStorage } = require('./harness');
 
 let harness;
 before(async () => {
@@ -100,6 +108,7 @@ test('a certificate that can\'t be read is not replaced, and the app asks for a 
     assert.deepEqual(pick(await readStorage(app.page), ['uniqueid', 'cert', 'settingsSchema']), Object.assign({ settingsSchema: 5 }, EXISTING_INSTALL));
     assert.equal(await app.page.evaluate(() => $('#wasmSpinnerMessage').text()), 'Unable to read the stored pairing data. Please restart Moonlight.');
     assert.equal(await app.page.evaluate(() => $('#wasmSpinner').is(':visible')), true, 'the app stays on the loading screen');
+    assert.equal(await app.page.evaluate(() => $('#wasmSpinner').hasClass('startup-failed')), true, 'without the moving bar');
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
@@ -125,6 +134,7 @@ test('a unique ID that can\'t be read is not replaced, and the install is not ta
     assert.equal('settingsSchema' in stored, false);
     assert.ok(app.logs.some((line) => line.indexOf('Failed to read the stored settings, so the settings schema stays as it is.') >= 0));
     assert.equal(await app.page.evaluate(() => $('#wasmSpinnerMessage').text()), 'Unable to read the stored pairing data. Please restart Moonlight.');
+    assert.equal(await app.page.evaluate(() => $('#wasmSpinner').hasClass('startup-failed')), true, 'without the moving bar');
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
@@ -245,6 +255,176 @@ test('the dialogs whose texts the app sets keep them through a later translation
     });
     // The static title of the restart dialog is still translated
     assert.equal(await app.page.evaluate(() => document.getElementById('restartAppDialogTitle').textContent), 'Restart Moonlight');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+// The loading screen: its text, whether it shows, whether it stopped its moving bar, and whether that bar is drawn
+const loadingScreen = (page) => page.evaluate(() => ({
+  text: $('#wasmSpinnerMessage').text(),
+  shown: $('#wasmSpinner').is(':visible'),
+  failed: $('#wasmSpinner').hasClass('startup-failed'),
+  barShown: $('#wasmSpinner > .bar1').is(':visible'),
+}));
+
+// The names of all WebAssembly calls, requests to hosts included
+const allWasmCalls = (page) => page.evaluate(() => window.__wasmCalls.map((call) => call.name));
+
+test('a database that can\'t be opened ends the loading screen with the restart text', async () => {
+  // indexedDB.open() answers with an error, as on a TV whose storage of the app is damaged
+  const failOpen = { content: '(' + (() => {
+    IDBFactory.prototype.open = function() {
+      const request = { error: new DOMException('Simulated open error', 'UnknownError') };
+      setTimeout(() => request.onerror && request.onerror({ target: request }), 20);
+      return request;
+    };
+  }).toString() + ')();' };
+  const app = await openApp(harness, {
+    tv: { tv: 's90c', conn: 'wifi' },
+    initScripts: [failOpen],
+    // Up to 2.3.4 the first translation pass never ended, since getData() never called back
+    readySignals: ['Cannot create or access the IndexedDB database', 'Loading system information...'],
+  });
+  try {
+    await app.page.waitForTimeout(500);
+    assert.deepEqual(await loadingScreen(app.page), {
+      text: 'Unable to read the stored pairing data. Please restart Moonlight.', shown: true, failed: true, barShown: false,
+    });
+    assert.deepEqual(await allWasmCalls(app.page), [], 'neither a new certificate nor an HTTP start');
+    assert.ok(app.logs.some((line) => line.indexOf('Error: Cannot create or access the IndexedDB database: UnknownError: Simulated open error') >= 0));
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a certificate that can\'t be made ends the loading screen with a message, without httpInit or polls', async () => {
+  const app = await openApp(harness, {
+    tv: { tv: 's90c', conn: 'wifi' },
+    moduleScripts: ['failing-start.js'],
+    initScripts: [{ content: 'window.__failStart = \'makeCert\';' }],
+    // A stored PC, which must not be asked without a certificate
+    stored: { hosts: SUNSHINE_HOSTS },
+    readySignals: ['Failed to generate a new certificate', 'Loading system information...'],
+  });
+  try {
+    await app.page.waitForTimeout(500);
+    assert.deepEqual(await loadingScreen(app.page), {
+      text: 'Moonlight couldn\'t create its pairing certificate. Please restart Moonlight.', shown: true, failed: true, barShown: false,
+    });
+    // Up to 2.3.4 the next step read the certificate of undefined (an unhandled rejection), and the stored PCs loaded and
+    // were polled anyway
+    assert.deepEqual(await allWasmCalls(app.page), ['makeCert']);
+    assert.deepEqual(await app.page.evaluate(() => Object.keys(hosts)), [], 'no stored PC loaded');
+    assert.equal('cert' in await readStorage(app.page), false, 'nothing stored, so the next start makes a certificate again');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a certificate that the module can\'t load ends the loading screen with a message', async () => {
+  const app = await openApp(harness, {
+    tv: { tv: 's90c', conn: 'wifi' },
+    moduleScripts: ['failing-start.js'],
+    initScripts: [{ content: 'window.__failStart = \'httpInit\';' }],
+    stored: Object.assign({ settingsSchema: 5, hosts: SUNSHINE_HOSTS }, EXISTING_INSTALL),
+    readySignals: ['Failed HTTP initialization', 'Loading system information...'],
+  });
+  try {
+    await app.page.waitForTimeout(500);
+    const screen = await loadingScreen(app.page);
+    assert.deepEqual([screen.shown, screen.failed, screen.barShown], [true, true, false]);
+    assert.equal(screen.text, 'The stored pairing certificate can\'t be used. Please restart Moonlight. If this message comes again, uninstall ' +
+      'Moonlight before you install it again, which deletes its settings and pairings.');
+    assert.deepEqual(await allWasmCalls(app.page), ['httpInit']);
+    assert.deepEqual(await app.page.evaluate(() => Object.keys(hosts)), [], 'no stored PC loaded');
+    // The stored certificate stays: a restart may load it
+    assert.deepEqual((await readStorage(app.page)).cert, EXISTING_INSTALL.cert);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('the texts of a start that can\'t go on fit the loading screen in every language', async () => {
+  for (const locale of ['de_DE', 'es_ES', 'fr_FR', 'pt_BR']) {
+    const app = await openApp(harness, {
+      tv: { tv: 's90c', conn: 'wifi', locale },
+      moduleScripts: ['failing-start.js'],
+      initScripts: [{ content: 'window.__failStart = \'httpInit\';' }],
+      stored: Object.assign({ settingsSchema: 5 }, EXISTING_INSTALL),
+      readySignals: ['Failed HTTP initialization', 'Loading system information...'],
+    });
+    try {
+      await app.page.waitForTimeout(500);
+      const box = await app.page.evaluate(() => {
+        const message = document.getElementById('wasmSpinnerMessage');
+        const rect = message.getBoundingClientRect();
+        const lines = Math.round(rect.height / parseFloat(getComputedStyle(message).lineHeight));
+        return {
+          text: message.textContent, lines, left: rect.left, right: rect.right, scrollWidth: message.scrollWidth, clientWidth: message.clientWidth,
+          failed: $('#wasmSpinner').hasClass('startup-failed'), loadingText: t('Loading Moonlight...'),
+        };
+      });
+      // The message of the failure in the language of the TV, not the loading text
+      assert.equal(box.failed, true, locale);
+      assert.notEqual(box.text, box.loadingText, locale);
+      assert.notEqual(box.text.indexOf('Moonlight'), -1, locale);
+      assert.ok(box.lines <= 3, locale + ': ' + box.lines + ' lines');
+      assert.ok(box.left >= 0 && box.right <= 1920 && box.scrollWidth <= box.clientWidth, locale + ': ' + JSON.stringify(box));
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.context.close();
+    }
+  }
+});
+
+test('a new certificate whose write is aborted (a full flash memory) is logged, and the start goes on', async () => {
+  // The write of the certificate aborts its transaction, and only the abort event reaches the transaction, as for a
+  // QuotaExceededError
+  const abortCert = { content: '(' + (() => {
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function(value, key) {
+      const request = put.apply(this, arguments);
+      if (key === 'cert') {
+        request.addEventListener('error', (event) => event.stopPropagation());
+        this.transaction.abort();
+      }
+      return request;
+    };
+  }).toString() + ')();' };
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, initScripts: [abortCert] });
+  try {
+    await waitForLog(app, 'Failed to store the new pairing certificate');
+    // (a transaction that the test aborts has no error, unlike one that the database aborts)
+    assert.ok(app.logs.some((line) => line.indexOf('Error: Unable to store data at the key: cert in IndexedDB: the transaction was aborted') >= 0),
+      app.logs.filter((line) => /IndexedDB/.test(line)).join('\n'));
+    assert.equal('cert' in await readStorage(app.page), false);
+    // The start went on with the certificate of this start
+    assert.deepEqual(await allWasmCalls(app.page), ['makeCert', 'httpInit']);
+    assert.equal(await app.page.evaluate(() => $('#host-grid').is(':visible')), true);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('the app asks once per start for persistent storage and logs the answer', async () => {
+  const persist = { content: '(' + (() => {
+    window.__persistCalls = 0;
+    navigator.storage.persisted = () => Promise.resolve(false);
+    navigator.storage.persist = () => {
+      window.__persistCalls++;
+      return Promise.resolve(true);
+    };
+  }).toString() + ')();' };
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, initScripts: [persist] });
+  try {
+    assert.equal(await app.page.evaluate(() => window.__persistCalls), 1, 'the database opens twice at a start, the request once');
+    assert.ok(app.logs.some((line) => line.indexOf('Persistent storage granted: the storage will not be cleared except by explicit user action.') >= 0));
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

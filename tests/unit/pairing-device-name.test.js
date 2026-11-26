@@ -200,7 +200,8 @@ test('the module passes the name from pair() to every pairing request of gs_pair
   const entry = main.slice(main.indexOf('void pair(int callbackId,'), main.indexOf('\n}\n', main.indexOf('void pair(int callbackId,')));
   assert.match(entry, /^void pair\(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber, std::string uniqueId,\s+std::string deviceName\) \{/);
   assert.match(entry, /g_Instance->Pair\(callbackId, serverMajorVersion, address, httpPort, randomNumber, deviceName\);/);
-  assert.match(main, /std::bind\(&MoonlightInstance::Pair_private, this, callbackId, serverMajorVersion, address, httpPort, randomNumber,\s+deviceName\)/);
+  // Since 2.3.5 with the number of the request, to which a cancel applies (libgamestream/http.c)
+  assert.match(main, /std::bind\(&MoonlightInstance::Pair_private, this, callbackId, serverMajorVersion, address, httpPort, randomNumber,\s+deviceName, requestNumber\)/);
   assert.match(main, /gs_pair\(atoi\(serverMajorVersion\.c_str\(\)\), address\.c_str\(\), \(unsigned short\)httpPort, randomNumber\.c_str\(\),\s+deviceName\.c_str\(\), &ppkstr\);/);
   assert.match(read('wasm/platform/messages.js'), /AsyncFunctions\['pair'\]\(id, \.\.\.params\);/);
   const pairing = read('libgamestream/pairing.c');

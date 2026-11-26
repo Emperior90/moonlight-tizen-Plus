@@ -94,7 +94,11 @@ MessageResult MoonlightInstance::HttpInit(std::string cert, std::string privateK
   return MessageResult::Resolve();
 }
 
-void MoonlightInstance::OpenUrl_private(int callbackId, std::string url, std::string ppk, bool binaryResponse) {
+void MoonlightInstance::OpenUrl_private(int callbackId, std::string url, std::string ppk, bool binaryResponse, int requestNumber) {
+  // The HTTP thread runs this request now: a cancel of it, also one that came while it waited, ends it
+  // (libgamestream/http.c)
+  http_begin_request(requestNumber);
+
   // For launch/resume requests, append the additional query parameters
   if (url.find("/launch?") != std::string::npos || url.find("/resume?") != std::string::npos) {
     url += LiGetLaunchUrlQueryParameters();
@@ -133,7 +137,11 @@ void MoonlightInstance::OpenUrl_private(int callbackId, std::string url, std::st
 }
 
 void MoonlightInstance::OpenUrl(int callbackId, std::string url, std::string ppk, bool binaryResponse) {
-  m_Dispatcher.post_job(std::bind(&MoonlightInstance::OpenUrl_private, this, callbackId, url, ppk, binaryResponse), false);
+  // Numbered on the main thread as it is handed over, so that cancelRequest() reaches it also while it still waits
+  // behind another job of the HTTP thread (e.g. the STUN lookup)
+  int requestNumber = http_hand_over_request();
+  m_Dispatcher.post_job(std::bind(&MoonlightInstance::OpenUrl_private, this, callbackId, url, ppk, binaryResponse, requestNumber),
+                        false);
 }
 
 MessageResult makeCert() {

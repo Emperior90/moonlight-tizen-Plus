@@ -238,10 +238,12 @@ class MoonlightInstance {
   bool WaitFor(std::condition_variable* variable, std::function<bool()> condition, std::chrono::milliseconds timeout);
   static int MediaSetupWaitFailed(const char* step);
 
-  void OpenUrl_private(int callbackId, std::string url, std::string ppk, bool binaryResponse);
+  // requestNumber is the number of the request among those handed over to the HTTP thread (http_hand_over_request() in
+  // libgamestream/http.c), to which a cancel applies
+  void OpenUrl_private(int callbackId, std::string url, std::string ppk, bool binaryResponse, int requestNumber);
   void STUN_private(int callbackId);
   void Pair_private(int callbackId, std::string serverMajorVersion, std::string address, int httpPort, std::string randomNumber,
-                    std::string deviceName);
+                    std::string deviceName, int requestNumber);
   void WakeOnLan_private(int callbackId, std::string macAddress, std::string subnetBroadcast);
 
   void LockMouse();

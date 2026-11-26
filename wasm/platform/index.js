@@ -852,7 +852,10 @@ function rescanNetwork() {
     // The polling of the hosts runs only while they are shown; opening a host or the settings stopped the scan already
     if (!isInGame && $('#host-grid').is(':visible')) {
       snackbarLog('Finished scanning the local network.');
-      startPollingHosts();
+      // Not while the Wake PC dialog waits, which polls its host itself and resumes the polling once it closes
+      if (!wolDialogWait) {
+        startPollingHosts();
+      }
     }
   });
 }
@@ -1867,6 +1870,13 @@ function pairingDialog(nvhttpHost, onSuccess, onFailure) {
 
 // How often the Wake PC dialog sends the Wake-on-LAN request again while it waits for the host
 var WOL_RESEND_INTERVAL_MS = 10000;
+// How often at most the Wake PC dialog scans the local network for the host (254 requests, about 4 seconds), which may
+// come back at a new address: when it opens, then before a poll once this long passed since the last scan. Up to
+// 2.3.4 it scanned before every poll, back to back.
+var WOL_SCAN_INTERVAL_MS = 30000;
+// After how long (in ms) the Wake PC dialog adds what to check on the PC when it still doesn't answer: Wake-on-LAN in
+// its BIOS or UEFI and in its network adapter, and that Sunshine starts with the PC
+var WOL_HINT_DELAY_MS = 90000;
 
 function autoWolDialog(host, onSuccess, onCancel) {
   var autoWolOverlay = document.querySelector('#autoWolDialogOverlay');
@@ -1901,11 +1911,18 @@ function autoWolDialog(host, onSuccess, onCancel) {
   Navigation.guardAccept(Views.AutoWolDialog);
   Navigation.push(Views.AutoWolDialog);
   focusElement('cancelAutoWol');
+  // The dialog polls its host itself, so the polling of the hosts pauses while it waits, as during a scan of the
+  // network (rescanNetwork()): both together with the scans of the dialog can exhaust the network stack of the TV. It
+  // resumes once the dialog closed and the hosts show (resumeHostPolling below).
+  stopPollingHosts();
 
   var isPolling = true;
   var isClosed = false;
   var pollTimeout = null;
   var resendTimer = null;
+  var hintTimer = null;
+  // When the dialog scanned the network last (Date.now()), or null before its first scan
+  var lastScanAt = null;
   var hasFailed = false;
   // The error of a failed request, which the Cancel/OK button logs. It lives here, since the button handler threw a
   // ReferenceError after a failure while it was declared in the catch handler below, and the dialog stayed open.
@@ -1915,7 +1932,16 @@ function autoWolDialog(host, onSuccess, onCancel) {
     isPolling = false;
     if (pollTimeout) clearTimeout(pollTimeout);
     if (resendTimer) clearInterval(resendTimer);
+    if (hintTimer) clearTimeout(hintTimer);
     if (typeof abortSubnetScan === 'function') abortSubnetScan();
+  };
+
+  // Resume the polling of the hosts once the dialog closed, if the hosts show and nothing else took over: not when the
+  // host that woke up opens now (hostChosen() stops the polling for its app list or its pairing) or a stream starts
+  var resumeHostPolling = function() {
+    if (!isInGame && !isHostOpening && !isDialogOpen && $('#host-grid').is(':visible')) {
+      startPollingHosts();
+    }
   };
 
   // Close the dialog once, and only then stop its tasks (as upstream does since 0a35dfd)
@@ -1937,6 +1963,7 @@ function autoWolDialog(host, onSuccess, onCancel) {
     console.log('%c[index.js, autoWolDialog]', 'color: green;', host.hostname + ' is online, closing the Wake PC dialog.');
     cleanup();
     if (onSuccess) onSuccess();
+    resumeHostPolling();
 
     // Instantly update the UI to remove the offline styling
     updateHostStatusIndicator(returnedHost);
@@ -1956,6 +1983,18 @@ function autoWolDialog(host, onSuccess, onCancel) {
         t('Waiting for the host PC to wake up and connect to the network...')
       );
 
+      // Say what to check on the PC when it still doesn't answer after a while; the dialog keeps waiting until Cancel
+      // or until the PC answers
+      hintTimer = setTimeout(function() {
+        if (!isPolling) return;
+        console.log('%c[index.js, autoWolDialog]', 'color: green;', host.hostname + ' hasn\'t answered ' + Math.round(WOL_HINT_DELAY_MS / 1000) + ' seconds after the Wake-on-LAN request.');
+        $('#autoWolDialogText').html(
+          t('Wake-on-LAN request sent to %1$s.', escapeHTML(host.hostname)) + '<br><br>' +
+          t('Waiting for the host PC to wake up and connect to the network...') + '<br><br>' +
+          t('%1$s hasn\'t answered yet. Check that Wake-on-LAN is on in its BIOS or UEFI and in the settings of its network adapter, and that Sunshine starts with the PC.', escapeHTML(host.hostname))
+        );
+      }, WOL_HINT_DELAY_MS);
+
       // Send the request again now and then while waiting, for a packet that a network card in deep sleep, a switch
       // that only just woke up or the Wi-Fi of the TV missed
       resendTimer = setInterval(function() {
@@ -1969,8 +2008,13 @@ function autoWolDialog(host, onSuccess, onCancel) {
       var pollLoop = function() {
         if (!isPolling) return;
 
-        // Continuously sweep the subnet to catch the host if it wakes up with a new DHCP IP
-        var scanPromise = (typeof startSubnetScanner === 'function')
+        // Sweep the subnet now and then to catch the host if it wakes up with a new DHCP IP: when the dialog opens, and
+        // then at most every WOL_SCAN_INTERVAL_MS
+        var isScanDue = lastScanAt === null || Date.now() - lastScanAt >= WOL_SCAN_INTERVAL_MS;
+        if (isScanDue) {
+          lastScanAt = Date.now();
+        }
+        var scanPromise = (isScanDue && typeof startSubnetScanner === 'function')
           ? Promise.resolve(startSubnetScanner()).catch(function(e){
               console.warn('%c[index.js, autoWolDialog]', 'color: orange;', 'Subnet scan failed during WOL wait, continuing to poll:', e);
             })
@@ -2033,6 +2077,7 @@ function autoWolDialog(host, onSuccess, onCancel) {
     }
     cleanup();
     if (onCancel) onCancel();
+    resumeHostPolling();
   });
 
   // Send wake request immediately since user explicitly opened the Wake PC menu
@@ -2510,6 +2555,23 @@ function startPcPowerSession(host, kind) {
   });
 }
 
+// Delete the files that the TV keeps of the given hosts, which were just removed from hosts and _previewApps (Delete PC
+// and Delete All PCs): the box art of each of them, and the Smart Hub previews of the apps that no remaining host
+// lists (deleteFilesOfDeletedHosts() in utils.js, which builds the paths). Also where the Smart Hub probe of this start
+// said no: the files of a start where it said yes may exist. Up to 2.3.4 the files stayed, and on Tizen 5.5 and 6.0 the
+// previews stayed readable for every device on the local network.
+function deleteBoxArtOfHosts(deletedHosts) {
+  var keptAppIds = {};
+  Object.keys(_previewApps).forEach(function(uid) {
+    ((_previewApps[uid] && _previewApps[uid].apps) || []).forEach(function(app) {
+      keptAppIds[String(app.id)] = true;
+    });
+  });
+  deleteFilesOfDeletedHosts(deletedHosts, Object.keys(hosts).map(function(uid) {
+    return hosts[uid];
+  }), keptAppIds);
+}
+
 // Show a confirmation with the Delete Host dialog before removing the host object
 function deleteHostDialog(host) {
   // Find the existing overlay and dialog elements
@@ -2557,8 +2619,9 @@ function deleteHostDialog(host) {
     updatePreviewData();
     // Forget the apps that were hidden for the host
     forgetHiddenApps(host.serverUid);
-    // The box art of its app grid that the app still holds goes (releaseAppGridBoxArt())
+    // The box art of its app grid that the app still holds goes (releaseAppGridBoxArt()), and so do its files
     forgetAppGridBoxArtOf(host.serverUid);
+    deleteBoxArtOfHosts([host]);
     // If host removed, show snackbar message
     snackbarLog('%1$s has been deleted successfully.', host.hostname);
     deleteHostOverlay.style.display = 'none';
@@ -2612,6 +2675,9 @@ function deleteAllHostsDialog() {
       console.log('%c[index.js, deleteAllHostsDialog]', 'color: green;', 'Removing all hosts, closing app dialog, and returning.');
       // Stop background polling for all hosts before removing them
       stopPollingHosts();
+      var deletedHosts = Object.keys(hosts).map(function(uid) {
+        return hosts[uid];
+      });
       // Iterate through all hosts and remove them
       for (var serverUid in hosts) {
         if (hosts.hasOwnProperty(serverUid)) {
@@ -2634,6 +2700,8 @@ function deleteAllHostsDialog() {
       _previewApps = {};
       savePreviewApps();
       updatePreviewData();
+      // The box art files of every PC go, and every Smart Hub preview of this app
+      deleteBoxArtOfHosts(deletedHosts);
       deleteHostOverlay.style.display = 'none';
       deleteHostDialog.close();
       isDialogOpen = false;
@@ -3325,8 +3393,21 @@ function showUpdateNoticeOnce(latestVersion) {
   });
 }
 
-// Automatically perform a scheduled app update check at startup if the interval condition is met and notify the user
-function checkForAppUpdatesAtStartup() {
+// How long the automatic check for updates waits before it asks GitHub once more after a failed check of this start
+// (e.g. the Wi-Fi of the TV was not up yet 10 seconds after the start), in ms
+var UPDATE_RETRY_DELAY_MS = 5 * 60 * 1000;
+
+// Whether the time of the last automatic check for updates makes a check due: none stored, more than UPDATE_INTERVAL
+// ago, or a time after now, which a wrong clock of the TV stored (it blocked the check until the clock passed it)
+function isUpdateCheckDue(lastChecked, currentTime) {
+  return typeof lastChecked !== 'number' || !isFinite(lastChecked) || lastChecked > currentTime ||
+    currentTime - lastChecked > UPDATE_INTERVAL;
+}
+
+// Automatically perform a scheduled app update check at startup if the interval condition is met and notify the user.
+// Only a check that GitHub answered counts as done: a failed one stores no time, so the next start checks again, and
+// this start asks once more after UPDATE_RETRY_DELAY_MS (isRetry), unless a stream runs then.
+function checkForAppUpdatesAtStartup(isRetry) {
   // Fetch the current timestamp and stored version info
   getData(UPDATE_TIMESTAMP, function(tResult) {
     var lastChecked = tResult[UPDATE_TIMESTAMP];
@@ -3336,7 +3417,7 @@ function checkForAppUpdatesAtStartup() {
       console.log('%c[index.js, checkForAppUpdatesAtStartup]', 'color: green;', `Last auto-check performed: ${formatUpdateTimestamp(lastChecked)}`);
     }
     // Check if enough time has passed since the last update check
-    if (!lastChecked || currentTime - lastChecked > UPDATE_INTERVAL) {
+    if (isUpdateCheckDue(lastChecked, currentTime)) {
       console.log('%c[index.js, checkForAppUpdatesAtStartup]', 'color: green;', 'Performing auto-check for new application updates...');
       // Fetch the latest release data from the GitHub API
       fetchLatestRelease().then(({ latestVersion }) => {
@@ -3349,16 +3430,26 @@ function checkForAppUpdatesAtStartup() {
             updateAppButton(latestVersion);
           }
         }, 100);
-        // Save the fetched version as the last known update version
+        // Save the fetched version as the last known update version, and the time of this check, which succeeded
         storeData(UPDATE_VERSION, latestVersion);
+        var checkedTime = Date.now();
+        storeData(UPDATE_TIMESTAMP, checkedTime);
+        console.log('%c[index.js, checkForAppUpdatesAtStartup]', 'color: green;', `New auto-check timestamp stored: ${formatUpdateTimestamp(checkedTime)}`);
       }).catch(error => {
-        // Only logged: the user didn't ask for this check and can't do anything about it (e.g. no internet). The check
-        // runs again after the interval, and Check for Updates in the settings says why it fails.
+        // Only logged: the user didn't ask for this check and can't do anything about it (e.g. no internet). No time
+        // is stored, so the next start checks again, and Check for Updates in the settings says why it fails.
         console.error('%c[index.js, checkForAppUpdatesAtStartup]', 'color: green;', 'Error: Failed to fetch the release data!', error);
+        if (!isRetry) {
+          console.log('%c[index.js, checkForAppUpdatesAtStartup]', 'color: green;', 'Checking for updates once more in ' + Math.round(UPDATE_RETRY_DELAY_MS / 60000) + ' minutes.');
+          setTimeout(function() {
+            if (isInGame) {
+              console.log('%c[index.js, checkForAppUpdatesAtStartup]', 'color: green;', 'Not checking for updates again during a stream; the next start checks.');
+              return;
+            }
+            checkForAppUpdatesAtStartup(true);
+          }, UPDATE_RETRY_DELAY_MS);
+        }
       });
-      // Save the current time as the last update check timestamp
-      storeData(UPDATE_TIMESTAMP, currentTime);
-      console.log('%c[index.js, checkForAppUpdatesAtStartup]', 'color: green;', `New auto-check timestamp stored: ${formatUpdateTimestamp(currentTime)}`);
     } else {
       var timeLeft = UPDATE_INTERVAL - (currentTime - lastChecked);
       var hoursLeft = Math.floor(timeLeft / (1000 * 60 * 60));
@@ -5817,38 +5908,96 @@ function createObjectStore(dataBase) {
   }
 }
 
+// Whether the database can't be opened at this start (openIndexDB()), so that every read fails at once
+var isIndexedDbFailed = false;
+// Whether this start asked for persistent storage already (requestPersistentStorage())
+var isPersistentStorageAsked = false;
+
+// Ask once per start that the browser of the TV never clears the storage of the app (the pairing, the hosts and the
+// settings) under storage pressure, and log the answer. Up to 2.3.4 the app only logged whether it was persistent.
+// res/config.xml asks for unlimited storage as well. Nothing waits for the answer.
+function requestPersistentStorage() {
+  if (isPersistentStorageAsked) {
+    return;
+  }
+  isPersistentStorageAsked = true;
+  if (!navigator.storage || !navigator.storage.persist || !navigator.storage.persisted) {
+    console.warn('%c[index.js, requestPersistentStorage]', 'color: green;', 'Warning: Persistent storage is not available!');
+    return;
+  }
+  navigator.storage.persisted().then(function(persistent) {
+    if (persistent) {
+      console.log('%c[index.js, requestPersistentStorage]', 'color: green;', 'Storage will not be cleared except by explicit user action.');
+      return;
+    }
+    return navigator.storage.persist().then(function(granted) {
+      console.log('%c[index.js, requestPersistentStorage]', 'color: green;', granted ? 'Persistent storage granted: the storage will not be cleared except by explicit user action.' :
+        'Persistent storage not granted: the storage may be cleared by the browser under storage pressure.');
+    });
+  }).catch(function(error) {
+    console.warn('%c[index.js, requestPersistentStorage]', 'color: green;', 'Warning: Failed to ask for persistent storage: ' + error);
+  });
+}
+
 function openIndexDB(callback) {
   if (db) {
     // Database already opened
     callback();
     return;
   }
+  // The database couldn't be opened at this start: call back at once without it, so that a read fails (getData()
+  // reports a read error) instead of waiting for good
+  if (isIndexedDbFailed) {
+    setTimeout(callback, 0);
+    return;
+  }
 
   console.log('%c[index.js, openIndexDB]', 'color: green;', 'Opening IndexedDB...');
-  if (navigator.storage && navigator.storage.persist) {
-    navigator.storage.persisted().then(persistent => {
-      if (persistent) {
-        console.log('%c[index.js, openIndexDB]', 'color: green;', 'Storage will not be cleared except by explicit user action.');
-      } else {
-        console.log('%c[index.js, openIndexDB]', 'color: green;', 'Storage may be cleared by the UA under storage pressure.');
-      }
-    });
-  } else {
-    console.warn('%c[index.js, openIndexDB]', 'color: green;', 'Warning: Persistent storage is not available!');
-  }
+  requestPersistentStorage();
 
   if (!indexedDB) {
     indexedDB = self.indexedDB || self.webkitIndexedDB || self.mozIndexedDB || self.OIndexedDB || self.msIndexedDB;
   }
 
+  // The callback runs once: also without the database after an error, so that the start shows why it can't go on
+  // (loadHTTPCertsCb()) instead of 'Loading Moonlight...' for good
+  let isCalledBack = false;
+  const fail = function(why) {
+    console.error('%c[index.js, openIndexDB]', 'color: green;', 'Error: Cannot create or access the IndexedDB database: ' + why);
+    isIndexedDbFailed = true;
+    if (!isCalledBack) {
+      isCalledBack = true;
+      callback();
+    }
+  };
+
   // Create/open database
-  const request = indexedDB.open(dbName, dbVersion);
+  let request;
+  try {
+    request = indexedDB.open(dbName, dbVersion);
+  } catch (err) {
+    setTimeout(function() {
+      fail(err);
+    }, 0);
+    return;
+  }
 
   request.onerror = function(e) {
-    console.error('%c[index.js, openIndexDB]', 'color: green;', 'Error: Cannot create or access the IndexedDB database: ', e);
+    fail(request.error || e);
+  };
+
+  // Another connection with an older version keeps the database from opening (none exists on a TV)
+  request.onblocked = function() {
+    fail('the database is blocked by another connection');
   };
 
   request.onsuccess = function(e) {
+    if (isCalledBack) {
+      // Opened after all, after an error was reported: later reads and writes use it
+      db = request.result;
+      return;
+    }
+    isCalledBack = true;
     console.log('%c[index.js, openIndexDB]', 'color: green;', 'Successfully created or accessed the IndexedDB database: ', e);
     db = request.result;
 
@@ -5941,7 +6090,21 @@ function getData(key, callbackFunction) {
   }
 }
 
-function storeData(key, data, callbackFunction) {
+// Store the data at the key and call the callback function once it is stored. A write that fails is logged, with the
+// error of the transaction, and calls onFailure (if given) once with it: e.g. a full flash memory aborts the
+// transaction with a QuotaExceededError, which fires only its abort event, which went unnoticed before 2.3.5.
+function storeData(key, data, callbackFunction, onFailure) {
+  let isFailed = false;
+  const fail = function(error) {
+    if (isFailed) {
+      return;
+    }
+    isFailed = true;
+    console.error('%c[index.js, storeData]', 'color: green;', 'Error: Unable to store data at the key: ' + key + ' in IndexedDB: ' + error);
+    if (onFailure) {
+      onFailure(error);
+    }
+  };
   let cb = function() {
     try {
       // Open a transaction to the database
@@ -5956,11 +6119,16 @@ function storeData(key, data, callbackFunction) {
         }
       };
 
+      // A failed request fires error and then abort; a transaction that the database aborts (e.g. QuotaExceededError)
+      // fires abort only
       transaction.onerror = function(e) {
-        console.error('%c[index.js, storeData]', 'color: green;', 'Error: Unable to store data in IndexedDB: ' + e);
+        fail(transaction.error || (e && e.target && e.target.error) || e);
+      };
+      transaction.onabort = function(e) {
+        fail(transaction.error || 'the transaction was aborted');
       };
     } catch (err) {
-      console.error('%c[index.js, storeData]', 'color: green;', 'Error: Something went wrong while storing data at the key: ' + key + ' from IndexedDB: ' + err);
+      fail(err);
     }
   };
 
@@ -6081,7 +6249,11 @@ function storeMultipleData(entries, callbackFunction) {
       };
 
       transaction.onerror = function(e) {
-        console.error('%c[index.js, storeMultipleData]', 'color: green;', 'Error: Unable to store data in IndexedDB: ' + e);
+        console.error('%c[index.js, storeMultipleData]', 'color: green;', 'Error: Unable to store data in IndexedDB: ' + (transaction.error || e));
+      };
+      // A transaction that the database aborts (e.g. QuotaExceededError on a full flash memory) fires abort only
+      transaction.onabort = function(e) {
+        console.error('%c[index.js, storeMultipleData]', 'color: green;', 'Error: Storing the keys: ' + Object.keys(entries).join(', ') + ' in IndexedDB was aborted: ' + transaction.error);
       };
     } catch (err) {
       console.error('%c[index.js, storeMultipleData]', 'color: green;', 'Error: Something went wrong while storing data at the keys: ' + Object.keys(entries).join(', ') + ' in IndexedDB: ' + err);
@@ -8150,6 +8322,12 @@ function loadStoredSettings() {
   });
 }
 
+// Stay on the loading screen with a message that says why the start can't go on, without the moving bar
+function showStartupFailure(message) {
+  $('#wasmSpinnerMessage').text(message);
+  $('#wasmSpinner').addClass('startup-failed');
+}
+
 function loadHTTPCerts() {
   console.log('%c[index.js, loadHTTPCerts]', 'color: green;', 'Loading stored HTTP certificates...');
   openIndexDB(loadHTTPCertsCb);
@@ -8169,7 +8347,7 @@ function loadHTTPCertsCb() {
       // start.
       if (isCertReadFailed || isUniqueidReadFailed) {
         console.error('%c[index.js, loadHTTPCertsCb]', 'color: green;', 'Error: Failed to read the stored ' + (isCertReadFailed ? 'certificate' : 'unique ID') + ', so nothing is replaced and the app has to be restarted!');
-        $('#wasmSpinnerMessage').text(t('Unable to read the stored pairing data. Please restart Moonlight.'));
+        showStartupFailure(t('Unable to read the stored pairing data. Please restart Moonlight.'));
         return;
       }
 
@@ -8189,76 +8367,92 @@ function loadHTTPCertsCb() {
         hideDiagnosticValue('uniqueid', myUniqueid);
       }
 
+      // Hand the certificate to the HTTP code of the module, then show the hosts. A failure there stays on the
+      // loading screen with a message: the app can't ask any host without it.
+      var startHttp = function() {
+        sendMessage('httpInit', [pairingCert.cert, pairingCert.privateKey, myUniqueid]).then(function(ret) {
+          restoreUiAfterWasmLoad();
+          loadStoredHosts();
+        }, function(failedInit) {
+          console.error('%c[index.js, loadHTTPCertsCb]', 'color: green;', 'Error: Failed HTTP initialization! Returned error was: ', failedInit + '!');
+          showStartupFailure(t('The stored pairing certificate can\'t be used. Please restart Moonlight. If this message comes again, uninstall Moonlight before you install it again, which deletes its settings and pairings.'));
+        });
+      };
+
       if (!pairingCert) { // We couldn't load a cert. Let's attempt to generate a new one.
         console.warn('%c[index.js, loadHTTPCertsCb]', 'color: green;', 'Warning: Local certificate not found! Generating a new one...');
         sendMessage('makeCert', []).then(function(cert) {
-          storeData('cert', cert, null);
+          storeCertificate(cert);
           pairingCert = cert;
           console.info('%c[index.js, loadHTTPCertsCb]', 'color: green;', 'Generated new certificate: ', cert);
+          startHttp();
         }, function(failedCert) {
+          // Nothing was stored, so the next start makes a certificate again
           console.error('%c[index.js, loadHTTPCertsCb]', 'color: green;', 'Error: Failed to generate a new certificate! Returned error was: \n', failedCert + '!');
-        }).then(function(ret) {
-          sendMessage('httpInit', [pairingCert.cert, pairingCert.privateKey, myUniqueid]).then(function(ret) {
-            restoreUiAfterWasmLoad();
-          }, function(failedInit) {
-            console.error('%c[index.js, loadHTTPCertsCb]', 'color: green;', 'Error: Failed HTTP initialization! Returned error was: ', failedInit + '!');
-          });
+          showStartupFailure(t('Moonlight couldn\'t create its pairing certificate. Please restart Moonlight.'));
         });
       } else {
-        sendMessage('httpInit', [pairingCert.cert, pairingCert.privateKey, myUniqueid]).then(function(ret) {
-          restoreUiAfterWasmLoad();
-        }, function(failedInit) {
-          console.error('%c[index.js, loadHTTPCertsCb]', 'color: green;', 'Error: Failed HTTP initialization! Returned error was: ', failedInit + '!');
-        });
+        startHttp();
       }
-
-      // load previously connected hosts, which have been killed into an object, and revive them back into a class
-      getData('hosts', function(previousValue) {
-        hosts = keepValidStoredHosts(previousValue.hosts);
-        for (var hostUID in hosts) { // Programmatically add each new host
-          var revivedHost = new NvHTTP(hosts[hostUID].address, myUniqueid, hosts[hostUID].userEnteredAddress, hosts[hostUID].macAddress);
-          Object.assign(revivedHost, hosts[hostUID]);
-          revivedHost._memCachedApplist = null; // Prevent using the app list cache from a previous session
-          revivedHost.httpPort = hosts[hostUID].httpPort || ((hosts[hostUID].httpsPort || 47984) + 5);
-          revivedHost.httpsPort = hosts[hostUID].httpsPort || (revivedHost.httpPort - 5);
-          revivedHost.externalPort = hosts[hostUID].externalPort || revivedHost.httpPort;
-          revivedHost.serverUid = hosts[hostUID].serverUid;
-          revivedHost.externalIP = hosts[hostUID].externalIP;
-          // The diagnostic log hides the stored public address wherever it appears, e.g. in the URLs of the polls that
-          // try it (diagnostics.js)
-          if (typeof hideDiagnosticAddress === 'function') {
-            hideDiagnosticAddress(revivedHost.externalIP);
-          }
-          revivedHost.hostname = hosts[hostUID].hostname;
-          revivedHost.ppkstr = hosts[hostUID].ppkstr;
-          revivedHost.autoWolEnabled = hosts[hostUID].autoWolEnabled || false;
-          // The hosts are stored as they were (saveHosts()), but what the last session knew about the PC is out of date
-          // now: a PC that is off now showed ONLINE (or Running, with the app it ran then) and a quick OK waited for its
-          // app list, and a PC that was off then showed OFFLINE although it answers now. So its state is unknown (null,
-          // no state on its card) until the first request of its polling ends (beginBackgroundPollingOfHost()), which
-          // hostChosen() and the Smart Hub deep links wait for. The polls of the last session go as well: one that ran
-          // while the hosts were saved left its callbacks stored as null, and pollServer() waited for that poll forever.
-          revivedHost.online = null;
-          revivedHost.currentGame = 0;
-          revivedHost._pollCompletionCallbacks = [];
-          revivedHost._consecutivePollFailures = 0;
-          revivedHost._pollCount = 0;
-          revivedHost.pinnedKeyMismatch = false;
-          hosts[hostUID] = revivedHost;
-          addHostToGrid(revivedHost);
-        }
-        isHostsLoaded = true;
-        // Load stored preview app lists and update Smart Hub Preview tiles.
-        // Using the persisted list avoids requiring live host connections at startup.
-        getData('previewApps', function(storedPreview) {
-          _previewApps = (storedPreview.previewApps != null) ? storedPreview.previewApps : {};
-          normalizePreviewImageUris(_previewApps);
-          updatePreviewData();
-        });
-        console.log('%c[index.js, loadHTTPCertsCb]', 'color: green;', 'Loading previously connected hosts...');
-        discoverHostsAtStartup();
-      });
     });
+  });
+}
+
+// Store a new pairing certificate. The start goes on in any case; a write that fails is logged, since the pairings made
+// with this certificate end at the next start, which makes a new one (SEC-8).
+function storeCertificate(cert) {
+  storeData('cert', cert, null, function(error) {
+    console.error('%c[index.js, storeCertificate]', 'color: green;', 'Error: Failed to store the new pairing certificate (' + error + '): the pairings of this start end at the next start of Moonlight.');
+  });
+}
+
+// Load the hosts that the last session stored, once the HTTP code of the module has the certificate (loadHTTPCertsCb())
+function loadStoredHosts() {
+  // load previously connected hosts, which have been killed into an object, and revive them back into a class
+  getData('hosts', function(previousValue) {
+    hosts = keepValidStoredHosts(previousValue.hosts);
+    for (var hostUID in hosts) { // Programmatically add each new host
+      var revivedHost = new NvHTTP(hosts[hostUID].address, myUniqueid, hosts[hostUID].userEnteredAddress, hosts[hostUID].macAddress);
+      Object.assign(revivedHost, hosts[hostUID]);
+      revivedHost._memCachedApplist = null; // Prevent using the app list cache from a previous session
+      revivedHost.httpPort = hosts[hostUID].httpPort || ((hosts[hostUID].httpsPort || 47984) + 5);
+      revivedHost.httpsPort = hosts[hostUID].httpsPort || (revivedHost.httpPort - 5);
+      revivedHost.externalPort = hosts[hostUID].externalPort || revivedHost.httpPort;
+      revivedHost.serverUid = hosts[hostUID].serverUid;
+      revivedHost.externalIP = hosts[hostUID].externalIP;
+      // The diagnostic log hides the stored public address wherever it appears, e.g. in the URLs of the polls that
+      // try it (diagnostics.js)
+      if (typeof hideDiagnosticAddress === 'function') {
+        hideDiagnosticAddress(revivedHost.externalIP);
+      }
+      revivedHost.hostname = hosts[hostUID].hostname;
+      revivedHost.ppkstr = hosts[hostUID].ppkstr;
+      revivedHost.autoWolEnabled = hosts[hostUID].autoWolEnabled || false;
+      // The hosts are stored as they were (saveHosts()), but what the last session knew about the PC is out of date
+      // now: a PC that is off now showed ONLINE (or Running, with the app it ran then) and a quick OK waited for its
+      // app list, and a PC that was off then showed OFFLINE although it answers now. So its state is unknown (null,
+      // no state on its card) until the first request of its polling ends (beginBackgroundPollingOfHost()), which
+      // hostChosen() and the Smart Hub deep links wait for. The polls of the last session go as well: one that ran
+      // while the hosts were saved left its callbacks stored as null, and pollServer() waited for that poll forever.
+      revivedHost.online = null;
+      revivedHost.currentGame = 0;
+      revivedHost._pollCompletionCallbacks = [];
+      revivedHost._consecutivePollFailures = 0;
+      revivedHost._pollCount = 0;
+      revivedHost.pinnedKeyMismatch = false;
+      hosts[hostUID] = revivedHost;
+      addHostToGrid(revivedHost);
+    }
+    isHostsLoaded = true;
+    // Load stored preview app lists and update Smart Hub Preview tiles.
+    // Using the persisted list avoids requiring live host connections at startup.
+    getData('previewApps', function(storedPreview) {
+      _previewApps = (storedPreview.previewApps != null) ? storedPreview.previewApps : {};
+      normalizePreviewImageUris(_previewApps);
+      updatePreviewData();
+    });
+    console.log('%c[index.js, loadHTTPCertsCb]', 'color: green;', 'Loading previously connected hosts...');
+    discoverHostsAtStartup();
   });
 }
 
@@ -8301,11 +8495,25 @@ function areHostsShownAtStartup() {
   return !isInGame && (!isStartupUiShown || $('#host-grid').is(':visible'));
 }
 
+// Whether the scan of the start can be left out: at least one stored host is paired, and every stored host answered its
+// first poll (online, also one that answered that it no longer accepts this TV). A host that didn't answer may be at a
+// new address, which the scan finds; without a paired host the user may still look for the PC to pair.
+function isEveryStoredHostOnline() {
+  var uids = Object.keys(hosts);
+  return uids.length > 0 && uids.every(function(uid) {
+    return hosts[uid].online === true;
+  }) && uids.some(function(uid) {
+    return hosts[uid].paired === true;
+  });
+}
+
 // Poll the known hosts and then scan the local network for new ones, once the stored hosts are loaded at startup.
 // Returns a promise that resolves once the scan is done and the polling resumed. When the user left the hosts before
 // the first polls ended (e.g. for the settings, or a Smart Hub tile opened a host), there is no scan at this start:
-// Rescan network in the header of the hosts finds a new PC or a new address later. The scan of the start only logs
-// that it runs, since nobody asked for it; the button shows its notices.
+// Rescan network in the header of the hosts finds a new PC or a new address later. Since 2.3.5 the scan is also left
+// out when every stored PC answered its first poll and one of them is paired (isEveryStoredHostOnline()); Rescan
+// network still scans whenever it is chosen. The scan of the start only logs that it runs, since nobody asked for it;
+// the button shows its notices.
 function discoverHostsAtStartup() {
   // Immediately start polling known hosts so they are ready for Smart Hub or instant clicks.
   // We wait for all known hosts to finish their initial ping before launching the subnet scanner
@@ -8318,14 +8526,22 @@ function discoverHostsAtStartup() {
       isSubnetScanFinished = true;
       return;
     }
+    // Every stored PC answered its first poll, and at least one of them is paired: the start has what it needs, and
+    // the scan (254 requests) would only find a PC that the app doesn't know yet, which Rescan network does
+    if (isEveryStoredHostOnline()) {
+      console.log('%c[index.js, discoverHostsAtStartup]', 'color: green;', 'Not scanning the local network at this start, since every stored PC answered and one of them is paired. Rescan network looks for other PCs.');
+      isSubnetScanFinished = true;
+      return;
+    }
     console.log('%c[index.js, discoverHostsAtStartup]', 'color: green;', 'Scanning the local network for new PCs...');
     // Stop background polling while sweeping the subnet to prevent network exhaustion
     stopPollingHosts();
     const resumePolling = () => {
       isSubnetScanFinished = true;
       console.log('%c[index.js, discoverHostsAtStartup]', 'color: green;', 'Finished scanning the local network.');
-      // Opening a host or the settings meanwhile stopped the polling, which stays stopped there
-      if (areHostsShownAtStartup()) {
+      // Opening a host or the settings meanwhile stopped the polling, which stays stopped there, and so does the Wake
+      // PC dialog, which polls its host itself and resumes the polling once it closes (autoWolDialog())
+      if (areHostsShownAtStartup() && !wolDialogWait) {
         startPollingHosts();
       }
     };

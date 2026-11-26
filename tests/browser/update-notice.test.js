@@ -5,6 +5,9 @@
 // "Version X is now available!" shows only on the first start that sees a newer version, never during a stream (where
 // it would cover the game, e.g. after a start from a Smart Hub tile), and a notice that a stream left out shows at a
 // later start. The Update button in the header of the hosts shows every time. A failed automatic check is only logged.
+// Since 2.3.5 a failed automatic check stores no time and is tried once more after UPDATE_RETRY_DELAY_MS, and a stored
+// time after now counts as due (isUpdateCheckDue()): up to 2.3.4 a check that failed, e.g. while the Wi-Fi of the TV
+// was still connecting, counted as done for 24 hours, and a wrong clock blocked the check until it passed the time.
 // The GitHub request is replaced by one that answers what the test sets.
 // The check of the settings (About > Check for updates, checkForAppUpdates() and offerAppUpdate()) answers after the
 // user may have moved on: its Update dialog opens neither over a running stream nor over another dialog (a message
@@ -105,6 +108,98 @@ test('a failed automatic check is only logged, and an up-to-date app shows nothi
     await answerReleases(app.page, version);
     assert.deepEqual(await checkAtStart(app.page, true), []);
     assert.equal(await updateButtonShown(app.page), false);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+// Replace the GitHub request by one that answers the given versions in turn (null fails, and the last one stays), counts
+// the requests in window.__fetches and records the snackbars. Only the checks that the test runs count: the check that
+// the start runs after 10 seconds goes nowhere (window.__checkAtStart is the real function, which its retry calls).
+const answerInTurn = (page, versions) => page.evaluate((list) => {
+  if (!window.__checkAtStart) {
+    window.__checkAtStart = checkForAppUpdatesAtStartup;
+    checkForAppUpdatesAtStartup = (isRetry) => (isRetry ? window.__checkAtStart(true) : undefined);
+  }
+  window.__messages = [];
+  document.querySelector('#snackbar').MaterialSnackbar.showSnackbar = (data) => window.__messages.push(data.message);
+  window.__fetches = 0;
+  fetchLatestRelease = () => {
+    const version = list[Math.min(window.__fetches++, list.length - 1)];
+    return version ? Promise.resolve({ latestVersion: version, releaseNotes: '' }) : Promise.reject(new Error('offline'));
+  };
+}, versions);
+
+// Run the automatic check of a start with the given time of the last check stored, and wait for its answer
+const checkWithStoredTime = (page, lastUpdateCheck) => page.evaluate(async (value) => {
+  await new Promise((resolve) => storeData('lastUpdateCheck', value, resolve));
+  window.__checkAtStart();
+  await new Promise((resolve) => setTimeout(resolve, 600));
+}, lastUpdateCheck);
+
+test('a failed automatic check stores no time, so the next start checks again', async () => {
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
+  try {
+    await answerInTurn(app.page, [null]);
+    await app.page.evaluate(() => {
+      UPDATE_RETRY_DELAY_MS = 60 * 60 * 1000;
+    });
+    await checkWithStoredTime(app.page, 0);
+    assert.equal(await app.page.evaluate(() => window.__fetches), 1);
+    assert.equal((await readStorage(app.page)).lastUpdateCheck, 0, 'up to 2.3.4 the failed check stored its time');
+    assert.ok(app.logs.some((line) => line.indexOf('Checking for updates once more in 60 minutes.') >= 0));
+    // The next start asks again, and a check that GitHub answered stores its time
+    await answerInTurn(app.page, ['99.0.0']);
+    await checkWithStoredTime(app.page, 0);
+    assert.equal(await app.page.evaluate(() => window.__fetches), 1);
+    const stored = await readStorage(app.page);
+    assert.ok(Math.abs(stored.lastUpdateCheck - Date.now()) < 60000, 'a check that worked stores its time: ' + stored.lastUpdateCheck);
+    assert.deepEqual(await app.page.evaluate(() => window.__messages), [NOTICE.replace('%1$s', '99.0.0')]);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a stored time after now (a wrong clock) makes the check due', async () => {
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
+  try {
+    await answerInTurn(app.page, ['99.0.0']);
+    await checkWithStoredTime(app.page, Date.now() + 10 * 24 * 60 * 60 * 1000);
+    assert.equal(await app.page.evaluate(() => window.__fetches), 1, 'up to 2.3.4 no check until the clock passed the time');
+    assert.deepEqual(await app.page.evaluate(() => window.__messages), [NOTICE.replace('%1$s', '99.0.0')]);
+    assert.ok(Math.abs((await readStorage(app.page)).lastUpdateCheck - Date.now()) < 60000);
+    // A time within the last 24 hours still skips the check
+    await answerInTurn(app.page, ['99.0.0']);
+    await checkWithStoredTime(app.page, Date.now() - 60 * 60 * 1000);
+    assert.equal(await app.page.evaluate(() => window.__fetches), 0);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a failed check of the start asks once more after the delay, and only once', async () => {
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
+  try {
+    // Fails at the start and at the retry: no third request, and still no time stored
+    await answerInTurn(app.page, [null, null, '99.0.0']);
+    await app.page.evaluate(() => {
+      UPDATE_RETRY_DELAY_MS = 300;
+    });
+    await checkWithStoredTime(app.page, 0);
+    await app.page.waitForTimeout(1500);
+    assert.equal(await app.page.evaluate(() => window.__fetches), 2, 'the check of the start and one retry');
+    assert.equal((await readStorage(app.page)).lastUpdateCheck, 0);
+    assert.deepEqual(await app.page.evaluate(() => window.__messages), []);
+    // Fails at the start, and the retry finds the new version and stores its time
+    await answerInTurn(app.page, [null, '99.0.0']);
+    await checkWithStoredTime(app.page, 0);
+    await app.page.waitForTimeout(1500);
+    assert.equal(await app.page.evaluate(() => window.__fetches), 2);
+    assert.deepEqual(await app.page.evaluate(() => window.__messages), [NOTICE.replace('%1$s', '99.0.0')]);
+    assert.ok(Math.abs((await readStorage(app.page)).lastUpdateCheck - Date.now()) < 60000);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

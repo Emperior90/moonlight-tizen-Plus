@@ -638,8 +638,8 @@ function dropBoxArtRequests(reason) {
  */
 var sendMessage = function(method, params) {
   if (SyncFunctions[method]) {
-    // Starting a request resets the cancel flag in C++, so a canceled pairing request
-    // that is still waiting in the JS queue must not start afterwards
+    // A cancel in C++ reaches only the requests handed over to the module so far (libgamestream/http.c), so a canceled
+    // pairing request that is still waiting in the JS queue must not start afterwards
     if (method === 'cancelRequest' && _queuedPairing) {
       _queuedPairing.canceled = true;
     }

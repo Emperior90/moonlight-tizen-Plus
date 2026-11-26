@@ -31,10 +31,8 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ### Changed
 
-- Every build checks the Tizen Studio installer it downloads, and a full release needs passed tests
-- The licence notice links ENet's real repository
-- The picture is read from the network by a thread of its own, so the packets of a frame are taken as they come
-- The streaming engine is built with stronger compiler optimizations
+- Builds check the Tizen Studio installer, a full release needs passed tests, and the ENet licence link is fixed
+- The picture is read from the network by a thread of its own, and the engine is built with stronger optimizations
 - Diagnostic log: two new lines show how busy the second thread is and whether its ring of packets filled up
 - After a Wi-Fi stall the sound catches up with the picture on its own (at most 100 ms behind)
 - Mouse emulation moves the pointer slowly just past the centre, and at shallow angles
@@ -42,12 +40,14 @@ What changed in each version of Moonlight Plus, in short, newest first.
 - B of a controller cancels a starting stream, and CH+ closes the menu of a PC again
 - The action buttons of the settings line up with the menus, and the PC details read as a table
 - The button mapping fades out at its bottom while more rows follow, and its arrows line up
+- No network scan at the start when every PC in the list answers; *Wake PC* scans less and says what to check
 
 ### Fixed
 
 - Controllers no longer act on the PC while Moonlight is in the background
 - Esc of a keyboard works as RETURN in the menus, and a held RETURN goes back one step only
 - The help texts of the settings can no longer lose their first letter
+- A failed update check no longer waits a day, a stuck loading screen says why, and *Delete PC* deletes its box art
 
 ### Also in this version
 

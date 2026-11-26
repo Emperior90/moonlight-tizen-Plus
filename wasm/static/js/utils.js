@@ -793,6 +793,66 @@ function getBoxArtDirName(hostname, serverUid) {
   return name;
 }
 
+// Delete the files that the TV keeps of PCs that were deleted (deleteBoxArtOfHosts() in index.js, for Delete PC and
+// Delete All PCs), which stayed up to 2.3.4: the directory of the box art of each deleted PC in the private storage of
+// the app, and the Smart Hub previews in the shared documents directory, which the preview service serves to the local
+// network on Tizen 5.5 and 6.0 (res/service/service.js). The path of a directory is built here, from getBoxArtDirName()
+// as everywhere else, never from the name of a host as it is. A directory that a remaining PC uses as well stays: two
+// PCs of the same name share it. A preview is named by the ID of its app only, and two PCs can list the same app ID
+// (e.g. the Desktop app of Sunshine), so the previews of an ID that a remaining PC lists (keptAppIds, an object with
+// the IDs as keys) stay. The previews of the regular Moonlight app in the same directory (preview-<id>.jpg) are never
+// touched. The calls are the asynchronous ones of Tizen 5.0 and newer, each in its own try, and an error is only
+// logged.
+function deleteFilesOfDeletedHosts(deletedHosts, remainingHosts, keptAppIds) {
+  if (typeof tizen === 'undefined' || !tizen.filesystem) {
+    return;
+  }
+  var logFailure = function(what) {
+    return function(error) {
+      console.warn('%c[utils.js, deleteFilesOfDeletedHosts]', 'color: gray;', 'Warning: Failed to delete ' + what + ': ' + (error && error.message ? error.message : error));
+    };
+  };
+  var keptDirNames = remainingHosts.map(function(host) {
+    return getBoxArtDirName(host.hostname, host.serverUid);
+  });
+  deletedHosts.forEach(function(host) {
+    if (keptDirNames.indexOf(getBoxArtDirName(host.hostname, host.serverUid)) >= 0) {
+      return;
+    }
+    var boxArtDir = 'wgt-private/' + getBoxArtDirName(host.hostname, host.serverUid);
+    try {
+      tizen.filesystem.deleteDirectory(boxArtDir, true, function() {
+        console.log('%c[utils.js, deleteFilesOfDeletedHosts]', 'color: gray;', 'Deleted the box art of ' + boxArtDir + '.');
+      }, logFailure(boxArtDir));
+    } catch (error) {
+      logFailure(boxArtDir)(error);
+    }
+  });
+  try {
+    tizen.filesystem.listDirectory('documents', function(files) {
+      var deleted = 0;
+      (files || []).forEach(function(fileName) {
+        if (typeof fileName !== 'string' || fileName.indexOf(SMART_HUB_PREVIEW_FILE_PREFIX) !== 0 || !/\.jpg$/.test(fileName)) {
+          return;
+        }
+        var appId = fileName.slice(SMART_HUB_PREVIEW_FILE_PREFIX.length, -'.jpg'.length);
+        if (Object.prototype.hasOwnProperty.call(keptAppIds, appId)) {
+          return;
+        }
+        try {
+          tizen.filesystem.deleteFile('documents/' + fileName, null, logFailure(fileName));
+          deleted++;
+        } catch (error) {
+          logFailure(fileName)(error);
+        }
+      });
+      console.log('%c[utils.js, deleteFilesOfDeletedHosts]', 'color: gray;', 'Deleting ' + deleted + ' Smart Hub previews that no remaining PC lists.');
+    }, logFailure('the Smart Hub previews'));
+  } catch (error) {
+    logFailure('the Smart Hub previews')(error);
+  }
+}
+
 function NvHTTP(address, clientUid, userEnteredAddress = '', macAddress) {
   // Constructor start
   this.hostname = address;
@@ -1127,8 +1187,6 @@ NvHTTP.prototype = {
         JSON.stringify(serverUid.slice(0, 24)) + ', isn\'t one that the app takes (1 to 64 letters, digits, dashes and underscores, and no name of a property of every object).'));
       return false;
     }
-
-    console.log('%c[utils.js, _parseServerInfo]', 'color: gray;', 'Parsing server info: ', $root);
 
     // Each field below is kept by its rule (cleanServerText(), isServerAddress(), isMacAddress(), parsePort() and
     // parseDisplayModes() above); a field that breaks its rule is left out or cut, and the host is listed all the same
@@ -1756,7 +1814,11 @@ NvHTTP.prototype = {
 
   updateExternalAddressIP4: function() {
     console.log('%c[utils.js, updateExternalAddressIP4]', 'color: gray;', 'Looking for the external IPv4 address of ' + this.hostname + '...');
+    // How long the lookup took goes to the log: it shares the one HTTP thread of the module with the requests to the
+    // hosts, outside their queue (messages.js), and a TV without internet may wait long for the name of the server
+    var startedAt = Date.now();
     return sendMessage('STUN', []).then(function(addr) {
+      var took = ' after ' + (Date.now() - startedAt) + ' ms';
       if (addr) {
         this.externalIP = addr;
         // The address itself stays out of the log, whose photos users post on the issue tracker, also in the URLs of the
@@ -1764,9 +1826,9 @@ NvHTTP.prototype = {
         if (typeof hideDiagnosticAddress === 'function') {
           hideDiagnosticAddress(addr);
         }
-        console.log('%c[utils.js, updateExternalAddressIP4]', 'color: gray;', 'Found the external IPv4 address of ' + this.hostname + '.');
+        console.log('%c[utils.js, updateExternalAddressIP4]', 'color: gray;', 'Found the external IPv4 address of ' + this.hostname + took + '.');
       } else {
-        console.error('%c[utils.js, updateExternalAddressIP4]', 'color: gray;', 'Error: External IPv4 address lookup failed!');
+        console.error('%c[utils.js, updateExternalAddressIP4]', 'color: gray;', 'Error: External IPv4 address lookup failed' + took + '!');
       }
     }.bind(this))
   },

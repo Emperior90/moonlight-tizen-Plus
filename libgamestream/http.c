@@ -74,21 +74,34 @@ static CURLcode sslctx_function(CURL * curl, void * sslctx, void * parm)
     return CURLE_OK;
 }
 
-volatile int g_CancelHttpRequest = 0;
+// The requests that the module hands to its HTTP thread are numbered (http_hand_over_request(), on the main thread), and
+// a cancel (http_cancel_request(), on the main thread) applies to every request up to the last one handed over: to the
+// one that runs and to one that still waits behind another job of the thread, e.g. the STUN lookup. The HTTP thread
+// names the request that it runs (http_begin_request()). Up to 2.3.4 a cancel set a flag that the next request cleared
+// at its start, so a request that was cancelled while it waited still ran. Plain 4-byte values: one thread writes
+// each of them.
+static volatile int g_LastHandedRequest = 0;
+static volatile int g_CancelledThrough = 0;
+static volatile int g_CurrentRequest = 0;
 
-void http_cancel_request() {
-  g_CancelHttpRequest = 1;
+int http_hand_over_request() {
+  return ++g_LastHandedRequest;
 }
 
-void http_reset_cancel() {
-  g_CancelHttpRequest = 0;
+void http_cancel_request() {
+  g_CancelledThrough = g_LastHandedRequest;
+}
+
+void http_begin_request(int number) {
+  g_CurrentRequest = number;
+}
+
+static int is_request_cancelled() {
+  return g_CurrentRequest != 0 && g_CurrentRequest <= g_CancelledThrough;
 }
 
 static int _progress_callback(void *clientp, double dltotal, double dlnow, double ultotal, double ulnow) {
-  if (g_CancelHttpRequest) {
-    return 1;
-  }
-  return 0;
+  return is_request_cancelled() ? 1 : 0;
 }
 
 int http_request(const char* url, const char* ppkstr, PHTTP_DATA data) {
@@ -99,7 +112,11 @@ int http_request(const char* url, const char* ppkstr, PHTTP_DATA data) {
   char* resolve_string = NULL;
   struct curl_slist *resolve_list = NULL;
 
-  http_reset_cancel();
+  // A request that was cancelled before it started never goes out
+  if (is_request_cancelled()) {
+    log_request(url, ppkstr, CURLE_ABORTED_BY_CALLBACK);
+    return GS_FAILED;
+  }
 
   curl = curl_easy_init();
 

@@ -573,3 +573,65 @@ test('_parseServerInfo() keeps each field by its rule', () => {
   assert.match(utils, /var candidates = getServerAddressCandidates\(this\);/);
   assert.match(utils, /refreshServerInfoAtAddress: function\(givenAddress\) \{[^}]*?if \(!isServerAddress\(givenAddress\)\) \{\s+return Promise\.reject\(/);
 });
+
+// Since 2.3.5 a parsed server info goes to no line of the console. Up to 2.3.4 each poll passed the parsed answer
+// itself, a jQuery object with its XML document, and the console of Chromium keeps the arguments of its last 1000
+// messages for its developer tools: about 15 MB of XML documents on the TV, with nothing in them that the diagnostic
+// log could show (6 of its 7 lines per 30 seconds on the PC list were this line).
+test('a parsed server info writes no line and gives the console no object to keep', async () => {
+  const platform = loadUtils();
+  const calls = [];
+  ['log', 'info', 'warn', 'error', 'debug'].forEach((level) => {
+    platform.context.console[level] = (...args) => calls.push({ level, args });
+  });
+  platform.context.__answer = REAL_ANSWERS['Sunshine, paired, over HTTPS'].answer;
+  const parsed = plain(await platform.run(`(function() {
+    var host = new NvHTTP('10.0.0.2', 'client', '', '');
+    return [1, 2, 3].map(function() { return host._parseServerInfo(__answer); });
+  })()`));
+  assert.deepEqual(parsed, [true, true, true]);
+  const withObject = calls.filter((call) => call.args.some((arg) => arg !== null && typeof arg === 'object'));
+  assert.deepEqual(withObject.map((call) => call.level + ' ' + String(call.args[0])), []);
+  assert.deepEqual(calls.map((call) => call.args.map(String).join(' ')).filter((text) => text.indexOf('Parsing server info') >= 0), []);
+});
+
+// Since 2.3.5 the lines of the STUN lookup say how long it took (a TV without internet may wait long for the name of
+// the server, while the lookup holds the one HTTP thread of the module), and still never the address
+test('the STUN lookup logs how long it took, also when it fails', async () => {
+  const lines = [];
+  const platform = createPlatformContext({
+    globals: {
+      crypto: webcrypto,
+      // The module answers the STUN lookup with an empty text when it finds no address
+      sendMessage() {
+        return Promise.resolve('');
+      },
+    },
+  });
+  platform.load('wasm/static/js/utils.js');
+  ['log', 'error'].forEach((level) => {
+    platform.context.console[level] = (...args) => lines.push(level + ' ' + args.filter((arg) => typeof arg === 'string' && arg.indexOf('%c') !== 0 && arg.indexOf('color:') !== 0).join(' '));
+  });
+  await platform.run(`(function() {
+    var host = new NvHTTP('10.0.0.2', 'client', '', '');
+    host.hostname = 'GAMING-PC';
+    return host.updateExternalAddressIP4();
+  })()`);
+  const stunLines = lines.filter((line) => /IPv4/.test(line));
+  assert.equal(stunLines.length, 2, stunLines.join('\n'));
+  assert.equal(stunLines[0], 'log Looking for the external IPv4 address of GAMING-PC...');
+  assert.match(stunLines[1], /^error Error: External IPv4 address lookup failed after \d+ ms!$/);
+
+  // A lookup that finds the address says so with its time, without the address
+  lines.length = 0;
+  platform.context.sendMessage = () => Promise.resolve('203.0.113.7');
+  const externalIP = await platform.run(`(function() {
+    var host = new NvHTTP('10.0.0.2', 'client', '', '');
+    host.hostname = 'GAMING-PC';
+    return host.updateExternalAddressIP4().then(function() { return host.externalIP; });
+  })()`);
+  assert.equal(externalIP, '203.0.113.7');
+  const found = lines.filter((line) => /IPv4/.test(line));
+  assert.match(found[1], /^log Found the external IPv4 address of GAMING-PC after \d+ ms\.$/);
+  assert.equal(lines.some((line) => line.indexOf('203.0.113.7') >= 0), false);
+});
