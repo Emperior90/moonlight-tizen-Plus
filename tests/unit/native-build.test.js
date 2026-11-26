@@ -7,7 +7,8 @@
 // builds the decoder from the list of CMakeLists.txt and decodes with it), no CPPLINT.cfg, and no member of
 // MoonlightInstance that is written but never read. Every file the build names exists, the Docker build context
 // leaves out the models of opus/dnn, which nothing compiles, and the unused headers of ports/ are gone. The module is
-// compiled and linked with -O3 (since 2.3.5).
+// compiled and linked with -O3 (since 2.3.5). Since 2.3.6 Opus is the floating-point build of libopus, as a test of its
+// CPU time on the TV (Audio CPU: decode of the full statistics), with the same files as the fixed-point build before.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -56,6 +57,29 @@ test('CMakeLists.txt builds the decoder of Opus without its encoder', () => {
   const auddec = read('wasm/auddec.cpp');
   assert.equal((auddec.match(/opus_multistream_decoder_create\(/g) || []).length, 1);
   assert.equal((auddec.match(/opus_multistream_decoder_destroy\(/g) || []).length, 1);
+});
+
+test('CMakeLists.txt builds Opus in floating point, without fast math, and the native tests build it the same way', () => {
+  // The definitions and include directories of the target: no FIXED_POINT, the float directory of SILK instead of the
+  // fixed one (also for the module), and none of the definitions or flags that would trade exactness for speed
+  const definitions = /target_compile_definitions\(opus PUBLIC([^)]*)\)/.exec(cmake());
+  assert.ok(definitions);
+  assert.deepEqual(definitions[1].trim().split(/\s+/), ['USE_ALLOCA', 'HAVE_LRINT', 'HAVE_LRINTF', 'OPUS_BUILD']);
+  const includes = (target) => new RegExp('target_include_directories\\(' + target + ' PUBLIC([^)]*)\\)').exec(cmake())[1].trim().split(/\s+/);
+  assert.deepEqual(includes('opus'), ['opus/include', 'opus/src', 'opus/silk', 'opus/celt', 'opus/silk/float']);
+  assert.ok(includes('moonlight-wasm').indexOf('opus/silk/float') >= 0);
+  assert.doesNotMatch(cmake(), /FIXED_POINT|silk\/fixed|FLOAT_APPROX|fast-math|ffast|OPUS_FAST_MATH/);
+  // The decode API of the app is unchanged: 16-bit samples
+  const auddec = read('wasm/auddec.cpp');
+  assert.ok(auddec.indexOf('opus_multistream_decode(decoder,') > 0);
+  assert.doesNotMatch(auddec, /opus_multistream_decode_float/);
+  // tests/native/run.sh reads the definitions and the include directories of the target, so that it builds what the
+  // release builds
+  const run = read('tests/native/run.sh');
+  assert.match(run, /sed -n '\/\^target_compile_definitions\(opus PUBLIC\/,\/\)\/p' "\$repo\/CMakeLists\.txt"/);
+  assert.match(run, /sed -n '\/\^target_include_directories\(opus PUBLIC\/,\/\)\/p' "\$repo\/CMakeLists\.txt"/);
+  assert.match(run, /"\$\{opus_defines\[@\]\}" "\$\{opus_includes\[@\]\}"/);
+  assert.doesNotMatch(run, /silk\/fixed/);
 });
 
 test('the Dockerfile copies only what exists, and the build context leaves out opus/dnn', () => {

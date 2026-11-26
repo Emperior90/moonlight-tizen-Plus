@@ -82,7 +82,12 @@ set_target_properties(libgamestream
 
 # The decoder of Opus (the app only decodes): the files of the encoder are left out. Every file here is one that the
 # decoder links (opus_multistream_decoder_create(), opus_multistream_decode()); tests/native/run.sh builds this list
-# and decodes with it.
+# with the include directories and definitions below and decodes with it.
+# Since 2.3.6 it is the floating-point build of libopus, as a test of whether it decodes with less CPU time on the TV
+# than the fixed-point build (FIXED_POINT and opus/silk/fixed up to 2.3.5); the line "Audio CPU: decode" of the full
+# statistics shows it. The same files link in both builds: the SILK decoder computes in integers in both, and the files
+# of opus/silk/float belong to the encoder. No -ffast-math and no FLOAT_APPROX: libopus relies on exact float
+# arithmetic in places. The app still decodes to 16-bit samples (opus_multistream_decode()).
 add_library(opus STATIC
     opus/celt/bands.c
     opus/celt/celt.c
@@ -155,12 +160,11 @@ target_include_directories(opus PUBLIC
     opus/src
     opus/silk
     opus/celt
-    opus/silk/fixed)
+    opus/silk/float)
 target_compile_definitions(opus PUBLIC
      USE_ALLOCA
      HAVE_LRINT
      HAVE_LRINTF
-     FIXED_POINT
      OPUS_BUILD)
 
 add_executable(moonlight-wasm
@@ -183,7 +187,7 @@ target_include_directories(moonlight-wasm PUBLIC
     opus/include
     opus/src
     opus/silk
-    opus/silk/fixed
+    opus/silk/float
     opus/celt
 )
 set_target_properties(moonlight-wasm

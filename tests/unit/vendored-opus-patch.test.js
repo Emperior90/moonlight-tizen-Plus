@@ -1,9 +1,10 @@
 'use strict';
 
 // Pins the local patch of the vendored Opus 1.5.2 (opus/, otherwise as upstream v1.5.2): opus/celt/arch.h sets
-// OPUS_FAST_INT64 also for WebAssembly (__EMSCRIPTEN__), so that the fixed-point decoder of the app multiplies in 64
-// bits as libopus does on 64-bit systems, instead of with the 16-bit partial products of its 32-bit fallback. A later
-// update of the vendored Opus would drop it unnoticed, so this file checks the condition, its explanation and the
+// OPUS_FAST_INT64 also for WebAssembly (__EMSCRIPTEN__), so that the integer arithmetic of the decoder multiplies in 64
+// bits as libopus does on 64-bit systems, instead of with the 16-bit partial products of its 32-bit fallback: that of
+// CELT and SILK in the fixed-point build of the app up to 2.3.5, that of SILK in the floating-point build since 2.3.6. A
+// later update of the vendored Opus would drop it unnoticed, so this file checks the condition, its explanation and the
 // places that record the patch: the licence notices of the package and the upstream baseline. tests/native/run.sh
 // evaluates the condition with the preprocessor for WebAssembly, a 32-bit target and an LP64 target.
 
@@ -28,13 +29,18 @@ test('opus/celt/arch.h sets OPUS_FAST_INT64 for WebAssembly and keeps the condit
   assert.equal((header.match(/__EMSCRIPTEN__/g) || []).length, 2, 'the comment and the condition');
 });
 
-test('the patch only matters for the fixed-point build that CMakeLists.txt makes', () => {
+test('the patch still matters for the SILK decoder of the floating-point build that CMakeLists.txt makes', () => {
   const definitions = /target_compile_definitions\(opus PUBLIC([^)]*)\)/.exec(read('CMakeLists.txt'));
   assert.ok(definitions);
-  assert.match(definitions[1], /\bFIXED_POINT\b/);
-  // The 64-bit macros that the condition switches are those of the fixed-point code of CELT and of SILK
+  // The floating-point build since 2.3.6 (tests/unit/native-build.test.js)
+  assert.doesNotMatch(definitions[1], /\bFIXED_POINT\b/);
+  // The 64-bit macros that the condition switches are those of the fixed-point code of CELT, which only the fixed-point
+  // build includes, and of SILK, whose decoder computes in integers in both builds: SigProc_FIX.h includes macros.h
+  // whatever FIXED_POINT says, and arch.h includes fixed_generic.h only for FIXED_POINT
   assert.match(read('opus/celt/fixed_generic.h'), /#if OPUS_FAST_INT64\n#define MULT32_32_Q31\(a,b\) \(\(opus_val32\)SHR\(\(opus_int64\)\(a\)\*\(opus_int64\)\(b\),31\)\)/);
   assert.match(read('opus/silk/macros.h'), /#if OPUS_FAST_INT64\n#define silk_SMULWB\(a32, b32\)/);
+  assert.match(read('opus/silk/SigProc_FIX.h'), /\n#include "macros\.h"\n/);
+  assert.match(read('opus/celt/arch.h'), /\n#ifdef FIXED_POINT\n[\s\S]*?#include "fixed_generic\.h"[\s\S]*?\n#else \/\* FIXED_POINT \*\//);
 });
 
 test('the licence notices, the upstream baseline and the native tests record the patch', () => {

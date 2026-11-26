@@ -152,10 +152,15 @@ opus_sources=($(sed -n '/^add_library(opus STATIC/,/^)/p' "$repo/CMakeLists.txt"
 # shellcheck disable=SC2207
 opus_defines=($(sed -n '/^target_compile_definitions(opus PUBLIC/,/)/p' "$repo/CMakeLists.txt" |
   sed -e 's/target_compile_definitions(opus PUBLIC//' -e 's/)//' | tr -s ' \n' '\n' | sed -e '/^$/d' -e 's/^/-D/'))
-echo "# Building the Opus decoder from the ${#opus_sources[@]} files of CMakeLists.txt (${opus_defines[*]})"
+# The include directories of the target as well, which select the fixed-point or the floating-point build with the
+# definitions (opus/silk/float since 2.3.6)
+# shellcheck disable=SC2207
+opus_includes=($(sed -n '/^target_include_directories(opus PUBLIC/,/)/p' "$repo/CMakeLists.txt" |
+  grep -o 'opus/[A-Za-z0-9_/]*' | sed -e "s|^|-I$repo/|"))
+echo "# Building the Opus decoder from the ${#opus_sources[@]} files of CMakeLists.txt (${opus_defines[*]}; ${opus_includes[*]#-I"$repo"/})"
 for source in "${opus_sources[@]}"; do
-  if ! "$cc" -std=gnu99 -O1 -w "${opus_defines[@]}" -I"$repo/opus/include" -I"$repo/opus/src" -I"$repo/opus/silk" \
-      -I"$repo/opus/celt" -I"$repo/opus/silk/fixed" -c "$repo/$source" -o "$opus_out/$(echo "$source" | tr / _).o"; then
+  if ! "$cc" -std=gnu99 -O1 -w "${opus_defines[@]}" "${opus_includes[@]}" \
+      -c "$repo/$source" -o "$opus_out/$(echo "$source" | tr / _).o"; then
     echo "# $source doesn't compile"
     failed=1
   fi
