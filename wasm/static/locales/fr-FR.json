@@ -211,7 +211,7 @@
   "CTRL + ALT + SHIFT + S": "CTRL + ALT + SHIFT + S",
   "SELECT + LB + RB + X": "SELECT + LB + RB + X",
   "— Step the performance statistics overlay through Off, Compact and Full.": "— Faire passer les statistiques de performances par Désactivé, Compact et Complet.",
-  "Kept only in the memory of the TV. The PIN, the encryption keys of the stream, the ID of the TV, the RTSP address, the public IP address and the MAC addresses are hidden. Local addresses, the addresses that you entered and the names of the PCs stay visible. UP and DOWN scroll.": "Conservé uniquement dans la mémoire du téléviseur. Le code PIN, les clés de chiffrement du streaming, l’identifiant du téléviseur, l’adresse RTSP, l’IP publique et les adresses MAC sont masqués. Les adresses locales ou saisies et les noms des PC restent visibles. HAUT et BAS font défiler.",
+  "Kept only in the memory of the TV. The PIN, the encryption keys of the stream, the ID of the TV, the RTSP address, the public IP address and the MAC addresses are hidden. Local addresses, the addresses that you entered and the names of the PCs stay visible. UP and DOWN scroll.": "Uniquement dans la mémoire du téléviseur. Le code PIN, les clés de chiffrement du streaming, l’ID du téléviseur, l’adresse RTSP, l’IP publique et les adresses MAC sont masqués. Les adresses locales ou saisies et les noms des PC restent visibles. HAUT et BAS font défiler.",
   "RETURN or ESC leaves the test, or a hold of B on a controller for 2 seconds.": "RETURN ou ESC quitte le test, tout comme B maintenu 2 secondes sur une manette.",
   "Remote control and keyboard": "Télécommande et clavier",
   "Media keys of the TV": "Touches multimédias du téléviseur",
