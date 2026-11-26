@@ -8,7 +8,9 @@
 // sequence in the page with its key events and waits, what the keys and the menu do meanwhile, RETURN and RED, the end of
 // the stream after the command (the PC list), the end of the stream with a panel open, and the layout of every panel in
 // every language, also with text 10 % wider (tests/browser/text-stress.js). The timing of the sequence on a clock of the
-// test and how its end is read are pinned by tests/unit/pc-power.test.js; the menu of a PC by pc-power.test.js.
+// test and how its end is read are pinned by tests/unit/pc-power.test.js; the menu of a PC by pc-power.test.js. Since
+// 2.3.5 'Quit app on the PC' asks first in a panel of its own (streamQuitPanel), which goes back, ends with the stream
+// and fits like the others; its answers are checked by stream-menu.test.js.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -204,7 +206,7 @@ async function padPress(page, button) {
 
 // What the page shows of the Stream Menu and its panels
 const state = (page) => page.evaluate(() => {
-  const panels = ['streamMenu', 'streamShortcutsPanel', 'streamFKeysPanel', 'streamPowerPanel', 'streamTextPanel'];
+  const panels = ['streamMenu', 'streamShortcutsPanel', 'streamFKeysPanel', 'streamPowerPanel', 'streamQuitPanel', 'streamTextPanel'];
   return {
     open: isStreamMenuOpen,
     shown: panels.filter((id) => !document.getElementById(id).hidden),
@@ -402,7 +404,7 @@ test('RETURN and B go back from each panel to the entry that opened it, also whe
   const app = await openStreaming({ gamepad: true });
   try {
     for (const [entry, panel, view] of [['streamMenuShortcuts', 'streamShortcutsPanel', 'StreamShortcuts'], ['streamMenuFKeys', 'streamFKeysPanel', 'StreamFKeys'],
-      ['streamMenuPower', 'streamPowerPanel', 'StreamPower']]) {
+      ['streamMenuPower', 'streamPowerPanel', 'StreamPower'], ['streamMenuQuit', 'streamQuitPanel', 'StreamQuit']]) {
       for (const back of ['RETURN', 'B', 'B after the mouse entry went', 'RETURN after the mouse entry came']) {
         if (back.indexOf('came') > 0) {
           // Without a controller the menu opens without the mouse emulation entry, which comes while the panel shows
@@ -639,7 +641,7 @@ test('RETURN cancels the command and closes Run with Esc, the stream goes on; RE
 test('a held RETURN goes back one level only, and the RIGHT that opens Function keys… doesn\'t run on in it while it is held', async () => {
   const app = await openStreaming();
   try {
-    for (const entry of ['streamMenuShortcuts', 'streamMenuFKeys', 'streamMenuPower', 'streamMenuText']) {
+    for (const entry of ['streamMenuShortcuts', 'streamMenuFKeys', 'streamMenuPower', 'streamMenuQuit', 'streamMenuText']) {
       await openMenuAt(app.page, entry);
       await remoteKey(app.page, ...ENTER);
       assert.notDeepEqual((await state(app.page)).shown, ['streamMenu'], entry);
@@ -899,7 +901,7 @@ test('a new bitrate after Enter reconnects the stream, since the command is drop
 test('the stream ends with a panel open: the panel and the menu close with their views, nothing is sent, and the next menu opens on Resume', async () => {
   const app = await openStreaming();
   try {
-    for (const entry of ['streamMenuShortcuts', 'streamMenuFKeys', 'streamMenuPower']) {
+    for (const entry of ['streamMenuShortcuts', 'streamMenuFKeys', 'streamMenuPower', 'streamMenuQuit']) {
       for (const end of ['streamTerminated: -1', 'RED', 'Play/Pause, then RED']) {
         const name = entry + ', ' + end;
         await openMenuAt(app.page, entry);
@@ -970,7 +972,7 @@ test('in every language the first level and each panel fit the safe area without
       await app.page.waitForFunction((locale) => document.documentElement.getAttribute('lang') === locale, language);
       await forEachTextWidth(app.page, async (stress) => {
         for (const [entry, panel] of [[null, 'streamMenu'], ['streamMenuShortcuts', 'streamShortcutsPanel'], ['streamMenuFKeys', 'streamFKeysPanel'],
-          ['streamMenuPower', 'streamPowerPanel']]) {
+          ['streamMenuPower', 'streamPowerPanel'], ['streamMenuQuit', 'streamQuitPanel']]) {
           const name = language + stress + ' ' + panel;
           await remoteKey(app.page, ...PLAY_PAUSE);
           if (entry) {
@@ -1011,7 +1013,7 @@ test('in every language the first level and each panel fit the safe area without
           assert.equal(fit.titleCut, false, name);
           assert.ok(panel === 'streamPowerPanel' ? fit.titleLines <= 2 : fit.titleLines === 1, name + ' ' + JSON.stringify(fit));
           assert.equal(fit.hintLines, 1, name);
-          assert.equal(fit.entries, { streamMenu: 12, streamShortcutsPanel: 5, streamFKeysPanel: 12, streamPowerPanel: 3 }[panel], name);
+          assert.equal(fit.entries, { streamMenu: 12, streamShortcutsPanel: 5, streamFKeysPanel: 12, streamPowerPanel: 3, streamQuitPanel: 2 }[panel], name);
           await app.page.evaluate(() => {
             streamMenuBitrateMbps = streamBitrateMbps;
             showStreamMenuBitrate();

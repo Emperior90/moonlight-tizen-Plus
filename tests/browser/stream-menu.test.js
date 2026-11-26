@@ -7,7 +7,8 @@
 // module), RETURN and B close it and resume the stream, and its entries run: the performance statistics, the mouse
 // emulation (its entry shows for a controller that reports a timestamp of 0 once its input changed, Tizen 5.5, before
 // that input moves the selection), the keys for the PC (every key released again; since 2.3.2 in the panel of
-// 'Shortcuts…', whose buttons still run with a click), Disconnect and 'Quit app on the PC'. Since 2.3.3 the first key of
+// 'Shortcuts…', whose buttons still run with a click), Disconnect and 'Quit app on the PC' (which asks first since 2.3.5,
+// with the question of the app list and the focus on Cancel). Since 2.3.3 the first key of
 // a PC keyboard in a running stream asks for the pointer lock, as RETURN does, while the keys of the TV, Esc and the
 // modifier keys don't, and no default action of such a key runs (Tab moved the focus off the video). It stays inside the safe area of the screen with every entry showing without scrolling and every label on one line in
 // every language, also with text 10 % wider than this machine draws it (tests/browser/text-stress.js), and the video
@@ -955,7 +956,18 @@ test('when the mouse emulation entry goes under the selection, the entry before 
   }
 });
 
-test('Disconnect ends the stream, and Quit app on the PC also quits the app on the host once the stream ended', async () => {
+// What the page shows of the question of 'Quit app on the PC' (streamQuitPanel)
+const quitPanel = (page) => page.evaluate(() => ({
+  shown: !document.getElementById('streamQuitPanel').hidden && $('#streamQuitPanel').is(':visible'),
+  entriesShown: $('#streamMenu').is(':visible'),
+  view: Object.keys(Views).filter((name) => Navigation.isCurrent(Views[name]))[0],
+  focused: document.activeElement ? document.activeElement.id : '',
+  title: $('#streamQuitTitle').text(),
+  text: $('#streamQuitText').text(),
+  items: getOverlayMenuItems('streamQuitPanel').map((item) => item.id),
+}));
+
+test('Disconnect ends the stream, and Quit app on the PC asks first, then also quits the app on the host once the stream ended', async () => {
   const app = await openStreaming();
   try {
     await remoteKey(app.page, ...PLAY_PAUSE);
@@ -978,7 +990,16 @@ test('Disconnect ends the stream, and Quit app on the PC also quits the app on t
   try {
     await remoteKey(quitting.page, ...PLAY_PAUSE);
     await quitting.page.evaluate(() => $('#streamMenuQuit').click());
+    // The question of the app list (quitAppDialog()), on Cancel, over the stream that goes on (since 2.3.5; before, the
+    // entry quit at once)
+    assert.deepEqual(await quitPanel(quitting.page), {
+      shown: true, entriesShown: false, view: 'StreamQuit', focused: 'streamQuitCancel', title: 'Quit app on the PC',
+      text: 'Are you sure you want to quit Game 8? All unsaved data will be lost.', items: ['streamQuitCancel', 'streamQuitConfirm'],
+    });
+    assert.deepEqual(await moduleCalls(quitting.page), ['setStreamMenuOpen true']);
+    await quitting.page.evaluate(() => $('#streamQuitConfirm').click());
     assert.deepEqual(await moduleCalls(quitting.page), ['setStreamMenuOpen true', 'setStreamMenuOpen false', 'stopStream']);
+    assert.equal((await quitPanel(quitting.page)).shown, false);
     const result = await quitting.page.evaluate(async () => {
       window.__hostCalls.length = 0;
       handleMessage('streamTerminated: 0');
@@ -992,6 +1013,79 @@ test('Disconnect ends the stream, and Quit app on the PC also quits the app on t
     assert.deepEqual(quitting.errors, []);
   } finally {
     await quitting.context.close();
+  }
+});
+
+test('the question of Quit app on the PC opens on Cancel, ignores a double OK, and Cancel, RETURN and B go back to the menu', async () => {
+  const app = await openStreaming({ gamepad: true });
+  const { page } = app;
+  // Back on the entries of the menu, on 'Quit app on the PC', with nothing quit
+  const assertBackOnQuit = async (message) => {
+    const panel = await quitPanel(page);
+    assert.deepEqual([panel.shown, panel.entriesShown, panel.view, panel.focused], [false, true, 'StreamMenu', 'streamMenuQuit'], message);
+    assert.equal(await page.evaluate(() => isStreamMenuOpen), true, message);
+  };
+  try {
+    await remoteKey(page, ...PLAY_PAUSE);
+    const entries = (await menuState(page)).entries;
+    for (let i = 0; i < entries.length; i++) {
+      await remoteKey(page, ...DOWN);
+    }
+    await remoteKey(page, ...UP);
+    assert.equal((await menuState(page)).focused, 'streamMenuQuit');
+    // A double OK on the entry: the first opens the question, the second (120 ms later) is ignored there
+    await page.evaluate(() => new Promise((resolve) => {
+      const enter = () => ['keydown', 'keyup'].forEach((type) => {
+        const event = new KeyboardEvent(type, { key: 'Enter', bubbles: true, cancelable: true });
+        Object.defineProperty(event, 'keyCode', { value: 13 });
+        Object.defineProperty(event, 'which', { value: 13 });
+        (document.activeElement || document.body).dispatchEvent(event);
+      });
+      enter();
+      setTimeout(() => {
+        enter();
+        resolve();
+      }, 120);
+    }));
+    let panel = await quitPanel(page);
+    assert.deepEqual([panel.shown, panel.view, panel.focused], [true, 'StreamQuit', 'streamQuitCancel']);
+    // UP and DOWN stop at the ends
+    await remoteKey(page, ...UP);
+    assert.equal((await quitPanel(page)).focused, 'streamQuitCancel');
+    await remoteKey(page, ...DOWN);
+    await remoteKey(page, ...DOWN);
+    assert.equal((await quitPanel(page)).focused, 'streamQuitConfirm');
+    await remoteKey(page, ...UP);
+    // OK on Cancel
+    await page.waitForTimeout(350);
+    await remoteKey(page, ...ENTER);
+    await assertBackOnQuit('Cancel');
+    // RETURN
+    await remoteKey(page, ...ENTER);
+    assert.equal((await quitPanel(page)).shown, true);
+    await remoteKey(page, ...RETURN);
+    await assertBackOnQuit('RETURN');
+    // B of the controller
+    await remoteKey(page, ...ENTER);
+    assert.equal((await quitPanel(page)).shown, true);
+    await page.evaluate(() => window.__setButton(0, 1, true));
+    await page.waitForTimeout(AFTER_DELAY_MS);
+    await page.evaluate(() => window.__setButton(0, 1, false));
+    await page.waitForTimeout(100);
+    await assertBackOnQuit('B');
+    // Nothing went to the host or ended the stream
+    assert.deepEqual(await moduleCalls(page), ['setStreamMenuOpen true']);
+    assert.deepEqual(await page.evaluate(() => [quitAppAfterStream, window.__hostCalls.filter((call) => call === 'quit')]), [false, []]);
+    // Without the title of the app, the question names the PC (the other text of the question of the app list)
+    panel = await page.evaluate(() => {
+      streamLaunchAppTitle = '';
+      updateStreamMenu();
+      return $('#streamQuitText').text();
+    });
+    assert.match(panel, /^Are you sure you want to quit the app that is running on .+\? All unsaved data will be lost\.$/);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
   }
 });
 

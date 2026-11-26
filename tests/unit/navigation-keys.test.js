@@ -46,10 +46,12 @@ function loadRemoteController(globals) {
   });
   platform.run('platformOnLoad({})');
   const tvKey = plain(platform.get('tvKey'));
-  // Press a key by name, e.g. press('KEY_UP'), and return whether the default action was prevented
+  // Press a key by name, e.g. press('KEY_UP'), or by its key code (27, Esc of a keyboard), and return whether the default
+  // action was prevented
   const press = (keyName, extra) => {
     let prevented = false;
-    const event = Object.assign({ keyCode: tvKey[keyName], repeat: false, preventDefault: () => { prevented = true; } }, extra || {});
+    const keyCode = typeof keyName === 'number' ? keyName : tvKey[keyName];
+    const event = Object.assign({ keyCode, repeat: false, preventDefault: () => { prevented = true; } }, extra || {});
     platform.get('remoteControllerHandler')(event);
     return prevented;
   };
@@ -162,11 +164,12 @@ test('a held arrow key drops the repeats that came before its last step reached 
   showSteps(1300);
   remote.press('KEY_UP', { repeat: true, timeStamp: 1310 });
   assert.deepEqual(operations, ['right', 'left', 'left', 'up', 'up', 'up']);
-  // The repeat of other keys and the arrow keys during a stream (e.g. in the Stream Menu) are left as they were
+  // The arrow keys during a stream (e.g. in the Stream Menu) are left as they were; the repeat of RETURN goes back no
+  // further in any menu (since 2.3.5, 'a held RETURN goes back one level' below)
   remote.press('KEY_RETURN', { repeat: true, timeStamp: 1305 });
   remote.platform.run('isInGame = true; wasmSessionStarted = true;');
   remote.press('KEY_DOWN', { repeat: true, timeStamp: 1306 });
-  assert.deepEqual(operations, ['right', 'left', 'left', 'up', 'up', 'up', 'back', 'down']);
+  assert.deepEqual(operations, ['right', 'left', 'left', 'up', 'up', 'up', 'down']);
 });
 
 test('a held arrow key still moves every half second when the times of its repeats look stale for good', () => {
@@ -213,6 +216,55 @@ test('Return goes back, CH+ presses and CH- switches', () => {
   press('KEY_CHANNEL_UP');
   press('KEY_CHANNEL_DOWN');
   assert.deepEqual(recorder.operations, ['back', 'press', 'switch']);
+  // CH+ presses once per press (since 2.3.5): it opens the menu of a PC or an app and closes it again, so its auto-repeat
+  // opened and closed the menu in turn while the key was held
+  press('KEY_CHANNEL_UP', { repeat: true });
+  press('KEY_CHANNEL_UP', { repeat: true });
+  assert.deepEqual(recorder.operations, ['back', 'press', 'switch']);
+  press('KEY_CHANNEL_UP');
+  assert.deepEqual(recorder.operations, ['back', 'press', 'switch', 'press']);
+});
+
+test('a held RETURN goes back one level in every menu, not only in the Stream Menu', () => {
+  const { recorder, press } = loadRemoteController();
+  // The views change at once, so before 2.3.5 the auto-repeat went on from a section of the settings to the PC list and
+  // to Exit Moonlight
+  press('KEY_RETURN');
+  [1, 2, 3, 4].forEach(() => press('KEY_RETURN', { repeat: true }));
+  assert.deepEqual(recorder.operations, ['back']);
+  press('KEY_RETURN');
+  assert.deepEqual(recorder.operations, ['back', 'back']);
+});
+
+test('Esc of a keyboard goes back like RETURN, prevents its default and ignores its auto-repeat', () => {
+  const remote = loadRemoteController({
+    isStreamConnected: false,
+    cancelStreamLaunch: () => {
+      remote.moduleCalls.push('cancelStreamLaunch');
+      remote.platform.run('isInGame = false;');
+    },
+  });
+  // Its default action closed an open <dialog> by itself and left the overlay and the keys of the dialog behind, so it
+  // is prevented, and the back() of the view closes the dialog as for RETURN (since 2.3.5)
+  assert.equal(remote.press(27, { key: 'Escape' }), true);
+  assert.deepEqual(remote.recorder.operations, ['back']);
+  assert.equal(remote.press(27, { key: 'Escape', repeat: true }), true);
+  assert.deepEqual(remote.recorder.operations, ['back']);
+  // On the launch screen it cancels the start, like RETURN and RED
+  remote.platform.run('isInGame = true; wasmSessionStarted = false;');
+  remote.press(27, { key: 'Escape' });
+  assert.deepEqual([remote.moduleCalls, remote.recorder.operations], [['cancelStreamLaunch'], ['back']]);
+});
+
+test('Done and Cancel of the keyboard of the TV accept and go back, once per press', () => {
+  const { recorder, press } = loadRemoteController();
+  // They come from a focused text field of the menus, the address field of Add PC (Views.AddHostDialog)
+  assert.equal(press(65376), false);
+  press(65376, { repeat: true });
+  assert.deepEqual(recorder.operations, ['accept']);
+  press(65385);
+  press(65385, { repeat: true });
+  assert.deepEqual(recorder.operations, ['accept', 'back']);
 });
 
 test('the volume keys control the TV volume', () => {
@@ -257,10 +309,10 @@ test('RETURN on the launch screen cancels the start once, and the auto-repeat of
   remote.press('KEY_RETURN', { repeat: true });
   remote.press('KEY_RETURN', { repeat: true });
   assert.deepEqual([remote.moduleCalls, remote.recorder.operations], [['cancelStreamLaunch'], []]);
-  // The next press goes back, and a RETURN held in the menus repeats as before
+  // The next press goes back, and a RETURN held in the menus goes back once (since 2.3.5)
   remote.press('KEY_RETURN');
   remote.press('KEY_RETURN', { repeat: true });
-  assert.deepEqual(remote.recorder.operations, ['back', 'back']);
+  assert.deepEqual(remote.recorder.operations, ['back']);
   // After the start request, the module stops the connection that it sets up
   remote.platform.run('isInGame = true; wasmSessionStarted = true;');
   remote.press('KEY_RETURN');
@@ -268,7 +320,7 @@ test('RETURN on the launch screen cancels the start once, and the auto-repeat of
   assert.deepEqual(remote.moduleCalls, ['cancelStreamLaunch', 'stopStream']);
   remote.platform.run('isInGame = false; wasmSessionStarted = false;');
   remote.press('KEY_RETURN', { repeat: true });
-  assert.deepEqual(remote.recorder.operations, ['back', 'back']);
+  assert.deepEqual(remote.recorder.operations, ['back']);
   // Once the stream connected, RETURN goes to the PC as Esc (index.js) and doesn't stop the stream
   remote.platform.run('isInGame = true; wasmSessionStarted = true; isStreamConnected = true;');
   remote.press('KEY_RETURN');

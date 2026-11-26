@@ -38,10 +38,13 @@ What changed in each version of Moonlight Plus, in short, newest first.
 - Diagnostic log: two new lines show how busy the second thread is and whether its ring of packets filled up
 - After a Wi-Fi stall the sound catches up with the picture on its own (at most 100 ms behind)
 - Mouse emulation moves the pointer slowly just past the centre, and at shallow angles
+- *Quit app on the PC* in the Stream Menu asks first, and Exit and Restart open on *Cancel*
+- B of a controller cancels a starting stream, and CH+ closes the menu of a PC again
 
 ### Fixed
 
 - Controllers no longer act on the PC while Moonlight is in the background
+- Esc of a keyboard works as RETURN in the menus, and a held RETURN goes back one step only
 
 ### Also in this version
 

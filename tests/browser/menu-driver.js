@@ -38,7 +38,8 @@ const THREE_HOSTS = {
   }),
 };
 
-// Runs before the scripts of the app: the simulated gamepads that navigator.getGamepads() returns. Gamepad 0 follows
+// Runs before the scripts of the app (also as an init script of openApp() of the harness, with padButton() then): the
+// simulated gamepads that navigator.getGamepads() returns. Gamepad 0 follows
 // its schedule (window.__padSchedule: { at, button, pressed } or { at, axis, value }, in the order of their times `at`
 // of performance.now()): a read of the gamepads first takes the steps that are due, so it sees what a real controller
 // would report at that moment, also when the page was busy and reads late. window.__padInputs counts the times the
@@ -355,6 +356,6 @@ function rowValue(page, rowId) {
 }
 
 module.exports = {
-  PAD, THREE_HOSTS, TV_KEYS, doubleKey, doublePadButton, dropdownOptions, key, keys, menuState, openMenus, openSettingsSection, padButton,
-  reloadMenus, rowValue, selectItem, takeSnackbars, timed, tvKey,
+  PAD, THREE_HOSTS, TV_KEYS, doubleKey, doublePadButton, dropdownOptions, installGamepads, key, keys, menuState, openMenus, openSettingsSection,
+  padButton, reloadMenus, rowValue, selectItem, takeSnackbars, timed, tvKey,
 };

@@ -7,7 +7,9 @@
 // repeat counts are in tests/unit/gamepad-menu-handler.test.js, the simulated controllers in gamepad-controllers.test.js.
 // Since 2.3.1 one press counts once: the last test drives the settings through the real polling with an A that comes
 // twice (which used to open the section and press its first row as well) and with a stick that snaps back past its
-// centre when it is let go (which used to step back, or the wrong way).
+// centre when it is let go (which used to step back, or the wrong way). Since 2.3.5 the polling goes on during the launch
+// screen of a stream, where only B acts (it cancels the start, start-screen-hang.test.js), and stops once the stream
+// connected.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -227,7 +229,7 @@ function simulatedGamepad() {
   addListener('gamepadinputchanged', (event) => window.__changes.push.apply(window.__changes, event.detail.changes));
 }
 
-test('the menu polling reports pad input, pauses while streaming and does not replay input held meanwhile', async () => {
+test('the menu polling keeps reading on the launch screen, pauses once the stream connected and does not replay input held meanwhile', async () => {
   const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, initScripts: [simulatedGamepad] });
   const { page } = app;
   try {
@@ -249,38 +251,63 @@ test('the menu polling reports pad input, pauses while streaming and does not re
     let changes = await page.evaluate(() => window.__changes);
     assert.ok(changes.some((c) => c.index === 13 && c.pressed) && changes.some((c) => c.index === 13 && !c.pressed), JSON.stringify(changes));
 
-    // Stream mode stops the polling of the menus, cancels a held repeat and forgets the stick directions
+    // The launch screen of a stream (showStreamMode() of a start) cancels a held repeat and forgets the stick directions,
+    // and the polling goes on for B (since 2.3.5), while every other button and the sticks do nothing
     await page.evaluate(() => {
       repeatAction = () => {};
       gamepadAxisDirections['0 axis 1'] = 1;
+      isInGame = true;
+      isStreamConnected = false;
       showStreamMode();
     });
-    const callsAtPause = await page.evaluate(() => window.__getGamepadsCalls);
+    await recordNavigation(page);
+    const callsAtLaunch = await page.evaluate(() => window.__getGamepadsCalls);
     await page.evaluate(() => {
       window.__changes = [];
       window.__pad.buttons[8] = { pressed: true, value: 1 };
       window.__pad.axes[0] = 0.9;
     });
     await page.waitForTimeout(300);
-    const paused = await page.evaluate(() => ({ calls: window.__getGamepadsCalls, changes: window.__changes, repeat: repeatAction, directions: gamepadAxisDirections }));
+    const launching = await page.evaluate(() => ({ calls: window.__getGamepadsCalls, changes: window.__changes, repeat: repeatAction, directions: gamepadAxisDirections }));
+    assert.ok(launching.calls > callsAtLaunch + 5, 'the menus read the gamepads on the launch screen');
+    assert.ok(launching.changes.some((c) => c.index === 8 && c.pressed), JSON.stringify(launching.changes));
+    assert.deepEqual(await operations(page), [], 'Select and the stick do nothing on the launch screen');
+    assert.equal(launching.repeat, null);
+    assert.deepEqual(launching.directions, {}, 'the stick directions are forgotten');
+
+    // 'Connection Established': the module reads the gamepads from now on, the polling of the menus stops
+    await page.evaluate(() => handleMessage('Connection Established'));
+    const callsAtPause = await page.evaluate(() => window.__getGamepadsCalls);
+    await page.evaluate(() => {
+      window.__changes = [];
+      window.__pad.buttons[0] = { pressed: true, value: 1 };
+    });
+    await page.waitForTimeout(300);
+    const paused = await page.evaluate(() => ({ calls: window.__getGamepadsCalls, changes: window.__changes, repeat: repeatAction }));
     assert.equal(paused.calls, callsAtPause, 'no getGamepads() calls from the menus while streaming');
     assert.deepEqual(paused.changes, []);
     assert.equal(paused.repeat, null);
-    assert.deepEqual(paused.directions, {}, 'the stick directions are forgotten');
 
-    // Back in the menus the polling resumes, and the input held during the stream is the new resting state
-    await page.evaluate(() => showAppsMode());
+    // Back in the menus (the stream ended) the polling resumes, and the input held during the stream is the new resting
+    // state
+    await page.evaluate(() => {
+      isInGame = false;
+      isStreamConnected = false;
+      showAppsMode();
+    });
     await page.waitForTimeout(200);
     const resumed = await page.evaluate(() => ({ calls: window.__getGamepadsCalls, changes: window.__changes }));
     assert.ok(resumed.calls > paused.calls + 10, 'polling resumed');
     assert.deepEqual(resumed.changes, []);
     await page.evaluate(() => {
+      window.__pad.buttons[0] = { pressed: false, value: 0 };
       window.__pad.buttons[8] = { pressed: false, value: 0 };
       window.__pad.axes[0] = 0;
     });
     await page.waitForTimeout(100);
     changes = await page.evaluate(() => window.__changes);
     assert.ok(changes.some((c) => c.index === 8 && !c.pressed) && changes.some((c) => c.type === 'axis' && c.index === 0 && c.value === 0), JSON.stringify(changes));
+    assert.ok(changes.some((c) => c.index === 0 && !c.pressed) && !changes.some((c) => c.pressed), JSON.stringify(changes));
 
     // Several stream cycles never add the connection listeners twice: index.js adds one for its log, gamepad.js one
     for (let i = 0; i < 3; i++) {

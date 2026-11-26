@@ -3,12 +3,15 @@
 // Checks the dialogs that confirm an action that can't be undone (pushConfirmationView() in wasm/platform/index.js):
 // quitting the running app (also before the start of another app), deleting a host or all hosts, Restore Defaults and
 // the optimal settings, which replace the video settings, open with the focus on No or Cancel, so that an OK pressed by
-// mistake only closes them. LEFT still reaches Yes or Apply. The other dialogs of the warning dialog keep their first
-// button: a warning its Close button, the Wake-on-LAN warning Continue.
+// mistake only closes them, and since 2.3.5 so do Exit Moonlight (which RETURN opens from the PC list) and the Restart
+// button of About. LEFT still reaches Yes, Apply, Exit or Restart. The restart question that follows Restore Defaults
+// keeps Restart. The other dialogs of the warning dialog keep their first button: a warning its Close button, the
+// Wake-on-LAN warning Continue. Remove all PCs with Continue deletes every PC with what the app stored for it.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { openApp, readStorage, startHarness } = require('./harness');
+const { THREE_HOSTS, tvKey } = require('./menu-driver');
 
 let harness;
 before(async () => {
@@ -155,6 +158,107 @@ test('the optimal settings open on Cancel, also after LEFT selected Apply the ti
     await app.page.evaluate(() => wakeOnLanWarningDialog({ hostname: 'GAMING-PC', macAddress: '02:11:22:33:44:55' }));
     assert.deepEqual(await selection(app.page), { focused: 'continueWarning', marked: ['continueWarning'] });
     await app.page.evaluate(() => $('#closeWarning').trigger('click'));
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('Exit Moonlight opens on Cancel, OK there keeps the app, and LEFT then OK exits', async () => {
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
+  try {
+    await app.page.evaluate(() => {
+      window.__exits = 0;
+      tizen.application.getCurrentApplication = () => ({ exit: () => window.__exits++ });
+    });
+    // RETURN on the PC list
+    await tvKey(app.page, 10009, 'XF86Back');
+    assert.deepEqual(await openDialogs(app.page), ['exitAppDialog']);
+    assert.deepEqual(await selection(app.page), { focused: 'cancelExitApp', marked: ['cancelExitApp'] });
+    await app.page.keyboard.press('Enter');
+    await app.page.waitForTimeout(300);
+    assert.deepEqual(await openDialogs(app.page), []);
+    assert.deepEqual(await app.page.evaluate(() => [window.__exits, isDialogOpen, Navigation.isCurrent(Views.Hosts)]), [0, false, true]);
+    // Again, also after LEFT selected Exit the time before: on Cancel; LEFT and OK exit
+    await tvKey(app.page, 10009, 'XF86Back');
+    await selection(app.page);
+    await app.page.keyboard.press('ArrowLeft');
+    assert.deepEqual(await selection(app.page), { focused: 'continueExitApp', marked: ['continueExitApp'] });
+    await app.page.evaluate(() => $('#cancelExitApp').trigger('click'));
+    await tvKey(app.page, 10009, 'XF86Back');
+    assert.deepEqual(await selection(app.page), { focused: 'cancelExitApp', marked: ['cancelExitApp'] });
+    await app.page.keyboard.press('ArrowLeft');
+    await app.page.waitForTimeout(100);
+    await app.page.keyboard.press('Enter');
+    await app.page.waitForTimeout(300);
+    assert.equal(await app.page.evaluate(() => window.__exits), 1);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('Restart Moonlight opens on Cancel, OK there restarts nothing, LEFT then OK restarts, and the question of Restore Defaults opens on Restart', async () => {
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
+  try {
+    await app.page.evaluate(() => {
+      window.__restarts = 0;
+      restartApplication = () => window.__restarts++;
+    });
+    // The Restart button of About
+    await app.page.evaluate(() => $('#restartAppBtn').trigger('click'));
+    assert.deepEqual(await openDialogs(app.page), ['restartAppDialog']);
+    assert.deepEqual(await selection(app.page), { focused: 'cancelRestartApp', marked: ['cancelRestartApp'] });
+    await app.page.keyboard.press('Enter');
+    await app.page.waitForTimeout(300);
+    assert.deepEqual([await openDialogs(app.page), await app.page.evaluate(() => window.__restarts)], [[], 0]);
+    await app.page.evaluate(() => $('#restartAppBtn').trigger('click'));
+    await selection(app.page);
+    await app.page.keyboard.press('ArrowLeft');
+    assert.deepEqual(await selection(app.page), { focused: 'continueRestartApp', marked: ['continueRestartApp'] });
+    await app.page.keyboard.press('Enter');
+    await app.page.waitForTimeout(300);
+    assert.equal(await app.page.evaluate(() => window.__restarts), 1);
+    // The restart that Restore Defaults asks for opens on Restart, also after the button of About opened on Cancel
+    await app.page.evaluate(() => $('#restartAppBtn').trigger('click'));
+    await selection(app.page);
+    await app.page.evaluate(() => $('#cancelRestartApp').trigger('click'));
+    await app.page.evaluate(() => requiredRestartAppDialog());
+    assert.deepEqual(await selection(app.page), { focused: 'continueRestartApp', marked: ['continueRestartApp'] });
+    await app.page.evaluate(() => $('#cancelRestartApp').trigger('click'));
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('Remove all PCs, then Continue, deletes every PC with its storage, its hidden apps and the data of the Smart Hub', async () => {
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, stored: { hosts: THREE_HOSTS } });
+  try {
+    await app.page.waitForFunction(() => typeof hosts !== 'undefined' && Object.keys(hosts).length === 3, null, { timeout: 10000 });
+    await app.page.evaluate(() => {
+      localStorage.setItem('hiddenApps_HOST1', JSON.stringify([{ id: 7, title: 'Desktop' }]));
+      _isSmartHubSupported = true;
+      _previewApps = { HOST1: [{ id: 7, title: 'Desktop' }] };
+      savePreviewApps();
+      deleteAllHostsDialog();
+    });
+    assert.deepEqual(await selection(app.page), { focused: 'cancelDeleteHost', marked: ['cancelDeleteHost'] });
+    await app.page.keyboard.press('ArrowLeft');
+    assert.deepEqual(await selection(app.page), { focused: 'continueDeleteHost', marked: ['continueDeleteHost'] });
+    await app.page.keyboard.press('Enter');
+    await app.page.waitForTimeout(400);
+    const result = await app.page.evaluate(() => ({
+      hosts: Object.keys(hosts),
+      cards: document.querySelectorAll('[id^="host-container-"]').length,
+      preview: _previewApps,
+      hidden: localStorage.getItem('hiddenApps_HOST1'),
+      dialogs: Array.prototype.map.call(document.querySelectorAll('dialog[open]'), (dialog) => dialog.id),
+    }));
+    assert.deepEqual(result, { hosts: [], cards: 0, preview: {}, hidden: null, dialogs: [] });
+    const stored = await readStorage(app.page);
+    assert.deepEqual([stored.hosts, stored.previewApps], [{}, {}]);
+    assert.ok(app.logs.some((line) => line.indexOf('All PCs have been deleted.') >= 0));
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

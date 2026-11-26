@@ -140,8 +140,9 @@ test('the function keys F1 to F12 of the Stream Menu are one key each, the virtu
   power.ctx.sendKeyComboToHost(keys.streamMenuKeyF11);
   assert.deepEqual(power.sent(), ['key 807a,3,0', 'key 807a,4,0']);
   // The panels and their entries
+  // 'Quit app on the PC' asks first in a panel of its own since 2.3.5 (the question of the app list)
   assert.deepEqual(plain(power.platform.get('STREAM_MENU_PANELS')), { streamMenuShortcuts: 'streamShortcutsPanel', streamMenuFKeys: 'streamFKeysPanel',
-    streamMenuPower: 'streamPowerPanel' });
+    streamMenuPower: 'streamPowerPanel', streamMenuQuit: 'streamQuitPanel' });
   assert.equal(power.platform.get('STREAM_FUNCTION_KEY_COLUMNS'), 4);
 });
 
@@ -537,7 +538,7 @@ test('a host without a name gets the sentences of the PC itself, never a name pu
   assert.deepEqual(restart.messages.map((message) => message.text), ['The PC restarts in a few seconds. To cancel (e.g. on the lock screen): RETURN or RED']);
 });
 
-test('in the Stream Menu a held RETURN goes back one level, and a held RIGHT that opened a panel doesn\'t move on in it', () => {
+test('a held RETURN goes back one level, in the Stream Menu and after it, and a held RIGHT that opened a panel doesn\'t move on in it', () => {
   const power = loadPower();
   const steps = [];
   power.ctx.tvKey = { KEY_LEFT: 37, KEY_UP: 38, KEY_RIGHT: 39, KEY_DOWN: 40, KEY_ENTER: 13, KEY_RETURN: 10009 };
@@ -549,10 +550,11 @@ test('in the Stream Menu a held RETURN goes back one level, and a held RIGHT tha
   key(10009, true);
   key(10009, true);
   assert.deepEqual(steps, ['back']);
-  // Closed (the next RETURN closed it): the held-key logic of index.js keeps the repeats from the PC
+  // Closed (the next RETURN closed it): its auto-repeat goes back no further either, as in every menu since 2.3.5 (the
+  // held-key logic of index.js keeps the repeats from the PC)
   power.ctx.isStreamMenuOpen = false;
   key(10009, true);
-  assert.deepEqual(steps, ['back', 'back']);
+  assert.deepEqual(steps, ['back']);
 
   // RIGHT opened a panel (streamMenuPanelKeyHeld): its auto-repeat doesn't move, a new press does
   steps.length = 0;

@@ -7,7 +7,8 @@
 // paired, and LIVING-ROOM, not paired).
 // - when the update button appears in the header, OK presses the button that is highlighted, not the one before it
 // - a second CH+, or a second Select of a gamepad, opens the menu of a PC once, so that one RETURN closes it; CH+,
-//   Play/Pause and Select open the menu from the menu icon of a PC too, like OK
+//   Play/Pause and Select open the menu from the menu icon of a PC too, like OK, and since 2.3.5 the key that opened it
+//   closes it again, as in the app menu, while a held CH+ opens it once
 // - the PC details name the real state of the PC
 // - the second press of a double OK or A that opens the Wake PC dialog or the PC details doesn't close them at once
 // - UP keeps the highlight on the only button of a dialog (PC details, navigation guide, support, Update, pairing)
@@ -95,7 +96,7 @@ for (const [rights, button] of [[0, 'rescanNetworkBtn'], [1, 'settingsBtn'], [2,
   });
 }
 
-test('a second CH+ or Select opens the menu of a PC once, and CH+, Play/Pause and Select open it from its menu icon', async () => {
+test('a second CH+ or Select opens the menu of a PC once, CH+, Play/Pause and Select open it from its menu icon, and the same key closes it again', async () => {
   const app = await openWithPcs({ pad: true });
   const { page } = app;
   try {
@@ -111,6 +112,51 @@ test('a second CH+ or Select opens the menu of a PC once, and CH+, Play/Pause an
     state = await menuState(page);
     assert.deepEqual([state.view, state.current, state.dialogs, state.marked], ['Hosts', 'host-container-HOST1', [], ['host-container-HOST1']]);
     assert.deepEqual(await pcMenuOverlays(page), []);
+    // CH+ opens it, and one more CH+ closes it again, as in the app menu (since 2.3.5; before, it only set the focus)
+    await key(page, 'chup', 500);
+    assert.equal((await menuState(page)).view, 'HostMenuDialog');
+    await key(page, 'chup', 500);
+    state = await menuState(page);
+    assert.deepEqual([state.view, state.current, state.dialogs, state.openDialogs, state.marked],
+      ['Hosts', 'host-container-HOST1', [], [], ['host-container-HOST1']]);
+    assert.deepEqual([await pcMenuOverlays(page), await page.evaluate(() => isDialogOpen)], [[], false]);
+    // A held CH+ (a keydown and its auto-repeat every 100 ms for 0.8 s) opens it once, and it stays open: whether the
+    // menu shows, every 20 ms from the keydown to 0.5 s after the keyup, without the repeats of the same state
+    const shown = await page.evaluate(() => new Promise((resolve) => {
+      const states = [];
+      const sample = setInterval(() => {
+        const open = document.querySelectorAll('[id^="hostMenuDialogOverlay-"]').length > 0;
+        if (states[states.length - 1] !== open) {
+          states.push(open);
+        }
+      }, 20);
+      const send = (type, repeat) => {
+        const event = new KeyboardEvent(type, { key: 'ChannelUp', bubbles: true, cancelable: true, repeat });
+        Object.defineProperty(event, 'keyCode', { value: 427 });
+        Object.defineProperty(event, 'which', { value: 427 });
+        (document.activeElement || document.body).dispatchEvent(event);
+      };
+      let count = 0;
+      const next = () => {
+        send('keydown', count > 0);
+        count++;
+        if (count <= 8) {
+          setTimeout(next, 100);
+          return;
+        }
+        send('keyup', false);
+        setTimeout(() => {
+          clearInterval(sample);
+          resolve(states);
+        }, 500);
+      };
+      next();
+    }));
+    assert.deepEqual(shown, [false, true], 'the menu opened once and stayed open');
+    state = await menuState(page);
+    assert.deepEqual([state.view, state.dialogs], ['HostMenuDialog', ['hostMenuDialogOverlay-HOST1']]);
+    await key(page, 'back', 400);
+    assert.equal((await menuState(page)).view, 'Hosts');
     await key(page, 'right', 200);
     assert.equal((await menuState(page)).current, 'host-container-HOST2');
     await key(page, 'left', 200);
@@ -123,6 +169,12 @@ test('a second CH+ or Select opens the menu of a PC once, and CH+, Play/Pause an
     await padButton(page, PAD.B, 400);
     state = await menuState(page);
     assert.deepEqual([state.view, state.dialogs], ['Hosts', []]);
+    // Select opens it and closes it again
+    await padButton(page, PAD.SELECT, 500);
+    assert.equal((await menuState(page)).view, 'HostMenuDialog');
+    await padButton(page, PAD.SELECT, 500);
+    state = await menuState(page);
+    assert.deepEqual([state.view, state.current, state.dialogs], ['Hosts', 'host-container-HOST1', []]);
 
     // UP to the menu icon of the PC: OK, CH+, Play/Pause and Select each open the menu
     await key(page, 'up', 200);
@@ -135,6 +187,12 @@ test('a second CH+ or Select opens the menu of a PC once, and CH+, Play/Pause an
       await key(page, 'back', 400);
       assert.equal((await menuState(page)).view, 'HostsMenuHighlight');
     }
+    // Play/Pause closes the menu that it opened from the menu icon, back on the icon
+    await key(page, 'playpause', 500);
+    assert.equal((await menuState(page)).view, 'HostMenuDialog');
+    await key(page, 'playpause', 500);
+    state = await menuState(page);
+    assert.deepEqual([state.view, state.current, state.dialogs], ['HostsMenuHighlight', 'hostMenuButton-HOST1', []]);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

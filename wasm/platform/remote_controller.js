@@ -60,6 +60,13 @@ function endStartingOrRunningStream() {
   }
 }
 
+// Esc of a keyboard, which the menus take as RETURN (the Navigation guide names both), and the Done and Cancel keys of
+// the keyboard of the TV (the IME of Tizen) in a text field of the menus, the address field of Add PC (the field of
+// 'Type text…' in the Stream Menu takes these keys itself, handleStreamTextKey() in menus.js)
+const KEY_ESCAPE = 27;
+const KEY_IME_DONE = 65376;
+const KEY_IME_CANCEL = 65385;
+
 function remoteControllerHandler(e) {
   const keyCode = e.keyCode;
   const target = e.target || {};
@@ -115,6 +122,14 @@ function remoteControllerHandler(e) {
       // Select the current item
       Navigation.accept();
       break;
+    case KEY_ESCAPE:
+      // Its default action closes an open <dialog> by itself (a close request of the browser), which left the dimmed
+      // overlay, isDialogOpen and the view of the dialog behind, so that the keys acted on the hidden dialog: OK then
+      // exited from Exit Moonlight. This handler runs before that default action (bubble phase on document), so
+      // preventing it here leaves the dialog to the back() of its view, like RETURN. In a running stream Esc goes to
+      // the PC (initSpecialKeys() in index.js) and nothing below acts on it: the menus are stopped there.
+      e.preventDefault();
+      // falls through
     case tvKey.KEY_RETURN:
       // On the launch screen of a stream, RETURN cancels the start like RED (the hint at its bottom names both): the menus
       // are stopped there, so before 2.3.2 it did nothing. Not once the stream connected, when RETURN goes to the PC as
@@ -142,13 +157,26 @@ function remoteControllerHandler(e) {
         }
         break;
       }
-      // In the Stream Menu RETURN goes back one level per press: the auto-repeat of the RETURN that closed a panel would
-      // close the menu as well
-      if (e.repeat && typeof isStreamMenuOpen !== 'undefined' && isStreamMenuOpen) {
+      // RETURN goes back one level per press, in the Stream Menu and in every other menu: the views change at once, so
+      // the auto-repeat of a RETURN held a little too long went back several levels, from a section of the settings to
+      // the PC list and on to Exit Moonlight, which could stay open with Exit selected (before 2.3.5)
+      if (e.repeat) {
         break;
       }
       // Go back or cancel the operation
       Navigation.back();
+      break;
+    case KEY_IME_DONE:
+      // Done of the keyboard of the TV: the text is entered (Views.AddHostDialog leaves the field and selects Continue)
+      if (!e.repeat) {
+        Navigation.accept();
+      }
+      break;
+    case KEY_IME_CANCEL:
+      // Cancel of the keyboard of the TV: like RETURN, which leaves the field
+      if (!e.repeat) {
+        Navigation.back();
+      }
       break;
     case tvKey.KEY_VOLUME_UP:
       // Increase the volume
@@ -163,7 +191,11 @@ function remoteControllerHandler(e) {
       tizen.tvaudiocontrol.setMute();
       break;
     case tvKey.KEY_CHANNEL_UP:
-      // Triggers the press action
+      // Triggers the press action, once per press: CH+ opens the menu of a PC or an app and closes it again, so its
+      // auto-repeat would open and close it in turn while the key is held
+      if (e.repeat) {
+        break;
+      }
       Navigation.press();
       break;
     case tvKey.KEY_CHANNEL_DOWN:

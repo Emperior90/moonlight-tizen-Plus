@@ -169,37 +169,37 @@
         <!-- Left Pane: Settings Categories. The ids stay those of earlier versions: interfaceSettings holds General. -->
         <div id="settings-left-pane">
           <div class="settings-categories">
-            <div class="settings-category" data-category="basicSettings" onclick="handleSettingsView('basicSettings')">
+            <div class="settings-category" tabindex="-1" data-category="basicSettings" onclick="handleSettingsView('basicSettings')">
               <span class="settings-category-icons cat-tile cat-tune" aria-hidden="true"><svg class="icon"><use xlink:href="#i-sliders"/></svg></span>
               <label data-i18n="Basic Settings">Basic Settings</label>
               <span class="settings-category-sub" data-i18n="Resolution, frame rate and bitrate">Resolution, frame rate and bitrate</span>
             </div>
-            <div class="settings-category" data-category="videoSettings" onclick="handleSettingsView('videoSettings')">
+            <div class="settings-category" tabindex="-1" data-category="videoSettings" onclick="handleSettingsView('videoSettings')">
               <span class="settings-category-icons cat-tile cat-video" aria-hidden="true"><svg class="icon"><use xlink:href="#i-video"/></svg></span>
               <label data-i18n="Video Settings">Video Settings</label>
               <span class="settings-category-sub" data-i18n="Codec, HDR and frame pacing">Codec, HDR and frame pacing</span>
             </div>
-            <div class="settings-category" data-category="audioSettings" onclick="handleSettingsView('audioSettings')">
+            <div class="settings-category" tabindex="-1" data-category="audioSettings" onclick="handleSettingsView('audioSettings')">
               <span class="settings-category-icons cat-tile cat-audio" aria-hidden="true"><svg class="icon"><use xlink:href="#i-speaker"/></svg></span>
               <label data-i18n="Audio Settings">Audio Settings</label>
               <span class="settings-category-sub" data-i18n="Sound output and synchronization">Sound output and synchronization</span>
             </div>
-            <div class="settings-category" data-category="inputSettings" onclick="handleSettingsView('inputSettings')">
+            <div class="settings-category" tabindex="-1" data-category="inputSettings" onclick="handleSettingsView('inputSettings')">
               <span class="settings-category-icons cat-tile cat-gamepad" aria-hidden="true"><svg class="icon"><use xlink:href="#i-gamepad"/></svg></span>
               <label data-i18n="Input Settings">Input Settings</label>
               <span class="settings-category-sub" data-i18n="Controllers and mouse emulation">Controllers and mouse emulation</span>
             </div>
-            <div class="settings-category" data-category="interfaceSettings" onclick="handleSettingsView('interfaceSettings')">
+            <div class="settings-category" tabindex="-1" data-category="interfaceSettings" onclick="handleSettingsView('interfaceSettings')">
               <span class="settings-category-icons cat-tile cat-ui" aria-hidden="true"><svg class="icon"><use xlink:href="#i-layout"/></svg></span>
               <label data-i18n="General">General</label>
               <span class="settings-category-sub" data-i18n="Language, app list and PCs">Language, app list and PCs</span>
             </div>
-            <div class="settings-category" data-category="advancedSettings" onclick="handleSettingsView('advancedSettings')">
+            <div class="settings-category" tabindex="-1" data-category="advancedSettings" onclick="handleSettingsView('advancedSettings')">
               <span class="settings-category-icons cat-tile cat-advanced" aria-hidden="true"><svg class="icon"><use xlink:href="#i-chip"/></svg></span>
               <label data-i18n="Advanced Settings">Advanced Settings</label>
               <span class="settings-category-sub" data-i18n="Statistics, warnings and experiments">Statistics, warnings and experiments</span>
             </div>
-            <div class="settings-category" data-category="aboutSettings" onclick="handleSettingsView('aboutSettings')">
+            <div class="settings-category" tabindex="-1" data-category="aboutSettings" onclick="handleSettingsView('aboutSettings')">
               <span class="settings-category-icons cat-tile cat-info" aria-hidden="true"><svg class="icon"><use xlink:href="#i-info"/></svg></span>
               <label data-i18n="About">About</label>
               <span class="settings-category-sub" data-i18n="System information and updates">System information and updates</span>
@@ -749,9 +749,9 @@
             <h4 id="loadingSpinnerMessage"></h4>
           </div>
         </div>
-        <!-- RETURN and RED cancel the start (remote_controller.js) -->
+        <!-- RETURN and RED of the remote and B of a controller cancel the start (remote_controller.js, index.js) -->
         <div id="launch-hints" class="launch-hints">
-          <span class="hint"><span class="keycap" data-i18n="RETURN">RETURN</span><span class="keycap keycap-red" data-i18n="RED">RED</span><span data-i18n="Cancel">Cancel</span></span>
+          <span class="hint"><span class="keycap" data-i18n="RETURN">RETURN</span><span class="keycap keycap-red" data-i18n="RED">RED</span><span class="keycap" data-i18n="B">B</span><span data-i18n="Cancel">Cancel</span></span>
         </div>
       </div>
     </main>
@@ -968,8 +968,8 @@
             <span data-i18n="— Return to the previous view, close any active menu or dialog, cancel the operation, and exit the application with confirmation. During a stream, RETURN sends Esc to the PC.">— Return to the previous view, close any active menu or dialog, cancel the operation, and exit the application with confirmation. During a stream, RETURN sends Esc to the PC.</span>
           </li>
           <li class="navGuideDialogControls">
-            <span class="navGuideRemoteText" data-i18n="CHANNEL UP">CHANNEL UP</span> / <span class="navGuideRemoteText" data-i18n="PLAY/PAUSE">PLAY/PAUSE</span> / <span class="navGuideKeyboardText" data-i18n="F11">F11</span> / <span class="navGuideGamepadText" data-i18n="SELECT">SELECT</span>
-            <span data-i18n="— Open the menu of a PC or an app.">— Open the menu of a PC or an app.</span>
+            <span class="navGuideRemoteText" data-i18n="CHANNEL UP">CHANNEL UP</span> / <span class="navGuideRemoteText" data-i18n="PLAY/PAUSE">PLAY/PAUSE</span> / <span class="navGuideGamepadText" data-i18n="SELECT">SELECT</span>
+            <span data-i18n="— Open or close the menu of a PC or an app.">— Open or close the menu of a PC or an app.</span>
           </li>
           <li class="navGuideDialogControls">
             <span class="navGuideRemoteText" data-i18n="PLAY/PAUSE">PLAY/PAUSE</span> / <span class="navGuideGamepadText" data-i18n="SELECT + START (HOLD 1 S)">SELECT + START (HOLD 1 S)</span>
@@ -980,11 +980,11 @@
             <span data-i18n="— Turn the mouse emulation on or off during a stream, if the Input Settings allow it (the Stream Menu always can): the left stick moves the pointer, the right stick scrolls, A or LB clicks left, B or RB clicks right, X or Y clicks the middle button.">— Turn the mouse emulation on or off during a stream, if the Input Settings allow it (the Stream Menu always can): the left stick moves the pointer, the right stick scrolls, A or LB clicks left, B or RB clicks right, X or Y clicks the middle button.</span>
           </li>
           <li class="navGuideDialogControls">
-            <span class="navGuideRemoteText" data-i18n="RED">RED</span> / <span class="navGuideKeyboardText" data-i18n="F1">F1</span> / <span class="navGuideKeyboardText" data-i18n="CTRL + ALT + SHIFT + Q">CTRL + ALT + SHIFT + Q</span> / <span class="navGuideGamepadText" data-i18n="SELECT + START + LB + RB">SELECT + START + LB + RB</span>
-            <span data-i18n="— Disconnect, while the app keeps running on the PC; cancels a stream that is starting.">— Disconnect, while the app keeps running on the PC; cancels a stream that is starting.</span>
+            <span class="navGuideRemoteText" data-i18n="RED">RED</span> / <span class="navGuideKeyboardText" data-i18n="CTRL + ALT + SHIFT + Q">CTRL + ALT + SHIFT + Q</span> / <span class="navGuideGamepadText" data-i18n="SELECT + START + LB + RB">SELECT + START + LB + RB</span>
+            <span data-i18n="— Disconnect, while the app keeps running on the PC. RED also cancels a stream that is starting.">— Disconnect, while the app keeps running on the PC. RED also cancels a stream that is starting.</span>
           </li>
           <li class="navGuideDialogControls">
-            <span class="navGuideRemoteText" data-i18n="YELLOW">YELLOW</span> / <span class="navGuideKeyboardText" data-i18n="F3">F3</span> / <span class="navGuideKeyboardText" data-i18n="CTRL + ALT + SHIFT + S">CTRL + ALT + SHIFT + S</span> / <span class="navGuideGamepadText" data-i18n="SELECT + LB + RB + X">SELECT + LB + RB + X</span>
+            <span class="navGuideRemoteText" data-i18n="YELLOW">YELLOW</span> / <span class="navGuideKeyboardText" data-i18n="CTRL + ALT + SHIFT + S">CTRL + ALT + SHIFT + S</span> / <span class="navGuideGamepadText" data-i18n="SELECT + LB + RB + X">SELECT + LB + RB + X</span>
             <span data-i18n="— Step the performance statistics overlay through Off, Compact and Full.">— Step the performance statistics overlay through Off, Compact and Full.</span>
           </li>
         </ul>
@@ -1126,7 +1126,7 @@
       <button type="button" id="streamMenuDisconnect" class="overlay-menu-item" role="menuitem">
         <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-stop"/></svg><span class="overlay-menu-label" data-i18n="Disconnect">Disconnect</span>
       </button>
-      <button type="button" id="streamMenuQuit" class="overlay-menu-item is-danger" role="menuitem">
+      <button type="button" id="streamMenuQuit" class="overlay-menu-item is-danger" role="menuitem" aria-haspopup="dialog">
         <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-quit"/></svg><span class="overlay-menu-label" data-i18n="Quit app on the PC">Quit app on the PC</span>
       </button>
       <button type="button" id="streamMenuPower" class="overlay-menu-item is-danger" role="menuitem" aria-haspopup="dialog">
@@ -1213,6 +1213,21 @@
       </button>
       <button type="button" id="streamPowerShutdown" class="overlay-menu-item is-danger" role="menuitem">
         <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-power"/></svg><span class="overlay-menu-label" data-i18n="Shut down the PC">Shut down the PC</span>
+      </button>
+      <div class="overlay-menu-hint" data-i18n="RETURN or B: back to the Stream Menu">RETURN or B: back to the Stream Menu</div>
+    </div>
+    <!-- 'Quit app on the PC' of the Stream Menu (platform/menus.js): the question of the app list, which opens on Cancel -->
+    <div id="streamQuitPanel" class="overlay-menu stream-menu" role="dialog" aria-labelledby="streamQuitTitle" aria-describedby="streamQuitText" hidden>
+      <div class="overlay-menu-header">
+        <h3 id="streamQuitTitle" class="overlay-menu-title" data-i18n="Quit app on the PC">Quit app on the PC</h3>
+        <div id="streamQuitSubtitle" class="overlay-menu-subtitle"></div>
+        <p id="streamQuitText" class="overlay-menu-text"></p>
+      </div>
+      <button type="button" id="streamQuitCancel" class="overlay-menu-item" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-close"/></svg><span class="overlay-menu-label" data-i18n="Cancel">Cancel</span>
+      </button>
+      <button type="button" id="streamQuitConfirm" class="overlay-menu-item is-danger" role="menuitem">
+        <svg class="overlay-menu-icon icon" aria-hidden="true"><use xlink:href="#i-quit"/></svg><span class="overlay-menu-label" data-i18n="Quit app on the PC">Quit app on the PC</span>
       </button>
       <div class="overlay-menu-hint" data-i18n="RETURN or B: back to the Stream Menu">RETURN or B: back to the Stream Menu</div>
     </div>

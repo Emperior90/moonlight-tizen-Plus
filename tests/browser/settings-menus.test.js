@@ -16,13 +16,15 @@
 // - the Advanced Settings keep a selection when their last row went away with the audio output
 // - the restart question of Restore Defaults comes at once, and the second press of a double OK doesn't answer it
 // - a double OK on the disabled Ultra low latency mode switch of a TV on Tizen 5.5 opens its warning once
+// - RIGHT opens the selected section like OK and LEFT in a section goes back to its tile like RETURN, and the tiles take
+//   the focus with the selection (since 2.3.5)
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { DROPDOWN_OK_WAIT_MS, startHarness, waitForStorage } = require('./harness');
 const {
   PAD, doubleKey, doublePadButton, dropdownOptions, key, menuState, openMenus, openSettingsSection, padButton, rowValue, selectItem, takeSnackbars,
-  timed,
+  timed, tvKey,
 } = require('./menu-driver');
 
 let harness;
@@ -372,6 +374,73 @@ test('OK twice on the disabled Ultra low latency mode switch opens its warning o
     await key(page, 'down', 200);
     state = await menuState(page);
     assert.deepEqual([state.view, state.current, state.marked], ['VideoSettings', 'gameModeBtn', ['gameModeBtn']]);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('RIGHT opens the selected section of the settings and LEFT goes back to its tile, and the tile has the focus while selected', async () => {
+  const app = await openMenus(harness, { pad: true });
+  const { page } = app;
+  // The tile that the list of the sections selects, and the tile that has the focus (since 2.3.5 the tiles take it,
+  // tabindex="-1"; before, the focus fell to the page)
+  const tiles = () => page.evaluate(() => {
+    const focused = document.activeElement;
+    return {
+      view: window.__view,
+      selected: Views.Settings.view.current().getAttribute('data-category'),
+      focusedTile: focused && focused.classList.contains('settings-category') ? focused.getAttribute('data-category') : '',
+      focusedId: focused && focused !== document.body ? focused.id : '',
+    };
+  });
+  try {
+    await key(page, 'up');
+    await selectItem(page, 'HostsNav', 'settingsBtn', 'left', 'right');
+    await key(page, 'ok', 500);
+    assert.equal((await menuState(page)).view, 'Settings');
+    await key(page, 'down');
+    assert.deepEqual(await tiles(page), { view: 'Settings', selected: 'videoSettings', focusedTile: 'videoSettings', focusedId: '' });
+    // RIGHT: the section opens on its first row, which takes the focus, and no tile keeps it
+    await key(page, 'right', 600);
+    let state = await menuState(page);
+    assert.deepEqual([state.view, state.current, state.focused, state.marked], ['VideoSettings', 'selectCodec', 'selectCodec', ['selectCodec']]);
+    assert.equal((await tiles(page)).focusedTile, '');
+    // LEFT: back on the tile of the section
+    await key(page, 'left', 400);
+    assert.deepEqual(await tiles(page), { view: 'Settings', selected: 'videoSettings', focusedTile: 'videoSettings', focusedId: '' });
+    // The same with the D-pad of a gamepad
+    await padButton(page, PAD.RIGHT, 600);
+    assert.deepEqual([(await menuState(page)).view, (await menuState(page)).current], ['VideoSettings', 'selectCodec']);
+    await padButton(page, PAD.LEFT, 400);
+    assert.deepEqual(await tiles(page), { view: 'Settings', selected: 'videoSettings', focusedTile: 'videoSettings', focusedId: '' });
+    // A held RIGHT (a keydown and its auto-repeat every 100 ms) opens the section once and stays on its first row (the
+    // section has no use for RIGHT)
+    await tvKey(page, 39, 'ArrowRight', { types: ['keydown'] });
+    for (let i = 0; i < 4; i++) {
+      await page.waitForTimeout(100);
+      await tvKey(page, 39, 'ArrowRight', { types: ['keydown'], repeat: true });
+    }
+    await tvKey(page, 39, 'ArrowRight', { types: ['keyup'] });
+    await page.waitForTimeout(600);
+    state = await menuState(page);
+    assert.deepEqual([state.view, state.current, state.focused], ['VideoSettings', 'selectCodec', 'selectCodec']);
+    await key(page, 'left', 400);
+    // About, whose first row (System information) scrolls with UP and DOWN only: LEFT goes back from it as well
+    for (let i = 0; i < 6; i++) {
+      await key(page, 'down', 150);
+    }
+    assert.equal((await tiles(page)).selected, 'aboutSettings');
+    await key(page, 'right', 600);
+    assert.deepEqual([(await menuState(page)).view, (await menuState(page)).current], ['AboutSettings', 'systemInfoBtn']);
+    await key(page, 'left', 400);
+    assert.deepEqual(await tiles(page), { view: 'Settings', selected: 'aboutSettings', focusedTile: 'aboutSettings', focusedId: '' });
+    // LEFT in the list of the sections does nothing, RETURN leaves it as before
+    await key(page, 'left', 300);
+    assert.equal((await tiles(page)).view, 'Settings');
+    await key(page, 'back', 400);
+    assert.deepEqual([(await menuState(page)).view, (await menuState(page)).focused], ['HostsNav', 'settingsBtn']);
+    assert.equal((await tiles(page)).focusedTile, '');
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

@@ -1181,6 +1181,8 @@ function dispatchMessage(msg) {
       return;
     }
     isStreamConnected = true;
+    // The Wasm module reads the gamepads from now on: the launch screen read them for B (showStreamMode() in index.js)
+    runGuarded('stopGamepadsOfLaunchScreen', function() { stopGamepadsOfLaunchScreen(); });
     // The control stream connected before, which released the start on the host ('ControlStreamConnected' above)
     streamLaunchAnsweredAt = 0;
     // Keep the screensaver of the TV off during a session played only with a gamepad

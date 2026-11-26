@@ -370,6 +370,12 @@ function keepDropdownOnScreen(rowId) {
 function handleGamepadMenuInput(e) {
   const gamepadIndex = e.detail.gamepad;
   const now = performance.now();
+  // The launch screen of a stream (showStreamMode()): B cancels the start like RETURN and RED, once per press, and the
+  // other buttons and the sticks do nothing, since the menus are stopped there
+  if (isInGame === true && !isStreamConnected) {
+    handleLaunchScreenGamepadInput(gamepadIndex, e.detail.changes, now);
+    return;
+  }
   // Iterate through each change in the gamepad input
   e.detail.changes.forEach((change) => {
     const { type, index, pressed, value } = change;
@@ -472,6 +478,24 @@ function handleGamepadMenuInput(e) {
         startRepeatAction(operation, source);
       }
     }
+  });
+}
+
+// B on the launch screen of a stream cancels its start (endStartingOrRunningStream() in remote_controller.js), with the
+// guard of the buttons of the menus against a press that a controller reports twice (BUTTON_REPEAT_GUARD)
+function handleLaunchScreenGamepadInput(gamepadIndex, changes, now) {
+  changes.forEach((change) => {
+    if (change.type !== 'button' || change.index !== 1 || !change.pressed) {
+      return;
+    }
+    const source = gamepadIndex + ' button 1';
+    const times = gamepadButtonTimes[source] || (gamepadButtonTimes[source] = { pressedAt: -Infinity, releasedAt: -Infinity });
+    if (now - times.pressedAt < BUTTON_REPEAT_GUARD) {
+      return;
+    }
+    times.pressedAt = now;
+    console.log('%c[index.js, handleLaunchScreenGamepadInput]', 'color: green;', 'B of gamepad ' + gamepadIndex + ' cancels the start of the stream.');
+    endStartingOrRunningStream();
   });
 }
 
@@ -2144,8 +2168,8 @@ function updateMacAddress(host) {
 }
 
 // Push the view of a dialog that confirms an action that can't be undone (quit the running app, delete hosts, restore
-// the default settings, apply the optimal settings) with the focus on No or Cancel, its second button, so that an OK
-// pressed by mistake doesn't confirm it
+// the default settings, apply the optimal settings) or that leaves the app (exit or restart Moonlight, since 2.3.5)
+// with the focus on No or Cancel, its second button, so that an OK pressed by mistake doesn't confirm it
 function pushConfirmationView(view) {
   view.view.index = 1;
   Navigation.push(view);
@@ -3566,7 +3590,8 @@ function restartAppDialog() {
   restartAppDialogOverlay.style.display = 'flex';
   restartAppDialog.showModal();
   isDialogOpen = true;
-  Navigation.push(Views.RestartMoonlightDialog);
+  // Opens on Cancel, so that an OK pressed by mistake doesn't restart the app
+  pushConfirmationView(Views.RestartMoonlightDialog);
 
   // Cancel the operation if the Cancel button is pressed
   $('#cancelRestartApp').off('click');
@@ -3600,10 +3625,13 @@ function requiredRestartAppDialog() {
   // Change the dialog text element to inform the user that a restart is required
   document.getElementById('restartAppDialogText').innerHTML = t('In order for your changes to take effect, a restart of the application is required.<br><br>Would you like to proceed with the restart?');
 
-  // Show the dialog and push the view
+  // Show the dialog and push the view, on Restart: the question follows Restore Defaults, whose changes need the restart,
+  // and it ignores OK for a moment after it opened (restoreDefaultsDialog()). The view keeps the button of its last use
+  // (the Restart button of About opens it on Cancel), so the index is set here.
   restartAppDialogOverlay.style.display = 'flex';
   restartAppDialog.showModal();
   isDialogOpen = true;
+  Views.RestartMoonlightDialog.view.index = 0;
   Navigation.push(Views.RestartMoonlightDialog);
 
   // Cancel the operation if the Cancel button is pressed
@@ -3645,7 +3673,8 @@ function exitAppDialog() {
   exitAppOverlay.style.display = 'flex';
   exitAppDialog.showModal();
   isDialogOpen = true;
-  Navigation.push(Views.ExitMoonlightDialog);
+  // Opens on Cancel: RETURN opens it from the PC list, so a RETURN pressed once too often, then OK, doesn't exit
+  pushConfirmationView(Views.ExitMoonlightDialog);
 
   // Cancel the operation if the Cancel button is pressed
   $('#cancelExitApp').off('click');
@@ -4452,11 +4481,20 @@ function showStreamMode() {
   fullscreenWasmModule();
   handleOnScreenOverlays();
   Navigation.stop();
-  // The Wasm module polls the gamepads on its own input thread while streaming, so pause the
-  // UI polling to keep the main thread free for the audio scheduler and the video player
+  // The gamepads stay read on the launch screen, where B cancels the start like RETURN (handleGamepadMenuInput()): the
+  // Wasm module reads them on its own input thread only once the stream connected, and the polling of the menus stops
+  // then ('Connection Established' in messages.js, stopGamepadsOfLaunchScreen()). A start once more from the Stream
+  // Menu, whose close stopped the polling, takes a fresh snapshot here, so a button held from it doesn't count. A held
+  // D-Pad or stick repeat is cancelled, since the menus are stopped.
+  Controller.startWatching();
+  resetGamepadMenuInput();
+}
+
+// The stream connected: the Wasm module reads the gamepads from now on (its input thread), so the polling of the menus,
+// which went on during the launch screen for B (showStreamMode()), stops to keep the main thread free for the audio
+// scheduler and the video player. The menus take a fresh snapshot of the gamepads when they resume.
+function stopGamepadsOfLaunchScreen() {
   Controller.stopWatching();
-  // Cancel a held D-Pad or stick repeat, since its release can no longer be detected, and forget the stick directions,
-  // since the menus take a fresh snapshot of the gamepads when they resume
   resetGamepadMenuInput();
 }
 

@@ -29,7 +29,8 @@
 // row). 'Shut down or restart the PC…' asks first, with the focus on Cancel, and then types the shutdown command of
 // Windows into its Run dialog (the power sequence below), which the menu of a PC in the PC list does as well
 // (pcPowerDialog() in index.js): Windows key + R, the command as text (independent of the keyboard layout of the PC),
-// and Enter. GameStream has no command for it.
+// and Enter. GameStream has no command for it. Since 2.3.5 'Quit app on the PC' asks first as well, with the focus on
+// Cancel, in the words of the same question of the app list (streamQuitPanel).
 
 // Whether the Stream Menu is open
 var isStreamMenuOpen = false;
@@ -80,7 +81,8 @@ for (let n = 1; n <= 12; n++) {
 // The function keys in a row of their panel (.stream-key-grid in style.css), which UP and DOWN step by (Views.StreamFKeys)
 const STREAM_FUNCTION_KEY_COLUMNS = 4;
 // The entries of the Stream Menu that open a panel in place of its entries, and the panel of each
-const STREAM_MENU_PANELS = { streamMenuShortcuts: 'streamShortcutsPanel', streamMenuFKeys: 'streamFKeysPanel', streamMenuPower: 'streamPowerPanel' };
+const STREAM_MENU_PANELS = { streamMenuShortcuts: 'streamShortcutsPanel', streamMenuFKeys: 'streamFKeysPanel', streamMenuPower: 'streamPowerPanel',
+  streamMenuQuit: 'streamQuitPanel' };
 // The power commands of the PC that 'Shut down or restart the PC…' types into the Run dialog of Windows: a full shutdown
 // or a restart, without /f, so that Windows asks before it closes an app with unsaved work. They go to the PC as text
 // (sendText() of the module), the only input that doesn't depend on its keyboard layout: typed as keys, '/' would
@@ -375,7 +377,11 @@ function updateStreamMenu() {
   const host = streamLaunchHost || api;
   const subtitle = [streamLaunchAppTitle, host && host.hostname ? host.hostname : ''].filter((text) => !!text).join(' · ');
   // The panels name the app and the PC as well, the question 'Shut down or restart the PC?' above all
-  $('#streamMenuSubtitle, #streamShortcutsSubtitle, #streamFKeysSubtitle, #streamPowerSubtitle').text(subtitle);
+  $('#streamMenuSubtitle, #streamShortcutsSubtitle, #streamFKeysSubtitle, #streamPowerSubtitle, #streamQuitSubtitle').text(subtitle);
+  // The question of 'Quit app on the PC' in the words of the same question of the app list (quitAppDialog() in index.js)
+  $('#streamQuitText').text(streamLaunchAppTitle ?
+    t('Are you sure you want to quit %1$s? All unsaved data will be lost.', streamLaunchAppTitle) :
+    t('Are you sure you want to quit the app that is running on %1$s? All unsaved data will be lost.', host && host.hostname ? host.hostname : ''));
   const statsLevel = getPerformanceStatsLevel();
   setOverlayMenuText('streamMenuStatsValue', getPerformanceStatsLevelName(statsLevel), statsLevel !== 0);
   setOverlayMenuValue('streamMenuMouseValue', streamMouseEmulationActive);
@@ -572,12 +578,13 @@ function runStreamMenuAction(id) {
     // Back to the stream, where the result of the keys shows (closeStreamMenu() closes the panel of the key first)
     closeStreamMenu(true);
     sendKeyComboToHost(STREAM_MENU_KEYS[id] || STREAM_FUNCTION_KEYS[id]);
-  } else if (id === 'streamPowerCancel') {
+  } else if (id === 'streamPowerCancel' || id === 'streamQuitCancel') {
     closeStreamMenuPanel();
   } else if (id === 'streamPowerRestart' || id === 'streamPowerShutdown') {
     confirmStreamMenuPower(id === 'streamPowerRestart' ? 'restart' : 'shutdown');
-  } else if (id === 'streamMenuDisconnect' || id === 'streamMenuQuit') {
-    quitAppAfterStream = id === 'streamMenuQuit';
+  } else if (id === 'streamMenuDisconnect' || id === 'streamQuitConfirm') {
+    // 'Quit app on the PC' asks first (its panel, since 2.3.5), and its confirmation ends the stream and quits the app
+    quitAppAfterStream = id === 'streamQuitConfirm';
     closeStreamMenu(false);
     // A power command whose Enter went out a moment ago belongs to this end (endPcPowerCommand())
     stopPcPowerCommandForTvStop();
@@ -589,6 +596,9 @@ function runStreamMenuAction(id) {
 function getStreamMenuPanelView(entryId) {
   if (entryId === 'streamMenuShortcuts') {
     return Views.StreamShortcuts;
+  }
+  if (entryId === 'streamMenuQuit') {
+    return Views.StreamQuit;
   }
   return entryId === 'streamMenuFKeys' ? Views.StreamFKeys : Views.StreamPower;
 }
@@ -1586,7 +1596,7 @@ function forgetHiddenApps(serverUid) {
 // Connect the entries of both menus to their actions
 function attachOverlayMenuListeners() {
   $('#streamMenu .overlay-menu-item, #streamShortcutsPanel .overlay-menu-item, #streamFKeysPanel .overlay-menu-item, ' +
-    '#streamPowerPanel .overlay-menu-item').on('click', function() {
+    '#streamPowerPanel .overlay-menu-item, #streamQuitPanel .overlay-menu-item').on('click', function() {
     runStreamMenuAction(this.id);
   });
   $('#streamTextSend').on('click', sendStreamText);

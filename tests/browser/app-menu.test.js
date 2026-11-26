@@ -6,6 +6,7 @@
 // Quit for the running app and Start for the others, which run like OK on the tile and the button Quit app on the PC;
 // Hide app leaves the app out of the grid and the Smart Hub tiles, stored per host and matched by ID or title, 'Show
 // hidden apps' shows the hidden apps dimmed, and 'Show app again' brings one back. The host and its apps are simulated.
+// Since 2.3.5 a held CH+ opens the menu once (its auto-repeat opened and closed it in turn).
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -134,6 +135,40 @@ test('the running app has a Running badge, the header names the keys of the app 
     assert.equal((await appMenu(app.page)).open, false);
     await app.page.evaluate(() => showHostsMode());
     assert.equal(await app.page.evaluate(() => $('#appMenuHint').is(':visible')), false);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a held CH+ opens the app menu once and it stays open, and the next CH+ closes it', async () => {
+  const app = await openAppList();
+  try {
+    // A keydown of CH+ and its auto-repeat every 100 ms for 0.8 s, as the remote sends a held key: whether the menu shows
+    // after each of them
+    const seen = await app.page.evaluate(() => new Promise((resolve) => {
+      const shown = [];
+      let count = 0;
+      const send = () => {
+        const event = new KeyboardEvent('keydown', { key: 'ChannelUp', bubbles: true, cancelable: true, repeat: count > 0 });
+        Object.defineProperty(event, 'keyCode', { value: 427 });
+        Object.defineProperty(event, 'which', { value: 427 });
+        (document.activeElement || document.body).dispatchEvent(event);
+        shown.push($('#appMenuOverlay').css('display') !== 'none');
+        count++;
+        if (count <= 8) {
+          setTimeout(send, 100);
+        } else {
+          resolve(shown);
+        }
+      };
+      send();
+    }));
+    assert.deepEqual(seen, [true, true, true, true, true, true, true, true, true]);
+    assert.deepEqual([(await appMenu(app.page)).open, (await appMenu(app.page)).title], [true, 'Cyberpunk 2077']);
+    await remote(app.page, 'KEY_CHANNEL_UP');
+    assert.equal((await appMenu(app.page)).open, false);
+    assert.equal(await selectedApp(app.page), 'Cyberpunk 2077');
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

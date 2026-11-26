@@ -79,6 +79,7 @@ test('the navigation guide names the OK key of the remote, describes the mouse e
   const rows = guide.split('<li class="navGuideDialogControls">').slice(1).map((row) => ({
     remote: (row.match(/class="navGuideRemoteText" data-i18n="([^"]*)"/g) || []).map((key) => /data-i18n="([^"]*)"/.exec(key)[1]),
     gamepad: (row.match(/class="navGuideGamepadText" data-i18n="([^"]*)"/g) || []).map((key) => /data-i18n="([^"]*)"/.exec(key)[1]),
+    keyboard: (row.match(/class="navGuideKeyboardText" data-i18n="([^"]*)"/g) || []).map((key) => /data-i18n="([^"]*)"/.exec(key)[1]),
     text: /<span data-i18n="(— [^"]*)"/.exec(row)[1],
   }));
   // The centre key of the remote is OK, and SELECT is only the button of a controller
@@ -91,9 +92,16 @@ test('the navigation guide names the OK key of the remote, describes the mouse e
   assert.deepEqual(mouse[0].gamepad, ['START (HOLD 1 S)']);
   assert.match(mouse[0].text, /the left stick moves the pointer, the right stick scrolls, A or LB clicks left, B or RB clicks right, X or Y clicks the middle button/);
   assert.deepEqual(rows.filter((row) => /in emulation/.test(row.text)), []);
-  // RETURN sends Esc during a stream, RED disconnects, and the Stream Menu line lists no entries
+  // RETURN sends Esc during a stream, RED disconnects and cancels a stream that is starting (since 2.3.5 the line says
+  // that only RED does: the key combinations act only in a running stream), and the Stream Menu line lists no entries
   assert.match(rows.find((row) => row.remote.indexOf('RETURN') >= 0).text, /During a stream, RETURN sends Esc to the PC\./);
-  assert.match(rows.find((row) => row.remote.indexOf('RED') >= 0).text, /^— Disconnect, while the app keeps running on the PC; cancels a stream that is starting\.$/);
+  assert.match(rows.find((row) => row.remote.indexOf('RED') >= 0).text, /^— Disconnect, while the app keeps running on the PC\. RED also cancels a stream that is starting\.$/);
+  // CH+, Play/Pause and Select close the menu of a PC or an app again (since 2.3.5)
+  assert.equal(rows.find((row) => row.remote.indexOf('CHANNEL UP') >= 0).text, '— Open or close the menu of a PC or an app.');
+  // No F key of a keyboard: the app handles none of them (a TV passes them as 112 to 123, which go to the PC in a
+  // stream), so F1, F3 and F11 went in 2.3.5; ESC stays, which works as RETURN
+  assert.deepEqual(rows.filter((row) => row.keyboard.some((key) => /^F\d+$/.test(key))).map((row) => row.keyboard), []);
+  assert.ok(rows.some((row) => row.keyboard.indexOf('ESC') >= 0));
   assert.equal(rows.find((row) => row.gamepad.indexOf('SELECT + START (HOLD 1 S)') >= 0).text, '— Open or close the Stream Menu during a stream.');
   // The TV handles its volume keys itself, and CH- only set the focus
   assert.deepEqual(rows.filter((row) => row.remote.some((key) => /VOLUME|CHANNEL DOWN/.test(key))), []);

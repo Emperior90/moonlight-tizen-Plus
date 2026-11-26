@@ -57,6 +57,10 @@
 // - the video receive lines of the diagnostic log (2.3.4): the mode of the receive thread, the lines of a minute and of
 //   the stream with their sample of about every 64th read, the lines of the poll() calls of the samples, the line of
 //   the frame receive time, how to read them against *Frames arrive at*, and where the guide points to them
+// - the keys in the menus (2.3.5): Esc works as RETURN, a held RETURN goes back one level, CH+ once per press and the
+//   same key closes the menu of a PC, RIGHT and LEFT between the list of the sections and a section, the keys of the
+//   address field of Add PC, B on the launch screen, Exit and Restart on Cancel, and the question of Quit app on the PC
+//   in the Stream Menu
 // The release notes of a release (docs/RELEASE_NOTES.md) only give the essentials, so the statements that they
 // carried until 1.19.100 are checked in the guide and the patch notes (docs/PATCH_NOTES.md), where they are now.
 
@@ -1351,4 +1355,52 @@ test('the guide describes the two threads of the video receive and the processin
   // The rows of the statistics stay true: the times are still when the app reads the packets (the reader notes them)
   assert.ok(tableRow('Frames arrive at')[1].indexOf('The times are when the app reads the packets, not when they reach the TV') >= 0);
   assert.match(video, /stampUs = PltGetMicroseconds\(\);/);
+});
+
+test('the guide and the controller page describe the keys in the menus of 2.3.5 as the code handles them', () => {
+  const remote = read('wasm/platform/remote_controller.js');
+  const navigation = read('wasm/platform/navigation.js');
+  const index = read('wasm/platform/index.js');
+  const menus = read('wasm/platform/menus.js');
+  const controllers = read('docs/CONTROLLERS.md');
+  // Esc is RETURN, without its own action, and the auto-repeat of RETURN goes back no further; CH+ once per press
+  assert.ok(GUIDE.indexOf('**Keys in the menus.** Esc of a USB keyboard works as RETURN (since 2.3.5;') > 0);
+  assert.match(remote, /case KEY_ESCAPE:[\s\S]{0,700}e\.preventDefault\(\);\s+\/\/ falls through\s+case tvKey\.KEY_RETURN:/);
+  assert.match(remote, /\/\/ the PC list and on to Exit Moonlight, which could stay open with Exit selected \(before 2\.3\.5\)\s+if \(e\.repeat\) \{\s+break;\s+\}\s+\/\/ Go back or cancel the operation\s+Navigation\.back\(\);/);
+  assert.ok(GUIDE.indexOf('A held RETURN goes back one level (before 2.3.5 it went on through the levels to *Exit Moonlight*), and CH+ acts once per press.') > 0);
+  assert.match(remote, /case tvKey\.KEY_CHANNEL_UP:[\s\S]{0,300}if \(e\.repeat\) \{\s+break;\s+\}\s+Navigation\.press\(\);/);
+  // The no longer dispatched Escape of the drop-downs
+  assert.equal(navigation.indexOf("new KeyboardEvent('keydown'"), -1);
+  // The address field of Add PC: Enter and Done (65376) accept, Cancel (65385) goes back
+  assert.ok(GUIDE.indexOf('Enter of a keyboard or *Done* of the keyboard of the TV ends the address and selects *Continue*, *Cancel* of the keyboard of the TV only closes the field, and LEFT and RIGHT move in the text') > 0);
+  assert.match(remote, /const KEY_IME_DONE = 65376;\s+const KEY_IME_CANCEL = 65385;/);
+  assert.match(navigation, /if \(currentItem === 'ipAddressTextInput' && isIpTextFieldEditing\(\)\) \{[\s\S]{0,500}handleIpTextFieldState\(false\);\s+focusElement\(this\.view\.select\(this\.view\.func\(\)\.indexOf\('continueAddHost'\)\)\);\s+Navigation\.guardAccept\(this\);/);
+  // The menu of a PC closes with the key that opened it
+  assert.ok(GUIDE.indexOf('since 2.3.5 the key that opened it closes it again, as in the app menu.') > 0);
+  assert.match(navigation, /HostMenuDialog: \{[\s\S]{0,1200}press: function\(\) \{[\s\S]{0,200}resolveElement\('closeHostMenu'\)\.click\(\);/);
+  // RIGHT opens a section, LEFT goes back in each of the 7 sections
+  assert.ok(GUIDE.indexOf('RIGHT opens the selected section like OK, and LEFT in a section goes back to the list of sections like RETURN (since 2.3.5)') > 0);
+  ['BasicSettings', 'InterfaceSettings', 'InputSettings', 'AudioSettings', 'VideoSettings', 'AdvancedSettings', 'AboutSettings'].forEach((view) => {
+    const start = navigation.indexOf('\n  ' + view + ': {');
+    const end = navigation.indexOf('\n  },', start);
+    assert.match(navigation.slice(start, end), /left: function\(\) \{\s+this\.back\(\);\s+\}/, view);
+  });
+  // B on the launch screen
+  assert.ok(GUIDE.indexOf('since 2.3.5 B of a controller and Esc of a keyboard (the bottom of the launch screen names RETURN, RED and B)') > 0);
+  assert.ok(controllers.indexOf('| B (Circle) | Back, like RETURN on the remote. On the launch screen *Starting…* it cancels the start like RETURN and RED (since 2.3.5;') > 0);
+  assert.match(index, /if \(isInGame === true && !isStreamConnected\) \{\s+handleLaunchScreenGamepadInput\(gamepadIndex, e\.detail\.changes, now\);\s+return;\s+\}/);
+  assert.match(index, /function handleLaunchScreenGamepadInput\(gamepadIndex, changes, now\) \{[\s\S]{0,200}change\.index !== 1[\s\S]{0,600}endStartingOrRunningStream\(\);/);
+  assert.match(read('wasm/platform/messages.js'), /isStreamConnected = true;\s+\/\/[^\n]*\n\s+runGuarded\('stopGamepadsOfLaunchScreen'/);
+  assert.match(read('wasm/index.html'), /<span class="keycap keycap-red" data-i18n="RED">RED<\/span><span class="keycap" data-i18n="B">B<\/span>/);
+  // Exit and Restart open on Cancel, the restart that Restore Defaults asks for on Restart
+  assert.ok(GUIDE.indexOf('and so do *Exit Moonlight*, which RETURN opens from the PC list, *Restart Moonlight* (both since 2.3.5)') > 0);
+  assert.ok(GUIDE.indexOf('The restart that *Restore Defaults* asks for opens on *Restart*.') > 0);
+  assert.match(index, /function exitAppDialog\(\) \{[\s\S]{0,600}pushConfirmationView\(Views\.ExitMoonlightDialog\);/);
+  assert.match(index, /function restartAppDialog\(\) \{[\s\S]{0,700}pushConfirmationView\(Views\.RestartMoonlightDialog\);/);
+  assert.match(index, /function requiredRestartAppDialog\(\) \{[\s\S]{0,1200}Views\.RestartMoonlightDialog\.view\.index = 0;\s+Navigation\.push\(Views\.RestartMoonlightDialog\);/);
+  // Quit app on the PC in the Stream Menu asks first, in a panel of its own that opens on Cancel
+  assert.ok(tableRow('Quit app on the PC')[1].indexOf('Asks first, with *Cancel* selected (since 2.3.5; before, it quit at once)') === 0);
+  assert.match(menus, /const STREAM_MENU_PANELS = \{[^}]*streamMenuQuit: 'streamQuitPanel' \};/);
+  assert.match(menus, /\} else if \(id === 'streamMenuDisconnect' \|\| id === 'streamQuitConfirm'\) \{[\s\S]{0,200}quitAppAfterStream = id === 'streamQuitConfirm';/);
+  assert.match(read('wasm/index.html'), /<div id="streamQuitPanel"[^>]*>[\s\S]{0,600}<button type="button" id="streamQuitCancel"[\s\S]{0,400}<button type="button" id="streamQuitConfirm"/);
 });

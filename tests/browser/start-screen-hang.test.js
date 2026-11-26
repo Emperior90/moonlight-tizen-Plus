@@ -16,7 +16,8 @@
 //   is empty' in its log). Now such an answer returns to the app list with a message.
 // - when the silent retry after no video or the reconnect of the Stream Menu got no answer, or found no app list.
 // RETURN did nothing on the launch screen, which the menus don't handle there; it now cancels the start like RED, and
-// the launch screen names both keys.
+// the launch screen names both keys. Since 2.3.5 B of a controller cancels it as well (the menus read the controllers
+// until 'Connection Established'), and the launch screen names it too.
 // Everything of the app is real here: NvHTTP, the request queue, startGame(), showApps() and the app grid, against the
 // simulated Sunshine of mocks/sunshine-host.js, whose module function Module.openUrl is wrapped so that /launch, /resume
 // and /applist answer as each test needs. The times are scaled down: the limit of the launch and resume requests 2 s
@@ -28,6 +29,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { SUNSHINE_HOSTS, openApp, startHarness } = require('./harness');
+const { PAD, installGamepads, padButton } = require('./menu-driver');
 const { forEachTextWidth } = require('./text-stress');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
@@ -87,15 +89,19 @@ const holdKey = (page, key, holdMs) => page.evaluate(async ({ code, name, ms }) 
 // does, and wrap the HTTP function of the module: window.__plans['/launch'], ['/resume'] and ['/applist'] say how the
 // next such request is answered ({ kind: 'never' }, { kind: 'resolve', value }, { kind: 'reject', value }), or null for
 // the simulated Sunshine. window.__events records the requests and the start requests, window.__snack the messages,
-// window.__unhandled the unhandled promise rejections.
+// window.__unhandled the unhandled promise rejections. With `pad: true` a simulated gamepad is connected (installGamepads()
+// of menu-driver.js, pressed with padButton()).
 async function openWithPc(options) {
   const opts = options || {};
   const app = await openApp(harness, {
     tv: Object.assign({ tv: 's90c', conn: 'wifi' }, opts.tv || {}),
     moduleScripts: ['sunshine-host.js'],
     stored: { hosts: SUNSHINE_HOSTS },
-    initScripts: [`window.__sunshineConfig = { currentGame: ${opts.currentGame || 0} };`],
+    initScripts: (opts.pad ? [installGamepads] : []).concat([`window.__sunshineConfig = { currentGame: ${opts.currentGame || 0} };`]),
   });
+  if (opts.pad) {
+    await app.page.evaluate(() => window.__connectPad(0));
+  }
   await app.page.waitForFunction((game) => typeof hosts !== 'undefined' && hosts.HOST1 && hosts.HOST1.online === true &&
     Number(hosts.HOST1.currentGame) === game, opts.currentGame || 0, { timeout: 10000 });
   await app.page.evaluate(({ limitMs, graceMs, holdMs }) => {
@@ -454,6 +460,82 @@ test('RETURN on the launch screen cancels the start like RED, before and after t
   }
 });
 
+test('B of a controller on the launch screen cancels the start like RETURN, before and after the start request, and not the stream', async () => {
+  // Before 2.3.5 the menus stopped reading the controllers when the launch screen showed, so B did nothing there
+  const app = await openWithPc({ pad: true });
+  try {
+    await setLimit(app.page, LONG_LIMIT_MS);
+    // Before the start request: the PC holds the launch request
+    await app.page.evaluate(() => {
+      window.__plans['/launch'] = { kind: 'never' };
+    });
+    await startApp(app.page);
+    await requestSent(app.page, '/launch');
+    // The other buttons do nothing there (the menus are stopped)
+    await padButton(app.page, PAD.A);
+    await padButton(app.page, PAD.SELECT);
+    await padButton(app.page, PAD.DOWN);
+    const waiting = await take(app.page);
+    assert.deepEqual([waiting.screen.startScreen, waiting.screen.isInGame, waiting.events], [true, true, ['/launch']]);
+    await padButton(app.page, PAD.B, 0);
+    const afterB = await take(app.page);
+    assert.deepEqual([afterB.screen.startScreen, afterB.screen.isInGame], [false, false]);
+    await appListShown(app.page, GRACE_MS + 3000);
+    assert.deepEqual((await take(app.page)).events, ['cancelRequest']);
+    assert.ok(app.logs.some((line) => line.indexOf('B of gamepad 0 cancels the start of the stream.') >= 0));
+
+    // After the start request, while the module sets up the connection: the module stops it. B held for 600 ms counts
+    // once: the app list that shows meanwhile doesn't go back to the PC list
+    await app.page.evaluate(async () => {
+      await window.wait(HOST_START_HOLD_MS);
+      window.__plans = {};
+      Module.startStream = function() {
+        window.__events.push('start request');
+        setTimeout(() => handleMessage('ProgressMsg: Starting RTSP handshake...'), 20);
+        return { type: 'resolve', ret: null };
+      };
+    });
+    await startApp(app.page);
+    await app.page.waitForFunction(() => wasmSessionStarted && $('#loadingSpinnerMessage').text() === 'Starting the RTSP handshake...', null, { timeout: 5000 });
+    await padButton(app.page, PAD.B, 600, 600);
+    await appListShown(app.page);
+    const stopped = await take(app.page);
+    assert.deepEqual(stopped.events, ['/launch', 'start request', 'stopStream']);
+    assertBackInAppList(stopped.screen);
+    // No message, but the one of the start for the simulated gamepad, which has no rumble
+    assert.deepEqual(stopped.snack.filter((text) => text.indexOf('does not support rumble') < 0), []);
+    // The menus read the controller in the app list: the next B goes back to the PC list
+    await padButton(app.page, PAD.B);
+    await app.page.waitForFunction(() => document.body.getAttribute('data-view') === 'hosts', null, { timeout: 3000 });
+    await app.page.evaluate(() => $('#host-container-HOST1').click());
+    await appListShown(app.page);
+    await take(app.page);
+
+    // Once the stream connected, the module reads the controllers: B stops nothing, and the menus read nothing
+    await app.page.evaluate(() => {
+      Module.startStream = function() {
+        window.__events.push('start request');
+        setTimeout(() => {
+          handleMessage('ControlStreamConnected');
+          handleMessage('Connection Established');
+        }, 20);
+        return { type: 'resolve', ret: null };
+      };
+    });
+    await startApp(app.page);
+    await app.page.waitForFunction(() => isStreamConnected && $('#wasm_module').is(':visible'), null, { timeout: 5000 });
+    const inputsBefore = await app.page.evaluate(() => window.__padInputs);
+    await padButton(app.page, PAD.B, 300, 100);
+    const streaming = await take(app.page);
+    assert.deepEqual([streaming.screen.isInGame, streaming.screen.video], [true, true]);
+    assert.equal(streaming.events.indexOf('stopStream'), -1);
+    assert.equal(await app.page.evaluate(() => window.__padInputs), inputsBefore, 'the menus read no gamepad during the stream');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
 test('an answer that no host sends returns to the app list with a message, also Sunshine\'s answer after an error', async () => {
   const app = await openWithPc();
   try {
@@ -762,7 +844,7 @@ test('a start once more that finds the PC no longer paired, or Moonlight in the 
   }
 });
 
-test('the launch screen names RETURN and RED to cancel, inside the screen and apart from the message, in every language', async () => {
+test('the launch screen names RETURN, RED and B to cancel, inside the screen and apart from the message, in every language', async () => {
   const languages = fs.readdirSync(path.join(REPO_ROOT, 'wasm/static/locales')).filter((name) => name.endsWith('.json'))
     .map((name) => name.replace(/\.json$/, ''));
   const app = await openWithPc();
@@ -798,8 +880,9 @@ test('the launch screen names RETURN and RED to cancel, inside the screen and ap
           };
         });
         const message = code + stress + ' ' + JSON.stringify(box);
-        assert.deepEqual(box.caps.map((cap) => cap.text), ['RETURN', tr('RED')], message);
-        assert.equal(box.text, 'RETURN' + tr('RED') + tr('Cancel'), message);
+        // B of a controller since 2.3.5
+        assert.deepEqual(box.caps.map((cap) => cap.text), ['RETURN', tr('RED'), tr('B')], message);
+        assert.equal(box.text, 'RETURN' + tr('RED') + tr('B') + tr('Cancel'), message);
         // Inside the safe area (96 px from each side), on one line, below the message and the poster
         assert.ok(box.hint.left >= 96 && box.hint.right <= box.width - 96 && box.hint.bottom <= box.height, message);
         assert.ok(box.hint.height <= 44, message);

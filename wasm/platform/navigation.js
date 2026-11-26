@@ -214,7 +214,8 @@ function isPopupMenuActive(id) {
   return !!(container && container.classList.contains('is-visible'));
 }
 
-// Close any active visible menu containers
+// Close any active visible menu containers. (Before 2.3.5 it also dispatched an Escape keydown on the document, which no
+// menu listened to and which the key handler now takes as RETURN.)
 function closeActiveVisibleMenu() {
   const visibleMenuContainer = document.querySelectorAll('.mdl-menu__container.is-visible');
   // If no visible menus are found, return false
@@ -229,10 +230,6 @@ function closeActiveVisibleMenu() {
       visibleMenu.MaterialMenu.hide();
     }
   });
-  // Simulate an Escape key press to close menus that rely on it
-  document.dispatchEvent(new KeyboardEvent('keydown', {
-    key: 'Escape', keyCode: 27, which: 27, bubbles: true
-  }));
   // Trigger a click on the body to ensure menus are closed
   if (document.body) {
     document.body.click();
@@ -276,6 +273,13 @@ function handleIpTextFieldState(enabled) {
       listener.focus();
     }
   }
+}
+
+// Whether the address field of Add PC takes the text: OK opened the keyboard of the TV for it (handleIpTextFieldState()),
+// and it still has the focus
+function isIpTextFieldEditing() {
+  const textInput = document.getElementById('ipAddressTextInput');
+  return !!textInput && !textInput.readOnly && document.activeElement === textInput;
 }
 
 // Change the value of the IP address numeric field
@@ -733,18 +737,34 @@ const Views = {
         focusElement(this.view.select(this.view.func().indexOf('continueAddHost')));
       }
     },
+    // While the address field takes the text, LEFT and RIGHT move the caret in it (a USB keyboard; the keyboard of the
+    // TV keeps its arrows while it shows) instead of leaving the field
     left: function() {
+      if (isIpTextFieldEditing()) {
+        return;
+      }
       this.view.prev();
       focusElement(this.view.current());
     },
     right: function() {
+      if (isIpTextFieldEditing()) {
+        return;
+      }
       this.view.next();
       focusElement(this.view.current());
     },
     accept: function() {
       const currentItem = elementId(this.view.current());
       // Check if the current item is the IP address text input field
-      if (currentItem === 'ipAddressTextInput') {
+      if (currentItem === 'ipAddressTextInput' && isIpTextFieldEditing()) {
+        // Enter of a keyboard or Done of the keyboard of the TV: the address is entered, so the field closes and Continue
+        // is selected, which the next OK presses. OK is ignored for a moment, in case the keyboard of the TV sends Enter
+        // with Done. Before 2.3.5 the field opened the keyboard again.
+        handleIpTextFieldState(false);
+        focusElement(this.view.select(this.view.func().indexOf('continueAddHost')));
+        Navigation.guardAccept(this);
+        return;
+      } else if (currentItem === 'ipAddressTextInput') {
         // Enable the text input field and set focus to it to open the virtual keyboard
         handleIpTextFieldState(true);
         return;
@@ -755,9 +775,8 @@ const Views = {
       }
     },
     back: function() {
-      const currentItem = document.activeElement;
-      // Check if the current item is the IP address text input field and it is not read-only
-      if (currentItem && currentItem.id === 'ipAddressTextInput' && !currentItem.readOnly) {
+      // While the address field takes the text, RETURN (or Cancel of the keyboard of the TV) only closes the field
+      if (isIpTextFieldEditing()) {
         // Disable the text input field and set focus back to the hidden listener element
         handleIpTextFieldState(false);
         return;
@@ -880,7 +899,9 @@ const Views = {
       resolveElement('closeHostMenu').click();
     },
     press: function() {
-      focusElement(this.view.current());
+      // The key that opened the menu closes it again (CH+ or Play/Pause on the remote, Select on a gamepad), as in the
+      // app menu (Views.AppMenu)
+      resolveElement('closeHostMenu').click();
     },
     enter: function() {
       mark(this.view.current());
@@ -1039,7 +1060,11 @@ const Views = {
       }
     },
     left: function() {},
-    right: function() {},
+    // The sections show to the right of their list: RIGHT opens the selected one like OK, and LEFT in a section goes
+    // back to the list like RETURN (the left() of each section view)
+    right: function() {
+      this.accept();
+    },
     accept: function() {
       clickElement(this.view.current());
     },
@@ -1057,8 +1082,11 @@ const Views = {
     enter: function() {
       mark(this.view.current());
     },
+    // The tiles take the focus (tabindex="-1" in index.html), which goes with the mark: a focused tile looks selected
+    // as well (style.css)
     leave: function() {
       unmark(this.view.current());
+      blurElement(this.view.current());
     },
   },
   SettingsNav: {
@@ -1129,7 +1157,10 @@ const Views = {
       this.view.nextOption();
       focusElement(this.view.current());
     },
-    left: function() {},
+    // Back to the list of the sections, which shows to the left (Views.Settings)
+    left: function() {
+      this.back();
+    },
     right: function() {},
     accept: function() {
       clickElement(this.view.current());
@@ -1281,7 +1312,10 @@ const Views = {
       this.view.nextOption();
       focusElement(this.view.current());
     },
-    left: function() {},
+    // Back to the list of the sections, which shows to the left (Views.Settings)
+    left: function() {
+      this.back();
+    },
     right: function() {},
     accept: function() {
       clickElement(this.view.current());
@@ -1355,7 +1389,10 @@ const Views = {
       this.view.nextOption();
       focusElement(this.view.current());
     },
-    left: function() {},
+    // Back to the list of the sections, which shows to the left (Views.Settings)
+    left: function() {
+      this.back();
+    },
     right: function() {},
     accept: function() {
       clickElement(this.view.current());
@@ -1404,7 +1441,10 @@ const Views = {
       this.view.nextOption();
       focusElement(this.view.current());
     },
-    left: function() {},
+    // Back to the list of the sections, which shows to the left (Views.Settings)
+    left: function() {
+      this.back();
+    },
     right: function() {},
     accept: function() {
       clickElement(this.view.current());
@@ -1609,7 +1649,10 @@ const Views = {
       this.view.nextOption();
       focusElement(this.view.current());
     },
-    left: function() {},
+    // Back to the list of the sections, which shows to the left (Views.Settings)
+    left: function() {
+      this.back();
+    },
     right: function() {},
     accept: function() {
       clickElement(this.view.current());
@@ -1783,7 +1826,10 @@ const Views = {
       this.view.nextOption();
       focusElement(this.view.current());
     },
-    left: function() {},
+    // Back to the list of the sections, which shows to the left (Views.Settings)
+    left: function() {
+      this.back();
+    },
     right: function() {},
     accept: function() {
       clickElement(this.view.current());
@@ -1832,7 +1878,10 @@ const Views = {
       this.view.nextOption();
       focusElement(this.view.current());
     },
-    left: function() {},
+    // Back to the list of the sections, which shows to the left (Views.Settings)
+    left: function() {
+      this.back();
+    },
     right: function() {},
     accept: function() {
       clickElement(this.view.current());
@@ -2206,8 +2255,8 @@ const Views = {
     // the bitrate of the bitrate entry and set the quality of the surround quality entry (LEFT Efficient, RIGHT High,
     // so that a held key stays at its end), and RIGHT opens the panel of 'Shortcuts…' and 'Function keys…' as OK does,
     // like the arrow they show (not the power question, which has none). UP and DOWN stop at the first and the last
-    // entry instead of wrapping around like the other menus: the menu opens on Resume, and the last entries quit the app
-    // on the PC without a question and ask to shut it down, so one UP too many must not select them.
+    // entry instead of wrapping around like the other menus: the menu opens on Resume, and the last entries ask to quit
+    // the app on the PC and to shut it down, so one UP too many must not select them.
     view: new ListView(() => getOverlayMenuItems('streamMenu')),
     up: function() {
       this.view.prev();
@@ -2335,6 +2384,40 @@ const Views = {
     // at the ends, so that neither a double OK nor a held key confirms it. Back and Cancel return to the entries of the
     // Stream Menu, on 'Shut down or restart the PC…'.
     view: new ListView(() => getOverlayMenuItems('streamPowerPanel')),
+    up: function() {
+      this.view.prev();
+      focusElement(this.view.current());
+    },
+    down: function() {
+      this.view.next();
+      focusElement(this.view.current());
+    },
+    left: function() {},
+    right: function() {},
+    accept: function() {
+      clickElement(this.view.current());
+    },
+    back: function() {
+      closeStreamMenuPanel();
+    },
+    press: function() {},
+    switch: function() {
+      focusElement(this.view.current());
+    },
+    enter: function() {
+      mark(this.view.current());
+      focusElement(this.view.current());
+    },
+    leave: function() {
+      unmark(this.view.current());
+      blurElement(this.view.current());
+    },
+  },
+  StreamQuit: {
+    // The question 'Quit app on the PC' of the Stream Menu (menus.js): Cancel and Quit app on the PC, like the question
+    // of the app list. It opens on Cancel, OK is ignored for a moment after it opened (Navigation.guardAccept()), and UP
+    // and DOWN stop at the ends. Back and Cancel return to the entries of the Stream Menu, on 'Quit app on the PC'.
+    view: new ListView(() => getOverlayMenuItems('streamQuitPanel')),
     up: function() {
       this.view.prev();
       focusElement(this.view.current());

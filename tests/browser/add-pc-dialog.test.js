@@ -11,11 +11,15 @@
 // - RETURN during a request closes the dialog, and the answer that comes later changes nothing
 // - with the text field, DOWN goes from the address to Continue and UP from a button back to the address, and the
 //   highlight moves with the selection
+// - while the text field takes the address (since 2.3.5): LEFT and RIGHT move the caret in it, Enter of a keyboard and
+//   Done of the keyboard of the TV end the address and select Continue (OK is ignored for a moment after it), and Cancel
+//   of the keyboard of the TV only closes the field. Before, RIGHT left the field, Enter opened the keyboard again and
+//   Done did nothing.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { startHarness } = require('./harness');
-const { key, keys, menuState, openMenus, takeSnackbars } = require('./menu-driver');
+const { doubleKey, key, keys, menuState, openMenus, takeSnackbars, tvKey } = require('./menu-driver');
 
 let harness;
 before(async () => {
@@ -193,6 +197,75 @@ test('text field: DOWN goes to Continue and UP back to the address, with the hig
     assert.deepEqual(await takeSnackbars(page), ['Failed to connect to 10.0.0.99. Make sure that Sunshine (or another GameStream host) is running on the PC.']);
     assert.equal(await page.evaluate(() => $('#ipAddressTextInput').val()), '10.0.0.99');
     assert.deepEqual(await selection(page), ['AddHostDialog', 'continueAddHost', ['continueAddHost'], 'continueAddHost']);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('text field: Enter and Done leave the field on Continue, RIGHT and LEFT move the caret, Cancel only closes the field', async () => {
+  const app = await openMenus(harness, { tv: TV, stored: { ipAddressFieldMode: false } });
+  const { page } = app;
+  const field = () => page.evaluate(() => {
+    const input = document.getElementById('ipAddressTextInput');
+    return { readOnly: input.readOnly, focused: document.activeElement === input, caret: input.selectionStart, clicks: window.__fieldClicks };
+  });
+  try {
+    await failRequestsAfter(page, 300);
+    await key(page, 'ok', 500);
+    await page.evaluate(() => {
+      window.__fieldClicks = 0;
+      document.getElementById('ipAddressTextInput').addEventListener('click', () => window.__fieldClicks++);
+    });
+    // OK on the field opens the keyboard of the TV for it (a click on the field)
+    await key(page, 'ok', 300);
+    assert.deepEqual(await field(), { readOnly: false, focused: true, caret: 0, clicks: 1 });
+    await page.evaluate(() => {
+      const input = document.getElementById('ipAddressTextInput');
+      input.value = '10.0.0.5';
+      updateIpAddressInputValidationState();
+      input.setSelectionRange(2, 2);
+    });
+    // The arrows of a keyboard move the caret and leave the selection in the field
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(150);
+    assert.deepEqual(await field(), { readOnly: false, focused: true, caret: 3, clicks: 1 });
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('ArrowLeft');
+    await page.waitForTimeout(150);
+    assert.deepEqual([(await field()).caret, (await selection(page))[1]], [1, 'ipAddressTextInput']);
+    // Enter, twice within 150 ms: the first ends the address on Continue, the second presses nothing
+    await doubleKey(page, 'ok', 400, 150);
+    assert.deepEqual(await selection(page), ['AddHostDialog', 'continueAddHost', ['continueAddHost'], 'continueAddHost']);
+    assert.deepEqual(await field(), { readOnly: true, focused: false, caret: 1, clicks: 1 });
+    assert.equal(await page.evaluate(() => window.__requests), 0);
+    assert.equal(await page.evaluate(() => $('#ipAddressTextInput').val()), '10.0.0.5');
+    // Done of the keyboard of the TV does the same
+    await key(page, 'up', 150);
+    await key(page, 'ok', 300);
+    assert.equal((await field()).readOnly, false);
+    await tvKey(page, 65376, 'Accept');
+    await page.waitForTimeout(200);
+    assert.deepEqual(await selection(page), ['AddHostDialog', 'continueAddHost', ['continueAddHost'], 'continueAddHost']);
+    assert.equal((await field()).readOnly, true);
+    // Cancel of the keyboard of the TV only closes the field: the dialog stays, on the field
+    await key(page, 'up', 150);
+    await key(page, 'ok', 300);
+    await tvKey(page, 65385, 'Cancel');
+    await page.waitForTimeout(200);
+    let state = await menuState(page);
+    assert.deepEqual([state.view, state.current, state.openDialogs], ['AddHostDialog', 'ipAddressTextInput', ['addHostDialog']]);
+    assert.deepEqual([(await field()).readOnly, (await field()).focused], [true, false]);
+    // DOWN and OK on Continue send the address
+    await key(page, 'down', 150);
+    await key(page, 'ok', 200);
+    assert.equal(await page.evaluate(() => window.__requests), 1);
+    await page.waitForTimeout(500);
+    // RETURN closes the dialog
+    await key(page, 'back', 300);
+    state = await menuState(page);
+    assert.deepEqual([state.view, state.openDialogs], ['Hosts', []]);
+    await takeSnackbars(page);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();
