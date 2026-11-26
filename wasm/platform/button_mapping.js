@@ -392,7 +392,9 @@ const ButtonMappingMenu = (function() {
   // changed (a timestamp of 0, Controller.isRealGamepad() in gamepad.js), so it can be chosen without reopening the menu.
   // The calibration renders the rows when it ends. The selection stays on its entry: the selected controller may show
   // 'Calibrate the sticks' now, which comes before Reset and Close, and the index of the menu would then point at the
-  // entry before the one that is marked, so OK on a marked Close would reset the mapping of the controller.
+  // entry before the one that is marked, so OK on a marked Close would reset the mapping of the controller. The entry
+  // that moved down with it stays above the fade at the bottom, and Close still shows the end of the panel
+  // (keepMappingFocusInView() in navigation.js).
   function refreshControllers() {
     if (calibration || $('#buttonMappingOverlay').css('display') === 'none') {
       return;
@@ -402,6 +404,7 @@ const ButtonMappingMenu = (function() {
     render();
     if (selected) {
       reselectOverlayMenuItem('buttonMappingPanel', view, selected);
+      keepMappingFocusInView(view.current());
     }
   }
 

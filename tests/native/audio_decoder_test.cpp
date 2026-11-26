@@ -29,10 +29,20 @@
 //
 // After a stall (since 2.3.5, wasm/audio_catch_up.hpp, whose rule audio_catch_up_test.cpp checks), the sound that piled
 // up beyond 100 ms is skipped also with 'Limit audio delay' off, counted and logged apart from its drops, and summed at
-// the end of the stream, while packets in real time after a pause of the host are all appended.
+// the end of the stream, while packets in real time after a pause of the host are all appended; a stall that comes
+// again soon after raises what the catch-up keeps, with a line of its own, and each start begins again at 100 ms.
+//
+// The packets of the EMSS backend arrive on a clock of the test (AUDDEC_NOW() of auddec.cpp), which stands still until
+// a test moves it on: the tests feed their packets at the times they choose, most of them all at once, much faster than
+// in real time, and a test machine that pauses between two packets can't make a stall that the catch-up acts on.
 //
 // auddec.cpp has an EM_ASM block without arguments, whose stub takes the GNU form of __VA_ARGS__ (run.sh):
 // Build with: -std=gnu++17
+
+#include <chrono>
+
+static std::chrono::steady_clock::time_point s_AudioNow{std::chrono::hours(1)};
+#define AUDDEC_NOW() s_AudioNow
 
 #include "../../wasm/auddec.cpp"
 
@@ -44,7 +54,6 @@
 #include <cstring>
 #include <initializer_list>
 #include <string>
-#include <thread>
 #include <vector>
 
 MoonlightInstance* g_Instance = nullptr;
@@ -748,10 +757,15 @@ static void TheEndOfTheStreamLogsTheLeadAndKeepsItForTheReport() {
   MoonlightInstance::AudDecCleanup();
 }
 
-// Feed packets in real time, one every 5 ms or a little more
+// Move the clock of the packets on by the given milliseconds
+static void AdvanceClock(int ms) {
+  s_AudioNow += std::chrono::milliseconds(ms);
+}
+
+// Feed packets in real time, one every 5 ms and a little more (5.1 ms), as a real clock gives them
 static void FeedInRealTime(int count) {
   for (int i = 0; i < count; i++) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    s_AudioNow += std::chrono::microseconds(5100);
     Feed(1);
   }
 }
@@ -759,20 +773,22 @@ static void FeedInRealTime(int count) {
 static void TheSoundThatPiledUpAfterAStallIsSkipped() {
   // One packet, then 150 ms without any (the player runs dry), then the 100 packets that queued up meanwhile, back to
   // back: the first 100 ms of them play, the rest is skipped, although 'Limit audio delay' is off. Before 2.3.5 all
-  // of them were appended, and the sound stayed 150 ms behind the picture for the rest of the stream. The burst takes
-  // well under a millisecond here, so 22 are appended; the range leaves room for a test machine that stalls in it.
+  // of them were appended, and the sound stayed 150 ms behind the picture for the rest of the stream. The burst comes
+  // at once, so 21 or 22 are appended (the first one after the stall, and those up to 100 ms ahead of it).
   StartAudio(AudioBackend::Emss, 2, 240, false);
   Feed(1);
-  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  AdvanceClock(150);
   Feed(100);
-  CHECK(appended.size() >= 21 && appended.size() <= 40);
+  CHECK(appended.size() >= 21 && appended.size() <= 22);
   CHECK_EQ(decodeCalls, (int)appended.size());
   // Every packet still counts for the lead of the sound, and the skips are logged apart from the drops of the switch
   CHECK_EQ(s_AudioLead.packets, 101u);
   CHECK_EQ(s_AudioCatchUp.stalls, 1u);
   CHECK_EQ(s_AudioCatchUp.skipped, 101u - (uint32_t)appended.size());
-  CHECK_EQ(CountLogs("Skipping the sound that piled up after a stall: 1 packets of this stream (1 stalls), PTS="), 1);
+  CHECK_EQ(CountLogs("Skipping the sound that piled up after a stall beyond 100 ms: 1 packets of this stream, stalls: 1, "
+                     "PTS="), 1);
   CHECK_EQ(CountLogs("Skipping the sound that piled up after a stall"), 1);
+  CHECK_EQ(CountLogs("Another stall within"), 0);
   CHECK(FindLog("Skipping the sound").size() < DiagnosticLogRing::kLineBytes);
   CHECK_EQ(CountLogs("Dropping audio packets to avoid overflow"), 0);
   // Packets in real time afterwards are all appended
@@ -787,11 +803,13 @@ static void TheSoundThatPiledUpAfterAStallIsSkipped() {
   unsigned int count = 0;
   unsigned int ms = 0;
   unsigned int stalls = 0;
-  CHECK_EQ(sscanf(summary.c_str(), "Skipped %u audio packets (%u ms of sound) that piled up after %u stalls of this "
-                  "stream\n", &count, &ms, &stalls), 3);
-  CHECK(count == skipped && count >= 61 && count <= 80);
+  unsigned int kept = 0;
+  CHECK_EQ(sscanf(summary.c_str(), "Skipped %u audio packets (%u ms of sound) that piled up after stalls of this "
+                  "stream; stalls: %u, sound kept after a stall: up to %u ms\n", &count, &ms, &stalls, &kept), 4);
+  CHECK(count == skipped && count >= 79 && count <= 80);
   CHECK_EQ(ms, count * 5);
   CHECK_EQ(stalls, 1u);
+  CHECK_EQ(kept, 100u);
   CHECK(summary.size() < DiagnosticLogRing::kLineBytes);
   CHECK_EQ(s_AudioCatchUp.skipped, 0u);
 
@@ -799,7 +817,7 @@ static void TheSoundThatPiledUpAfterAStallIsSkipped() {
   // nothing is skipped
   StartAudio(AudioBackend::Emss, 2, 240, false);
   Feed(1);
-  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  AdvanceClock(150);
   FeedInRealTime(20);
   CHECK_EQ(appended.size(), (size_t)21);
   CHECK_EQ(s_AudioCatchUp.skipped, 0u);
@@ -810,9 +828,9 @@ static void TheSoundThatPiledUpAfterAStallIsSkipped() {
   // With 'Limit audio delay' on, its own drops do the same, with its own line
   StartAudio(AudioBackend::Emss, 2, 240, true);
   Feed(1);
-  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  AdvanceClock(150);
   Feed(100);
-  CHECK(appended.size() >= 21 && appended.size() <= 40);
+  CHECK(appended.size() >= 21 && appended.size() <= 22);
   CHECK_EQ(CountLogs("Dropping audio packets to avoid overflow"), 1);
   CHECK_EQ(CountLogs("Skipping the sound that piled up after a stall"), 0);
   CHECK_EQ(s_AudioCatchUp.skipped, 0u);
@@ -820,7 +838,7 @@ static void TheSoundThatPiledUpAfterAStallIsSkipped() {
   // A start begins the catch-up afresh, also after a stream that ended without its cleanup
   StartAudio(AudioBackend::Emss, 2, 240, false);
   Feed(1);
-  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  AdvanceClock(150);
   Feed(100);
   CHECK(s_AudioCatchUp.skipped > 0u);
   StartAudio(AudioBackend::Emss, 2, 240, false);
@@ -829,6 +847,62 @@ static void TheSoundThatPiledUpAfterAStallIsSkipped() {
   CHECK_EQ(s_AudioCatchUp.skipped, 0u);
   Feed(30);
   CHECK_EQ(s_AudioCatchUp.skipped, 0u);
+  MoonlightInstance::AudDecCleanup();
+}
+
+static void AStallThatComesAgainKeepsMoreOfItsSound() {
+  // A first stall of 150 ms, cut back to 100 ms, then 20 packets in real time, which leave about 100 ms in the player
+  StartAudio(AudioBackend::Emss, 2, 240, false);
+  Feed(1);
+  AdvanceClock(150);
+  Feed(100);
+  FeedInRealTime(20);
+  const size_t before = appended.size();
+  const uint32_t skippedBefore = s_AudioCatchUp.skipped;
+  CHECK_EQ(s_AudioCatchUp.stalls, 1u);
+  // The network stalls again for 150 ms: the player runs dry for about 50 ms, so the catch-up now keeps about 150 ms:
+  // the 30 packets of the stall all play, and the next stall of that length doesn't empty the player again
+  AdvanceClock(150);
+  Feed(30);
+  CHECK_EQ(appended.size(), before + 30);
+  CHECK_EQ(s_AudioCatchUp.skipped, skippedBefore);
+  CHECK_EQ(s_AudioCatchUp.stalls, 1u);
+  CHECK(s_AudioCatchUp.target > 0.14 && s_AudioCatchUp.target < 0.155);
+  CHECK_EQ(CountLogs("Another stall within"), 1);
+  unsigned int raisedTo = 0;
+  CHECK_EQ(sscanf(FindLog("Another stall within").c_str(), "Another stall within 2 minutes: the sound kept after a stall "
+                  "rises from 100 to %u ms, PTS=", &raisedTo), 1);
+  CHECK(raisedTo >= 140u && raisedTo <= 155u);
+  CHECK(FindLog("Another stall within").size() < DiagnosticLogRing::kLineBytes);
+  // A packet beyond the raised target is still skipped, and the skip line names the raised target
+  Feed(30);
+  CHECK(s_AudioCatchUp.skipped > skippedBefore);
+  CHECK_EQ(CountLogs("Another stall within"), 1);
+  // The end of the stream names what it kept at the end
+  logs.clear();
+  MoonlightInstance::AudDecCleanup();
+  unsigned int stalls = 0;
+  unsigned int kept = 0;
+  CHECK_EQ(sscanf(FindLog("Skipped ").c_str(), "Skipped %*u audio packets (%*u ms of sound) that piled up after stalls of "
+                  "this stream; stalls: %u, sound kept after a stall: up to %u ms\n", &stalls, &kept), 2);
+  CHECK_EQ(stalls, 2u);
+  CHECK(kept >= 140u && kept <= 155u);
+  // Each start begins again at 100 ms
+  StartAudio(AudioBackend::Emss, 2, 240, false);
+  CHECK_EQ(s_AudioCatchUp.target, kAudioCatchUpTargetSeconds);
+
+  // With 'Limit audio delay' on, its 100 ms hold at all times, and the catch-up raises nothing
+  StartAudio(AudioBackend::Emss, 2, 240, true);
+  Feed(1);
+  AdvanceClock(150);
+  Feed(100);
+  FeedInRealTime(20);
+  const size_t switchBefore = appended.size();
+  AdvanceClock(150);
+  Feed(30);
+  CHECK(appended.size() >= switchBefore + 20 && appended.size() <= switchBefore + 22);
+  CHECK_EQ(s_AudioCatchUp.target, kAudioCatchUpTargetSeconds);
+  CHECK_EQ(CountLogs("Another stall within"), 0);
   MoonlightInstance::AudDecCleanup();
 }
 
@@ -863,5 +937,7 @@ int main() {
                         TheEndOfTheStreamLogsTheLeadAndKeepsItForTheReport);
   test_support::RunTest("after a stall, the sound that piled up beyond 100 ms is skipped, also with Limit audio delay "
                         "off, and counted apart from its drops", TheSoundThatPiledUpAfterAStallIsSkipped);
+  test_support::RunTest("a stall that comes again soon after keeps more of its sound, with a line of its own, and each "
+                        "start begins again at 100 ms", AStallThatComesAgainKeepsMoreOfItsSound);
   return test_support::Summary();
 }

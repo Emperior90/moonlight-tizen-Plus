@@ -2,8 +2,8 @@
 // one batched main-thread call per poll (or the single Emscripten calls when its helper is missing), an arrival per
 // controller, the controller state only when it changes plus a refresh every 100 ms, a retry after a dropped packet,
 // and the controller mask when controllers come and go. Since 2.3.5 the slots are read only once per 50 ms while no
-// slot counts as a controller or while the input stays paused (the Stream Menu, the hidden app), on every poll
-// otherwise.
+// slot counts as a controller or while the input stays paused for the Stream Menu, on every poll otherwise, and not at
+// all while Moonlight stays hidden.
 
 #include "gamepad_harness.h"
 #include "test_support.h"
@@ -173,8 +173,9 @@ static int ReadsInOneSecond() {
 }
 
 // Each read is a round trip to the main thread that the input thread waits for: while no slot counts as a controller
-// (none, or a placeholder of Tizen) or while the input stays paused, the slots are read once per 50 ms; with a
-// controller every 5 ms; a pause that starts or ends, and the first poll of a stream, read at once
+// (none, or a placeholder of Tizen) or while the input stays paused for the Stream Menu, the slots are read once per
+// 50 ms; while Moonlight stays hidden not at all; with a controller every 5 ms; a pause that starts or ends, and the
+// first poll of a stream, read at once
 static void RunIdleReads(bool fallback) {
   harness::Reset();
   harness::useFallbackPath = fallback;
@@ -217,14 +218,19 @@ static void RunIdleReads(bool fallback) {
   CHECK_EQ(harness::slotReads, before + 1);
   CHECK_EQ(ReadsInOneSecond(), 200);
 
-  // The same while Moonlight is hidden
-  setAppHidden(true);
+  // While Moonlight is hidden: the read that sends the released state, then none until the page shows again
+  setStreamPageHidden(true);
   before = harness::slotReads;
   Poll();
   CHECK_EQ(harness::slotReads, before + 1);
-  reads = ReadsInOneSecond();
-  CHECK(reads >= 20 && reads <= 21);
-  setAppHidden(false);
+  CHECK(!padPackets.empty() && padPackets.back().buttons == 0);
+  CHECK_EQ(ReadsInOneSecond(), 0);
+  // Also with the Stream Menu opened and closed meanwhile
+  setStreamMenuOpen(true);
+  CHECK_EQ(ReadsInOneSecond(), 0);
+  setStreamMenuOpen(false);
+  CHECK_EQ(ReadsInOneSecond(), 0);
+  setStreamPageHidden(false);
   before = harness::slotReads;
   Poll();
   CHECK_EQ(harness::slotReads, before + 1);
@@ -262,8 +268,8 @@ int main() {
   test_support::RunTest("a controller replaced in the same slot is removed and announced again", TestReplacedController);
   test_support::RunTest("no slots: nothing is announced or sent", TestFailedRead);
   test_support::RunTest("a read that throws is not logged again by every poll", TestThrowingReadIsNotLoggedEachPoll);
-  test_support::RunTest("the slots are read once per 50 ms while no controller counts or the input stays paused, on "
-                        "every poll otherwise", TestIdleReads);
+  test_support::RunTest("the slots are read once per 50 ms while no controller counts or the Stream Menu is open, not "
+                        "at all while Moonlight is hidden, on every poll otherwise", TestIdleReads);
   test_support::RunTest("the fallback path reads the slots by the same rule", TestIdleReadsOfTheFallbackPath);
   return test_support::Summary();
 }

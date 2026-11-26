@@ -339,6 +339,14 @@ test('the global name check accepts names that another script declares, and the 
       'if (typeof notOnEveryTv === "function") { notOnEveryTv(); }',
       'var flag = typeof maybeThere === "boolean" ? maybeThere : false;',
       'typeof neverRead;',
+      // On the side of the test where the name exists, in either order and combined with !, && and ||
+      'if (typeof inElse === "undefined") { console.log(0); } else { inElse(); }',
+      'typeof afterOr === "undefined" || afterOr();',
+      'var picked = typeof onlyIfFunction !== "function" ? null : onlyIfFunction;',
+      '"object" === typeof literalFirst && literalFirst.run();',
+      'if (!(typeof negated === "undefined")) { negated(); }',
+      'if (typeof both1 === "function" && typeof both2 !== "undefined") { both1(both2); }',
+      'if (typeof either1 === "undefined" || typeof either2 === "undefined") { console.log(1); } else { either1(either2); }',
       'hoisted();',
       'function hoisted() { return arguments.length; }',
       'Module = {};',
@@ -373,6 +381,28 @@ test('the global name check reports undeclared names, implicit globals and block
   assert.deepEqual(checkGlobals({ 'a.js': 'if (typeof other === "function") { maybe(); } else { other(); }' }), [
     'a.js:1: maybe is used, but nothing declares it',
     'a.js:1: other is used, but nothing declares it',
+  ]);
+  // Nor does a test whose side shows that the name doesn't exist, or that shows nothing: each of these reads throws a
+  // ReferenceError when the name is missing
+  assert.deepEqual(checkGlobals({ 'a.js': [
+    'if (typeof wrongIf === "undefined") { wrongIf(); }',
+    'typeof wrongAnd === "undefined" && wrongAnd();',
+    'typeof notFunction !== "function" && notFunction();',
+    'typeof wrongOr !== "undefined" || wrongOr();',
+    'var value = typeof wrongCondition === "undefined" ? wrongCondition : 0;',
+    'if (typeof onlyOne === "undefined" || ready) { onlyOne(); }',
+    'if (typeof oneOfTwo !== "undefined" || ready) { oneOfTwo(); }',
+    'if (typeof bare) { bare(); }',
+    'var ready = true;',
+  ].join('\n') }), [
+    'a.js:1: wrongIf is used, but nothing declares it',
+    'a.js:2: wrongAnd is used, but nothing declares it',
+    'a.js:3: notFunction is used, but nothing declares it',
+    'a.js:4: wrongOr is used, but nothing declares it',
+    'a.js:5: wrongCondition is used, but nothing declares it',
+    'a.js:6: onlyOne is used, but nothing declares it',
+    'a.js:7: oneOfTwo is used, but nothing declares it',
+    'a.js:8: bare is used, but nothing declares it',
   ]);
 });
 

@@ -9,7 +9,10 @@
 //   the globals; function scopes hoist their var and function declarations, blocks hold their let, const and class,
 //   and catch parameters, for heads, destructuring and default parameters declare names as JavaScript does;
 // - a read of a name that nothing declares and ALLOWED_GLOBALS lacks is reported, unless it is the operand of typeof
-//   or sits behind a test with `typeof <name>` (e.g. `typeof x === 'function' ? x() : ...`);
+//   or sits on the side of a test with `typeof <name>` where the test shows that the name exists: the consequent of an
+//   `if` or `?:` and the right of `&&` behind `typeof x !== 'undefined'` or `typeof x === 'function'` (any type but
+//   'undefined'), the alternate and the right of `||` behind `typeof x === 'undefined'` or `typeof x !== 'function'`,
+//   with `!`, `&&` and `||` combining such tests (`typeof x === 'undefined' && x()` throws, so it is reported);
 // - an assignment to a name that nothing declares is reported, unless ALLOWED_GLOBALS marks the name writable;
 // - every inline handler of index.html (onclick="...", onchange="...") may only use declared names.
 // A property, an object key, a method name or a label is no use of a name.
@@ -162,23 +165,40 @@ function declareBlock(statements, scope) {
   });
 }
 
-// The names whose `typeof` an expression tests
-function typeofNames(node, names) {
-  const found = names || new Set();
+const EQUALITY = new Set(['===', '!==', '==', '!=']);
+
+// The names that a test shows to exist when it is true (`truthy`) or when it is false: a comparison of `typeof <name>`
+// with a string says that the name exists where its type is known to be another than 'undefined'; `!` turns the side
+// around, `a && b` is true and `a || b` false only when both are, and otherwise only the names of both sides count
+function existingNames(node, truthy) {
+  const none = new Set();
   if (!isNode(node)) {
-    return found;
+    return none;
   }
-  if (node.type === 'UnaryExpression' && node.operator === 'typeof' && node.argument.type === 'Identifier') {
-    found.add(node.argument.name);
+  if (node.type === 'UnaryExpression' && node.operator === '!') {
+    return existingNames(node.argument, !truthy);
   }
-  children(node).forEach((value) => {
-    if (Array.isArray(value)) {
-      value.forEach((child) => typeofNames(child, found));
-    } else {
-      typeofNames(value, found);
+  if (node.type === 'LogicalExpression' && (node.operator === '&&' || node.operator === '||')) {
+    const left = existingNames(node.left, truthy);
+    const right = existingNames(node.right, truthy);
+    if ((node.operator === '&&') === truthy) {
+      return new Set([...left, ...right]);
     }
-  });
-  return found;
+    return new Set([...left].filter((name) => right.has(name)));
+  }
+  if (node.type === 'BinaryExpression' && EQUALITY.has(node.operator)) {
+    const isTypeof = (side) => side.type === 'UnaryExpression' && side.operator === 'typeof' && side.argument.type === 'Identifier';
+    const isString = (side) => side.type === 'Literal' && typeof side.value === 'string';
+    const [operand, literal] = isTypeof(node.left) && isString(node.right) ? [node.left, node.right] :
+      (isTypeof(node.right) && isString(node.left) ? [node.right, node.left] : [null, null]);
+    if (!operand) {
+      return none;
+    }
+    // Whether `typeof <name>` is the string of the test on this side of it
+    const typeIsLiteral = (node.operator === '===' || node.operator === '==') === truthy;
+    return typeIsLiteral !== (literal.value === 'undefined') ? new Set([operand.argument.name]) : none;
+  }
+  return none;
 }
 
 // Collects the uses of names of one script: { name, line, write, typeofOperand, guarded, scope }
@@ -194,10 +214,10 @@ Walker.prototype.use = function(node, scope, write, typeofOperand) {
   this.uses.push({ name: node.name, line: node.loc.start.line, write, typeofOperand: !!typeofOperand, guarded: this.guards.has(node.name), scope });
 };
 
-// Walk `node` with the names whose typeof `test` checks as guarded
-Walker.prototype.guarded = function(test, node, scope) {
+// Walk `node` with the names that a test showed to exist (existingNames()) as guarded
+Walker.prototype.guarded = function(names, node, scope) {
   const saved = this.guards;
-  this.guards = new Set([...saved, ...typeofNames(test)]);
+  this.guards = new Set([...saved, ...names]);
   this.walk(node, scope);
   this.guards = saved;
 };
@@ -379,13 +399,13 @@ Walker.prototype.walk = function(node, scope) {
     case 'IfStatement':
     case 'ConditionalExpression':
       this.walk(node.test, scope);
-      this.guarded(node.test, node.consequent, scope);
-      this.walk(node.alternate, scope);
+      this.guarded(existingNames(node.test, true), node.consequent, scope);
+      this.guarded(existingNames(node.test, false), node.alternate, scope);
       return;
     case 'LogicalExpression':
       this.walk(node.left, scope);
-      if (node.operator === '&&') {
-        this.guarded(node.left, node.right, scope);
+      if (node.operator === '&&' || node.operator === '||') {
+        this.guarded(existingNames(node.left, node.operator === '&&'), node.right, scope);
       } else {
         this.walk(node.right, scope);
       }

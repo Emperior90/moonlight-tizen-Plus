@@ -158,7 +158,8 @@ test('the diagnostic log under About: app and native lines, secrets hidden, scro
 
 // The note above the log (index.html), in English
 const LOG_NOTE = 'Kept only in the memory of the TV. The PIN, the encryption keys of the stream, the ID of the TV, the RTSP address, the public IP ' +
-  'address and the MAC addresses are hidden. Local addresses and the names of the PCs stay visible. UP and DOWN scroll.';
+  'address and the MAC addresses are hidden. Local addresses, the addresses that you entered and the names of the PCs stay visible. ' +
+  'UP and DOWN scroll.';
 
 test('the note of the diagnostic log names what it hides and what stays, in two lines in every language, also with 10 % wider text', async () => {
   for (const locale of ['en_US', 'de_DE', 'es_ES', 'fr_FR', 'pt_BR']) {

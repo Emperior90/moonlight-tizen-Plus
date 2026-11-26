@@ -421,7 +421,17 @@ test('the AV1 entry with the note stays selectable, the field shows the codec, a
     assert.deepEqual([menu.av1, menu.field], ['AV1 (pode não ser suportado por esta TV)', 'AV1']);
     const lines = await readSystemInfoLines(page);
     assert.ok(lines.indexOf('Decodificadores de vídeo (verificação do MediaSource): H.264: Sim, HEVC: Sim, HEVC Main10: Sim, AV1: Não, AV1 Main10: Não') >= 0, lines.join('\n'));
+    // The two lines of the decoder levels below it, in the same sentence case
+    ['Decodificadores de vídeo no nível 5.1 (H.264 acima de 1080p): ', 'Decodificadores de vídeo no nível 5.2 (4K acima de 60 FPS): ']
+      .forEach((label) => assert.equal(lines.filter((line) => line.indexOf(label) === 0).length, 1, label + '\n' + lines.join('\n')));
     assert.ok(lines.indexOf('Modo de latência ultrabaixa (Modo Jogo): Desconhecido') >= 0, lines.join('\n'));
+    // French puts a no-break space before every colon, also between a codec and its answer (the lines are read as HTML)
+    await page.evaluate(() => window.i18n.setLanguage('fr-FR'));
+    const frenchLines = await readSystemInfoLines(page);
+    const frenchAnswers = ['H.264', 'HEVC', 'HEVC Main10', 'AV1', 'AV1 Main10']
+      .map((codec, index) => codec + '&nbsp;: ' + (index < 3 ? 'Oui' : 'Non')).join(', ');
+    assert.ok(frenchLines.indexOf('Décodeurs vidéo (vérification MediaSource)&nbsp;: ' + frenchAnswers) >= 0,
+      frenchLines.join('\n'));
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

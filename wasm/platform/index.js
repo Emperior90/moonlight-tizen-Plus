@@ -2950,6 +2950,15 @@ function handleSettingsView(category) {
     return;
   }
 
+  // The tiles take the focus (tabindex="-1" in index.html), also from a click of the mouse, and a focused tile has the
+  // white look of the tile that the keys select in the list (style.css): the tile of the open section keeps only the
+  // look of the open section (.selected). Views.Settings.leave() blurs the tile that the keys selected, which after a
+  // click can be another one, and after a click the rows of the section take the focus only with the next key.
+  const focusedTile = document.activeElement;
+  if (focusedTile && focusedTile.classList && focusedTile.classList.contains('settings-category')) {
+    focusedTile.blur();
+  }
+
   // Navigate to the corresponding settings view
   switch (category) {
     case 'basicSettings': // Navigate to the BasicSettings view
@@ -4592,18 +4601,26 @@ function showStreamMode() {
   fullscreenWasmModule();
   handleOnScreenOverlays();
   Navigation.stop();
-  // The gamepads stay read on the launch screen, where B cancels the start like RETURN (handleGamepadMenuInput()): the
-  // Wasm module reads them on its own input thread only once the stream connected, and the polling of the menus stops
-  // then ('Connection Established' in messages.js, stopGamepadsOfLaunchScreen()). A start once more from the Stream
-  // Menu, whose close stopped the polling, takes a fresh snapshot here, so a button held from it doesn't count. A held
-  // D-Pad or stick repeat is cancelled, since the menus are stopped.
+  watchGamepadsOfLaunchScreen();
+}
+
+// The gamepads stay read on the launch screen of a stream, where B cancels the start like RETURN
+// (handleGamepadMenuInput()): the Wasm module reads them on its own input thread only once the stream connected, and
+// the polling of the menus stops then ('Connection Established' in messages.js, stopGamepadsOfLaunchScreen()). For the
+// start (showStreamMode()), and for the launch screen of a start once more after a stream that connected: the retry
+// after no video (retryStreamStart()) and the reconnect with new settings (resumeStreamAfterSettingsChange()), whose
+// stream stopped the polling, at 'Connection Established' or with the close of the Stream Menu, and whose
+// showStreamMode() comes only after their delay and the refresh of the server info. The polling that starts again takes
+// a fresh snapshot, so a button held from the stream or the Stream Menu doesn't count, and a held D-Pad or stick repeat
+// is cancelled, since the menus are stopped.
+function watchGamepadsOfLaunchScreen() {
   Controller.startWatching();
   resetGamepadMenuInput();
 }
 
 // The stream connected: the Wasm module reads the gamepads from now on (its input thread), so the polling of the menus,
-// which went on during the launch screen for B (showStreamMode()), stops to keep the main thread free for the audio
-// scheduler and the video player. The menus take a fresh snapshot of the gamepads when they resume.
+// which went on during the launch screen for B (watchGamepadsOfLaunchScreen()), stops to keep the main thread free for
+// the audio scheduler and the video player. The menus take a fresh snapshot of the gamepads when they resume.
 function stopGamepadsOfLaunchScreen() {
   Controller.stopWatching();
   resetGamepadMenuInput();
@@ -4963,8 +4980,8 @@ function startGame(host, appID, restartKind, restartChange) {
   };
 
   // The visit of the app list at the press (appListVisitOf()): what the start shows once the PC answered (the question
-  // to quit the running app, the list built again) is dropped when the user left that list meanwhile, e.g. with RETURN
-  // to the PC list while the server info was on its way. A start once more has no press.
+  // to quit the running app, the list built again, and since 2.3.5 the stream itself) is dropped when the user left that
+  // list meanwhile, e.g. with RETURN to the PC list while the server info was on its way. A start once more has no press.
   var pressVisit = isRestart ? null : appListVisitOf(host);
 
   // Refresh the server info, because the user might have quit the game
@@ -5108,6 +5125,18 @@ function startGame(host, appID, restartKind, restartChange) {
           // The quit doesn't need the list: ask by the name of the PC
           askToQuit(null);
         });
+        return;
+      }
+
+      // The user left the app list of the press while the server info was on its way, e.g. with RETURN or B of a
+      // controller to the PC list, or opened the menu of an app over it with CH+: the start is dropped, as RETURN or B on
+      // its launch screen would cancel it. Up to 2.3.4 the stream started anyway, over the PC list or under the menu of
+      // the app, and the end of the stream went back to the app list (leaveStreamView() in messages.js) while the PC list
+      // showed, so that its keys went to the hidden grid. A start without a press (a start once more, a Smart Hub deep
+      // link while the list didn't show with the keys) goes on.
+      if (!isRestart && pressVisit !== null && !isAppListVisitShown(host, pressVisit)) {
+        console.log('%c[index.js, startGame]', 'color: green;', 'Not starting app ' + appID + ', since its app list no longer shows.');
+        closeStartAudio();
         return;
       }
 
@@ -5471,10 +5500,10 @@ var noVideoRetryBlockedPorts = '';
 //   still holds an earlier start, e.g. one that this TV cancelled or one of another device, after it dropped this one.
 //   The stream that ended never connected, so the start once more waits for its hold, from the answer to its request on
 //   (waitForHeldHostStart()), which also covers the earlier start, as long as the host keeps it for its default time.
-// The launch screen shows meanwhile, where RED cancels the start as usual (cancelStreamLaunch()). Each kind only once per
-// launch, so that a port that is really blocked shows its message about 10 seconds later, and never while Moonlight is
-// in the background or after the user ended the stream (which ends it without error). Returns whether the retry takes
-// over the end of the stream.
+// The launch screen shows meanwhile, where RED, RETURN and B cancel the start as usual (cancelStreamLaunch()). Each
+// kind only once per launch, so that a port that is really blocked shows its message about 10 seconds later, and never
+// while Moonlight is in the background or after the user ended the stream (which ends it without error). Returns
+// whether the retry takes over the end of the stream.
 function retryStreamStart(restartKind, blockedPorts) {
   var host = streamLaunchHost;
   var appID = streamLaunchAppId;
@@ -5498,6 +5527,8 @@ function retryStreamStart(restartKind, blockedPorts) {
   $('body').css('backgroundColor', '');
   $('#loadingSpinner').css('display', 'inline-block');
   $('#loadingSpinnerMessage').text(t('Starting %1$s...', streamLaunchAppTitle));
+  // B cancels from now on, as the hint of the launch screen says: a stream that connected stopped the polling
+  watchGamepadsOfLaunchScreen();
   setTimeout(function() {
     // Cancelled meanwhile with RED, or since Moonlight went to the background (endStreamInBackground())
     if (launchId !== streamLaunchId || isInGame !== true) {
@@ -5676,8 +5707,8 @@ function restartStreamWithSettings(change) {
 
 // Resume the app with the new settings once the stream ended for restartStreamWithSettings() (called by handleMessage()
 // in messages.js with the error code of the end of the stream): the launch screen shows meanwhile, with what changed,
-// where RED cancels as usual (cancelStreamLaunch()). Not when the stream ended for another reason, or while Moonlight is
-// in the background. Returns whether the reconnect takes over the end of the stream.
+// where RED, RETURN and B cancel as usual (cancelStreamLaunch()). Not when the stream ended for another reason, or
+// while Moonlight is in the background. Returns whether the reconnect takes over the end of the stream.
 function resumeStreamAfterSettingsChange(errorCode) {
   var change = pendingStreamRestart;
   pendingStreamRestart = null;
@@ -5695,6 +5726,8 @@ function resumeStreamAfterSettingsChange(errorCode) {
   $('body').css('backgroundColor', '');
   $('#loadingSpinner').css('display', 'inline-block');
   $('#loadingSpinnerMessage').text(getStreamReconnectMessage(change));
+  // B cancels from now on, as the hint of the launch screen says (the close of the Stream Menu stopped the polling)
+  watchGamepadsOfLaunchScreen();
   setTimeout(function() {
     // Cancelled meanwhile with RED, or since Moonlight went to the background (endStreamInBackground())
     if (launchId !== streamLaunchId || isInGame !== true) {
@@ -7413,7 +7446,7 @@ function restoreDefaultsSettingsValues() {
   updateAudioBackendSettings();
 
   const defaultAudioConfig = 'Stereo';
-  $('#selectAudio').text('Stereo').attr('data-value', defaultAudioConfig).data('value', defaultAudioConfig);
+  $('#selectAudio').text(t('Stereo')).attr('data-value', defaultAudioConfig).data('value', defaultAudioConfig);
   storeData('audioConfig', defaultAudioConfig, null);
 
   // 'Surround audio quality' is part of the optimal streaming settings, which applyOptimalStreamingSettings() restored
@@ -7624,7 +7657,9 @@ function describeVideoDecoderProbe() {
       ? t('Unknown (not available)')
       : t('Unknown (the answers of the TV are not reliable)'))];
   }
-  const describe = (probes) => probes.map((probe) => probe.codec + ': ' + describeCheckAnswer(videoDecoderProbe.results[probe.mimeType])).join(', ');
+  // Each codec and its answer through t(), so that French puts a no-break space before the colon
+  const describe = (probes) => probes.map((probe) => t('%1$s: %2$s', probe.codec,
+    describeCheckAnswer(videoDecoderProbe.results[probe.mimeType]))).join(', ');
   const isH264Level51 = (probe) => probe.codec === 'H.264' && probe.level === '5.1';
   return [
     t('Video decoders (MediaSource check): %1$s', describe(VIDEO_DECODER_PROBES.filter((probe) => probe.level !== '5.2' && !isH264Level51(probe)))),
@@ -8495,13 +8530,25 @@ function areHostsShownAtStartup() {
   return !isInGame && (!isStartupUiShown || $('#host-grid').is(':visible'));
 }
 
+// Whether a host answered at the public address of the household (externalIP) rather than at an address of the local
+// network: a poll whose LAN address failed tries externalIP too (getServerAddressCandidates() in utils.js), and a
+// router that forwards the ports to the PC and loops requests from the LAN back answers there, so the host was stored at
+// that address. Only the scan finds the PC at its new LAN address again (moveKnownHostTo() in main.js). An address that
+// the user entered counts as any other.
+function isHostAtPublicAddress(host) {
+  return !!host.externalIP && host.address === host.externalIP && host.address !== host.userEnteredAddress;
+}
+
 // Whether the scan of the start can be left out: at least one stored host is paired, and every stored host answered its
-// first poll (online, also one that answered that it no longer accepts this TV). A host that didn't answer may be at a
-// new address, which the scan finds; without a paired host the user may still look for the PC to pair.
+// first poll (online, also one that answered that it no longer accepts this TV) at its own address: one of the local
+// network, or the one that the user entered (e.g. a DDNS name or a public address), not only the public address of the
+// household that the app learned (isHostAtPublicAddress()). A host that didn't answer may be at a new address, which the
+// scan finds, and so may one that answered only at that public address; without a paired host the user may still look
+// for the PC to pair.
 function isEveryStoredHostOnline() {
   var uids = Object.keys(hosts);
   return uids.length > 0 && uids.every(function(uid) {
-    return hosts[uid].online === true;
+    return hosts[uid].online === true && !isHostAtPublicAddress(hosts[uid]);
   }) && uids.some(function(uid) {
     return hosts[uid].paired === true;
   });
@@ -8511,9 +8558,9 @@ function isEveryStoredHostOnline() {
 // Returns a promise that resolves once the scan is done and the polling resumed. When the user left the hosts before
 // the first polls ended (e.g. for the settings, or a Smart Hub tile opened a host), there is no scan at this start:
 // Rescan network in the header of the hosts finds a new PC or a new address later. Since 2.3.5 the scan is also left
-// out when every stored PC answered its first poll and one of them is paired (isEveryStoredHostOnline()); Rescan
-// network still scans whenever it is chosen. The scan of the start only logs that it runs, since nobody asked for it;
-// the button shows its notices.
+// out when every stored PC answered its first poll at its own address (not only at the public address of the household)
+// and one of them is paired (isEveryStoredHostOnline()); Rescan network still scans whenever it is chosen. The scan of the start only logs that
+// it runs, since nobody asked for it; the button shows its notices.
 function discoverHostsAtStartup() {
   // Immediately start polling known hosts so they are ready for Smart Hub or instant clicks.
   // We wait for all known hosts to finish their initial ping before launching the subnet scanner
@@ -8526,8 +8573,9 @@ function discoverHostsAtStartup() {
       isSubnetScanFinished = true;
       return;
     }
-    // Every stored PC answered its first poll, and at least one of them is paired: the start has what it needs, and
-    // the scan (254 requests) would only find a PC that the app doesn't know yet, which Rescan network does
+    // Every stored PC answered its first poll at an address of the local network, and at least one of them is paired:
+    // the start has what it needs, and the scan (254 requests) would only find a PC that the app doesn't know yet,
+    // which Rescan network does
     if (isEveryStoredHostOnline()) {
       console.log('%c[index.js, discoverHostsAtStartup]', 'color: green;', 'Not scanning the local network at this start, since every stored PC answered and one of them is paired. Rescan network looks for other PCs.');
       isSubnetScanFinished = true;
@@ -9066,12 +9114,12 @@ function getBackgroundStatsLine() {
 }
 
 // Tell the WebAssembly module whether the page is hidden during a stream, so that the controllers stay away from the PC
-// meanwhile, whatever the browser reports for them in a hidden page (setAppHidden() in wasm/gamepad.cpp). Each stream
-// starts with the page shown.
+// meanwhile, whatever the browser reports for them in a hidden page (setStreamPageHidden() in wasm/gamepad.cpp). Each
+// stream starts with the page shown.
 function setStreamControllersHidden(hidden) {
   try {
-    if (typeof Module !== 'undefined' && typeof Module.setAppHidden === 'function') {
-      Module.setAppHidden(hidden);
+    if (typeof Module !== 'undefined' && typeof Module.setStreamPageHidden === 'function') {
+      Module.setStreamPageHidden(hidden);
     }
   } catch (error) {
     console.error('%c[index.js, setStreamControllersHidden]', 'color: green;', 'Error: Failed to tell the module that the page is ' + (hidden ? 'hidden' : 'shown') + ': ' + error);

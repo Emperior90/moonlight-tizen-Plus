@@ -2,7 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
-- [2.3.5](#235): pre-release, checks of the build and the tests, with everything of 2.3.3 and 2.3.4
+- [2.3.5](#235): pre-release, keys that reach the PC without RETURN, pairing a PC that dropped the TV again, video on a thread of its own and sound that catches up after a stall
 - [2.3.4](#234): pre-release only, its changes come with 2.3.5
 - [2.3.3](#233): pre-release only, its changes come with 2.3.5
 - [2.3.2](#232): 2026-11-20, a tidier Stream Menu with F keys and PC shutdown, finer frame times, how fast frames arrive, more facts in the log and a fix for recovery keyframes
@@ -23,35 +23,35 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ## 2.3.5
 
-*Pre-release, in testing.* Checks of the build and the tests, for the changes that follow.
+*Pre-release, in testing.* Keys reach the PC without RETURN, a PC that dropped the TV pairs again, video has its own reading thread and the sound catches up.
 
 > **Install:** by hand over 2.3.4, 2.3.3, 2.3.2 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >
-> **Tested:** with simulated TVs and hosts only; the changes of 2.3.4 and 2.3.3 still need a test on a TV.
+> **Tested:** with simulated TVs and hosts only; high bitrates, keys and dialogs, controllers while hidden, sound after a stall, the start scan and *Wake PC* need a TV.
+
+### New
+
+- B of a controller cancels a stream that is starting; a USB mouse also scrolls sideways (untested on a TV)
+- The diagnostic log tells whether the app or the TV's Wi-Fi limits how fast frames arrive at a high bitrate
 
 ### Changed
 
-- Builds check the Tizen Studio installer, a full release needs passed tests, and the ENet licence link is fixed
+- In a stream the first arrow, OK or keyboard key gives the stream the keys (not Esc, Shift, Ctrl or Alt)
+- A PC that dropped the TV (e.g. after *Unpair All*) shows *Unpaired*; OK pairs it again, also while it runs a game
 - The picture is read from the network by a thread of its own, and the engine is built with stronger optimizations
-- Diagnostic log: two new lines show how busy the second thread is and whether its ring of packets filled up
-- After a Wi-Fi stall the sound catches up with the picture on its own (at most 100 ms behind)
-- Mouse emulation moves the pointer slowly just past the centre, and at shallow angles
+- After a Wi-Fi stall the sound catches up on its own: at most 100 ms behind, 300 ms if stalls come again
 - *Quit app on the PC* in the Stream Menu asks first, and Exit and Restart open on *Cancel*
-- B of a controller cancels a starting stream, and CH+ closes the menu of a PC again
-- The action buttons of the settings line up with the menus, and the PC details read as a table
-- The button mapping fades out at its bottom while more rows follow, and its arrows line up
-- No network scan at the start when every PC in the list answers; *Wake PC* scans less and says what to check
-- The guide explains the first start and failed pairings, and Brazilian Portuguese uses one word for each thing
+- Mouse emulation moves the pointer slowly just past the center, and at shallow angles
+- Long messages stay 5 to 15 seconds by their length and make room for the statistics
+- No network scan at the start if every PC answers and one is paired; *Wake PC* scans less and says what to check
+- Settings buttons line up, the PC details read as a table, and Brazilian Portuguese uses one word for each thing
 
 ### Fixed
 
-- Controllers no longer act on the PC while Moonlight is in the background, and help texts keep their first letter
-- Esc of a keyboard works as RETURN in the menus, and a held RETURN goes back one step only
+- CH+, CH-, Source and the color keys no longer press keys on the PC; Ctrl + Alt + Shift + S keeps the keyboard on
+- Controllers no longer act on the PC while Moonlight is hidden; Esc works as RETURN, a held RETURN goes back once
+- OK and *Quit app on the PC* work while the PC runs an app the TV's list lacks; an empty or failed list says why
 - A failed update check no longer waits a day, a stuck loading screen says why, and *Delete PC* deletes its box art
-
-### Also in this version
-
-- Everything of the pre-releases 2.3.4 and 2.3.3 below
 
 ## 2.3.4
 

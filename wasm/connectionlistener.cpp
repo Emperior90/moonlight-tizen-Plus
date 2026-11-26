@@ -175,8 +175,9 @@ void MoonlightInstance::ClLibraryLogMessage(const char* format, ...) {
 }
 
 void MoonlightInstance::ClConnectionStatusUpdate(int connectionStatus) {
-  // This runs on the video receive thread, so the message is posted without waiting for the main thread,
-  // otherwise the UDP socket would not be drained while the main thread is busy
+  // This runs on the processing thread of the video receive (the receive thread up to 2.3.4), so the message is
+  // posted without waiting for the main thread, otherwise the ring of packets in front of it would fill and the UDP
+  // socket would not be drained while the main thread is busy
   if (g_Instance->m_DisableWarningsEnabled == false) {
     switch (connectionStatus) {
       case CONN_STATUS_OKAY:

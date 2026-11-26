@@ -376,7 +376,14 @@ test('the promotion stops unless the workflow Tests passed for the commit of the
       const result = promote(repo, runSha, 'v1.19.100', { [entry.sha]: entry.runs });
       assert.equal(result.status, 1, entry.name + ': ' + result.output);
       assert.ok(result.output.indexOf('The workflow Tests has not passed for commit ' + entry.sha + ' (its check run tests: ' + entry.result + ').') >= 0, entry.name + ': ' + result.output);
-      assert.match(result.output, /run it again from the Actions tab, before promoting/);
+      if (entry.result === 'missing') {
+        // Without a run there is nothing to run again
+        assert.match(result.output, /No run of Tests exists for this commit, so there is none to run again: push a commit that runs it, or build a new pre-release from a commit that passed it, before promoting\./, entry.name);
+        assert.doesNotMatch(result.output, /run it again from the Actions tab/, entry.name);
+      } else {
+        assert.match(result.output, /Wait until it has passed, or run it again from the Actions tab, before promoting\./, entry.name);
+        assert.doesNotMatch(result.output, /No run of Tests exists/, entry.name);
+      }
       assert.equal(result.requests.filter((request) => request.method === 'PATCH' || request.method === 'DELETE').length, 0, entry.name + ': nothing was changed');
     });
     // An older failure followed by a passed run again counts as passed, for both commits

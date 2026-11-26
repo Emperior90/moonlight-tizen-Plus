@@ -17,7 +17,7 @@
 // - the restart question of Restore Defaults comes at once, and the second press of a double OK doesn't answer it
 // - a double OK on the disabled Ultra low latency mode switch of a TV on Tizen 5.5 opens its warning once
 // - RIGHT opens the selected section like OK and LEFT in a section goes back to its tile like RETURN, and the tiles take
-//   the focus with the selection (since 2.3.5)
+//   the focus with the selection (since 2.3.5), while the tile of an open section has no focus, also after a click
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -441,6 +441,59 @@ test('RIGHT opens the selected section of the settings and LEFT goes back to its
     await key(page, 'back', 400);
     assert.deepEqual([(await menuState(page)).view, (await menuState(page)).focused], ['HostsNav', 'settingsBtn']);
     assert.equal((await tiles(page)).focusedTile, '');
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('a click of the mouse on a tile of the settings opens its section, and the tile keeps only the look of the open section', async () => {
+  // The mouse down focuses the tile (tabindex="-1"), and the focus has the white look of the tile that the keys select:
+  // in the first version of 2.3.5 the clicked tile kept it while its section was open, until a key moved the focus
+  const app = await openMenus(harness, {});
+  const { page } = app;
+  const tile = (category) => page.evaluate((name) => {
+    const element = document.querySelector('.settings-category[data-category="' + name + '"]');
+    const focused = document.activeElement;
+    return {
+      view: window.__view,
+      selected: element.classList.contains('selected'),
+      focus: element.matches(':focus'),
+      background: getComputedStyle(element).backgroundColor,
+      focusedTile: focused && focused.classList.contains('settings-category') ? focused.getAttribute('data-category') : '',
+    };
+  }, category);
+  try {
+    await key(page, 'up');
+    await selectItem(page, 'HostsNav', 'settingsBtn', 'left', 'right');
+    await key(page, 'ok', 500);
+    assert.equal((await menuState(page)).view, 'Settings');
+    // The look of the open section, for the comparison below: Video with the keys, then back to the list
+    await key(page, 'down');
+    await key(page, 'right', 600);
+    const keyLook = await tile('videoSettings');
+    assert.deepEqual([keyLook.view, keyLook.selected, keyLook.focus, keyLook.focusedTile], ['VideoSettings', true, false, '']);
+    assert.notEqual(keyLook.background, 'rgb(255, 255, 255)');
+    await key(page, 'left', 400);
+    // A click on the tile of the Audio Settings, which the keys didn't select, then the mouse moves away from the tiles
+    const box = await page.evaluate(() => {
+      const rect = document.querySelector('.settings-category[data-category="audioSettings"]').getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    });
+    await page.mouse.move(box.x - 5, box.y - 5);
+    await page.mouse.move(box.x, box.y);
+    await page.mouse.click(box.x, box.y);
+    await page.waitForTimeout(100);
+    await page.mouse.move(1700, 1000);
+    await page.waitForTimeout(600);
+    const clicked = await tile('audioSettings');
+    assert.deepEqual([clicked.view, clicked.selected, clicked.focus, clicked.focusedTile], ['AudioSettings', true, false, ''], JSON.stringify(clicked));
+    assert.equal(clicked.background, keyLook.background, 'the look of the open section, not the white one of the focus');
+    assert.equal((await tile('videoSettings')).focus, false);
+    // The first key after the mouse brings the focus to the first row of the section, as before
+    await key(page, 'down', 300);
+    const state = await menuState(page);
+    assert.deepEqual([state.view, state.focused], ['AudioSettings', 'selectAudio']);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

@@ -884,6 +884,13 @@ body:not([data-view="hosts"]):not([data-view="apps"]) .launcher-hero {
   -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0) 0, #000 10px);
   mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0) 0, #000 10px);
 }
+/* The mask only while the grid is at its top: the top of a scrolled grid lies under the fade of the hero (is-scrolled,
+   launcher.js), and the mask cost frames while the rows scroll (in the Chromium of the tests, with a long app list,
+   one frame in twenty or more took 33 ms instead of 17 ms) */
+.launcher-hero.is-scrolled ~ #host-grid, .launcher-hero.is-scrolled ~ #game-grid {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
 #host-grid {
   grid-template-columns: repeat(5, minmax(0, 1fr));
   grid-auto-rows: 232px;

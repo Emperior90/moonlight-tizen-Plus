@@ -4,7 +4,8 @@
 // combos next to it, and the input while the menu is open and after it closed (setStreamMenuOpen()): the host gets the
 // controllers released, and the buttons that chose an entry don't reach the game. The mouse emulation entry of the menu
 // (toggleMouseEmulation()) works without the setting that allows the hold of Start. While Moonlight is hidden during the
-// stream (setAppHidden(), since 2.3.5), the host gets the same as while the menu is open.
+// stream (setStreamPageHidden(), since 2.3.5), the host gets the same as while the menu is open, and the controllers
+// aren't read, so that a hidden page that reports none doesn't unplug them on the PC.
 
 #include "gamepad_harness.h"
 #include "test_support.h"
@@ -406,7 +407,7 @@ static void TestInputWhileHidden() {
   harness::slots[0].analogButton[kButtonRT] = 1.0;
   Poll();
   CHECK(!padPackets.empty() && padPackets.back().buttons == A_FLAG && padPackets.back().rightTrigger == 255);
-  setAppHidden(true);
+  setStreamPageHidden(true);
   const size_t before = padPackets.size();
   PollFor(60000);
   CHECK_EQ(padPackets.size(), before + 1);
@@ -441,7 +442,7 @@ static void TestInputWhileHidden() {
   // Shown again with A, the stick and RT held: the stick and RT reach the game at once, A once released and pressed again
   SetButton(0, kButtonA, true);
   PollFor(100);
-  setAppHidden(false);
+  setStreamPageHidden(false);
   Poll();
   CHECK(padPackets.size() == hidden + 1 && padPackets.back().buttons == 0 &&
         padPackets.back().leftStickX == static_cast<short>(0.8 * 32767) && padPackets.back().rightTrigger == 255);
@@ -452,7 +453,7 @@ static void TestInputWhileHidden() {
   CHECK_EQ(LastButtons(), A_FLAG);
 
   // A new stream starts shown, whatever the stream before was left with
-  setAppHidden(true);
+  setStreamPageHidden(true);
   Poll();
   CHECK_EQ(LastButtons(), 0);
   harness::Instance()->HandleGamepadInputState(false, false, harness::FaceButtonSwapMapping(false, false), LI_CTYPE_UNKNOWN);
@@ -468,16 +469,64 @@ static void TestInputWhileHidden() {
   CHECK(!harness::mouseButtons.empty() && harness::mouseButtons.back().action == BUTTON_ACTION_PRESS);
   harness::mouseButtons.clear();
   harness::mouseMoves.clear();
-  setAppHidden(true);
+  setStreamPageHidden(true);
   harness::slots[0].axis[0] = 1.0;
   PollFor(1000);
   CHECK(harness::mouseButtons.size() == 1 && harness::mouseButtons[0].action == BUTTON_ACTION_RELEASE);
   CHECK(harness::mouseMoves.empty());
   CHECK(harness::scrolls.empty());
-  setAppHidden(false);
+  setStreamPageHidden(false);
   Poll();
   CHECK(mouseEmulationActive);
   CHECK(harness::mouseMoves.size() == 1 && harness::mouseMoves[0] == std::make_pair(10, 0));
+}
+
+// Whether a packet since the given one tells the host that no controller is there any more (a removal of the last one)
+static bool AnyRemovalSince(size_t from) {
+  for (size_t i = from; i < padPackets.size(); ++i) {
+    if (padPackets[i].activeMask == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static void TestControllersStayOnThePcWhileHidden() {
+  // The browser of a hidden page may report no controller at all: the PC keeps it, released, instead of a removal, and
+  // when the page shows again with the controller there, it isn't announced a second time
+  StartWithController();
+  CHECK_EQ(harness::arrivals.size(), 1u);
+  SetButton(0, kButtonA, true);
+  Poll();
+  setStreamPageHidden(true);
+  Poll();
+  const size_t released = padPackets.size();
+  CHECK(!padPackets.empty() && padPackets.back().buttons == 0 && padPackets.back().activeMask == 1);
+  harness::Disconnect(0);
+  PollFor(5000);
+  CHECK_EQ(padPackets.size(), released);
+  Connect(0);
+  SetButton(0, kButtonA, true);
+  setStreamPageHidden(false);
+  PollFor(200);
+  CHECK(!AnyRemovalSince(released));
+  CHECK_EQ(harness::arrivals.size(), 1u);
+  CHECK(!padPackets.empty() && padPackets.back().activeMask == 1 && padPackets.back().buttons == 0);
+
+  // A controller switched off while Moonlight is hidden is removed once the page shows again, and one switched on
+  // meanwhile is announced then
+  setStreamPageHidden(true);
+  Poll();
+  harness::Disconnect(0);
+  Connect(1);
+  PollFor(1000);
+  const size_t hidden = padPackets.size();
+  CHECK_EQ(harness::arrivals.size(), 1u);
+  setStreamPageHidden(false);
+  Poll();
+  CHECK_EQ(harness::arrivals.size(), 2u);
+  CHECK(!harness::arrivals.empty() && harness::arrivals.back().controller == 1);
+  CHECK(padPackets.size() > hidden && padPackets[hidden].controller == 0 && padPackets[hidden].activeMask == 2);
 }
 
 static void TestMouseModeAndMenu() {
@@ -542,5 +591,7 @@ int main() {
   test_support::RunTest("the mouse emulation entry and the Stream Menu in mouse mode", TestMouseModeAndMenu);
   test_support::RunTest("while Moonlight is hidden the host gets the controllers released once and nothing else, and "
                         "buttons held when it shows again need a new press", TestInputWhileHidden);
+  test_support::RunTest("while Moonlight is hidden the controllers aren't read, so the PC keeps them; the read on the "
+                        "way back sees which are there", TestControllersStayOnThePcWhileHidden);
   return test_support::Summary();
 }

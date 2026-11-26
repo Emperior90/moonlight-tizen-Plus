@@ -110,6 +110,9 @@ test('the Spanish and French texts use the terms of the glossary', () => {
   assert.match(french['ForceGM variant detected: the app asks the TV for its Game Mode, so the Ultra low latency mode setting stays off here and the decoder uses the Low Latency mode.'], /mode Jeu/);
   const hostSoftware = /host ?name|Hostname|GameStream host|the other host|Wolf|host audio/;
   assert.deepEqual(keys.filter((key) => /hôte/.test(french[key]) && !hostSoftware.test(key)).map((key) => french[key]), []);
+  // Waking the PC is despertar, the word of Despertar el PC, never encender (turn on), also while the dialog waits
+  assert.deepEqual(keys.filter((key) => /\bwake/i.test(english[key]) && /\b(encend|encien)/i.test(spanish[key])).map((key) => spanish[key]), []);
+  assert.equal(spanish['Waiting for the host PC to wake up and connect to the network...'], 'Esperando a que el PC se despierte y se conecte a la red…');
   // The television is a televisor and a téléviseur, also in the entry of the audio backend (since 2.3.5)
   assert.deepEqual(matching(spanish, /\bTVs?\b/), []);
   assert.deepEqual(matching(french, /\bTVs?\b/), []);
@@ -121,7 +124,7 @@ test('the Spanish and French texts use the terms of the glossary', () => {
   // A typographic ellipsis instead of three dots, and the decimal comma
   [spanish, french].forEach((texts) => {
     assert.deepEqual(matching(texts, /\.\.\./), []);
-    assert.match(texts['— Navigate to the next item, and increase the bitrate in 0.5 Mbps steps.'], /0,5 Mbps/);
+    assert.match(texts['— Navigate to the next item, increase the bitrate in 0.5 Mbps steps, and open the selected category of the settings.'], /0,5 Mbps/);
   });
 });
 

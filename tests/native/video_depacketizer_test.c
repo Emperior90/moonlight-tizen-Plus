@@ -31,7 +31,9 @@
 // The test feeds packets the way RtpVideoQueue.c hands them over (the queue entry behind the packet in the same
 // allocation, which the depacketizer takes over) for an AV1 stream of Sunshine, whose frames pass through unparsed with
 // the frame type in the header, and counts the allocations of VideoDepacketizer.c and of the packets, so that a decode
-// unit or packet that the depacketizer loses shows up as a leak.
+// unit or packet that the depacketizer loses shows up as a leak. run.sh runs it once more with the thread sanitizer (the
+// line below), which must report nothing.
+// Thread sanitizer: yes
 
 // The thread functions of Platform.c need the GNU extensions of the C library
 #define _GNU_SOURCE

@@ -137,6 +137,10 @@ test('the TV classes of the guide name the warnings that 4K above 60 FPS gets on
   for (const name of ['4K, 60 Hz panel', '4K, 120 Hz panel', '8K']) {
     assert.doesNotMatch(tableRow(name)[1], /144 FPS|exceeds Level 5\.2/, name);
   }
+  // The 120 Hz row says what was tested on the S90C: the stream at 120 FPS starts and the statistics show 120, while
+  // nobody has counted yet how many different frames its panel shows from an app (the slow-motion check of the guide)
+  assert.match(tableRow('4K, 120 Hz panel')[1], /On the S90C a stream at 120 FPS starts and the statistics show 120; whether its panel shows 120 different frames from an app hasn't been counted yet/);
+  assert.doesNotMatch(tableRow('4K, 120 Hz panel')[1], /Untested on any 120 Hz TV except the S90C/);
   // No document calls level 5.2 the highest level of all Samsung TVs any more
   for (const file of ['docs/GUIDE.md', 'docs/RELEASE_NOTES.md', 'docs/PATCH_NOTES.md', 'CHANGELOG.md', 'wasm/platform/tv_profile.js']) {
     assert.doesNotMatch(read(file), /highest (decoder )?level of Samsung TVs|Level 5\.2 on every Samsung TV/i, file);
@@ -399,6 +403,8 @@ test('the README and the guide count Tizen 10 as Tizen 9.0 or newer, as strong a
   }
   assert.match(readme, /including Tizen 10 of the models of 2026, which Moonlight Plus has not been tested on yet/);
   assert.match(GUIDE, /Newer includes Tizen 10 of the models of 2026, which Moonlight Plus has not been tested on yet/);
+  // "Newer" follows the Tizen 5.5 that it means, before the sentences on older TVs
+  assert.match(GUIDE, /with Tizen 5\.5 or newer, which means model year 2020 or later\. Newer includes Tizen 10 /);
   // The freeze is known on Tizen 9 only
   assert.match(GUIDE, /The switch can freeze the picture on Tizen 9\. Whether it still does on Tizen 10 is not known, so the app treats Tizen 10 the same way\./);
   // The hint after an update of Tizen, with the one-time warning of 2.3.1 as the code does it
@@ -1077,7 +1083,7 @@ test('the guide describes the trust of a PC of 2.3.3 as the code does it', () =>
   assert.ok(GUIDE.indexOf('If the PC may be asleep, wake it first with *Wake PC* in its options (OK does that too when *Always wake this PC automatically* is on)') > 0);
   assert.ok(GUIDE.indexOf('Another key at the public address of your network doesn\'t count, unless the PC was last reached there or you entered it') > 0);
   // The PC list: Unpaired for a PC that refused the TV, its own message for another key, OK names the PC
-  assert.ok(GUIDE.indexOf('A paired PC that no longer accepts this TV (since 2.3.3, e.g. after *Unpair All* in Sunshine) shows *Unpaired*, and OK pairs it again with a new PIN, also while it runs a game') > 0);
+  assert.ok(GUIDE.indexOf('A paired PC that no longer accepts this TV (since 2.3.5, e.g. after *Unpair All* in Sunshine) shows *Unpaired*, and OK pairs it again with a new PIN, also while it runs a game') > 0);
   assert.ok(GUIDE.indexOf('and otherwise the message *Failed to connect to GAMING-PC …*.') > 0);
   // The 401 answer over HTTPS with the pinned key is the refusal; a mismatch of the key never marks the PC
   assert.match(utils, /var HOST_REFUSED_TV_ERROR = 'HOST_REFUSED_TV';/);
@@ -1117,7 +1123,7 @@ test('the guide describes the app list of 2.3.3 as the code does it', () => {
   // So is what follows a quit after RETURN: the quit (stopGame()) builds the list and calls back only in the visit of
   // the press, and the start after Yes changes the view and starts the other app only then
   assert.ok(GUIDE.indexOf('So is what follows a quit: when you press RETURN while the PC still quits a game (which can take several seconds), ' +
-    'the quit goes on, but the PC list stays and the other app doesn\'t start (since 2.3.3; before, the app list came back and the app started).') > 0);
+    'the quit goes on, but the PC list stays and the other app doesn\'t start (since 2.3.5; before, the app list came back and the app started).') > 0);
   assert.match(index, /function stopGame\(host, callbackFunction, pressVisit\) \{/);
   assert.match(index, /var showAppsAfterQuit = function\(quitSucceeded, refusalSaid\) \{\s+if \(pressVisit !== undefined && pressVisit !== null && !isAppListVisitShown\(host, pressVisit\)\) \{/);
   assert.match(index, /if \(!isPressListShown\(\)\) \{[\s\S]{0,250}return;\s+\}\s+startGame\(host, appID\);/);
@@ -1145,7 +1151,7 @@ test('the guide describes the app list of 2.3.3 as the code does it', () => {
   assert.match(utils, /return Promise\.reject\('The app list was answered with status ' \+ \$root\.attr\('status_code'\)\);/);
   // The box art of the same PC shows at once; no PC is polled during a stream
   assert.ok(GUIDE.indexOf('The box art that already showed shows at once when you return to the same PC, e.g. after a stream, unless the apps of ' +
-    'another PC were open in between or *Refresh apps* ran (since 2.3.3).') > 0);
+    'another PC were open in between or *Refresh apps* ran (since 2.3.5).') > 0);
   assert.match(index, /var appGridBoxArt = \{ serverUid: null, urls: \{\} \};/);
   const showStreamMode = index.slice(index.indexOf('function showStreamMode() {'), index.indexOf('\n}\n', index.indexOf('function showStreamMode() {')));
   assert.match(showStreamMode, /isInGame = true;[\s\S]{0,300}stopPollingHosts\(\);/);
@@ -1314,7 +1320,7 @@ test('the guide describes the video receive lines of 2.3.4 as the code makes the
     'A high share of error correction (FEC) raises *up to* by up to about that share, since its extra packets cost the app little and *Frames arrive at* leaves them out.']
     .forEach((text) => assert.ok(log.indexOf(text) > 0, text));
   // The pointers of the guide to them: above 150 Mbps and in the troubleshooting
-  assert.ok(guideSection('### Above 150 Mbps').indexOf('Whether the app or the Wi-Fi of the TV sets that pace, the lines *Video receive …* of the [diagnostic log](#diagnostic-log) tell after a stream (since 2.3.4).') > 0);
+  assert.ok(guideSection('### Above 150 Mbps').indexOf('Whether the app or the Wi-Fi of the TV sets that pace, the lines *Video receive …* of the [diagnostic log](#diagnostic-log) tell after a stream (since 2.3.5).') > 0);
   const trouble = GUIDE.split('\n').find((line) => line.indexOf('- **A long frame receive time at a high bitrate, e.g. 10 ms at 180 Mbps over Wi-Fi:**') === 0);
   assert.ok(trouble, 'the troubleshooting bullet');
   assert.ok(trouble.indexOf('read *Video receive of the stream* and *Frame receive of the stream* at the end of the [diagnostic log](#diagnostic-log)') > 0);
@@ -1333,32 +1339,51 @@ test('the guide describes the two threads of the video receive and the processin
     assert.ok(match, String(pattern));
     return match[1];
   };
-  // The reader: its other work is noting the time and handing the packet over, a wait for room doesn't count, and its
-  // rate counts one clock read per packet
+  // The reader: its other work is handing the packet over, a wait for room doesn't count, and its rate adds one clock
+  // read per packet for the time it notes (a sampled packet takes it from the clock read of its sample, which its other
+  // work leaves out)
   assert.match(video, /figures\.workUs \+= nowUs - workStartUs - workWaitedUs;/);
   assert.match(video, /\* 8 \/\s+\(readUs \+ workUs \+ clockUs\);/);
-  ['and of everything else the reading thread does for a packet until it reads the next one (since 2.3.5 it only notes the time and hands the packet to a second thread; a wait for room between them doesn\'t count here); and from these, with one clock read per packet, the speed at which the reading thread could take packets that are waiting, counted like *Frames arrive at*.']
+  assert.match(video, /workStartUs = clockUs;\s+workSampled = true;\s+stampUs = endUs;/);
+  ['and of everything else the reading thread does for a packet until it reads the next one (it only hands the packet to a second thread, and a wait for room between them doesn\'t count here); and from these, with one clock read per packet for noting when it read the packet, the speed at which the reading thread could take packets that are waiting, counted like *Frames arrive at*.']
     .forEach((text) => assert.ok(log.indexOf(text) > 0, text));
   // The processing thread: its lines once a minute and at the end, the example built from the format of the code
   const process = formatOf(/Limelog\("(Video processing of the stream, %u s: [^"]*)\\n",/);
   const minute = formatOf(/Limelog\("(Video processing, last %u s: [^"]*)\\n",/);
   assert.ok(minute.indexOf('Video processing, last ') === 0);
   assert.match(video, /if \(nowUs - windowStartUs >= VIDEO_RECV_LINE_INTERVAL_US\) \{\s+if \(figures\.packets > windowStart\.packets\) \{\s+logVideoProcessFigures\(/);
-  const example = formatC(process, [312, 4973512, '14.2', '61', '809', 212, ringPackets, 0, 0, 2240]);
-  assert.equal(example, 'Video processing of the stream, 312 s: 4973512 packets, 14.2 us of work each, idle 61%: up to 809 Mbps; ring up to 212 of 1024 packets, full 0 times for 0 ms; 2240 wakes');
-  assert.ok(log.indexOf('Since 2.3.5 a second thread does the work on the packets that the first one reads, with a ring of ' + ringPackets + ' packets between them. Its lines come once a minute and at the end, e.g. *' + example + '* (an example, not a measurement)') > 0);
+  const example = formatC(process, [312, 4973512, '14.2', '77', '38', '809', 212, ringPackets, 0, 0, 19054]);
+  assert.equal(example, 'Video processing of the stream, 312 s: 4973512 packets, 14.2 us of work each, idle 77% (looking 38%): up to 809 Mbps; ring up to 212 of 1024 packets, full 0 times for 0 ms; 19054 wakes');
+  // (the example is one stream: 14.2 us of work for each of its packets leave 77 % of its 312 s idle)
+  assert.equal(Math.round(100 - 14.2 * 4973512 / 312e6 * 100), 77);
+  assert.ok(log.indexOf('A second thread does the work on the packets that the first one reads, with a ring of ' + ringPackets + ' packets between them. Its lines come once a minute and at the end, e.g. *' + example + '* (an example, not a measurement)') > 0);
   // No packet is dropped: a reader that finds the ring full waits for room
   assert.match(ring, /while \(ring->head - ring->tail == ring->slotCount && !ring->stopped\) \{\s+ring->readerWaiting = true;\s+PltWaitForConditionVariable\(&ring->roomCond, &ring->mutex\);/);
   assert.doesNotMatch(ring.replace(/\/\/.*$/gm, ''), /drop/i);
   // The wakes are those of a waiting processing thread by the reader
   assert.match(ring, /if \(ring->processorWaiting\) \{\s+ring->processorWaiting = false;\s+ring->figures\.wakes\+\+;\s+PltSignalConditionVariable\(&ring->packetsCond\);/);
-  ['the packets it took (as many as the reading thread read, unless some were left at the end), its time per packet (error correction, decryption, putting the frame together at its last packet), the share of the time it had nothing to do, the speed at which it could take packets, counted like *Frames arrive at*',
-    'then the most packets that waited in the ring, how often the ring was full and for how long the reading thread waited for room (no packet is dropped: they wait in the receive buffer of the TV), and how often the reading thread had to wake it.',
-    'With two threads (since 2.3.5), the slower of the two sets the pace: compare the lower of the two *up to* with *Frames arrive at*. A ring that was *full* means the second thread was the limit at those times; a high *idle* share means it keeps up.']
+  // It looks again for more than VRR_LINGER_US (0.1 ms) before it waits, and its line counts that time apart, as part
+  // of the idle time; it takes up to VRR_BATCH packets at once, which stay in the ring until it gives them back
+  assert.match(ring, /#define VRR_LINGER_US 100\n/);
+  assert.match(ring, /nowUs - startUs <= VRR_LINGER_US && checks < VRR_LINGER_CHECKS\) \{/);
+  assert.match(ring, /\*lookUs = nowUs - startUs;/);
+  assert.match(video, /figures\.idleUs \+= idleUs;\s+figures\.lookUs \+= lookUs;/);
+  assert.match(ring, /#define VRR_BATCH 32\n/);
+  assert.match(ring, /ring->tail \+= released;/);
+  assert.match(ring, /depth = ring->head - ring->tail;/);
+  ['the packets it took (as many as the reading thread read, unless some were left at the end), its time per packet (error correction, decryption, putting the frame together at its last packet), the share of the time it had nothing to do (*idle*) and, in brackets, the part of it that it spent looking for the next packet before it waited (*looking*: it looks for at least 0.1 ms, so that the reading thread needn\'t wake it for each packet of a frame, and keeps a core of the TV busy meanwhile), the speed at which it could take packets, counted like *Frames arrive at*',
+    'then the most packets in the ring at once (counting the up to 32 that the second thread was working on), how often the ring was full and for how long the reading thread waited for room (no packet is dropped: they wait in the receive buffer of the TV), and how often the reading thread had to wake it (at least about once per frame, since it waits between the frames).',
+    'With two threads, the slower of the two sets the pace, and the share of waiting packets is that of the reading thread only: compare the lower of the two *up to* with *Frames arrive at*. When the second thread\'s *up to* is the lower one and not more than about a quarter above *Frames arrive at* (or below it), the second thread sets the receive time, whatever the share of waiting packets: it can be the limit within each frame and still be idle between the frames.',
+    'A *ring up to* well above the 32 packets that it takes at once shows it too, and a ring that was *full* shows it at its worst. A high *looking* share at a high bitrate means that it kept a core busy while the frames came; *wakes* close to the number of packets mean that the packets came further apart than its look, e.g. at a low bitrate, and each wake delays a packet a little.']
     .forEach((text) => assert.ok(log.indexOf(text) > 0, text));
-  // The rows of the statistics stay true: the times are still when the app reads the packets (the reader notes them)
+  // The rows of the statistics stay true: the times are still when the app reads the packets (the reader notes them),
+  // and the receive time ends when the second thread has put the frame together, so a slower second thread raises it
+  // without lowering the rate, which comes from the times of the reader
   assert.ok(tableRow('Frames arrive at')[1].indexOf('The times are when the app reads the packets, not when they reach the TV') >= 0);
   assert.match(video, /stampUs = PltGetMicroseconds\(\);/);
+  assert.ok(tableRow('Frames arrive at')[1].indexOf('Since 2.3.5 a thread of its own reads the packets: a slower second thread, which puts the frames together, raises the frame receive time without lowering this figure, unless its ring of packets fills (see *Video processing* in the [diagnostic log](#diagnostic-log)).') >= 0);
+  assert.ok(GUIDE.indexOf('the size of a frame divided by this speed is about its receive time (since 2.3.5 longer when the thread of the app that puts the frames together is the slower one, see *Video processing* in the [diagnostic log](#diagnostic-log))') > 0);
+  assert.match(read('moonlight-common-c/src/VideoDepacketizer.c'), /qdu->decodeUnit\.enqueueTimeUs = PltGetMicroseconds\(\);/);
 });
 
 test('the guide and the controller page describe the keys in the menus of 2.3.5 as the code handles them', () => {
@@ -1396,6 +1421,9 @@ test('the guide and the controller page describe the keys in the menus of 2.3.5 
   assert.match(index, /function handleLaunchScreenGamepadInput\(gamepadIndex, changes, now\) \{[\s\S]{0,200}change\.index !== 1[\s\S]{0,600}endStartingOrRunningStream\(\);/);
   assert.match(read('wasm/platform/messages.js'), /isStreamConnected = true;\s+\/\/[^\n]*\n\s+runGuarded\('stopGamepadsOfLaunchScreen'/);
   assert.match(read('wasm/index.html'), /<span class="keycap keycap-red" data-i18n="RED">RED<\/span><span class="keycap" data-i18n="B">B<\/span>/);
+  // RETURN or B in the app list before the launch screen shows: the start is dropped once the server info came
+  assert.ok(GUIDE.indexOf('RETURN or B in the app list right after OK, before *Starting…* shows, cancels the start as well (since 2.3.5;') > 0);
+  assert.match(index, /if \(!isRestart && pressVisit !== null && !isAppListVisitShown\(host, pressVisit\)\) \{\s+console\.log\([^\n]*'Not starting app ' \+ appID \+ ', since its app list no longer shows\.'\);\s+closeStartAudio\(\);\s+return;\s+\}\s+\/\/ Retrieve all stream configuration options/);
   // Exit and Restart open on Cancel, the restart that Restore Defaults asks for on Restart
   assert.ok(GUIDE.indexOf('and so do *Exit Moonlight*, which RETURN opens from the PC list, *Restart Moonlight* (both since 2.3.5)') > 0);
   assert.ok(GUIDE.indexOf('The restart that *Restore Defaults* asks for opens on *Restart*.') > 0);
@@ -1434,6 +1462,10 @@ test('the guide describes the first start, the failed pairings, an unreadable ap
     '- Four number fields for an IPv4 address. Turn it off to type a name, an IPv6 address or a port.');
   assert.match(first, /four number fields for an IPv4 address, preset to the network of the TV/);
   assert.match(first, /turn off Settings → General → \*Numeric PC address input\* first/);
+  // The example of another port isn't the port that the app uses anyway (47989); the address takes the HTTP port of the
+  // host, which is the port setting of Sunshine
+  assert.match(first, /or another port \(e\.g\. \*gaming-pc:50000\* for Sunshine with the port 50000\)/);
+  assert.doesNotMatch(first, /:47989\*/);
   assert.match(index, /pairingDialog\(_nvhttpHost, function\(\) \{\s+\/\/ Add the host to the grid after successful pairing\s+addHostToGrid\(_nvhttpHost\);/);
   assert.match(first, /the PC joins the list once it is paired/);
   // The PIN has four digits (generatePairingPin() of utils.js), and the app list opens after the pairing (hostChosen())
@@ -1451,10 +1483,16 @@ test('the guide describes the first start, the failed pairings, an unreadable ap
     assert.equal(english[key], key);
     assert.ok(troubleshooting.indexOf(row) > 0, row);
   });
-  // No sound at all: the backend Disabled turns it off, the Opus decoder line of the log, the line of the statistics
+  // No sound at all: the backend Disabled turns it off, the line of the statistics. An Opus decoder that can't be created
+  // never leaves a stream silent: the start fails at the audio stage (AudDecInit() in auddec.cpp returns the error), which
+  // the row of the start failures explains, so the item doesn't name it
   assert.match(read('wasm/index.html'), /<li class="mdl-menu__item" data-value="Disabled" data-i18n="Disabled">Disabled<\/li>/);
   assert.match(troubleshooting, /- \*\*No sound at all:\*\* check Settings → Audio Settings → \*Audio backend\*: \*Disabled\* turns the sound off\./);
-  assert.match(troubleshooting, /if the \[diagnostic log\]\(#diagnostic-log\) shows \*Creating the Opus decoder failed\*, choose Stereo/);
+  assert.match(read('wasm/auddec.cpp'), /The start of the stream fails at this stage with the error\./);
+  const noSound = troubleshooting.slice(troubleshooting.indexOf('- **No sound at all:**'), troubleshooting.indexOf('- **Only stereo from a soundbar or receiver:**'));
+  assert.ok(noSound.length > 0 && noSound.indexOf('*Audio stream* line') > 0, noSound);
+  assert.doesNotMatch(noSound, /Opus decoder/);
+  assert.ok(troubleshooting.indexOf('*Creating the Opus decoder failed* before "audio stream establishment failed"') > 0);
 });
 
 test('the README claims no tested surround output, and the README and the guide point owners of Tizen 5.0 TVs elsewhere (2.3.5)', () => {

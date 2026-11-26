@@ -903,9 +903,11 @@ static uint32_t TenthsOfMs(uint32_t timeUs) {
 // Add the time a frame spent in a stage, from one reading of the microsecond clock (LiGetMicroseconds(), or a time of
 // the decode unit) to a later one, to the total of the stage and keep the longest. A later reading that is earlier
 // counts as 0: on the TV the clock of each thread is performance.now() of its worker, which Emscripten lines up with
-// the main thread when the thread starts, so the receive thread and this thread can read it a little apart. Its steps
-// are those of performance.now(), which the browser may round (e.g. to 0.1 ms), so a single time is not exact to the
-// microsecond; an average over many frames comes closer.
+// the main thread when the thread starts, so the receive thread and this thread can read it a little apart (since 2.3.5
+// the receive time of a frame also starts on the clock of the reader and ends on that of the processing thread of the
+// video receive, up to about 0.2 ms apart, the same for a whole stream). Its steps are those of performance.now(),
+// which the browser may round (e.g. to 0.1 ms), so a single time is not exact to the microsecond; an average over many
+// frames comes closer.
 static void AddFrameTime(uint64_t& totalUs, uint32_t& maxUs, uint64_t fromUs, uint64_t toUs) {
   const uint32_t timeUs = toUs > fromUs ? (uint32_t)std::min<uint64_t>(toUs - fromUs, UINT32_MAX) : 0;
   totalUs += timeUs;
@@ -1972,9 +1974,10 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     s_LastClientDroppedFrames = clientDroppedFrames;
   } else {
     // Any frame number greater than the last frame number + 1 represents a dropped frame. The ones the client
-    // dropped itself were not lost on the network, so they are counted separately. The receive thread can
-    // count such frames before their gap shows up here (e.g. while this thread waits in the pacer), so the
-    // client drops not covered by this gap are carried over to the next gap rather than discarded.
+    // dropped itself were not lost on the network, so they are counted separately. The processing thread of the
+    // video receive (the receive thread up to 2.3.4) can count such frames before their gap shows up here (e.g.
+    // while this thread waits in the pacer), so the client drops not covered by this gap are carried over to the
+    // next gap rather than discarded.
     const uint32_t gap = (uint32_t)(decodeUnit->frameNumber - (m_LastFrameNumber + 1));
     const uint32_t tvDroppedFrames = std::min(gap, clientDroppedFrames - s_LastClientDroppedFrames);
     m_ActiveWndVideoStats.networkDroppedFrames += gap - tvDroppedFrames;
@@ -2454,7 +2457,8 @@ void MoonlightInstance::FormatVideoStats(VIDEO_STATS& stats, char* output, int l
     }
 
     // Print the FEC recoveries of the session: losses the parity packets repaired without a visible effect, how
-    // long the longest repair blocked the receive thread, and how close the worst block came to losing a frame
+    // long the longest repair held up the processing thread of the video receive (the receive thread up to 2.3.4),
+    // and how close the worst block came to losing a frame
     VIDEO_NETWORK_STATS networkStats = {};
     LiGetVideoNetworkStats(&networkStats);
     ret = snprintf(

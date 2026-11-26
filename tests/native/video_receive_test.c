@@ -28,7 +28,12 @@
 //    the clock read per packet; the processing thread has its own lines (one a minute of its time, one for the stream);
 //  - the limit of 10 s for the first frame runs on the processing thread, by the read times;
 //  - the start creates the processing thread before the reader, every stop and failed start stops the ring, joins both
-//    and frees the ring.
+//    and frees the ring;
+//  - a plain packet that the RTP queue rejects (a surplus parity packet of a block it completed, a late or a duplicate
+//    packet) leaves its buffer with the processing thread, which puts it into the slot of the next packet: no buffer is
+//    in two slots and none is lost; an encrypted one leaves the buffer it was decrypted into for the next decryption;
+//  - the lines of the processing thread from chosen figures: the work per packet from the time it was busy, the idle
+//    share and the part of it that it looked again for packets, the rate, and the counts of the ring of the minute.
 //
 // The socket, the RTP queue, the threads, the mutexes, the decryption and the clock are stand-ins: the receive calls
 // follow a script of entries (a packet, whether it was waiting and how long its receive took; a timeout; an error), the
@@ -586,6 +591,8 @@ static PLT_CRYPTO_CONTEXT cryptoContext;
 static int decryptCalls;
 static unsigned char* lastDecryptInput;
 static unsigned char* lastDecryptOutput;
+// The buffer that each entry of the script was decrypted into
+static unsigned char* decryptedInto[MAX_ENTRIES];
 // The call (counted from 1) that fails, or 0
 static int failingDecryption;
 
@@ -613,15 +620,24 @@ bool PltDecryptMessage(PPLT_CRYPTO_CONTEXT ctx, int algorithm, int flags, unsign
   }
   lastDecryptInput = inputData;
   lastDecryptOutput = outputData;
+  {
+    // (the ciphertext of the stand-in is the RTP packet as serve() made it, its sequence number the entry plus 1)
+    const int index = (int)BE16(((PRTP_PACKET)inputData)->sequenceNumber) - 1;
+    if (index >= 0 && index < MAX_ENTRIES) {
+      decryptedInto[index] = outputData;
+    }
+  }
   memcpy(outputData, inputData, (size_t)inputDataLength);
   *outputDataLength = inputDataLength;
   return true;
 }
 
-// The RTP queue takes workUs (and the extra work of the entry) for a packet and keeps it (here: frees it). It runs on
-// the processing thread and finds the entry of the script by the sequence number that serve() gave the packet; the
-// first packet stands for a keyframe (notifyKeyFrameReceived(), which the depacketizer calls), unless a case checks the
-// limit for the first frame.
+// The RTP queue takes workUs (and the extra work of the entry) for a packet and keeps it (here: frees it), or, every
+// rejectEvery-th packet of a case that sets it, rejects it and leaves the buffer to the caller, as the real queue does
+// with a surplus parity packet of a block it completed or a late or duplicate packet. It runs on the processing thread
+// and finds the entry of the script by the sequence number that serve() gave the packet; the first packet stands for a
+// keyframe (notifyKeyFrameReceived(), which the depacketizer calls), unless a case checks the limit for the first
+// frame.
 static int queuedPackets;
 static int lastQueuedLength;
 static char* lastQueuedPacket;
@@ -632,6 +648,11 @@ static int queuedOutOfOrder;
 static int queuedWithWrongTime;
 static int queuedInOtherBuffer;
 static int lastQueuedIndex;
+static int rejectEvery;
+static int rejectedPackets;
+static bool rejected[MAX_ENTRIES];
+// Runs after the processing thread, before the stop (a case that looks into the ring sets it)
+static void (*afterProcessing)(void);
 // (StreamConfig.packetSize of every case)
 #define PACKET_SIZE_OF_STREAM 1392
 
@@ -661,6 +682,11 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
   }
   if ((EncryptionFeaturesEnabled & SS_ENC_VIDEO) == 0 && (char*)packet != servedBuffer[index]) {
     queuedInOtherBuffer++;
+  }
+  if (rejectEvery > 0 && (index + 1) % rejectEvery == 0) {
+    rejected[index] = true;
+    rejectedPackets++;
+    return RTPF_RET_REJECTED;
   }
   queuedPackets++;
   lastQueuedLength = length;
@@ -763,6 +789,11 @@ static void resetStream(void) {
   queuedWithWrongTime = 0;
   queuedInOtherBuffer = 0;
   lastQueuedIndex = -1;
+  rejectEvery = 0;
+  rejectedPackets = 0;
+  memset(rejected, 0, sizeof(rejected));
+  memset(decryptedInto, 0, sizeof(decryptedInto));
+  afterProcessing = NULL;
   receiveEntry = NULL;
   processEntry = NULL;
   receiveThreadsCreated = 0;
@@ -798,6 +829,35 @@ static void resetStream(void) {
   computeSamples(MAX_ENTRIES);
 }
 
+// No buffer is in two slots of the ring (the processing thread puts a buffer of its own into each slot of a plain
+// packet that it hands to the queue)
+static int compareBuffers(const void* a, const void* b) {
+  const uintptr_t x = (uintptr_t)*(char* const*)a;
+  const uintptr_t y = (uintptr_t)*(char* const*)b;
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+static char* slotBuffers[VIDEO_RECV_RING_PACKETS];
+static void checkSlotBuffersDistinct(void) {
+  CHECK(receiveRing.slots != NULL);
+  if (receiveRing.slots == NULL) {
+    return;
+  }
+  for (uint32_t i = 0; i < receiveRing.slotCount; i++) {
+    slotBuffers[i] = receiveRing.slots[i].buffer;
+  }
+  qsort(slotBuffers, receiveRing.slotCount, sizeof(slotBuffers[0]), compareBuffers);
+  int shared = 0;
+  for (uint32_t i = 1; i < receiveRing.slotCount; i++) {
+    if (slotBuffers[i] == slotBuffers[i - 1]) {
+      shared++;
+    }
+  }
+  if (shared > 0) {
+    printf("  # %d buffers are in two slots of the ring at once\n", shared);
+  }
+  CHECK_EQ_INT(shared, 0);
+}
+
 // The start up to the threads, the receive thread on this thread until the script is used up (or it ends the stream),
 // then the processing thread until it took every packet (or it ends the stream), and the stop, which leaves no mutex
 // or condition variable of the ring behind
@@ -813,6 +873,10 @@ static void runStream(void) {
   if (processEntry != NULL) {
     event("process", NULL);
     processEntry(NULL);
+  }
+  checkSlotBuffersDistinct();
+  if (afterProcessing != NULL) {
+    afterProcessing();
   }
   event("stop", NULL);
   stopVideoStream();
@@ -873,8 +937,8 @@ static void expectedProcessLine(char* text, size_t size, unsigned long long pack
     snprintf(rate, sizeof(rate), "n/a");
   }
   snprintf(text, size,
-           "Video processing of the stream, %u s: %llu packets, %.1f us of work each, idle 0%%: up to %s Mbps; ring up "
-           "to %llu of 32768 packets, full 0 times for 0 ms; 0 wakes\n",
+           "Video processing of the stream, %u s: %llu packets, %.1f us of work each, idle 0%% (looking 0%%): up to %s "
+           "Mbps; ring up to %llu of 32768 packets, full 0 times for 0 ms; 0 wakes\n",
            seconds, packets, (double)elapsedUs / (double)packets, rate, packets);
 }
 
@@ -1016,10 +1080,10 @@ static void test_timeout_mode_reads_each_packet_with_one_recvfrom_and_samples_ab
     // all the packets, as the reader ran first here
     expectedProcessLine(expected, sizeof(expected), 256, 256ULL * FULL_PACKET, 256 * workUs);
     checkLine(expected);
-    checkLine(ipv6 ? "Video processing of the stream, 1 s: 256 packets, 30.0 us of work each, idle 0%: up to 388 Mbps; "
-                     "ring up to 256 of 32768 packets, full 0 times for 0 ms; 0 wakes\n"
-                   : "Video processing of the stream, 1 s: 256 packets, 30.0 us of work each, idle 0%: up to 382 Mbps; "
-                     "ring up to 256 of 32768 packets, full 0 times for 0 ms; 0 wakes\n");
+    checkLine(ipv6 ? "Video processing of the stream, 1 s: 256 packets, 30.0 us of work each, idle 0% (looking 0%): up "
+                     "to 388 Mbps; ring up to 256 of 32768 packets, full 0 times for 0 ms; 0 wakes\n"
+                   : "Video processing of the stream, 1 s: 256 packets, 30.0 us of work each, idle 0% (looking 0%): up "
+                     "to 382 Mbps; ring up to 256 of 32768 packets, full 0 times for 0 ms; 0 wakes\n");
     // After the lines of the reader, once
     CHECK(findLine(PROCESS_LINE) > findLine(CHECK_LINE));
     CHECK_EQ_INT(countLines(PROCESS_LINE), 1);
@@ -1563,12 +1627,99 @@ static void test_the_processing_thread_logs_a_line_each_minute_of_its_time(void)
   CHECK_EQ_INT(countLines(PROCESS_MINUTE_LINE), 1);
   // 1504 packets in 60.16 s: 25 packets/s, 40,000 us each, up to (1408 + 28) * 8 * 1504 / 60160000 = 0.29 Mbps; the
   // ring held all 2100 packets in that minute
-  checkLine("Video processing, last 60 s: 25 packets/s, 40000.0 us of work each, idle 0%: up to 0 Mbps; ring up to 2100 "
-            "of 32768 packets, full 0 times for 0 ms; 0 wakes\n");
-  checkLine("Video processing of the stream, 84 s: 2100 packets, 40000.0 us of work each, idle 0%: up to 0 Mbps; ring up "
-            "to 2100 of 32768 packets, full 0 times for 0 ms; 0 wakes\n");
+  checkLine("Video processing, last 60 s: 25 packets/s, 40000.0 us of work each, idle 0% (looking 0%): up to 0 Mbps; "
+            "ring up to 2100 of 32768 packets, full 0 times for 0 ms; 0 wakes\n");
+  checkLine("Video processing of the stream, 84 s: 2100 packets, 40000.0 us of work each, idle 0% (looking 0%): up to 0 "
+            "Mbps; ring up to 2100 of 32768 packets, full 0 times for 0 ms; 0 wakes\n");
   const int minute = findLine(PROCESS_MINUTE_LINE);
   CHECK(minute >= 0 && minute < findLine(PROCESS_LINE));
+}
+
+// After a stream of plain video with every 5th packet rejected: the slot of the packet after a rejected one has the
+// buffer that the rejected packet was received into
+static int rejectedBufferElsewhere;
+static void checkRejectedBuffersInTheNextSlot(void) {
+  rejectedBufferElsewhere = 0;
+  for (int i = 0; i + 1 < scriptLength; i++) {
+    if (rejected[i] && receiveRing.slots[(uint32_t)(i + 1) & (receiveRing.slotCount - 1)].buffer != servedBuffer[i]) {
+      rejectedBufferElsewhere++;
+    }
+  }
+}
+
+static void test_a_packet_that_the_queue_rejects_leaves_its_buffer_for_the_next_one(void) {
+  // Plain video, every 5th packet rejected (in a real stream every surplus parity packet of a block that is complete,
+  // and every late or duplicate packet): the processing thread put a buffer of its own into the slot of the packet, and
+  // the buffer of the rejected packet goes into the slot of the next one. No buffer is in two slots (runStream()) and
+  // none is lost (the leak check of the address sanitizer at the end of the test)
+  resetStream();
+  rejectEvery = 5;
+  afterProcessing = checkRejectedBuffersInTheNextSlot;
+  for (int i = 0; i < 200; i++) {
+    addPacket(FULL_PACKET, true, 5, 1);
+  }
+  runStream();
+  CHECK_EQ_INT(queuedPackets, 160);
+  CHECK_EQ_INT(rejectedPackets, 40);
+  CHECK_EQ_INT(rejectedBufferElsewhere, 0);
+  CHECK_EQ_INT(terminations, 0);
+  // Encrypted video: the buffer that a rejected packet was decrypted into is the one the next packet is decrypted into
+  resetStream();
+  rejectEvery = 5;
+  EncryptionFeaturesEnabled = SS_ENC_VIDEO;
+  rtpOffset = (int)sizeof(ENC_VIDEO_HEADER);
+  for (int i = 0; i < 200; i++) {
+    addPacket(FULL_PACKET + (int)sizeof(ENC_VIDEO_HEADER), true, 5, 1);
+  }
+  runStream();
+  CHECK_EQ_INT(queuedPackets, 160);
+  CHECK_EQ_INT(rejectedPackets, 40);
+  CHECK_EQ_INT(decryptCalls, 200);
+  int decryptedElsewhere = 0;
+  for (int i = 0; i + 1 < 200; i++) {
+    if (rejected[i] && (decryptedInto[i + 1] != decryptedInto[i] || decryptedInto[i] == NULL)) {
+      decryptedElsewhere++;
+    }
+  }
+  CHECK_EQ_INT(decryptedElsewhere, 0);
+}
+
+static void test_the_lines_of_the_processing_thread_from_chosen_figures(void) {
+  // logVideoProcessFigures() itself, with figures that the cases above can't make (the processing thread runs after
+  // the reader there, so it never waits, looks or is woken, and the ring is never full)
+  resetStream();
+  receiveRing.slotCount = 1024;
+  // A minute of 1,200,000 packets of 1408 bytes, idle 24 of its 60 s, 9 s of them looking again: busy 36 s, so 30 us
+  // of work per packet and up to (1408 + 28) * 8 / 30 = 383 Mbps; the counts of the ring are those of the minute (full
+  // 7 - 4 times for 9600 - 2100 us, 2500 - 2000 wakes), its most packets those since the start of the minute
+  const VIDEO_PROC_FIGURES before = { .packets = 300000, .bytes = 300000ULL * 1408, .idleUs = 6000000, .lookUs = 3000000 };
+  const VIDEO_PROC_FIGURES now = { .packets = 1500000, .bytes = 1500000ULL * 1408, .idleUs = 30000000,
+                                   .lookUs = 12000000 };
+  const VIDEO_RECV_RING_FIGURES ringBefore = { .maxDepth = 250, .windowMaxDepth = 180, .fullWaits = 4, .fullWaitUs = 2100,
+                                               .wakes = 2000 };
+  const VIDEO_RECV_RING_FIGURES ringNow = { .maxDepth = 300, .windowMaxDepth = 212, .fullWaits = 7, .fullWaitUs = 9600,
+                                            .wakes = 2500 };
+  logVideoProcessFigures(&now, &before, &ringNow, &ringBefore, 60000000, false);
+  checkLine("Video processing, last 60 s: 20000 packets/s, 30.0 us of work each, idle 40% (looking 15%): up to 383 Mbps; "
+            "ring up to 212 of 1024 packets, full 3 times for 8 ms; 500 wakes\n");
+  // The whole stream of 75 s: idle 30 s, 12 s of them looking, the most packets in the ring and every count since the
+  // start
+  logVideoProcessFigures(&now, NULL, &ringNow, NULL, 75000000, true);
+  checkLine("Video processing of the stream, 75 s: 1500000 packets, 30.0 us of work each, idle 40% (looking 16%): up to "
+            "383 Mbps; ring up to 300 of 1024 packets, full 7 times for 10 ms; 2500 wakes\n");
+  // Idle at most the time of the line and looking at most the idle time: nothing left for work, so no rate
+  const VIDEO_PROC_FIGURES clamped = { .packets = 3, .bytes = 3 * 1408, .idleUs = 5000000, .lookUs = 7000000 };
+  const VIDEO_RECV_RING_FIGURES ringFew = { .maxDepth = 3, .windowMaxDepth = 3, .fullWaits = 1, .fullWaitUs = 12,
+                                            .wakes = 1 };
+  logVideoProcessFigures(&clamped, NULL, &ringFew, NULL, 1000000, true);
+  checkLine("Video processing of the stream, 1 s: 3 packets, 0.0 us of work each, idle 100% (looking 100%): up to n/a "
+            "Mbps; ring up to 3 of 1024 packets, full 1 times for 0 ms; 1 wakes\n");
+  const VIDEO_PROC_FIGURES moreLookThanIdle = { .packets = 1000, .bytes = 1000 * 1408, .idleUs = 1000000,
+                                                .lookUs = 3000000 };
+  logVideoProcessFigures(&moreLookThanIdle, NULL, &ringFew, NULL, 10000000, true);
+  checkLine("Video processing of the stream, 10 s: 1000 packets, 9000.0 us of work each, idle 10% (looking 10%): up to 1 "
+            "Mbps; ring up to 3 of 1024 packets, full 1 times for 0 ms; 1 wakes\n");
+  receiveRing.slotCount = 0;
 }
 
 static void test_the_lines_fit_the_log_and_name_no_address(void) {
@@ -1599,10 +1750,10 @@ static void test_the_lines_fit_the_log_and_name_no_address(void) {
   }
   // The processing thread: a line after each batch of 32 packets of 100 s, with the work at its clamp
   CHECK_EQ_INT(countLines(PROCESS_MINUTE_LINE), 1280 / VRR_BATCH);
-  CHECK(hasLine("Video processing, last 3200 s: 0 packets/s, 99999.9 us of work each, idle 0%: up to 0 Mbps; ring up to "
-                "1280 of 32768 packets, full 0 times for 0 ms; 0 wakes\n"));
-  checkLine("Video processing of the stream, 128000 s: 1280 packets, 99999.9 us of work each, idle 0%: up to 0 Mbps; "
-            "ring up to 1280 of 32768 packets, full 0 times for 0 ms; 0 wakes\n");
+  CHECK(hasLine("Video processing, last 3200 s: 0 packets/s, 99999.9 us of work each, idle 0% (looking 0%): up to 0 "
+                "Mbps; ring up to 1280 of 32768 packets, full 0 times for 0 ms; 0 wakes\n"));
+  checkLine("Video processing of the stream, 128000 s: 1280 packets, 99999.9 us of work each, idle 0% (looking 0%): up "
+            "to 0 Mbps; ring up to 1280 of 32768 packets, full 0 times for 0 ms; 0 wakes\n");
   CHECK_EQ_INT(receiveLinesTooLong, 0);
   CHECK_EQ_INT(receiveLinesWithAddress, 0);
   CHECK(hasDottedAddress("from 192.168.1.20 on"));
@@ -1638,6 +1789,10 @@ int main(void) {
            test_the_first_frame_limit_runs_on_the_processing_thread_by_the_read_times);
   RUN_TEST("the processing thread logs a line each minute of its time and one for the stream",
            test_the_processing_thread_logs_a_line_each_minute_of_its_time);
+  RUN_TEST("a packet that the RTP queue rejects leaves its buffer for the next one: no buffer in two slots, none lost",
+           test_a_packet_that_the_queue_rejects_leaves_its_buffer_for_the_next_one);
+  RUN_TEST("the lines of the processing thread from chosen figures: work, idle, looking, rate and the ring of the minute",
+           test_the_lines_of_the_processing_thread_from_chosen_figures);
   RUN_TEST("the lines fit a line of the diagnostic log and name no address",
            test_the_lines_fit_the_log_and_name_no_address);
   return test_summary();

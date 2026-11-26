@@ -25,7 +25,7 @@ jobs:
         working-directory: tests
     # This job checks out the code, sets up Node.js with the pinned test tools, and runs every suite but the browser tests. Each suite also runs when an earlier suite failed, so that one run reports all failures, as long as the tools it needs were installed.
     steps:
-      # This step uses the `actions/checkout` action to check out the repository's code so that it can be used in the workflow. No later step pushes, so the token isn't kept in the clone.
+      # This step uses the `actions/checkout` action to check out the repository's code so that it can be used in the workflow. No later step pushes, so the checkout keeps no token on the runner.
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -49,7 +49,7 @@ jobs:
       - name: Run the unit tests
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         run: npm run test:unit
-      # This step builds the native tests (the gamepad and the stats of the app with g++, files of moonlight-common-c with gcc) with the address and undefined behaviour sanitizers, and runs them.
+      # This step builds the native tests (the gamepad and the stats of the app with g++, files of moonlight-common-c with gcc) with the address and undefined behaviour sanitizers, and runs them; the tests with threads of the video receive also with the thread sanitizer, which `run.sh` requires here (CI is set).
       # It also compiles every source file of the WebAssembly module without linking, which catches errors that only the release build would show; the headers of curl and OpenSSL let it check wasm/http.cpp too, and OpenSSL runs the tests of the pairing and the requests of libgamestream.
       - name: Install the headers of curl and OpenSSL
         if: ${{ !cancelled() }}

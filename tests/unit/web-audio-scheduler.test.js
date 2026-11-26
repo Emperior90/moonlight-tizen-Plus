@@ -10,8 +10,9 @@
 // - back to back at 48 kHz and at 44.1 kHz, the first frame at the target, without underruns and drops
 // - at the plain ratio the samples pass unchanged, and the resampler keeps a sine a sine across the frames
 // - a stall of the main thread is an underrun with a new schedule at the target; a long gap of the host audio isn't
-// - the clock sync follows a drift of 200 ppm within its limit of 500 ppm and keeps the lead at the target; without
-//   it, a fast host makes the scheduler drop frames, which keeps the lead bounded
+// - the clock sync follows a drift of 200 ppm within its limit of 500 ppm and keeps the lead at the target; a drift of
+//   1000 ppm holds it at exactly that limit, and the lead then moves by the rest of the drift; without it, a fast host
+//   makes the scheduler drop frames, which keeps the lead bounded
 // - the end of the scheduler, a suspended context and frames that never reached the scheduler
 
 const test = require('node:test');
@@ -186,6 +187,40 @@ test('Audio clock sync follows a drift of 200 ppm within 500 ppm and keeps the l
     env.starts.forEach((start, k) => {
       assert.ok(Math.abs(start.when - start.now - TARGET) <= 0.003, `${ppm}: frame ${k} at a lead of ${((start.when - start.now) * 1000).toFixed(2)} ms`);
     });
+    const stats = env.stats();
+    assert.deepEqual([stats.droppedFull, stats.droppedEmpty, stats.underruns, stats.resyncs], [0, 0, 0, 1], ppm + ': ' + JSON.stringify(stats));
+  }
+});
+
+test('Audio clock sync stops at its limit of 500 ppm against a drift of 1000 ppm, and the lead moves by the rest', () => {
+  for (const ppm of [1000, -1000]) {
+    const env = setup(48000, { clockSync: true });
+    const limit = Math.sign(ppm) * 500e-6;
+    const period = SAMPLES / HOST_RATE / (1 + ppm * 1e-6);
+    let worstCorrection = 0;
+    let unlimitedAfter10s = 0;
+    let leadAt10s = null;
+    feed(env, 30, ppm, null, (i) => {
+      const correction = env.app.get('_audCorrection');
+      worstCorrection = Math.max(worstCorrection, Math.abs(correction));
+      // The correction reaches the limit within about 7 s, and stays there while the drift is larger
+      if (i * period >= 10) {
+        if (correction !== limit) {
+          unlimitedAfter10s++;
+        }
+        if (leadAt10s === null) {
+          const last = env.starts[env.starts.length - 1];
+          leadAt10s = last.when - last.now;
+        }
+      }
+    });
+    assert.equal(worstCorrection, 500e-6, ppm + ': the largest correction');
+    assert.equal(env.app.get('_audCorrection'), limit, ppm + ': the correction at the end');
+    assert.equal(unlimitedAfter10s, 0, ppm + ': frames after 10 s without the correction at its limit');
+    // The 500 ppm that the correction can't take move the lead by 0.5 ms per second, 10 ms from 10 s to 30 s
+    const last = env.starts[env.starts.length - 1];
+    const moved = (last.when - last.now - leadAt10s) * 1000;
+    assert.ok(Math.abs(moved - Math.sign(ppm) * 10) <= 1, ppm + ': the lead moved by ' + moved.toFixed(2) + ' ms from 10 s on');
     const stats = env.stats();
     assert.deepEqual([stats.droppedFull, stats.droppedEmpty, stats.underruns, stats.resyncs], [0, 0, 0, 1], ppm + ': ' + JSON.stringify(stats));
   }

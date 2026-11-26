@@ -6,7 +6,8 @@
 // the empty state "Find your gaming PC" while hosts exist; box art shows uncropped, as a 3:4 poster for portrait covers
 // (600 x 800, 600 x 900) and as a banner only for landscape art, in the hero and on the start screen; the ambient light
 // is made of averaged colours of the art drawn as radial glows (no stretched canvas); and the rows that scroll under the
-// hero fade out instead of ending in a hard cut. The hero follows the focus only (mark() of navigation.js), never a real
+// hero fade out instead of ending in a hard cut (the fade of the grid itself at its top, for the glow of a card in the
+// first row, only while the grid isn't scrolled). The hero follows the focus only (mark() of navigation.js), never a real
 // mouse pointer; it offers UP for the options of a host only where UP reaches them; the ambient light changes only once
 // the focus rests and covers the right part of the screen only; the tiles keep the top of portrait covers and ring the
 // focused card with a dark gap, so that the ring shows on light box art; and the tooltips of the header buttons lie above
@@ -483,20 +484,24 @@ test('the ambient light is made of averaged colours of the box art, drawn as rad
   }
 });
 
-test('the rows that scroll under the hero fade out instead of ending in a hard cut', async () => {
+test('the rows that scroll under the hero fade out instead of ending in a hard cut, and the grid drops its own fade at the top while it is scrolled', async () => {
   const app = await openAppList(12);
   try {
+    // The fade of the hero, and the mask of the grid (the fade at its top for the glow of a card in the first row)
     const fade = () => app.page.evaluate(() => ({
       scrolled: document.getElementById('game-grid').scrollTop > 0,
       opacity: getComputedStyle(document.getElementById('launcher-hero'), '::after').opacity,
+      mask: getComputedStyle(document.getElementById('game-grid')).webkitMaskImage !== 'none',
     }));
     await focusApp(app.page, 'A Steam Cover');
-    assert.deepEqual(await fade(), { scrolled: false, opacity: '0' });
-    // One row down: the grid scrolls after the focus moved, so the fade follows the scrolling itself
+    assert.deepEqual(await fade(), { scrolled: false, opacity: '0', mask: true });
+    // One row down: the grid scrolls after the focus moved, so the fade follows the scrolling itself. The grid drops its
+    // mask, which the fade of the hero covers, as long as it is scrolled (2.3.5 before the fix: frames of 33 ms instead
+    // of 17 ms while the rows of a long app list scroll)
     await press(app.page, 'ArrowDown');
     await app.page.waitForFunction(() => getComputedStyle(document.getElementById('launcher-hero'), '::after').opacity === '1', null,
       { timeout: 3000 });
-    assert.deepEqual(await fade(), { scrolled: true, opacity: '1' });
+    assert.deepEqual(await fade(), { scrolled: true, opacity: '1', mask: false });
     // The fade lies above the top of the grid and spans the width of the screen
     const band = await app.page.evaluate(() => {
       const hero = document.getElementById('launcher-hero').getBoundingClientRect();
@@ -506,6 +511,11 @@ test('the rows that scroll under the hero fade out instead of ending in a hard c
         gradient: /linear-gradient/.test(style.backgroundImage) };
     });
     assert.deepEqual(band, { atGridTop: true, height: '72px', width: '1920px', gradient: true });
+    // Back up to the first row: the grid is at its top again, the fade of the hero goes and the mask comes back
+    await press(app.page, 'ArrowUp');
+    await app.page.waitForFunction(() => document.getElementById('game-grid').scrollTop === 0 &&
+      getComputedStyle(document.getElementById('launcher-hero'), '::after').opacity === '0', null, { timeout: 3000 });
+    assert.deepEqual(await fade(), { scrolled: false, opacity: '0', mask: true });
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

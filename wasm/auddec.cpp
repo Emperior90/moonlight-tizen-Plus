@@ -495,13 +495,21 @@ void MoonlightInstance::AudDecCleanup(void) {
   }
   s_AudioLead.Reset(0.0);
 
-  // Log what the catch-up after stalls skipped in this stream, if anything
+  // Log what the catch-up after stalls skipped in this stream, if anything, and how much sound it kept at the end
   if (s_AudioCatchUp.skipped != 0) {
-    ClLogMessage("Skipped %u audio packets (%.0f ms of sound) that piled up after %u stalls of this stream\n",
-      s_AudioCatchUp.skipped, s_AudioCatchUp.skipped * s_frameDuration.count() * 1000.0, s_AudioCatchUp.stalls);
+    ClLogMessage("Skipped %u audio packets (%.0f ms of sound) that piled up after stalls of this stream; stalls: %u, "
+      "sound kept after a stall: up to %.0f ms\n", s_AudioCatchUp.skipped,
+      s_AudioCatchUp.skipped * s_frameDuration.count() * 1000.0, s_AudioCatchUp.stalls, s_AudioCatchUp.target * 1000.0);
   }
   s_AudioCatchUp.Reset();
 }
+
+// The clock of the packets of the EMSS backend: the time of the first one and of each one after it, which the lead and
+// the catch-up after a stall are measured on. tests/native/audio_decoder_test.cpp replaces it with a clock of its own,
+// so that a test machine that pauses between two packets doesn't look like a stall of the network.
+#ifndef AUDDEC_NOW
+#define AUDDEC_NOW() std::chrono::steady_clock::now()
+#endif
 
 void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLength) {
   // Discard the audio packet without decoding it when the audio output is disabled
@@ -530,21 +538,35 @@ void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLe
   // Check if this is the first audio frame
   if (!s_hasFirstFrame) {
     // Record the time of the first frame
-    s_firstAppend = std::chrono::steady_clock::now();
+    s_firstAppend = AUDDEC_NOW();
     // Update the flag to indicate that the first frame has been processed
     s_hasFirstFrame = true;
   }
 
   // Get the current time and calculate the time elapsed since the first frame
-  auto now = std::chrono::steady_clock::now();
+  auto now = AUDDEC_NOW();
   TimeStamp ntp = now - s_firstAppend;
 
-  // After the player ran dry, e.g. after a stall of the Wi-Fi, the sound that piled up beyond the margin is skipped
-  // whatever 'Limit audio delay' says (audio_catch_up.hpp)
+  // After the player ran dry, e.g. after a stall of the Wi-Fi, the sound that piled up beyond the target of the
+  // catch-up is skipped whatever 'Limit audio delay' says (audio_catch_up.hpp)
   const bool catchingUp = s_AudioCatchUp.Update(ntp.count(), s_estimatedAudioEnd.count());
 
-  // Check if audio synchronization is enabled or the catch-up runs, and if packet dropping is necessary to avoid overflow
-  if ((s_AudioSyncEnabled || catchingUp) && ntp + kAudioBufferMargin < s_estimatedAudioEnd) {
+  // Check if packet dropping is necessary: with audio synchronization enabled while more than the margin waits, to
+  // avoid overflow; without it while the catch-up runs and more than its target waits
+  bool skip;
+  if (s_AudioSyncEnabled) {
+    skip = ntp + kAudioBufferMargin < s_estimatedAudioEnd;
+  } else {
+    const double targetBefore = s_AudioCatchUp.target;
+    skip = catchingUp && s_AudioCatchUp.Skips(ntp.count(), s_estimatedAudioEnd.count());
+    // A stall that came again raised the target (with or without a skip)
+    if (s_AudioCatchUp.target != targetBefore) {
+      ClLogMessage("Another stall within %u minutes: the sound kept after a stall rises from %.0f to %.0f ms, "
+        "PTS=%.03f NTP=%.03f\n", (unsigned)(kAudioCatchUpRepeatSeconds / 60.0), targetBefore * 1000.0,
+        s_AudioCatchUp.target * 1000.0, s_pktPts.count(), ntp.count());
+    }
+  }
+  if (skip) {
     if (s_AudioSyncEnabled) {
       // Report the dropped packets in batches (the first and every 100th), see s_DroppedPackets
       if (++s_DroppedPackets % 100 == 1) {
@@ -552,11 +574,11 @@ void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLe
           s_DroppedPackets, s_pktPts.count(), ntp.count());
       }
     } else {
-      // Counted apart from the drops of 'Limit audio delay', in batches like them
-      s_AudioCatchUp.CountSkipped();
+      // Counted apart from the drops of 'Limit audio delay' (by Skips()), and logged in batches like them
       if (s_AudioCatchUp.skipped % 100 == 1) {
-        ClLogMessage("Skipping the sound that piled up after a stall: %u packets of this stream (%u stalls), "
-          "PTS=%.03f NTP=%.03f\n", s_AudioCatchUp.skipped, s_AudioCatchUp.stalls, s_pktPts.count(), ntp.count());
+        ClLogMessage("Skipping the sound that piled up after a stall beyond %.0f ms: %u packets of this stream, "
+          "stalls: %u, PTS=%.03f NTP=%.03f\n", s_AudioCatchUp.target * 1000.0, s_AudioCatchUp.skipped,
+          s_AudioCatchUp.stalls, s_pktPts.count(), ntp.count());
       }
     }
     // The host sent this sound all the same, so it counts for the drift

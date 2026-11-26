@@ -693,7 +693,11 @@ test('a start or stop of the gamepad polling drops what a stick still does in th
   // The start of a stream and the Stream Menu, when it opens and closes, reset this way
   const source = (file) => fs.readFileSync(path.join(REPO_ROOT, 'wasm/platform', file), 'utf8');
   const body = (text, name) => text.slice(text.indexOf('function ' + name + '('), text.indexOf('\n}\n', text.indexOf('function ' + name + '(')));
-  assert.match(body(source('index.js'), 'showStreamMode'), /resetGamepadMenuInput\(\);/);
+  // The launch screen of a start and of a start once more (the retry after no video, the reconnect with new settings)
+  assert.match(body(source('index.js'), 'watchGamepadsOfLaunchScreen'), /Controller\.startWatching\(\);\s+resetGamepadMenuInput\(\);/);
+  ['showStreamMode', 'retryStreamStart', 'resumeStreamAfterSettingsChange'].forEach((name) => {
+    assert.match(body(source('index.js'), name), /\n\s+watchGamepadsOfLaunchScreen\(\);/, name);
+  });
   assert.match(body(source('menus.js'), 'openStreamMenu'), /resetGamepadMenuInput\(\);\s+Controller\.startWatching\(\);/);
   assert.match(body(source('menus.js'), 'closeStreamMenu'), /Controller\.stopWatching\(\);\s+resetGamepadMenuInput\(\);/);
 });

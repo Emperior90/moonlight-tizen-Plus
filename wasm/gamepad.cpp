@@ -151,13 +151,13 @@ static SentControllerState sentState[kMaxControllers];
 static constexpr uint64_t kControllerRefreshIntervalMs = 100;
 
 // While no slot counted as a controller at the last read (no controller, or only the placeholders of Tizen and
-// controllers with a timestamp of 0 that sent no input yet), or while the input stays paused (the Stream Menu is open or
-// Moonlight is hidden), the slots are read only once per kIdleSlotReadIntervalMs instead of on every poll: each read is
-// a round trip to the main thread that the input thread waits for (ReadGamepadSlots()), 200 per second in a stream
-// played with the remote or a keyboard. The input thread still runs every 5 ms for the mouse (ReportMouseMovement() in
-// input.cpp), and a pause that starts or ends is read at once. A controller that connects is announced within 50 ms,
-// and a controller with a timestamp of 0 counts from an input that a read sees: a tap shorter than 50 ms before its
-// first counted input can go unseen.
+// controllers with a timestamp of 0 that sent no input yet), or while the input stays paused for the Stream Menu, the
+// slots are read only once per kIdleSlotReadIntervalMs instead of on every poll: each read is a round trip to the main
+// thread that the input thread waits for (ReadGamepadSlots()), 200 per second in a stream played with the remote or a
+// keyboard. While Moonlight stays hidden they aren't read at all (see appHidden). The input thread still runs every
+// 5 ms for the mouse (ReportMouseMovement() in input.cpp), and a pause that starts or ends is read at once. A controller
+// that connects is announced within 50 ms, and a controller with a timestamp of 0 counts from an input that a read
+// sees: a tap shorter than 50 ms before its first counted input can go unseen.
 static constexpr uint64_t kIdleSlotReadIntervalMs = 50;
 static bool hadController = false; // a slot counted as a controller at the last read
 static uint64_t lastSlotReadMs = 0; // when the slots were last read, 0 for a read on the next poll
@@ -214,9 +214,11 @@ static StreamMenuCombo streamMenuCombo[kMaxControllers];
 // released, no mouse input and no button combos, while the menus of the UI read the controllers. The buttons that are
 // held when it closes, e.g. the one that chose Resume, reach the host only once they were released and pressed again.
 static std::atomic<bool> streamMenuOpen{false};
-// Moonlight is hidden during the stream (setAppHidden(), called by the UI on the main thread when the page is hidden
-// or shown again): the host gets the same as while the Stream Menu is open, whatever the browser reports for the
-// controllers of a hidden page (the last state, the live input of Smart Hub, or nothing)
+// Moonlight is hidden during the stream (setStreamPageHidden(), called by the UI on the main thread when the page is
+// hidden or shown again): the host gets the same as while the Stream Menu is open, and once it has the controllers
+// released the slots aren't read until the page shows again, whatever the browser reports for the controllers of a
+// hidden page (the last state, the live input of Smart Hub, or nothing, which would unplug them on the PC and announce
+// them again on the way back). The read when the page shows again sees which controllers are there.
 static std::atomic<bool> appHidden{false};
 static bool inputPaused = false; // the state of streamMenuOpen and appHidden that the input thread follows
 // The buttons, as the host gets them, held since the Stream Menu closed or Moonlight showed again
@@ -600,7 +602,7 @@ void setStreamMenuOpen(bool open) {
 }
 
 // Called by the UI on the main thread when the page is hidden or shown again during a stream (bound in main.cpp)
-void setAppHidden(bool hidden) {
+void setStreamPageHidden(bool hidden) {
   appHidden.store(hidden);
 }
 
@@ -799,10 +801,15 @@ void MoonlightInstance::PollGamepads() {
   // See the matching rule of isRealGamepad() in wasm/platform/gamepad.js, which getConnectedGamepadMask() in utils.js
   // uses too – these must stay in sync (tests/fixtures/gamepad-evidence.tsv)!
 
-  // Without a controller at the last read, or while the input stays paused, read the slots only once per
-  // kIdleSlotReadIntervalMs (see there); a pause that starts or ends is read at once
+  // While Moonlight stays hidden, the host already has the controllers released: the slots aren't read (see appHidden)
+  if (inputPaused && appHidden.load()) {
+    return;
+  }
+
+  // Without a controller at the last read, or while the input stays paused for the Stream Menu, read the slots only
+  // once per kIdleSlotReadIntervalMs (see there); a pause that starts or ends is read at once
   const uint64_t readMs = LiGetMillis();
-  const bool stillPaused = inputPaused && (streamMenuOpen.load() || appHidden.load());
+  const bool stillPaused = inputPaused && streamMenuOpen.load();
   if ((!hadController || stillPaused) && lastSlotReadMs != 0 && readMs - lastSlotReadMs < kIdleSlotReadIntervalMs) {
     return;
   }

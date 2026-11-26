@@ -3,9 +3,9 @@
 // Pins how a stream ends when the app goes to the background (from the earlier rounds of fixes, see the visibilitychange
 // handler in wasm/platform/index.js): a short hide such as a TV menu keeps the stream, a longer one ends it with a
 // notice on return, a stream whose video the TV took away or that is still connecting ends at once, and a stream that
-// is still starting is cancelled. While a stream is hidden, the module is told so (setAppHidden(), since 2.3.5), which
-// keeps the controllers away from the PC until the page shows again (tests/native/stream_menu_combo_test.cpp). The stop
-// delay is shortened to 400 ms for the tests.
+// is still starting is cancelled. While a stream is hidden, the module is told so (setStreamPageHidden(), since 2.3.5),
+// which keeps the controllers away from the PC until the page shows again (tests/native/stream_menu_combo_test.cpp).
+// The stop delay is shortened to 400 ms for the tests.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -65,7 +65,7 @@ function setVisibility(app, state) {
 }
 
 const stops = (app) => app.page.evaluate(() => window.__stops);
-const appHiddenCalls = (app) => app.page.evaluate(() => window.__wasmCalls.filter((call) => call.name === 'setAppHidden')
+const appHiddenCalls = (app) => app.page.evaluate(() => window.__wasmCalls.filter((call) => call.name === 'setStreamPageHidden')
   .map((call) => call.args));
 const notices = (app) => app.logs.filter((line) => line.indexOf(NOTICE) >= 0).length;
 

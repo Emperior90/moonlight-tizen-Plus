@@ -268,7 +268,8 @@ static int reconstructFrame(PRTP_VIDEO_QUEUE queue) {
     }
 
     reed_solomon* rs = NULL;
-    // Time the recovery, since it runs on the receive thread and no packets are read from the socket meanwhile
+    // Time the recovery, since it holds up the processing thread of the video receive (the receive thread up to
+    // 2.3.4): the reader keeps reading meanwhile, until the ring of 1024 packets between them is full
     uint64_t recoveryStartMs = PltGetMillis();
     uint32_t recoveryMs = 0;
     uint32_t statMissingDataPackets = 0;

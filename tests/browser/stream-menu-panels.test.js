@@ -685,12 +685,12 @@ test('the background and a refused command stop the sequence: Run is closed with
 
     // Moonlight goes to the background after Windows key + R and is stopped there (endStreamInBackground()): Esc before
     // the stop, so that Run doesn't stay open on the PC with the command. The hidden page pauses the controllers first
-    // (setAppHidden(), since 2.3.5), which the keys of the sequence don't depend on.
+    // (setStreamPageHidden(), since 2.3.5), which the keys of the sequence don't depend on.
     await confirmShutdown();
     await hide(true);
     await app.page.evaluate(() => endStreamInBackground('test'));
     let calls = await moduleCalls(app.page);
-    assert.deepEqual(calls.slice(calls.indexOf(WIN_R[3]) + 1), ['setAppHidden true', ...ESC_KEY, 'setStreamMenuOpen false', 'stopStream']);
+    assert.deepEqual(calls.slice(calls.indexOf(WIN_R[3]) + 1), ['setStreamPageHidden true', ...ESC_KEY, 'setStreamMenuOpen false', 'stopStream']);
     await app.page.evaluate(() => handleMessage('streamTerminated: 0'));
     await app.page.waitForTimeout(300);
     assert.deepEqual(await app.page.evaluate(() => [isInGame, pcPowerCommand, window.__showApps, window.__showHosts]), [false, null, 1, 0]);
@@ -708,7 +708,7 @@ test('the background and a refused command stop the sequence: Run is closed with
     await app.page.waitForFunction(() => pcPowerCommand && pcPowerCommand.stopped, null, { timeout: 4000 });
     await hide(false);
     calls = await moduleCalls(app.page);
-    assert.deepEqual(calls.slice(calls.indexOf(WIN_R[3]) + 1), ['setAppHidden true', ...ESC_KEY, 'setStreamMenuOpen false', 'setAppHidden false']);
+    assert.deepEqual(calls.slice(calls.indexOf(WIN_R[3]) + 1), ['setStreamPageHidden true', ...ESC_KEY, 'setStreamMenuOpen false', 'setStreamPageHidden false']);
     assert.deepEqual(await app.page.evaluate(() => [isInGame, document.activeElement.id]), [true, 'wasm_module']);
     await remoteKey(app.page, ...DOWN);
     assert.deepEqual(await app.page.evaluate(() => window.__videoKeys.slice()), ['keydown 40', 'keyup 40']);

@@ -230,6 +230,11 @@ test('the review of November 2026 moved each project to the upstream state it re
   // The review of 26 November read the tags of 22, 23 and 26 November (the one of 22 November was gone later that day)
   assert.deepEqual(byId.sunshine.decisions[3].tags, ['v2026.1122.180652', 'v2026.1123.40502', 'v2026.1126.5025']);
   assert.equal(byId.sunshine.decisions[3].decision, 'skipped');
+  // The guide doesn't send users to the pre-release v2026.1115.211404 alone, whose tag is gone, but to the pre-releases
+  // since then, and names the newest one that the review read
+  const guide = fs.readFileSync(path.join(REPO_ROOT, 'docs/GUIDE.md'), 'utf8');
+  assert.ok(guide.indexOf('in its pre-releases since v2026.1115.211404 (#6021; on 26 November 2026 the newest is v2026.1126.5025)') > 0);
+  assert.doesNotMatch(guide, /in its pre-release v2026\.1115\.211404 \(#6021\)/);
   assert.deepEqual([byId['sunshine-pr-5917'].reviewed_through, byId['sunshine-pr-5917'].reviewed_state], ['f8cebd0ebff24a534ab0d35ed21901cd54210df4', 'open']);
   // The decisions name the sections of the guide by their heading, which have no numbers since 2.3.0
   Object.values(byId).forEach((dep) => dep.decisions.forEach((decision) => assert.doesNotMatch(decision.why, /guide, section \d/, dep.id)));

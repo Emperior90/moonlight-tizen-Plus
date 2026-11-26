@@ -1815,7 +1815,9 @@ NvHTTP.prototype = {
   updateExternalAddressIP4: function() {
     console.log('%c[utils.js, updateExternalAddressIP4]', 'color: gray;', 'Looking for the external IPv4 address of ' + this.hostname + '...');
     // How long the lookup took goes to the log: it shares the one HTTP thread of the module with the requests to the
-    // hosts, outside their queue (messages.js), and a TV without internet may wait long for the name of the server
+    // hosts, outside their queue (messages.js), and a TV without internet may wait long for the name of the server. The
+    // time includes a wait behind a request that holds the thread when the lookup is posted, so it is an upper bound of
+    // how long the lookup itself holds the thread.
     var startedAt = Date.now();
     return sendMessage('STUN', []).then(function(addr) {
       var took = ' after ' + (Date.now() - startedAt) + ' ms';

@@ -11,6 +11,8 @@
 # root of the repository, so a source file there is named from it, e.g. moonlight-common-c/src/RtspParser.c. A test that
 # includes OpenSSL or curl is skipped with a notice when their headers are missing, like the syntax check of
 # wasm/http.cpp below.
+# A C test with threads that carries the line '// Thread sanitizer: yes' is built and run once more with the thread
+# sanitizer (see below), which can't be combined with the address sanitizer.
 # The executables go to tests/native/build. Set CXX and CC to use other compilers.
 #
 # The vptr check of UBSan is off, because the tests call member functions of MoonlightInstance, whose virtual
@@ -68,6 +70,40 @@ have_header() {
   printf '#include <%s>\n' "$1" | "$cc" -x c -fsyntax-only - 2>/dev/null
 }
 
+# The thread sanitizer for the C tests that name it (the ring and the two threads of the video receive, the lock of the
+# depacketizer): a data race, which the address sanitizer doesn't see, fails the test. Where the compiler can't build or
+# run a program with it, those runs are skipped with a notice, and in CI (where CI is set, as on GitHub) that fails the
+# run instead. A kernel with more address randomization than the sanitizer of the compiler knows stops it at the start
+# ("unexpected memory mapping"); its runs then go through setarch -R, which turns that randomization off for them.
+tsan_cflags=(
+  -std=gnu99 -g -O1 -fno-omit-frame-pointer -fsanitize=thread
+  -I"$here/stubs_c" -I"$repo/moonlight-common-c/src" -I"$repo/moonlight-common-c/enet/include"
+  -I"$repo/moonlight-common-c/reedsolomon"
+)
+export TSAN_OPTIONS="${TSAN_OPTIONS:-halt_on_error=1}"
+tsan_ready=0
+tsan_run=()
+printf '%s\n' '#include <pthread.h>' 'static int count;' 'static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;' \
+  'static void* add(void* context) { pthread_mutex_lock(&lock); count++; pthread_mutex_unlock(&lock); return context; }' \
+  'int main(void) { pthread_t thread; if (pthread_create(&thread, 0, add, 0) != 0) return 1; add(0);' \
+  '  pthread_join(thread, 0); return count == 2 ? 0 : 1; }' > "$out/tsan_probe.c"
+if "$cc" -fsanitize=thread -o "$out/tsan_probe" "$out/tsan_probe.c" -lpthread 2>/dev/null; then
+  if "$out/tsan_probe" >/dev/null 2>&1; then
+    tsan_ready=1
+  elif command -v setarch >/dev/null 2>&1 && setarch "$(uname -m)" -R "$out/tsan_probe" >/dev/null 2>&1; then
+    tsan_ready=1
+    tsan_run=(setarch "$(uname -m)" -R)
+  fi
+fi
+if [ "$tsan_ready" -eq 0 ]; then
+  if [ -n "${CI:-}" ]; then
+    echo "# $cc can't build or run a program with the thread sanitizer, which the tests need in CI"
+    failed=1
+  else
+    echo "# Skipped the runs with the thread sanitizer: $cc can't build or run a program with it"
+  fi
+fi
+
 for source in "$here"/*_test.c; do
   [ -e "$source" ] || continue
   name="$(basename "$source" .c)"
@@ -92,6 +128,15 @@ for source in "$here"/*_test.c; do
   if ! "$out/$name"; then
     echo "# $name failed"
     failed=1
+  fi
+  if [ "$tsan_ready" -eq 1 ] && grep -q '^// Thread sanitizer: yes$' "$source"; then
+    echo "# Building $name with the thread sanitizer"
+    (cd "$repo" && "$cc" "${tsan_cflags[@]}" ${defines[@]+"${defines[@]}"} -o "$out/${name}_tsan" "$source" ${extra[@]+"${extra[@]}"} -lpthread)
+    echo "# Running $name with the thread sanitizer"
+    if ! ${tsan_run[@]+"${tsan_run[@]}"} "$out/${name}_tsan"; then
+      echo "# $name failed with the thread sanitizer"
+      failed=1
+    fi
   fi
 done
 

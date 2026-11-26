@@ -53,8 +53,9 @@ static unsigned int firstPacketPresentationTime;
 static bool dropStatePending;
 static bool idrFrameProcessed;
 
-// Serializes the frame state between the receive thread (processRtpPayload(), notifyFrameLost()) and the decoder
-// thread (requestDecoderRefresh()), as upstream e64327c does. Upstream makes idrFrameProcessed atomic; here it is
+// Serializes the frame state between the processing thread of the video receive (the receive thread up to 2.3.4:
+// queueRtpPacket(), queueRtpPackets(), notifyFrameLost()) and the decoder thread (requestDecoderRefresh()), as upstream
+// e64327c does. Upstream makes idrFrameProcessed atomic; here it is
 // written and read with this lock held too, since the C11 atomics are not used with Emscripten 1.39. The lock is
 // never taken twice: a decode unit is submitted with it released, because DR_NEED_IDR leads back into
 // requestDecoderRefresh(). With it held, only the leaf locks of the queues and events are taken (LiRequestIdrFrame(),
@@ -64,7 +65,8 @@ static PLT_MUTEX stateLock;
 // Frames this client dropped itself because the decoder didn't keep up: the decode unit queue overflowed, or the
 // decoder asked for an IDR frame, plus the frames dropped while waiting for the IDR frame after that. They show up
 // as gaps in the frame numbers like frames lost on the network, so they are counted to tell the two apart. Each
-// counter has a single writer: the receive thread for the queue overflow and the IDR wait, and the decoder thread
+// counter has a single writer: the processing thread of the video receive (the receive thread up to 2.3.4) for the
+// queue overflow and the IDR wait, and the decoder thread
 // for the decoder refresh. clientResetPending is written by both threads, with stateLock held.
 static uint32_t clientRecvDroppedFrames;
 static uint32_t clientQueueOverflows;
@@ -356,8 +358,9 @@ void LiCompleteVideoFrame(VIDEO_FRAME_HANDLE handle, int drStatus) {
     }
     else if (drStatus == DR_OK && qdu->decodeUnit.frameType == FRAME_TYPE_IDR) {
         // Remember that the IDR frame was processed. We can now use
-        // reference frame invalidation. (The receive thread reads it
-        // with stateLock held; this is never called with it held.)
+        // reference frame invalidation. (The processing thread of the
+        // video receive reads it with stateLock held; this is never
+        // called with it held.)
         PltLockMutex(&stateLock);
         idrFrameProcessed = true;
         PltUnlockMutex(&stateLock);
@@ -857,7 +860,7 @@ void requestDecoderRefresh(void) {
     clientDecoderRefreshes++;
     clientResetPending = true;
 
-    // If the receive thread is currently mid-frame, defer dropping its state
+    // If the processing thread of the video receive is currently mid-frame, defer dropping its state
     // until the frame boundary so continuation packets aren't invalidated.
     dropStatePending = decodingFrame;
 

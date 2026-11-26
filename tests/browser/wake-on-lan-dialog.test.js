@@ -343,15 +343,17 @@ test('the polling of the hosts pauses while the dialog waits, also past the end 
 test('the dialog says what to check on the PC once it waited WOL_HINT_DELAY_MS, and keeps waiting', async () => {
   const app = await openWithOfflineHost();
   try {
-    await app.page.evaluate(async () => {
+    const textBefore = await app.page.evaluate(async () => {
       WOL_HINT_DELAY_MS = 300;
       window.openWolDialog();
       await new Promise((resolve) => setTimeout(resolve, 150));
+      // Read in the page right away: its timer fires before the later one of the hint, also on a slow machine, where a
+      // second round trip from the test could already find the hint
+      return $('#autoWolDialogText').text();
     });
-    let state = await dialogState(app.page);
-    assert.equal(state.text, 'Wake-on-LAN request sent to GAMING-PC.Waiting for the host PC to wake up and connect to the network...');
+    assert.equal(textBefore, 'Wake-on-LAN request sent to GAMING-PC.Waiting for the host PC to wake up and connect to the network...');
     await app.page.waitForTimeout(300);
-    state = await dialogState(app.page);
+    const state = await dialogState(app.page);
     assert.deepEqual([state.open, state.button], [true, 'Cancel']);
     assert.equal(state.text, 'Wake-on-LAN request sent to GAMING-PC.Waiting for the host PC to wake up and connect to the network...' +
       'GAMING-PC hasn\'t answered yet. Check that Wake-on-LAN is on in its BIOS or UEFI and in the settings of its network adapter, and that Sunshine starts with the PC.');

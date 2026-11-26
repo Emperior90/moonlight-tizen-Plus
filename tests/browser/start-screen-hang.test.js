@@ -536,6 +536,87 @@ test('B of a controller on the launch screen cancels the start like RETURN, befo
   }
 });
 
+test('B of a controller cancels the launch screen of a start once more after a stream that connected, within its delay and after its request', async () => {
+  // The stream before stopped the polling of the menus, at 'Connection Established' and for the reconnect also with the
+  // close of the Stream Menu. In the first version of 2.3.5 only the start once more itself (showStreamMode() of
+  // startGame(), after the delay and the refresh of the server info) started it again, so B did nothing on the launch
+  // screen meanwhile, which names B, while RETURN cancelled
+  const app = await openWithPc({ pad: true });
+  try {
+    await setLimit(app.page, LONG_LIMIT_MS);
+    for (const kind of ['retry after no video', 'reconnect of the Stream Menu']) {
+      const isRetry = kind === 'retry after no video';
+      const startMessage = isRetry ? 'Starting Cyberpunk 2077...' : 'Reconnecting with 20 Mbps...';
+      // Within the delay of the start once more: long here, so that B comes before its end also on a busy machine
+      const delayMs = 3000;
+      await app.page.evaluate((ms) => {
+        STREAM_RETRY_DELAY_MS = ms;
+        SETTINGS_RESTART_DELAY_MS = ms;
+      }, delayMs);
+      await startStream(app.page);
+      const menuOpened = await app.page.evaluate((retry) => {
+        window.__restartAt = performance.now();
+        if (retry) {
+          handleMessage('streamTerminated: -100');
+          return null;
+        }
+        // The polling runs in the menu and stops with its close (closeStreamMenu() in menus.js)
+        openStreamMenu();
+        const opened = isStreamMenuOpen;
+        restartStreamWithSettings({ bitrateMbps: 20 });
+        return opened;
+      }, isRetry);
+      assert.equal(menuOpened, isRetry ? null : true, kind);
+      // The end of the stream, which the module reports a moment after the stop of the reconnect
+      await app.page.waitForFunction((message) => $('#loadingSpinner').is(':visible') && $('#loadingSpinnerMessage').text() === message,
+        startMessage, { timeout: 2000 });
+      const waiting = await take(app.page);
+      assert.deepEqual([waiting.screen.startScreen, waiting.screen.startMessage, waiting.screen.isInGame, waiting.events],
+        [true, startMessage, true, isRetry ? [] : ['stopStream']], kind);
+      await padButton(app.page, PAD.B, 0);
+      const afterB = await take(app.page);
+      assert.deepEqual([afterB.screen.startScreen, afterB.screen.isInGame, afterB.events], [false, false, []], kind + ': ' + JSON.stringify(afterB));
+      await appListShown(app.page);
+      // The start once more doesn't go on after its delay
+      await app.page.evaluate((ms) => window.wait(Math.max(0, window.__restartAt + ms + 300 - performance.now())), delayMs);
+      const later = await take(app.page);
+      assertBackInAppList(later.screen, kind);
+      assert.deepEqual([later.events, later.snack.filter((text) => text.indexOf('does not support rumble') < 0)], [[], []], kind);
+
+      // After the delay, once the start once more showed its launch screen again (showStreamMode()) and sent its resume
+      // request, which the PC holds
+      await app.page.evaluate(() => {
+        STREAM_RETRY_DELAY_MS = 100;
+        SETTINGS_RESTART_DELAY_MS = 100;
+      });
+      await startStream(app.page);
+      await app.page.evaluate((retry) => {
+        window.__plans['/resume'] = { kind: 'never' };
+        if (retry) {
+          handleMessage('streamTerminated: -100');
+        } else {
+          openStreamMenu();
+          restartStreamWithSettings({ bitrateMbps: 20 });
+        }
+      }, isRetry);
+      await requestSent(app.page, '/resume');
+      await take(app.page);
+      await padButton(app.page, PAD.B, 0);
+      const afterRequest = await take(app.page);
+      assert.deepEqual([afterRequest.screen.startScreen, afterRequest.screen.isInGame], [false, false], kind + ' after the request');
+      await appListShown(app.page, GRACE_MS + 3000);
+      assert.deepEqual((await take(app.page)).events, ['cancelRequest'], kind + ' after the request');
+    }
+    // The menus read the controller in the app list: the next B goes back to the PC list
+    await padButton(app.page, PAD.B);
+    await app.page.waitForFunction(() => document.body.getAttribute('data-view') === 'hosts', null, { timeout: 3000 });
+    assert.equal(app.logs.filter((line) => line.indexOf('B of gamepad 0 cancels the start of the stream.') >= 0).length, 4);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
 test('an answer that no host sends returns to the app list with a message, also Sunshine\'s answer after an error', async () => {
   const app = await openWithPc();
   try {

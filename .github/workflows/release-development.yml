@@ -28,14 +28,14 @@ jobs:
     if: github.ref != 'refs/heads/master' && inputs.promote_tag == ''
     runs-on: ubuntu-latest
     # The build of the Standard variant took 5 to 6 minutes without cache in the release runs of November 2026, and the
-    # ForceGM variant reuses its layers; the limit ends a hung step (the installer of Tizen Studio runs under expect
-    # without a timeout of its own)
+    # ForceGM variant reuses its layers; the limit ends a hung step (the signing with `tizen package` runs under expect
+    # with `set timeout -1`, so a prompt it doesn't expect would wait for ever)
     timeout-minutes: 45
     # contents: write deletes the earlier pre-release of the branch and creates the new one
     permissions:
       contents: write
     steps:
-      # No step pushes with git: the token isn't kept in the clone, which the Dockerfile copies into the build
+      # No step pushes with git, so the checkout keeps no token on the runner
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -292,7 +292,8 @@ jobs:
 
           # The release keeps the files built from $sha and puts its tag on $GITHUB_SHA: the workflow Tests must have passed
           # for both. Its job `tests` sums up the other jobs; the newest check run of GitHub Actions under that name counts
-          # (a run again that passed counts, a cancelled one doesn't)
+          # (a run again that passed counts, a cancelled one doesn't). Without any run (e.g. after a push with [skip ci])
+          # there is nothing to run again, and Tests can't be started by hand
           require_tests() {
             local commit="$1" result
             result=$(api "$API_URL/commits/$commit/check-runs?check_name=tests&per_page=100" | jq -r '
@@ -300,7 +301,11 @@ jobs:
               | if . == null then "missing" elif .status != "completed" then .status else .conclusion end')
             if [ "$result" != "success" ]; then
               echo "The workflow Tests has not passed for commit $commit (its check run tests: $result)."
-              echo "Wait until it has passed, or run it again from the Actions tab, before promoting."
+              if [ "$result" = "missing" ]; then
+                echo "No run of Tests exists for this commit, so there is none to run again: push a commit that runs it, or build a new pre-release from a commit that passed it, before promoting."
+              else
+                echo "Wait until it has passed, or run it again from the Actions tab, before promoting."
+              fi
               exit 1
             fi
           }

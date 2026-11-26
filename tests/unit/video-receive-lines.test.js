@@ -58,8 +58,8 @@ const MINUTE = 'Video receive, last %u s: %llu packets/s, %.2f socket calls each
 const STREAM = 'Video receive of the stream, %u s: %llu packets, %.2f socket calls each, %s%% were waiting; %s us to read a waiting packet, %s us of other work per packet: up to %s Mbps; clock read %s us\\n';
 const CHECK = 'Video receive check of the stream: %llu calls of poll() without a timeout, %s us each, %llu failed\\n';
 const CHECK_FAILED = 'Video receive check: poll() without a timeout failed: %d\\n';
-const PROC_MINUTE = 'Video processing, last %u s: %llu packets/s, %s us of work each, idle %s%%: up to %s Mbps; ring up to %u of %u packets, full %u times for %u ms; %u wakes\\n';
-const PROC_STREAM = 'Video processing of the stream, %u s: %llu packets, %s us of work each, idle %s%%: up to %s Mbps; ring up to %u of %u packets, full %u times for %u ms; %u wakes\\n';
+const PROC_MINUTE = 'Video processing, last %u s: %llu packets/s, %s us of work each, idle %s%% (looking %s%%): up to %s Mbps; ring up to %u of %u packets, full %u times for %u ms; %u wakes\\n';
+const PROC_STREAM = 'Video processing of the stream, %u s: %llu packets, %s us of work each, idle %s%% (looking %s%%): up to %s Mbps; ring up to %u of %u packets, full %u times for %u ms; %u wakes\\n';
 const FRAME = 'Frame receive of the stream: %u.%02u ms on average, frames arrive at %u Mbps\\n';
 const FRAME_FEW = 'Frame receive of the stream: %u.%02u ms on average, frames arrive at: too few frames to tell\\n';
 
@@ -121,10 +121,15 @@ test('the receive thread logs its mode, a line each minute and one for the strea
 });
 
 test('the lines fit within a line of the diagnostic log at their longest', () => {
-  // The largest value of each conversion, and of each text that the code passes: the waiting share at most 100, the times
-  // at most 99999.9 us, the rate at most 99999 Mbps (or "n/a", which is shorter)
+  // The largest value of each conversion, and of each text that the code passes: the waiting, idle and looking shares at
+  // most 100, the times at most 99999.9 us, the rate at most 99999 Mbps (or "n/a", which is shorter); the most packets in
+  // the ring and its size at most VIDEO_RECV_RING_PACKETS, since the reader waits for room once the ring holds that many
   const seconds = 4294967295;
   const count = '18446744073709551615';
+  const ringPackets = Number(/\n#ifndef VIDEO_RECV_RING_PACKETS\n#define VIDEO_RECV_RING_PACKETS (\d+)\n#endif\n/.exec(VIDEO)[1]);
+  assert.match(VIDEO, /VrrInitialize\(&receiveRing, VIDEO_RECV_RING_PACKETS, slotSize\)/);
+  assert.match(RING, /if \(depth == ring->slotCount && !ring->stopped\) \{/);
+  assert.match(RING, /while \(ring->head - ring->tail == ring->slotCount && !ring->stopped\) \{/);
   const lines = [
     format(MODE_TIMEOUT, [100]),
     format(MODE_POLL, []),
@@ -133,27 +138,29 @@ test('the lines fit within a line of the diagnostic log at their longest', () =>
     format(STREAM, [seconds, count, '999.99', '100', '99999.9', '99999.9', '99999', '99999.9']),
     format(CHECK, [count, '99999.9', count]),
     format(CHECK_FAILED, [-2147483648]),
-    format(PROC_MINUTE, [seconds, count, '99999.9', '100', '99999', seconds, seconds, seconds, seconds, seconds]),
-    format(PROC_STREAM, [seconds, count, '99999.9', '100', '99999', seconds, seconds, seconds, seconds, seconds]),
+    format(PROC_MINUTE, [seconds, count, '99999.9', '100', '100', '99999', ringPackets, ringPackets, seconds, seconds, seconds]),
+    format(PROC_STREAM, [seconds, count, '99999.9', '100', '100', '99999', ringPackets, ringPackets, seconds, seconds, seconds]),
     format(FRAME, [42949672, '95', seconds]),
     format(FRAME_FEW, [42949672, '95']),
   ];
   lines.forEach((line) => assert.ok(line.length <= 239, line.length + ': ' + line));
-  // (the longest lines of the processing thread, as the spec of 2.3.5 counted them)
-  assert.equal(lines[7].length, 225);
-  assert.equal(lines[8].length, 232);
+  // (the longest lines of the processing thread, with the looking share)
+  assert.equal(lines[7].length, 228);
+  assert.equal(lines[8].length, 235);
   // The clamps that keep the texts that short
   assert.match(VIDEO, /else if \(value > 99999\.9\) \{\s+value = 99999\.9;/);
   assert.match(VIDEO, /if \(callsEach > 999\.99\) \{\s+callsEach = 999\.99;/);
   assert.match(VIDEO, /if \(mbps > 99999\) \{\s+mbps = 99999;/);
   assert.match(VIDEO, /if \(clockUs > 99999\.9\) \{\s+clockUs = 99999\.9;/);
   assert.match(VIDEO, /snprintf\(waiting, sizeof\(waiting\), "%u", \(unsigned int\)\(\(d\.checkedWaiting \* 100 \+ d\.checked \/ 2\) \/ d\.checked\)\);/);
-  // The processing thread: its work per packet and its rate clamped like those of the reader, its counts within 32 bits
+  // The processing thread: its work per packet and its rate clamped like those of the reader, its idle share at most
+  // 100 and its looking share at most the idle share, its counts within 32 bits
   const process = functionBody(VIDEO, 'static void logVideoProcessFigures(');
   assert.match(process, /if \(value > 99999\.9\) \{\s+value = 99999\.9;/);
   assert.match(process, /if \(mbps > 99999\) \{\s+mbps = 99999;/);
   assert.match(process, /snprintf\(idle, sizeof\(idle\), "%u", \(unsigned int\)\(\(idleUs \* 100 \+ elapsedUs \/ 2\) \/ elapsedUs\)\);/);
-  assert.match(process, /idleUs = d\.idleUs < elapsedUs \? d\.idleUs : elapsedUs;/);
+  assert.match(process, /snprintf\(look, sizeof\(look\), "%u", \(unsigned int\)\(\(lookUs \* 100 \+ elapsedUs \/ 2\) \/ elapsedUs\)\);/);
+  assert.match(process, /idleUs = d\.idleUs < elapsedUs \? d\.idleUs : elapsedUs;\s+lookUs = d\.lookUs < idleUs \? d\.lookUs : idleUs;/);
   assert.equal((process.match(/clampedVideoCount\(/g) || []).length, 6);
   assert.match(functionBody(VIDEO, 'static unsigned int clampedVideoCount(uint64_t value) {'),
     /return value > 4294967295ULL \? 4294967295U : \(unsigned int\)value;/);
@@ -359,9 +366,9 @@ test('the redaction of the diagnostic log leaves every form of the video receive
     format(stream, [1, 3, '2.00', 'n/a', 'n/a', 'n/a', 'n/a', 'n/a']),
     format(check, [4870, '2.1', 0]),
     format(checkFailed, [28]),
-    format(procMinute, [60, 16180, '14.2', '61', '809', 212, 1024, 0, 0, 37]),
-    format(procStream, [312, 4973512, '14.2', '61', '809', 212, 1024, 0, 0, 2240]),
-    format(procStream, [1, 3, 'n/a', '100', 'n/a', 3, 1024, 1, 12, 1]),
+    format(procMinute, [60, 16180, '14.2', '77', '38', '809', 212, 1024, 0, 0, 3661]),
+    format(procStream, [312, 4973512, '14.2', '77', '38', '809', 212, 1024, 0, 0, 19054]),
+    format(procStream, [1, 3, 'n/a', '100', '100', 'n/a', 3, 1024, 1, 12, 1]),
     format(frame, [10, '52', 276]),
     format(frameFew, [1, '00']),
   ].forEach((line) => {
@@ -371,6 +378,6 @@ test('the redaction of the diagnostic log leaves every form of the video receive
   assert.equal(format(stream, [312, 4973512, '1.00', '91', '3.2', '28.5', '362', '0.4']),
     'Video receive of the stream, 312 s: 4973512 packets, 1.00 socket calls each, 91% were waiting; 3.2 us to read a waiting packet, 28.5 us of other work per packet: up to 362 Mbps; clock read 0.4 us');
   assert.equal(format(frame, [10, '52', 276]), 'Frame receive of the stream: 10.52 ms on average, frames arrive at 276 Mbps');
-  assert.equal(format(procStream, [312, 4973512, '14.2', '61', '809', 212, 1024, 0, 0, 2240]),
-    'Video processing of the stream, 312 s: 4973512 packets, 14.2 us of work each, idle 61%: up to 809 Mbps; ring up to 212 of 1024 packets, full 0 times for 0 ms; 2240 wakes');
+  assert.equal(format(procStream, [312, 4973512, '14.2', '77', '38', '809', 212, 1024, 0, 0, 19054]),
+    'Video processing of the stream, 312 s: 4973512 packets, 14.2 us of work each, idle 77% (looking 38%): up to 809 Mbps; ring up to 212 of 1024 packets, full 0 times for 0 ms; 19054 wakes');
 });

@@ -356,7 +356,7 @@ MessageResult cancelRequest();
 
 void toggleStats();
 void setStreamMenuOpen(bool open);
-void setAppHidden(bool hidden);
+void setStreamPageHidden(bool hidden);
 void toggleMouseEmulation();
 bool requestIdrFrame();
 int getAudioChannelCount();

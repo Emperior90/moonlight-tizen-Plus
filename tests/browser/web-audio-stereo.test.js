@@ -192,7 +192,7 @@ test('with Web Audio the settings show no audio configuration and no surround au
   }
 });
 
-test('an install with Web Audio stored opens with the line, which follows the language', async () => {
+test('an install with Web Audio stored opens with the line, which follows the language, as the restored stereo does', async () => {
   const app = await openApp(harness, { tv: TV, stored: { audioBackend: 'WebAudio', audioConfig: '51Surround' } });
   try {
     await openSettings(app.page);
@@ -202,10 +202,16 @@ test('an install with Web Audio stored opens with the line, which follows the la
     await app.page.waitForFunction(() => document.documentElement.getAttribute('lang') === 'de-DE');
     assert.equal((await audioSettings(app.page)).note,
       'Web Audio spielt immer Stereo, daher gibt es Audiokonfiguration und Surround-Tonqualität hier nicht.');
-    // Restore Defaults goes back to the media player of the TV, without the line
+    await app.page.evaluate((locale) => i18n.setLanguage(locale), 'es-ES');
+    await app.page.waitForFunction(() => document.documentElement.getAttribute('lang') === 'es-ES');
+    // Restore Defaults goes back to the media player of the TV, without the line, and its audio configuration names
+    // the restored stereo in the language of the app (Spanish says Estéreo), as the menu does: the field keeps that
+    // text until the next change of language, e.g. after Cancel on the restart question
     await app.page.evaluate(() => restoreDefaultsSettingsValues());
     assert.deepEqual(await audioSettings(app.page), { audioConfig: true, surroundQuality: false, note: null,
       items: ['selectAudioBackend', 'selectAudio', 'audioSyncBtn', 'playHostAudioBtn', 'audioQosBtn'] });
+    assert.deepEqual(await app.page.evaluate(() => [$('#selectAudio').text().trim(), $('#selectAudio').attr('data-value'),
+      $('.audioConfigMenu li[data-value="Stereo"]').text().trim()]), ['Estéreo', 'Stereo', 'Estéreo']);
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

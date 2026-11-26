@@ -14,8 +14,9 @@
 // contents of a slot need no lock: the reader writes a slot only between taking it (VrrFirstSlot() or VrrPublish()
 // returns it) and publishing it, and the processing thread uses it only between taking it and giving it back, and the
 // mutex orders the two. A thread waits only when it has to: the processing thread when the ring is empty (after looking
-// again for up to VRR_LINGER_US, so that the reader rarely has to wake it while the packets of a frame come one after
-// the other), and the reader when the ring is full. Each one wakes the other only when the other waits.
+// again for at least VRR_LINGER_US, so that the reader rarely has to wake it while the packets of a frame come one
+// after the other), and the reader when the ring is full. Each one wakes the other only when the other waits. The look
+// keeps the processing thread on the CPU, so its lines count that time apart (*looking* in VideoStream.c).
 //
 // Plain video: the processing thread hands the buffer of a slot to the RTP queue and puts a buffer of its own into
 // the slot in its place, so no packet is copied. Encrypted video: the slot keeps its buffer, which the processing
@@ -29,7 +30,11 @@
 
 // The packets that the processing thread takes at most before it gives them back
 #define VRR_BATCH 32
-// How long the processing thread looks again for packets before it waits for the reader, and how often at most
+// How long the processing thread looks again for packets before it waits for the reader, at least, and how often at
+// most. The look lasts until the clock has gone more than VRR_LINGER_US past its first read: on a clock of microseconds
+// about VRR_LINGER_US, on one that steps in 0.1 ms like performance.now() of the TV 100 to 200 us. A look that ended
+// when the clock reached VRR_LINGER_US would end at the next step of such a clock, after 0 to 100 us, and the reader
+// would have to wake the thread for a third to a half of the packets of a frame.
 #define VRR_LINGER_US 100
 #define VRR_LINGER_CHECKS 4096
 
@@ -194,13 +199,14 @@ static void VrrStop(PVIDEO_RECV_RING ring) {
 // The processing thread: gives back the `released` slots it took last, wakes a reader that waits for room, then takes
 // the next ones, looking again for a while and then waiting while there are none, and returns how many it took (at
 // most VRR_BATCH, from *first on, an index for VrrSlot()): 0 once the ring is stopped, or closed and empty. *idleUs
-// gets the time it looked again and waited; *figures the figures of the ring, whose windowMaxDepth then starts again
-// from the packets now in the ring if startWindow.
+// gets the time it looked again and waited, *lookUs the part of it that it looked again (on the CPU); *figures the
+// figures of the ring, whose windowMaxDepth then starts again from the packets now in the ring if startWindow.
 static uint32_t VrrReleaseAndTake(PVIDEO_RECV_RING ring, uint32_t released, uint32_t* first, uint64_t* idleUs,
-                                  VIDEO_RECV_RING_FIGURES* figures, bool startWindow) {
+                                  uint64_t* lookUs, VIDEO_RECV_RING_FIGURES* figures, bool startWindow) {
     uint32_t taken;
 
     *idleUs = 0;
+    *lookUs = 0;
     PltLockMutex(&ring->mutex);
     ring->tail += released;
     if (released > 0 && ring->readerWaiting) {
@@ -212,18 +218,21 @@ static uint32_t VrrReleaseAndTake(PVIDEO_RECV_RING ring, uint32_t released, uint
         uint64_t nowUs;
         int checks = 0;
 
-        // Look again for a while before waiting: the next packet of a frame usually comes within it
+        // Look again for a while before waiting: the next packet of a frame usually comes within it. The clock must go
+        // past start + VRR_LINGER_US (not only reach it), so that a clock in steps of 0.1 ms looks for a whole step at
+        // least, not just until its next step.
         PltUnlockMutex(&ring->mutex);
         startUs = PltGetMicroseconds();
         nowUs = startUs;
         PltLockMutex(&ring->mutex);
         while (ring->head == ring->tail && !ring->stopped && !ring->closed &&
-               nowUs - startUs < VRR_LINGER_US && checks < VRR_LINGER_CHECKS) {
+               nowUs - startUs <= VRR_LINGER_US && checks < VRR_LINGER_CHECKS) {
             PltUnlockMutex(&ring->mutex);
             nowUs = PltGetMicroseconds();
             checks++;
             PltLockMutex(&ring->mutex);
         }
+        *lookUs = nowUs - startUs;
         while (ring->head == ring->tail && !ring->stopped && !ring->closed) {
             ring->processorWaiting = true;
             PltWaitForConditionVariable(&ring->packetsCond, &ring->mutex);

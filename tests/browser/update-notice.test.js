@@ -5,9 +5,10 @@
 // "Version X is now available!" shows only on the first start that sees a newer version, never during a stream (where
 // it would cover the game, e.g. after a start from a Smart Hub tile), and a notice that a stream left out shows at a
 // later start. The Update button in the header of the hosts shows every time. A failed automatic check is only logged.
-// Since 2.3.5 a failed automatic check stores no time and is tried once more after UPDATE_RETRY_DELAY_MS, and a stored
-// time after now counts as due (isUpdateCheckDue()): up to 2.3.4 a check that failed, e.g. while the Wi-Fi of the TV
-// was still connecting, counted as done for 24 hours, and a wrong clock blocked the check until it passed the time.
+// Since 2.3.5 a failed automatic check stores no time and is tried once more after UPDATE_RETRY_DELAY_MS (not during a
+// stream), and a stored time after now counts as due (isUpdateCheckDue()): up to 2.3.4 a check that failed, e.g. while
+// the Wi-Fi of the TV was still connecting, counted as done for 24 hours, and a wrong clock blocked the check until it
+// passed the time.
 // The GitHub request is replaced by one that answers what the test sets.
 // The check of the settings (About > Check for updates, checkForAppUpdates() and offerAppUpdate()) answers after the
 // user may have moved on: its Update dialog opens neither over a running stream nor over another dialog (a message
@@ -200,6 +201,33 @@ test('a failed check of the start asks once more after the delay, and only once'
     assert.equal(await app.page.evaluate(() => window.__fetches), 2);
     assert.deepEqual(await app.page.evaluate(() => window.__messages), [NOTICE.replace('%1$s', '99.0.0')]);
     assert.ok(Math.abs((await readStorage(app.page)).lastUpdateCheck - Date.now()) < 60000);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+// E.g. a Smart Hub tile that started a stream right after the start of the app: the retry doesn't ask GitHub during
+// the stream, and isn't put off to its end either; the next start checks
+test('the retry of a failed check of the start doesn\'t ask during a stream, and the next start checks', async () => {
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' } });
+  try {
+    await answerInTurn(app.page, [null, '99.0.0']);
+    await app.page.evaluate(() => {
+      UPDATE_RETRY_DELAY_MS = 300;
+      isInGame = true;
+    });
+    await checkWithStoredTime(app.page, 0);
+    await app.page.waitForTimeout(1200);
+    assert.equal(await app.page.evaluate(() => window.__fetches), 1, 'only the check of the start');
+    assert.ok(app.logs.some((line) => line.indexOf('Not checking for updates again during a stream; the next start checks.') >= 0));
+    await app.page.evaluate(() => {
+      isInGame = false;
+    });
+    await app.page.waitForTimeout(600);
+    assert.equal(await app.page.evaluate(() => window.__fetches), 1, 'no check at the end of the stream');
+    assert.deepEqual(await app.page.evaluate(() => window.__messages), []);
+    assert.equal((await readStorage(app.page)).lastUpdateCheck, 0, 'the next start checks');
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

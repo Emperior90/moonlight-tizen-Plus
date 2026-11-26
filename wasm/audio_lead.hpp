@@ -5,8 +5,8 @@
 // the sound falls behind the picture: moonlight-qt PR #2101 measured 25 to 92 ms over 75 minutes (+53 ms per hour at a
 // clock mismatch of 15 ppm), moonlight-tv issue #516 80 to 130 ms over 30 minutes on an LG C2. 'Limit audio delay'
 // (off by default) caps the lead at 100 ms by skipping sound (auddec.cpp), and since 2.3.5 the catch-up after a stall
-// does the same for the sound that piled up during it, whatever the switch says (audio_catch_up.hpp); but nothing told
-// how far it runs ahead.
+// does the same for the sound that piled up during it (beyond 100 ms, or up to 300 ms for stalls that come again),
+// whatever the switch says (audio_catch_up.hpp); but nothing told how far it runs ahead.
 //
 // auddec.cpp hands every packet that reaches the EMSS path to AudioLeadTracker::AddPacket() on the audio thread: the
 // time since the first packet on the monotonic clock of the TV, and the lead after it, i.e. how far the end of the
@@ -16,7 +16,8 @@
 // - The lead, as averages over windows of 10 s: in the first window after the first minute, in the last window and in
 //   the highest one. This is what the code of the app believes waits in the player. It follows the rule of auddec.cpp:
 //   after a gap that empties the player it starts again from the packet after the gap, and a late packet followed by
-//   the packets that queued up behind it raises it by the time the player ran dry, up to 100 ms (audio_catch_up.hpp).
+//   the packets that queued up behind it raises it by the time the player ran dry, up to the target of the catch-up:
+//   100 ms, raised up to 300 ms by stalls that come again (audio_catch_up.hpp).
 // - The drift in milliseconds per hour, from the sound that arrived against the clock of the TV: the packets so far
 //   times their duration (the clock of the PC, which sends one packet per packet duration) minus the time (the clock of
 //   the TV). Network delay only ever lowers this offset, so each window keeps its highest value, which comes from the

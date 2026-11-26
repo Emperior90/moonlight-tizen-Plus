@@ -5,7 +5,9 @@
 // the browser tests (browser/mocks/moonlight-wasm.js) throws like Embind on the TV when a call passes another number:
 // - the table that the sources give today, which pins startStream at 34 arguments (a hard rule of the start request)
 // - every bound function has a stand-in in the stub
-// - the parser on small samples: templates with commas, emscripten::val, void, a signature over two lines, comments
+// - the parser on small samples: templates with commas, emscripten::val, void, a signature over two lines, comments;
+//   the forms of a binding that Embind takes (policies after the function, `function(` after `using namespace
+//   emscripten`, a function of a namespace), and an error for one that it can't read, so that none is left out
 // - the stub with the table: a call with 33 arguments of startStream throws Embind's BindingError, 34 pass, also for a
 //   function that a test puts in later
 
@@ -23,7 +25,7 @@ const STUB = fs.readFileSync(path.join(REPO_ROOT, 'tests', 'browser', 'mocks', '
 test('the functions of the module take the numbers of arguments of their C++ functions', () => {
   assert.deepEqual(readEmbindArity(REPO_ROOT), {
     makeCert: 0, httpInit: 3, openUrl: 4, sendKeyboardEvent: 3, sendText: 1,
-    startStream: 34, stopStream: 0, cancelRequest: 0, toggleStats: 0, setStreamMenuOpen: 1, setAppHidden: 1,
+    startStream: 34, stopStream: 0, cancelRequest: 0, toggleStats: 0, setStreamMenuOpen: 1, setStreamPageHidden: 1,
     toggleMouseEmulation: 0, requestIdrFrame: 0, getAudioChannelCount: 0, takeDiagnosticLog: 0, stun: 1, pair: 7,
     wakeOnLan: 3,
   });
@@ -66,6 +68,53 @@ test('the parser counts the parameters of C++ signatures', () => {
     // A bound function without a signature is an error, not a guess
     fs.appendFileSync(path.join(dir, 'bind.cpp'), '\nEMSCRIPTEN_BINDINGS(more) { emscripten::function("lost", &lost); }\n');
     assert.throws(() => readEmbindArity(REPO_ROOT, dir), /The signature of lost, which Embind binds as lost, was not found/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the parser reads every form of a binding that Embind takes, and stops at one that it cannot read', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'moonlight-embind-'));
+  const write = (bindings) => fs.writeFileSync(path.join(dir, 'bind.cpp'), [
+    '#include <emscripten/bind.h>',
+    'using namespace emscripten;',
+    'void one(int a);',
+    'void two(int* a, int b);',
+    'void three(int a, int b, int c);',
+    'namespace ns {',
+    'void four(int a, int b, int c, int d);',
+    '}',
+    'int ns::five(int a, int b, int c, int d, int e) {',
+    '  return a;',
+    '}',
+    'struct Player { void play(int a); static int make(); };',
+    'EMSCRIPTEN_BINDINGS(sample) {',
+  ].concat(bindings, ['}']).join('\n'));
+  try {
+    write([
+      '  emscripten::function("one", &one);',
+      '  emscripten::function("two", &two, emscripten::allow_raw_pointers());',
+      '  function("three", &three);',
+      '  emscripten::function("four", &ns::four);',
+      '  function("five", ns::five, allow_raw_pointers(), return_value_policy::reference());',
+      // A method of a class_ and a std::function are no functions of the module, and a string is no binding
+      '  class_<Player>("Player").function("play", &Player::play).class_function("make", &Player::make);',
+      '  value_object<std::function<void(int)>>("function(x)");',
+    ]);
+    assert.deepEqual(readEmbindArity(REPO_ROOT, dir), { one: 1, two: 2, three: 3, four: 4, five: 5 });
+    // A binding in another form is an error: it would leave the function unchecked in the stub
+    [
+      ['a lambda', '  function("lambda", optional_override([](int a) { return a; }));', /function\("lambda", optional_override\(.*\) at bind\.cpp:14 can't be read/],
+      ['select_overload', '  emscripten::function("picked", select_overload<void(int)>(&one));', /function\("picked", select_overload<void\(int\)>\(&one\)\) at bind\.cpp:14 can't be read/],
+      ['template arguments', '  emscripten::function<void, int>("typed", &one);', /The Embind binding at bind\.cpp:14 can't be read: function is not followed by its arguments/],
+      ['a name that is no string', '  function(NAME, &one);', /function\(NAME, &one\) at bind\.cpp:14 can't be read/],
+      ['an argument that is no policy', '  function("extra", &one, 5);', /function\("extra", &one, 5\) at bind\.cpp:14 can't be read/],
+      ['a name bound twice', '  function("one", &one);\n  function("one", &two);', /one is bound twice by Embind \(bind\.cpp:14 and bind\.cpp:15\)/],
+      ['a function of a namespace without a signature', '  function("six", &ns::six);', /The signature of ns::six, which Embind binds as six, was not found/],
+    ].forEach(([name, binding, error]) => {
+      write([binding]);
+      assert.throws(() => readEmbindArity(REPO_ROOT, dir), error, name);
+    });
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

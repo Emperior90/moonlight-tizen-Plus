@@ -2,9 +2,10 @@
 
 // Checks the Brazilian Portuguese texts (wasm/static/locales/pt-BR.json) beyond what tests/tools/i18n-check.js checks for
 // every language: the form of address (você, never tu), the terms of the glossary in docs/TRANSLATING.md (PC for the host
-// PC, parear, app, transmissão, taxa de bits, controle), the typography (typographic quotes and ellipsis, decimal comma,
-// sentence case for labels), the key names as they are printed on the remote and the gamepad, and the names the texts
-// refer to (settings, menu entries) as the translated UI shows them. The glossary has not been reviewed by a native
+// PC, parear, app, transmissão, taxa de bits, controle, despertar, apertar), the typography (typographic quotes and
+// ellipsis, decimal comma, sentence case for labels, for the lines of System information and inside sentences), the key
+// names as they are printed on the remote and the gamepad, and the names the texts refer to (settings, menu entries) as
+// the translated UI shows them, with their case. The glossary has not been reviewed by a native
 // speaker yet (docs/TRANSLATING.md); these checks keep the texts consistent with it.
 
 const test = require('node:test');
@@ -51,16 +52,24 @@ test('the Brazilian Portuguese texts use the terms of the glossary', () => {
   assert.deepEqual(keys.filter((key) => /\bhosts?\b/i.test(portuguese[key]) && !hostSoftware.test(key)).map((key) => portuguese[key]), []);
   // The TV is feminine
   assert.deepEqual(matching(/\b(o|do|no|este|esse) TV\b/), []);
+  // Waking the PC is despertar, as in Despertar PC (not ligar), and a press of a key or a button is apertar (not pressionar)
+  const wakePc = keys.filter((key) => /\bwak(e|es|ing)\b/i.test(key.replace(/Wake-on-LAN/gi, '')) && /\bPC\b/.test(key));
+  assert.ok(wakePc.length >= 6, wakePc.join('\n'));
+  wakePc.forEach((key) => assert.match(portuguese[key], /despert/i, key));
+  assert.deepEqual(matching(/\bpression/i), []);
+  assert.match(portuguese['Press a key of the remote'], /^Aperte /);
 });
 
 test('Brazilian Portuguese uses typographic quotes and ellipsis, the decimal comma and sentence case', () => {
+  // “ ”, neither straight double nor single quotes (nor ‘ ’)
   assert.deepEqual(matching(/"/), []);
+  assert.deepEqual(matching(/(^|[\s(>])'[^']+'|‘/), []);
   assert.deepEqual(matching(/\.\.\./), []);
   keys.forEach((key) => {
     const text = portuguese[key];
     assert.equal((text.match(/“/g) || []).length, (text.match(/”/g) || []).length, text);
   });
-  assert.match(portuguese['— Navigate to the next item, and increase the bitrate in 0.5 Mbps steps.'], /0,5 Mbps/);
+  assert.match(portuguese['— Navigate to the next item, increase the bitrate in 0.5 Mbps steps, and open the selected category of the settings.'], /0,5 Mbps/);
   // Labels, titles and section names in sentence case, as in Spanish and French; product names (Web Audio, Full HD,
   // Xbox) and the Modo Jogo of the TV keep their capitals
   [['Basic Settings', 'Configurações básicas'], ['Video Settings', 'Configurações de vídeo'], ['Audio Settings', 'Configurações de áudio'],
@@ -76,14 +85,33 @@ test('Brazilian Portuguese uses typographic quotes and ellipsis, the decimal com
     }
     const text = portuguese[key].replace(/<[^>]+>/g, ' ');
     const words = text.split(/\s+/).filter(Boolean);
-    // Short labels only, not sentences
-    if (words.length < 2 || words.length > 8 || /[.!?]$/.test(text.trim())) {
+    // Labels, not sentences: short ones, and the lines of System information (ending in ':' or ': %1$s') at any length
+    if (words.length < 2 || (words.length > 8 && !/:( %\d\$s)?$/.test(text.trim())) || /[.!?]$/.test(text.trim())) {
       return false;
     }
     return words.slice(1).some((word, index) => /^[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+[:,]?$/.test(word) && !exceptions.test(word.replace(/[:,]$/, '')) &&
-      !/[:(]$/.test(words[index]));
+      !/[:(.!?]$/.test(words[index]));
   }).map((key) => portuguese[key]);
   assert.deepEqual(titleCase, []);
+  // Inside a sentence too: no two capitalized words in a row past its first word (e.g. not "o modo de Latência Ultrabaixa"),
+  // leaving out quoted names (“ ”) and parentheses, which can name the English menus of other apps; and the sections and
+  // the Stream Menu, which keep only their first capital (not "nas Configurações de Áudio")
+  const capital = /^[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+$/;
+  const titleCaseInSentences = [];
+  keys.filter((key) => key !== 'Moonlight Game Streaming').forEach((key) => {
+    const text = portuguese[key].replace(/<[^>]+>/g, ' ').replace(/“[^”]*”/g, ' “” ').replace(/\([^)]*\)/g, ' () ');
+    text.split(/[.!?:;]\s+|^\s*[-—]\s+|\s+[-—]\s+/).forEach((sentence) => {
+      const words = sentence.split(/\s+/).filter(Boolean);
+      for (let i = 1; i + 1 < words.length; i++) {
+        const next = words[i + 1].replace(/[,.;:!?]+$/, '');
+        if (capital.test(words[i]) && capital.test(next) && !exceptions.test(words[i]) && !exceptions.test(next)) {
+          titleCaseInSentences.push(words[i] + ' ' + next + ' in ' + portuguese[key]);
+        }
+      }
+    });
+  });
+  assert.deepEqual(titleCaseInSentences, []);
+  assert.deepEqual(matching(/\bConfigurações (?:Básicas|de (?:Vídeo|Áudio|Entrada)|Avançadas)\b|\bMenu da Transmissão\b/), []);
 });
 
 test('the key names stay as printed on the remote and the gamepad, the other keys get the Portuguese words', () => {
@@ -108,7 +136,8 @@ test('texts that name a setting or a menu entry use its Portuguese name', () => 
     ['RETURN or B: back to the Stream Menu', 'Stream Menu'],
   ];
   references.forEach(([text, name]) => {
+    // With its case: the sections and the Stream Menu keep their first capital and nothing more
     const translatedName = portuguese[name].replace(/ \(%1\$s\)$/, '');
-    assert.ok(portuguese[text].toLowerCase().indexOf(translatedName.toLowerCase()) >= 0, translatedName + ' in ' + portuguese[text]);
+    assert.ok(portuguese[text].indexOf(translatedName) >= 0, translatedName + ' in ' + portuguese[text]);
   });
 });

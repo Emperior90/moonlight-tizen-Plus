@@ -218,11 +218,11 @@ test('both messages follow the language, name the settings as the UI shows them 
   const app = await openApp(harness, { tv: TV, stored: { audioConfig: '51Surround' } });
   try {
     const { page } = app;
-    // The real snackbar, as a stream shows it, for 700 ms instead of 5 s, so that the next one doesn't have to wait
+    // The real snackbar, as a stream shows it, for 1200 ms instead of 5 s, so that the next one doesn't have to wait long
     await page.evaluate(() => {
       const snackbar = document.querySelector('#snackbar').MaterialSnackbar;
       const show = snackbar.showSnackbar.bind(snackbar);
-      snackbar.showSnackbar = (data) => show(Object.assign({}, data, { timeout: 700 }));
+      snackbar.showSnackbar = (data) => show(Object.assign({}, data, { timeout: 1200 }));
     });
     // The message of a stream in the quality High names both settings and both values, the one of a stream in Efficient
     // the audio configuration and Stereo, and never the surround audio quality
@@ -243,11 +243,18 @@ test('both messages follow the language, name the settings as the UI shows them 
             handleMessage('AudioOverloadMsg: 6,412');
             isInGame = false;
             wasmSessionStarted = false;
-            await new Promise((resolve) => setTimeout(resolve, 350));
+            // Measured once it slid in (its transform of .mdl-snackbar--active, 250 ms in MDL), which a busy page
+            // reaches later than a fixed wait: up to 2 s
             const snackbar = document.getElementById('snackbar');
+            const deadline = performance.now() + 2000;
+            const isSlidIn = () => snackbar.classList.contains('mdl-snackbar--active') &&
+              new DOMMatrixReadOnly(getComputedStyle(snackbar).transform).m42 === 0;
+            while (!isSlidIn() && performance.now() < deadline) {
+              await new Promise((resolve) => requestAnimationFrame(resolve));
+            }
             const text = snackbar.querySelector('.mdl-snackbar__text');
             const box = snackbar.getBoundingClientRect();
-            return { active: snackbar.classList.contains('mdl-snackbar--active'), text: text.textContent,
+            return { active: snackbar.classList.contains('mdl-snackbar--active'), slidIn: isSlidIn(), text: text.textContent,
               inside: box.left >= 0 && box.right <= window.innerWidth && box.top >= 0 && box.bottom <= window.innerHeight,
               cut: text.scrollWidth > text.clientWidth + 1 || text.scrollHeight > text.clientHeight + 1,
               lines: Math.round(text.getBoundingClientRect().height / parseFloat(getComputedStyle(text).lineHeight)),
@@ -256,6 +263,7 @@ test('both messages follow the language, name the settings as the UI shows them 
           }, { quality: variant.quality, expected: variant.names, unexpected: variant.absent });
           const where = language + ' ' + variant.quality + stress + ' ' + JSON.stringify(shown);
           assert.equal(shown.active, true, where);
+          assert.equal(shown.slidIn, true, where);
           assert.equal(shown.inside, true, where);
           assert.equal(shown.cut, false, where);
           assert.ok(shown.lines <= 3, where);

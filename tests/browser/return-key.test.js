@@ -10,8 +10,10 @@
 // Since 2.3.5 Esc of a keyboard works as RETURN (remoteControllerHandler() in remote_controller.js): before, its own
 // action closed a <dialog> by itself and left the dimmed overlay, isDialogOpen and the view of the dialog behind, so that
 // the keys acted on the hidden dialog, and OK then exited from Exit Moonlight. Only a trusted Escape has that action, so
-// the Esc rows press it with the keyboard of Playwright. A held RETURN goes back one level (before 2.3.5 its auto-repeat
-// went on through the levels, to Exit Moonlight), and Exit Moonlight opens on Cancel.
+// the Esc rows press it with the keyboard of Playwright. Only the row of the address field of Add PC shows that the
+// action is prevented: there back() keeps the dialog open while the field takes the text, whereas the other dialogs
+// close in their back() anyway. A held RETURN goes back one level (before 2.3.5 its auto-repeat went on through the
+// levels, to Exit Moonlight), and Exit Moonlight opens on Cancel.
 // tests/unit/navigation-ids.test.js checks that every element that navigation.js names exists.
 
 const { after, before, test } = require('node:test');
@@ -95,6 +97,37 @@ test('Hosts: RETURN opens Exit Moonlight on Cancel, RETURN and Esc close it, and
     await key(page, 'ok', 500);
     assert.equal((await where(page)).view, 'AddHostDialog');
     assert.equal(await page.evaluate(() => window.__exits), 0);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('AddHostDialog: RETURN and Esc while typing in the address field close only the field, and the next one the dialog', async () => {
+  // The one dialog whose back() keeps it open: the own action of a trusted Esc, if not prevented, closed the <dialog>
+  // by itself and left its overlay, isDialogOpen and its view behind, as before 2.3.5 on every dialog
+  const app = await openMenus(harness, { stored: { ipAddressFieldMode: false } });
+  const { page } = app;
+  const field = () => page.evaluate(() => {
+    const input = document.getElementById('ipAddressTextInput');
+    return { value: input.value, readOnly: input.readOnly, focused: document.activeElement === input };
+  });
+  try {
+    for (const which of ['RETURN', 'Esc']) {
+      // OK on Add PC, then OK on the address field, which takes the text
+      await key(page, 'ok', 500);
+      assert.equal((await where(page)).current, 'ipAddressTextInput', which);
+      await key(page, 'ok', 300);
+      await page.keyboard.type('10.0');
+      assert.deepEqual(await field(), { value: '10.0', readOnly: false, focused: true }, which);
+      await press(page, which);
+      const typing = await where(page);
+      assert.deepEqual([typing.view, typing.current, typing.openDialogs, typing.overlays, typing.dialogOpen],
+        ['AddHostDialog', 'ipAddressTextInput', ['addHostDialog'], ['addHostDialogOverlay'], true], which + ' ' + JSON.stringify(typing));
+      assert.deepEqual(await field(), { value: '10.0', readOnly: true, focused: false }, which);
+      await press(page, which);
+      assertClosed(await where(page), 'Hosts', 'addHostContainer', which);
+    }
     assert.deepEqual(app.errors, []);
   } finally {
     await app.context.close();

@@ -6,7 +6,12 @@
 //  - encrypted video is decrypted from the buffer of its slot into a buffer of the processing thread, which the queue
 //    gets; a packet that fails to decrypt is logged and the stream goes on;
 //  - a ring of 8 packets (defined here before the include) and a slow queue: the ring fills, the reader waits, nothing
-//    is lost or reordered, and the line of the processing thread counts the times it was full;
+//    is lost or reordered, the line of the processing thread counts the times it was full, and the reader's line doesn't
+//    count its waits for room as its work;
+//  - a queue that rejects every 5th packet (as the real one rejects surplus parity packets and late or duplicate
+//    ones): the buffer stays with the processing thread, and the reader never receives into the buffer of a packet that
+//    the processing thread hasn't handed to the queue yet (no buffer in two slots);
+//  - the idle share of the processing thread: high when it waits for packets, and without the wait for its first one;
 //  - the stop while the reader waits for room, while the processing thread waits for packets, and while the reader of a
 //    socket that never waits waits in its read (woken by wakeUdpSocketReader()), also in the three failed starts after
 //    the reader started; a failed start of the reader stops and joins the processing thread and frees the ring;
@@ -19,8 +24,9 @@
 // the script can add (for the limit of 10 s); RtpvAddPacket() records and frees each packet. The main thread waits for
 // the stand-ins through a mutex and a condition variable of the test, which also orders what the threads wrote before
 // it reads it. A watchdog ends the test if a stop never returns.
-// The test runs with the flags of run.sh (the address and undefined behaviour sanitizers) and, by hand, with
-// -fsanitize=thread (see tests/README.md), which must report nothing.
+// The test runs with the flags of run.sh (the address and undefined behaviour sanitizers) and, by the line below, once
+// more with the thread sanitizer, which must report nothing.
+// Thread sanitizer: yes
 
 #define _GNU_SOURCE
 
@@ -123,6 +129,23 @@ static long long numberAfter(const char* line, const char* text) {
   const char* start = strstr(line, text);
   long long value = -1;
   if (start == NULL || sscanf(start + strlen(text), "%lld", &value) != 1) {
+    return -1;
+  }
+  return value;
+}
+
+// The number in a line right before the text, e.g. the time before " us of other work per packet", or -1
+static double numberBefore(const char* line, const char* text) {
+  const char* end = strstr(line, text);
+  if (end == NULL) {
+    return -1;
+  }
+  const char* start = end;
+  while (start > line && start[-1] != ' ') {
+    start--;
+  }
+  double value = -1;
+  if (sscanf(start, "%lf", &value) != 1) {
     return -1;
   }
   return value;
@@ -304,6 +327,11 @@ static bool timeoutWorks;
 static bool noWaitWorks;
 static bool readerWoken;
 static int closeCalls;
+// Whether the processing thread handed each entry to the RTP queue (under testMutex); with checkBusyBuffers (a case
+// whose packets all go to the queue), the receives into the buffer of a packet that it hadn't handed over yet
+static bool handedToQueue[MAX_ENTRIES];
+static bool checkBusyBuffers;
+static int servedIntoBusyBuffer;
 
 #define FIRST_SOCKET 1000
 #define NO_WAIT_SOCKET 1001
@@ -411,6 +439,16 @@ static int serve(char* buffer, int size, bool noWait) {
     return -1;
   }
   CHECK(entry->size <= size);
+  if (checkBusyBuffers) {
+    // (a packet stays in the ring of 8 and the batch of the processing thread, so 64 entries back are enough)
+    pthread_mutex_lock(&testMutex);
+    for (int j = index > 64 ? index - 64 : 0; j < index; j++) {
+      if (servedBuffer[j] == buffer && !handedToQueue[j]) {
+        servedIntoBusyBuffer++;
+      }
+    }
+    pthread_mutex_unlock(&testMutex);
+  }
   memset(buffer, 0, (size_t)entry->size);
   PRTP_PACKET rtp = (PRTP_PACKET)&buffer[rtpOffset];
   rtp->header = 0x90;
@@ -504,7 +542,11 @@ bool PltDecryptMessage(PPLT_CRYPTO_CONTEXT ctx, int algorithm, int flags, unsign
 
 // ---- The RTP queue, on the processing thread ----
 
+// The packets that reached RtpvAddPacket(), queued or rejected (every rejectEvery-th one, if set, without freeing it:
+// the buffer stays with the caller, as with the real queue)
 static int queuedPackets;
+static int rejectEvery;
+static int rejectedPackets;
 static int queuedOutOfOrder;
 static int queuedTooEarly;
 static int queuedInOtherBuffer;
@@ -575,12 +617,19 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
     while (PltGetMicroseconds() < endUs) {
     }
   }
-  free(packet);
+  const bool reject = rejectEvery > 0 && (index + 1) % rejectEvery == 0;
+  if (!reject) {
+    free(packet);
+  }
   pthread_mutex_lock(&testMutex);
+  handedToQueue[index] = true;
   queuedPackets++;
+  if (reject) {
+    rejectedPackets++;
+  }
   pthread_cond_broadcast(&testCond);
   pthread_mutex_unlock(&testMutex);
-  return RTPF_RET_QUEUED;
+  return reject ? RTPF_RET_REJECTED : RTPF_RET_QUEUED;
 }
 uint32_t RtpvGetCurrentFrameNumber(PRTP_VIDEO_QUEUE queue) {
   (void)queue;
@@ -651,6 +700,11 @@ static void resetStream(void) {
   noWaitWorks = true;
   readerWoken = false;
   closeCalls = 0;
+  memset(handedToQueue, 0, sizeof(handedToQueue));
+  checkBusyBuffers = false;
+  servedIntoBusyBuffer = 0;
+  rejectEvery = 0;
+  rejectedPackets = 0;
   __atomic_store_n(&clockJumpUs, 0, __ATOMIC_SEQ_CST);
   failingDecryptIndex = -1;
   decryptCalls = 0;
@@ -707,6 +761,7 @@ static void stopStream(void) {
   CHECK_EQ_INT(queuedTooEarly, 0);
   CHECK_EQ_INT(queuedInOtherBuffer, 0);
   CHECK_EQ_INT(queuedWithWrongLength, 0);
+  CHECK_EQ_INT(servedIntoBusyBuffer, 0);
   CHECK_EQ_INT(linesTooLong, 0);
   if (test_current_failed) {
     printf("  # events: %s\n", events);
@@ -768,13 +823,18 @@ static bool terminated(void) {
 // ---- The cases ----
 
 static void test_every_packet_reaches_the_queue_in_order_with_its_read_time_and_its_buffer(void) {
+  // The queue rejects every 5th packet: its buffer stays with the processing thread, which puts it into the next slot,
+  // and the reader never receives into the buffer of a packet that is still on its way (no buffer in two slots)
   resetStream();
   addPackets(20000, FULL_PACKET);
+  rejectEvery = 5;
+  checkBusyBuffers = true;
   initializeVideoStream();
   CHECK_EQ_INT(startVideoStream(NULL, 0), 0);
   CHECK(waitForQueued(20000));
   stopStream();
   CHECK_EQ_INT(queuedPackets, 20000);
+  CHECK_EQ_INT(rejectedPackets, 4000);
   CHECK_EQ_INT(terminations, 0);
   checkEvents("bind:1000 create:VideoProc create:VideoRecv create:VideoDec create:VideoPing join:VideoPing "
               "join:VideoRecv join:VideoProc join:VideoDec close:1000 cleanup");
@@ -808,23 +868,33 @@ static void test_encrypted_video_is_decrypted_from_the_slot_into_another_buffer(
 }
 
 static void test_a_full_ring_makes_the_reader_wait_and_loses_nothing(void) {
-  // A queue that takes 200 us for each packet, and a reader that reads them at once: the ring of 8 is full again and
-  // again, and the reader waits for room each time
+  // A queue that takes 200 us for each packet (and rejects every 5th), and a reader that reads them at once: the ring
+  // of 8 is full again and again, and the reader waits for room each time
   resetStream();
-  addPackets(2000, FULL_PACKET);
+  addPackets(4000, FULL_PACKET);
   queueWorkUs = 200;
+  rejectEvery = 5;
+  checkBusyBuffers = true;
   initializeVideoStream();
   CHECK_EQ_INT(startVideoStream(NULL, 0), 0);
-  CHECK(waitForQueued(2000));
+  CHECK(waitForQueued(4000));
   stopStream();
-  CHECK_EQ_INT(queuedPackets, 2000);
+  CHECK_EQ_INT(queuedPackets, 4000);
+  CHECK_EQ_INT(rejectedPackets, 800);
   const int process = findLine(PROCESS_LINE);
-  CHECK(process >= 0);
+  const int stream = findLine(STREAM_LINE);
+  CHECK(process >= 0 && stream >= 0);
   if (process >= 0) {
     CHECK(strstr(lines[process], "; ring up to 8 of 8 packets, full ") != NULL);
     CHECK(numberAfter(lines[process], "of 8 packets, full ") > 0);
     // The processing thread had work most of the time
     CHECK(numberAfter(lines[process], " idle ") < 50);
+  }
+  if (stream >= 0) {
+    // The reader waited for room before about every 8th packet, for the 8 packets of the batch before (1.6 ms): its
+    // other work per packet leaves those waits out, or it would be about the 200 us of the queue per packet
+    const double otherUs = numberBefore(lines[stream], " us of other work per packet");
+    CHECK(otherUs >= 0 && otherUs < 100);
   }
 }
 
@@ -863,6 +933,8 @@ static void test_the_stop_wakes_a_processing_thread_that_waits_for_packets(void)
   CHECK_EQ_INT(startVideoStream(NULL, 0), 0);
   CHECK(waitForQueued(100));
   CHECK(waitForRing(processorWaitsForPackets));
+  // It waits for 200 ms more, which its line counts as idle time
+  usleep(200000);
   const uint64_t stopStartUs = PltGetMicroseconds();
   stopStream();
   const uint64_t stopUs = PltGetMicroseconds() - stopStartUs;
@@ -873,6 +945,58 @@ static void test_the_stop_wakes_a_processing_thread_that_waits_for_packets(void)
   CHECK(process >= 0);
   if (process >= 0) {
     CHECK_EQ_INT(numberAfter(strstr(lines[process], " s: "), " s: "), 100);
+    CHECK(numberAfter(lines[process], " idle ") >= 50);
+  }
+}
+
+static void test_the_wait_for_the_first_packet_is_no_idle_time(void) {
+  // The reader times out 90 times (about 100 ms, and 9 of the 10 s without video) before the first packet, then reads
+  // 400 packets at once, each of which takes the queue 200 us: the processing thread is busy for 80 ms from its first
+  // packet on, and the stop comes right after the last one, so its idle share stays low; the wait for the first
+  // packet doesn't count (the figures start with it), or the share would be 100 %
+  resetStream();
+  for (int i = 0; i < 90; i++) {
+    addEntry(ENTRY_TIMEOUT, 0);
+  }
+  addPackets(400, FULL_PACKET);
+  queueWorkUs = 200;
+  initializeVideoStream();
+  CHECK_EQ_INT(startVideoStream(NULL, 0), 0);
+  CHECK(waitForQueued(400));
+  stopStream();
+  CHECK_EQ_INT(queuedPackets, 400);
+  CHECK_EQ_INT(terminations, 0);
+  const int process = findLine(PROCESS_LINE);
+  CHECK(process >= 0);
+  if (process >= 0) {
+    CHECK_EQ_INT(numberAfter(strstr(lines[process], " s: "), " s: "), 400);
+    CHECK(numberAfter(lines[process], " idle ") < 50);
+  }
+}
+
+static void test_packets_a_millisecond_apart_make_the_processing_thread_look_then_wait(void) {
+  // 100 packets about 1 ms apart (a receive timeout of the stand-in between them), more than the look of the processing
+  // thread lasts: after each packet it looks again for about 0.1 ms, then waits, and the next packet wakes it. Its line
+  // shows the idle time with the looks in it (about a tenth of the time) and a wake for nearly every packet
+  resetStream();
+  for (int i = 0; i < 100; i++) {
+    addPackets(1, FULL_PACKET);
+    addEntry(ENTRY_TIMEOUT, 0);
+  }
+  initializeVideoStream();
+  CHECK_EQ_INT(startVideoStream(NULL, 0), 0);
+  CHECK(waitForQueued(100));
+  stopStream();
+  CHECK_EQ_INT(queuedPackets, 100);
+  CHECK_EQ_INT(terminations, 0);
+  const int process = findLine(PROCESS_LINE);
+  CHECK(process >= 0);
+  if (process >= 0) {
+    const long long idle = numberAfter(lines[process], " idle ");
+    const long long looking = numberAfter(lines[process], "(looking ");
+    CHECK(idle >= 50);
+    CHECK(looking >= 1 && looking <= idle);
+    CHECK(numberBefore(lines[process], " wakes\n") >= 50);
   }
 }
 
@@ -1020,14 +1144,20 @@ static void test_a_failed_start_of_the_reader_stops_and_joins_the_processing_thr
 
 int main(void) {
   signal(SIGALRM, onWatchdog);
-  RUN_TEST("every packet reaches the queue on the processing thread in order, with its read time and in its buffer",
+  RUN_TEST("every packet reaches the queue on the processing thread in order, with its read time and in its buffer, and "
+           "the buffer of a rejected one is used again, never while its packet is on its way",
            test_every_packet_reaches_the_queue_in_order_with_its_read_time_and_its_buffer);
   RUN_TEST("encrypted video is decrypted from the buffer of its slot into another one, and a failed one is logged",
            test_encrypted_video_is_decrypted_from_the_slot_into_another_buffer);
-  RUN_TEST("a full ring makes the reader wait and loses nothing", test_a_full_ring_makes_the_reader_wait_and_loses_nothing);
+  RUN_TEST("a full ring makes the reader wait and loses nothing, and the reader's waits are not its work",
+           test_a_full_ring_makes_the_reader_wait_and_loses_nothing);
   RUN_TEST("the stop wakes a reader that waits for room", test_the_stop_wakes_a_reader_that_waits_for_room);
-  RUN_TEST("the stop wakes a processing thread that waits for packets, within a second",
+  RUN_TEST("the stop wakes a processing thread that waits for packets, within a second, and its wait is idle time",
            test_the_stop_wakes_a_processing_thread_that_waits_for_packets);
+  RUN_TEST("the wait for the first packet is no idle time of the processing thread",
+           test_the_wait_for_the_first_packet_is_no_idle_time);
+  RUN_TEST("packets a millisecond apart make the processing thread look again, then wait, and the reader wake it",
+           test_packets_a_millisecond_apart_make_the_processing_thread_look_then_wait);
   RUN_TEST("the reader of a socket that never waits is woken at the stop and at the three failed starts after it",
            test_the_reader_of_a_socket_that_never_waits_is_woken_at_the_stop_and_at_a_failed_start);
   RUN_TEST("the limit of 10 s for the first frame ends the stream on the processing thread, by the read times",

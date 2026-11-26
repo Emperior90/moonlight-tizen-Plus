@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # This step uses the `actions/checkout` action to check out the baseline file and the script, without keeping the token in the clone.
+      # This step uses the `actions/checkout` action to check out the baseline file and the script, without keeping the token on the runner.
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

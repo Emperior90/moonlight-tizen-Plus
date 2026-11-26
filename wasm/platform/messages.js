@@ -1181,7 +1181,7 @@ function dispatchMessage(msg) {
       return;
     }
     isStreamConnected = true;
-    // The Wasm module reads the gamepads from now on: the launch screen read them for B (showStreamMode() in index.js)
+    // The Wasm module reads the gamepads from now on: the launch screen read them for B (watchGamepadsOfLaunchScreen())
     runGuarded('stopGamepadsOfLaunchScreen', function() { stopGamepadsOfLaunchScreen(); });
     // The control stream connected before, which released the start on the host ('ControlStreamConnected' above)
     streamLaunchAnsweredAt = 0;

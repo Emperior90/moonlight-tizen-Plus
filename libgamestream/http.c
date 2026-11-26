@@ -78,8 +78,10 @@ static CURLcode sslctx_function(CURL * curl, void * sslctx, void * parm)
 // a cancel (http_cancel_request(), on the main thread) applies to every request up to the last one handed over: to the
 // one that runs and to one that still waits behind another job of the thread, e.g. the STUN lookup. The HTTP thread
 // names the request that it runs (http_begin_request()). Up to 2.3.4 a cancel set a flag that the next request cleared
-// at its start, so a request that was cancelled while it waited still ran. Plain 4-byte values: one thread writes
-// each of them.
+// at its start, so a request that was cancelled while it waited still ran. The requests of a pairing share its number
+// (Pair_private() in wasm/main.cpp), so a cancel during the pairing also ends the /unpair of the cleanup of gs_pair(),
+// which only GameStream of GeForce Experience answered: Sunshine and its forks have no such route. Plain 4-byte values:
+// one thread writes each of them.
 static volatile int g_LastHandedRequest = 0;
 static volatile int g_CancelledThrough = 0;
 static volatile int g_CurrentRequest = 0;

@@ -929,7 +929,7 @@ EMSCRIPTEN_BINDINGS(handle_message) {
   emscripten::function("cancelRequest", &cancelRequest);
   emscripten::function("toggleStats", &toggleStats);
   emscripten::function("setStreamMenuOpen", &setStreamMenuOpen);
-  emscripten::function("setAppHidden", &setAppHidden);
+  emscripten::function("setStreamPageHidden", &setStreamPageHidden);
   emscripten::function("toggleMouseEmulation", &toggleMouseEmulation);
   emscripten::function("requestIdrFrame", &requestIdrFrame);
   emscripten::function("getAudioChannelCount", &getAudioChannelCount);

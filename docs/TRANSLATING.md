@@ -65,6 +65,7 @@ The German texts address the user with the informal *du* and use the words of th
 | favorite | Favorit | *Zu Favoriten hinzufügen*, *Aus Favoriten entfernen* |
 | recently played | zuletzt gespielt | |
 | wake | aufwecken | *PC aufwecken* |
+| web UI (of Sunshine, Apollo, Vibepollo) | Weboberfläche | *in der Weboberfläche von Sunshine*; not *Web-UI* |
 | frame rate | Bildrate | FPS stays |
 | bitrate | Bitrate | Mbps stays |
 | resolution | Auflösung | |
@@ -113,6 +114,7 @@ The Spanish texts address the user with the informal *tú* (*Selecciona*, *Pulsa
 | Stream Menu | Menú de transmisión | |
 | shortcuts, function keys | atajos de teclado, teclas de función | key names such as *Alt + Tab* and *F1* stay |
 | shut down, restart (the PC) | apagar, reiniciar | |
+| wake (the PC) | despertar | *Despertar el PC*, *Esperando a que el PC se despierte …*; not *encender*, which is *turn on* |
 | Run (the dialog of Windows) | Ejecutar | the Sunshine app *Desktop* stays |
 | command | comando | not *orden* |
 | resume, quit | reanudar, cerrar | |
@@ -186,7 +188,7 @@ Put a no-break space (U+00A0) before : ; ? ! and inside « » (*« Afficher les 
 
 ## Brazilian Portuguese glossary
 
-The Brazilian Portuguese texts address the user with *você* (*Selecione*, *Pressione*, *Você tem certeza de que deseja …?*). This glossary records the terms that the texts use since 2.3.5. A native speaker hasn't reviewed it yet: a correction is welcome on the issue tracker.
+The Brazilian Portuguese texts address the user with *você* (*Selecione*, *Aperte*, *Você tem certeza de que deseja …?*). This glossary records the terms that the texts use since 2.3.5. A native speaker hasn't reviewed it yet: a correction is welcome on the issue tracker.
 
 | English | Brazilian Portuguese | Note |
 |---|---|---|
@@ -206,13 +208,14 @@ The Brazilian Portuguese texts address the user with *você* (*Selecione*, *Pres
 | shut down, restart (the PC) | desligar, reiniciar | |
 | resume, quit | retomar, encerrar | *Sair do Moonlight* for leaving the app |
 | hide, hidden | ocultar, oculto | |
-| wake | despertar | *Despertar PC* |
+| wake (the PC) | despertar | *Despertar PC*, *Aguardando o PC despertar …*; not *ligar*, which is *turn on* |
+| press (a key or a button) | apertar | *Aperte OK*, *Aperte um botão no controle*; not *pressionar* |
 | frame, keyframe | quadro, quadro-chave | FPS stays |
 | frame rate | taxa de quadros | |
 | bitrate | taxa de bits | Mbps stays; not *bitrate* |
 | Stereo | Estéreo | *Som surround 5.1*, *Som surround 7.1* |
 | game mode (of the TV) | Modo Jogo | |
-| Ultra low latency mode (the setting) | modo de latência ultrabaixa | |
+| Ultra low latency mode (the setting) | modo de latência ultrabaixa | also the modes of the video player in a sentence: *o modo de latência ultrabaixa*, *o modo de baixa latência* |
 | rumble | vibração | |
 | mouse emulation | emulação de mouse | |
 | button mapping | mapeamento de botões | |
@@ -225,9 +228,9 @@ The Brazilian Portuguese texts address the user with *você* (*Selecione*, *Pres
 | remote keys | OK, RETURN, Play/Pause, CH+, CH-, VOL+, VOL-, MUTE | the arrows *CIMA*, *BAIXO*, *ESQUERDA*, *DIREITA*, the color keys *VERMELHO* and *AMARELO* (*botão VERMELHO* in a sentence) |
 | gamepad keys | A, B, X, Y, SELECT, START, LB, RB | *D-PAD*, *ANALÓGICO ESQ.* |
 
-Labels, titles and the names of sections are in sentence case, as in Spanish and French (*Configurações avançadas*, *Ver detalhes*); product names and *Modo Jogo* keep their capitals, and so do *Menu da transmissão* and the sections when a sentence names them. Quotes are “ ” (*“Mostrar apps ocultos”*). Write *por exemplo*, decimal commas (*0,5 Mbps*) and a typographic ellipsis without a space (*Carregando…*).
+Labels, titles, the lines of System information and the names of sections are in sentence case, as in Spanish and French (*Configurações avançadas*, *Ver detalhes*, *Decodificadores de vídeo no nível 5.1 …*); product names and *Modo Jogo* keep their capitals, and so do *Menu da transmissão* and the sections when a sentence names them, with their first capital only. Quotes are “ ” (*“Mostrar apps ocultos”*), never straight quotes. Write *por exemplo*, decimal commas (*0,5 Mbps*) and a typographic ellipsis without a space (*Carregando…*).
 
-`tests/unit/portuguese-texts.test.js` checks the *você*, the main terms of this table, the typography and the key names.
+`tests/unit/portuguese-texts.test.js` checks the *você*, the main terms of this table, the typography (with sentence case in labels, in the lines of System information and inside sentences) and the key names.
 
 ## Adding a language
 

@@ -6,7 +6,8 @@
 # - old-release-notices attaches docs/licenses/THIRD-PARTY-NOTICES-before-2.2.txt and the GPL-3.0 text to the four
 #   releases before 2.2.0, whose packages carry no licence texts. From 2.2.0 on, the package carries them itself.
 # Both jobs can run again: they replace the files they uploaded before. Neither changes which release is the latest,
-# which the in-app update check reads.
+# which the in-app update check reads. A change of docs/licenses/THIRD-PARTY-NOTICES-before-2.2.txt reaches those
+# releases only when old-release-notices runs again after the push: until then they keep the copy uploaded before.
 name: Licence and source assets
 on:
   workflow_dispatch:

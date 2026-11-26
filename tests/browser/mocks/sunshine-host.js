@@ -33,7 +33,8 @@
 // the path of each request once it is answered, e.g. to make the PC forget the TV right after /cancel. { otherPcAt:
 // ['203.0.113.7'] } are addresses where another PC with Sunshine answers with its own key (e.g. the public address of
 // the household, which the router hands to the PC that it forwards the port to): an HTTPS request there fails with
-// '-100' (state.otherPcRequests counts them).
+// '-100' (state.otherPcRequests counts them). { loopbackAt: ['203.0.113.7'] } are addresses whose ports the router
+// forwards to this PC and loops back from the local network (NAT loopback): the PC answers there as at 10.0.0.2.
 (function() {
   'use strict';
   var config = window.__sunshineConfig || {};
@@ -59,6 +60,7 @@
     httpMac: config.unpaired ? '00:00:00:00:00:00' : '00:11:22:33:44:55',
     otherPcAt: config.otherPcAt || [],
     otherPcRequests: 0,
+    loopbackAt: config.loopbackAt || [],
     onAnswered: null,
     key: config.key || null,
     pairs: [],
@@ -108,6 +110,10 @@
         handlePromiseMessage(id, 'reject', '-100');
       }, 0);
       return;
+    }
+    if (address && state.loopbackAt.indexOf(address[1]) >= 0) {
+      // The router hands the request to the PC
+      url = url.replace(address[1], '10.0.0.2');
     }
     if (!/^https?:\/\/10\.0\.0\.2:/.test(url)) {
       setTimeout(function() {

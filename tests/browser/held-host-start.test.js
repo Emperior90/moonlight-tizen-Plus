@@ -21,7 +21,9 @@
 // The page holds a simulated Sunshine that keeps its launch sessions that way, with one thread for the requests, as the
 // HTTPS server of Sunshine and the HTTP thread of the module have, and a stub of the module whose start request runs the
 // handshake against it. The times are scaled down: ping_timeout 1000 ms, the hold that the app waits for 1100 ms (11 s
-// in the app), the delays before a retry and a reconnect 100 ms.
+// in the app), the delays before a retry and a reconnect 100 ms. A test waits for the event or the text that it expects
+// (window.untilEvent(), window.untilCountdown()), with a deadline, not for a fixed time: the start after a hold connected
+// 40 ms before the fixed wait of 1400 ms ended, which a loaded runner missed.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -173,6 +175,23 @@ async function openWithSunshine() {
       const entry = window.__events.slice(from || 0).find((item) => item.event.indexOf(prefix) === 0);
       return entry ? entry.at : -1;
     };
+    // Wait until the event `name` was recorded `count` times (once unless given), at most for `ms` (5 s unless given),
+    // then a moment more (settleMs, 300 ms unless given), in which an event that must not follow would show
+    window.untilEvent = async (name, count, ms, settleMs) => {
+      const deadline = performance.now() + (ms || 5000);
+      while (window.names().filter((event) => event === name).length < (count || 1) && performance.now() < deadline) {
+        await window.wait(10);
+      }
+      await window.wait(settleMs === undefined ? 300 : settleMs);
+    };
+    // Wait until the launch screen counts down the hold, at most for 3 s, and return its text then
+    window.untilCountdown = async () => {
+      const deadline = performance.now() + 3000;
+      while (!/^Waiting for the PC to release the previous start/.test($('#loadingSpinnerMessage').text()) && performance.now() < deadline) {
+        await window.wait(10);
+      }
+      return $('#loadingSpinnerMessage').text();
+    };
   });
   return app;
 }
@@ -188,9 +207,8 @@ test('RED while the host handles /launch, then a new start: it waits with a coun
       await window.wait(20);
       // ... and starts it again at once: the request waits behind /launch, whose answer the TV ignores
       startGame(window.__host, 7);
-      await window.wait(400);
-      const waiting = { message: $('#loadingSpinnerMessage').text(), isInGame, wasmSessionStarted };
-      await window.wait(1500);
+      const waiting = { message: await window.untilCountdown(), isInGame, wasmSessionStarted };
+      await window.untilEvent('host: connected');
       return {
         names: window.names(), screens: window.__screens.slice(), waiting, connected: isStreamConnected,
         answeredAt: window.timeOf('host: /launch'), resumedAt: window.timeOf('tv: /resume'),
@@ -231,7 +249,7 @@ test('RED after the host accepted the start, while the TV reads the codec modes 
       red();
       window.__sunshine.serverInfoMs = 10;
       startGame(window.__host, 7);
-      await window.wait(1600);
+      await window.untilEvent('host: connected');
       return {
         cancelled, names: window.names(), screens: window.__screens.slice(), connected: isStreamConnected,
         answeredAt: window.timeOf('host: /launch'), resumedAt: window.timeOf('tv: /resume'),
@@ -264,7 +282,7 @@ test('RED while the stream connects, after the host accepted its start: the next
       window.__connect = 'auto';
       await window.wait(20);
       startGame(window.__host, 7);
-      await window.wait(1900);
+      await window.untilEvent('host: connected');
       return {
         connecting, names: window.names(), screens: window.__screens.slice(), connected: isStreamConnected,
         answeredAt: window.timeOf('host: /launch'), resumedAt: window.timeOf('tv: /resume'),
@@ -290,14 +308,14 @@ test('a stream whose control stream connected makes no start wait, also when it 
       // The control stream connects, which clears the session on the host, and the TV still sets up the video stream
       window.__connect = 'control';
       startGame(window.__host, 7);
-      await window.wait(500);
+      await window.untilEvent('host: control stream connected', 1, 3000, 50);
       const settingUp = { message: $('#loadingSpinnerMessage').text(), wasmSessionStarted, connected: isStreamConnected };
       // The user gives up meanwhile and starts again at once
       red();
       const redFrom = window.__events.length;
       const redAt = performance.now();
       startGame(window.__host, 7);
-      await window.wait(500);
+      await window.untilEvent('host: control stream connected', 2, 3000, 50);
       // A later stage of the start fails after the control stream connected, e.g. the audio stream (-1), which the module
       // reports once LiStartConnection() returned; a new start goes out at once as well
       handleMessage('streamTerminated: -1');
@@ -306,7 +324,7 @@ test('a stream whose control stream connected makes no start wait, also when it 
       const failedFrom = window.__events.length;
       const failedAt = performance.now();
       startGame(window.__host, 7);
-      await window.wait(500);
+      await window.untilEvent('host: connected');
       return {
         settingUp, names: window.names(), screens: window.__screens.slice(), connected: isStreamConnected,
         redGap: window.timeOf('tv: /resume', redFrom) - redAt, failedGap: window.timeOf('tv: /resume', failedFrom) - failedAt,
@@ -334,25 +352,25 @@ test('a stream that connected makes no start wait: the reconnect of the Stream M
   try {
     const run = await app.page.evaluate(async () => {
       startGame(window.__host, 7);
-      await window.wait(500);
+      await window.untilEvent('host: connected', 1, 3000, 50);
       const firstConnected = isStreamConnected;
       // The bitrate entry of the Stream Menu reconnects the stream (stop, then resume 100 ms later)
       const reconnectAt = performance.now();
       restartStreamWithSettings({ bitrateMbps: 50 });
-      await window.wait(500);
+      await window.untilEvent('host: connected', 2, 3000, 50);
       const reconnected = isStreamConnected;
       // No video arrives at the start of the stream: it starts once more 100 ms later
       const retryAt = performance.now();
       const retryFrom = window.__events.length;
       handleMessage('streamTerminated: -100');
-      await window.wait(500);
+      await window.untilEvent('host: connected', 3, 3000, 50);
       const retried = isStreamConnected;
       // The user stops the stream and starts it again at once
       red();
       const restartFrom = window.__events.length;
       const restartAt = performance.now();
       startGame(window.__host, 7);
-      await window.wait(400);
+      await window.untilEvent('host: connected', 4);
       return {
         names: window.names(), screens: window.__screens.slice(), states: [firstConnected, reconnected, retried, isStreamConnected],
         reconnectGap: window.timeOf('tv: /resume') - reconnectAt,
@@ -383,7 +401,7 @@ test('the host holds a start of another device: the stream starts once more with
     const run = await app.page.evaluate(async () => {
       window.otherDeviceStarts(1000);
       startGame(window.__host, 7);
-      await window.wait(2300);
+      await window.untilEvent('host: connected');
       return {
         names: window.names(), screens: window.__screens.slice(), connected: isStreamConnected,
         answeredAt: window.timeOf('host: /launch'), resumedAt: window.timeOf('tv: /resume'),
@@ -412,13 +430,12 @@ test('a host that still holds the other start after the retry: the message about
       // Another device's start that the host keeps for 5 s (e.g. a larger ping_timeout)
       window.otherDeviceStarts(5000);
       startGame(window.__host, 7);
-      await window.wait(2000);
+      await window.untilEvent('app list');
       const failed = { names: window.names(), isInGame };
       // A new start right away waits for the hold of the retry, which also never connected
       const from = window.__events.length;
       startGame(window.__host, 7);
-      await window.wait(300);
-      const waiting = $('#loadingSpinnerMessage').text();
+      const waiting = await window.untilCountdown();
       red();
       await window.wait(1500);
       return { failed, waiting, later: window.names().slice(from), isInGame };
@@ -445,11 +462,11 @@ test('a launch request that fails on the TV makes the next start wait, since it 
     const run = await app.page.evaluate(async () => {
       window.__sunshine.failRequests = true;
       startGame(window.__host, 7);
-      await window.wait(400);
+      await window.untilEvent('app list', 1, 3000, 50);
       const failedAt = window.timeOf('tv: /launch failed');
       window.__sunshine.failRequests = false;
       startGame(window.__host, 7);
-      await window.wait(1400);
+      await window.untilEvent('host: connected');
       return { names: window.names(), screens: window.__screens.slice(), connected: isStreamConnected, failedAt, launchedAt: window.timeOf('tv: /launch', 2) };
     });
     assert.deepEqual(run.names, ['tv: /launch', 'tv: /launch failed', 'message: Failed to launch Game 7', 'app list',
@@ -476,9 +493,8 @@ test('RED while the host handles /resume, then a new start: it waits until the h
       red();
       await window.wait(20);
       startGame(window.__host, 8);
-      await window.wait(400);
-      const waiting = $('#loadingSpinnerMessage').text();
-      await window.wait(1500);
+      const waiting = await window.untilCountdown();
+      await window.untilEvent('host: connected');
       const resumes = window.__events.filter((entry) => entry.event === 'tv: /resume').map((entry) => entry.at);
       return {
         names: window.names(), screens: window.__screens.slice(), waiting, connected: isStreamConnected,
@@ -505,11 +521,11 @@ test('a resume request that fails on the TV makes the next start wait, since it 
       window.__sunshine.runningApp = 8;
       window.__sunshine.failRequests = true;
       startGame(window.__host, 8);
-      await window.wait(300);
+      await window.untilEvent('app list', 1, 3000, 50);
       const failedAt = window.timeOf('tv: /resume failed');
       window.__sunshine.failRequests = false;
       startGame(window.__host, 8);
-      await window.wait(1400);
+      await window.untilEvent('host: connected');
       const resumes = window.__events.filter((entry) => entry.event === 'tv: /resume').map((entry) => entry.at);
       return { names: window.names(), screens: window.__screens.slice(), connected: isStreamConnected, failedAt, secondAt: resumes[1] };
     });

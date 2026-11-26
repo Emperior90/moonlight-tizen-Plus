@@ -4,10 +4,9 @@
 // - every action is pinned by the full commit of a release, with the version of that release as a comment
 //   (`uses: owner/action@<40 hex> # vX.Y.Z`), the form Dependabot updates: a tag can be moved to other code, a commit
 //   can't; and one action has one commit and one version in every workflow
-// - every job has a timeout of at most an hour, so that a hung step (e.g. the installer of Tizen Studio under expect)
-//   ends instead of holding a runner for six hours
-// - every checkout keeps no token in the clone (`persist-credentials: false`): no job pushes with git, and the release
-//   build copies the .git folder into the Docker build
+// - every job has a timeout of at most an hour, so that a hung step (e.g. the signing with `tizen package`, which runs
+//   under expect with `set timeout -1`) ends instead of holding a runner for six hours
+// - every checkout keeps no token on the runner (`persist-credentials: false`): no job pushes with git
 // - every workflow sets its permissions, at the top or in every job
 
 const test = require('node:test');
@@ -58,7 +57,7 @@ test('every job has a timeout of at most an hour', () => {
   });
 });
 
-test('every checkout keeps no token in the clone', () => {
+test('every checkout keeps no token on the runner', () => {
   let checkouts = 0;
   workflowFiles().forEach((name) => {
     Object.entries(jobs(readWorkflow(name))).forEach(([job, lines]) => {

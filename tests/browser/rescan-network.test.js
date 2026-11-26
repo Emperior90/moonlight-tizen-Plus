@@ -7,8 +7,9 @@
 // header still presses Settings after a return from the settings, now that the button comes first. The scan of the
 // start (discoverHostsAtStartup()) runs only while the hosts are shown and no stream starts, says so only in the log,
 // and resumes the polling only while the hosts are shown. Since 2.3.5 the start doesn't scan when every stored PC
-// answered its first poll and one of them is paired (isEveryStoredHostOnline()), and the polling goes on; Rescan network
-// is unchanged. The scan is replaced by one that the test finishes by hand; the calls of the polling are recorded.
+// answered its first poll at its own address (not only at the public address of the household) and one of them is
+// paired (isEveryStoredHostOnline()), and the polling goes on; Rescan network is unchanged. The scan is replaced by one
+// that the test finishes by hand; the calls of the polling are recorded.
 
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -237,6 +238,18 @@ const simulateHosts = (page, refreshMs, options) => page.evaluate(({ delay, pair
   });
   window.subnetScanPromise = null;
   window.__finishScan = null;
+  // Resolves true once the scan started, or false after 5 seconds without one, so that a start that leaves the scan
+  // out fails its test instead of waiting for good
+  window.__scanStarted = async () => {
+    const deadline = Date.now() + 5000;
+    while (!window.__finishScan) {
+      if (Date.now() > deadline) {
+        return false;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    return true;
+  };
   startSubnetScanner = () => {
     if (!window.subnetScanPromise) {
       window.subnetScanPromise = new Promise((resolve) => {
@@ -273,14 +286,15 @@ test('Rescan network during the scan at startup leaves one poll loop per host', 
   const app = await openWithScan();
   try {
     await simulateHosts(app.page, 20);
-    await app.page.evaluate(async () => {
+    assert.equal(await app.page.evaluate(async () => {
       discoverHostsAtStartup();
-      while (!window.__finishScan) {
-        await new Promise((resolve) => setTimeout(resolve, 5));
+      if (!(await window.__scanStarted())) {
+        return false;
       }
       // The button presses into the running scan, which both resume the polling once it ends
       $('#rescanNetworkBtn').trigger('click');
-    });
+      return true;
+    }), true, 'the scan of the start started');
     const result = await pollsAfterScan(app.page);
     assert.equal(result.starts, 3, 'the start, the end of the scan and the end of the rescan start the polling');
     assert.deepEqual(result.polls, { HOST1: 1, HOST2: 1 });
@@ -296,16 +310,17 @@ test('Rescan network during the first polls at startup leaves one poll loop per 
   try {
     // The first server info requests of the start are still running when the button is pressed
     await simulateHosts(app.page, 300);
-    await app.page.evaluate(async () => {
+    assert.equal(await app.page.evaluate(async () => {
       discoverHostsAtStartup();
       await new Promise((resolve) => setTimeout(resolve, 20));
       $('#rescanNetworkBtn').trigger('click');
-      while (!window.__finishScan) {
-        await new Promise((resolve) => setTimeout(resolve, 5));
+      if (!(await window.__scanStarted())) {
+        return false;
       }
       // The start waits for its first polls before it joins the scan of the button
       await new Promise((resolve) => setTimeout(resolve, 400));
-    });
+      return true;
+    }), true, 'the scan of the button started');
     const result = await pollsAfterScan(app.page);
     assert.deepEqual(result.polls, { HOST1: 1, HOST2: 1 });
     assert.deepEqual(app.errors, []);
@@ -333,12 +348,13 @@ test('the scan of the start runs quietly while the hosts are shown, and resumes 
   try {
     await simulateHosts(app.page, 20);
     await recordStartupScan(app.page);
-    await app.page.evaluate(async () => {
+    assert.equal(await app.page.evaluate(async () => {
       discoverHostsAtStartup();
-      while (!window.__finishScan) {
-        await new Promise((resolve) => setTimeout(resolve, 5));
+      if (!(await window.__scanStarted())) {
+        return false;
       }
-    });
+      return true;
+    }), true, 'the scan of the start started');
     const result = await pollsAfterScan(app.page);
     assert.deepEqual(result.polls, { HOST1: 1, HOST2: 1 });
     const seen = await app.page.evaluate(() => ({ scans: window.__scans, messages: window.__messages, finished: isSubnetScanFinished }));
@@ -386,12 +402,13 @@ test('the start scans when a stored PC didn\'t answer, also with a paired one', 
     await simulateHosts(app.page, 20, { paired: true, offline: 'HOST2' });
     await recordStartupScan(app.page);
     const firstLine = app.logs.length;
-    await app.page.evaluate(async () => {
+    assert.equal(await app.page.evaluate(async () => {
       discoverHostsAtStartup();
-      while (!window.__finishScan) {
-        await new Promise((resolve) => setTimeout(resolve, 5));
+      if (!(await window.__scanStarted())) {
+        return false;
       }
-    });
+      return true;
+    }), true, 'the scan of the start started');
     const result = await pollsAfterScan(app.page);
     assert.deepEqual(result.polls, { HOST1: 1, HOST2: 1 });
     const seen = await app.page.evaluate(() => ({ scans: window.__scans, finished: isSubnetScanFinished, online: [hosts.HOST1.online, hosts.HOST2.online] }));
@@ -438,18 +455,62 @@ for (const [name, config] of [['doesn\'t answer', { offline: true }], ['isn\'t p
   });
 }
 
+// The paired PC was stored at the public address of the household (externalIP): when its LAN address stopped answering
+// in an earlier session, its poll tried that address, where the router forwards the ports to the PC and loops the
+// requests of the LAN back ({ loopbackAt } of mocks/sunshine-host.js). Its first poll at the start answers there, but
+// only the scan finds it at its address of the local network again, so the start scans and the PC moves back to
+// 10.0.0.2 (the scan's request there gets an answer from a stand-in fetch; the TV is at 10.0.0.50). A start that
+// skipped the scan there kept the PC on the router at every start. An address that the user entered counts as an
+// answer, as any other.
+const AT_PUBLIC_ADDRESS = Object.assign({}, SUNSHINE_HOSTS.HOST1, { address: '203.0.113.7', externalIP: '203.0.113.7',
+  localAddress: '10.0.0.2', _baseUrlHttps: 'https://203.0.113.7:47984', _baseUrlHttp: 'http://203.0.113.7:47989' });
+const answerScanAt = (address) => ({ content: '(' + ((url) => {
+  const fetchOfThePage = window.fetch;
+  window.fetch = function(input) {
+    if (String(input).indexOf(url) === 0) {
+      return Promise.resolve(new Response('<root/>', { status: 200 }));
+    }
+    return fetchOfThePage.apply(window, arguments);
+  };
+}).toString() + ')(' + JSON.stringify('http://' + address + ':47989/') + ');' });
+for (const [name, userEnteredAddress, scans] of [['that it found there', '', true], ['that the user entered', '203.0.113.7', false]]) {
+  test('a start whose stored paired PC answers at the public address ' + name + (scans ? ' scans the network' : ' doesn\'t scan'), async () => {
+    const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi', ip: '10.0.0.50' }, moduleScripts: ['sunshine-host.js'],
+      stored: { hosts: { HOST1: Object.assign({}, AT_PUBLIC_ADDRESS, { userEnteredAddress }) } },
+      initScripts: [{ content: 'window.__sunshineConfig = { loopbackAt: ["203.0.113.7"] };' }, answerScanAt('10.0.0.2')] });
+    try {
+      await app.page.waitForFunction(() => isSubnetScanFinished === true, null, { timeout: 30000 });
+      const scanned = app.logs.some((line) => line.indexOf('Starting chunked subnet /24 scan on 10.0.0.0/24') >= 0);
+      const skipped = app.logs.some((line) => line.indexOf('Not scanning the local network at this start, since every stored PC answered') >= 0);
+      assert.deepEqual([scanned, skipped], [scans, !scans]);
+      if (scans) {
+        await app.page.waitForFunction(() => hosts.HOST1.address === '10.0.0.2', null, { timeout: 5000 });
+        assert.ok(app.logs.some((line) => line.indexOf('Updating address for server UID: HOST1 from 203.0.113.7 to 10.0.0.2 (the PC proved its pinned key there)') >= 0));
+      } else {
+        assert.equal(await app.page.evaluate(() => hosts.HOST1.address), '203.0.113.7');
+      }
+      assert.equal(await app.page.evaluate(() => [hosts.HOST1.online, hosts.HOST1.paired].join()), 'true,true');
+      await app.page.evaluate(() => stopPollingHosts());
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.context.close();
+    }
+  });
+}
+
 test('a scan of the start that ends while the settings are shown leaves the polling stopped', async () => {
   const app = await openWithScan();
   try {
     await simulateHosts(app.page, 20);
     await recordStartupScan(app.page);
-    await app.page.evaluate(async () => {
+    assert.equal(await app.page.evaluate(async () => {
       discoverHostsAtStartup();
-      while (!window.__finishScan) {
-        await new Promise((resolve) => setTimeout(resolve, 5));
+      if (!(await window.__scanStarted())) {
+        return false;
       }
       $('#settingsBtn').trigger('click');
-    });
+      return true;
+    }), true, 'the scan of the start started');
     await app.page.waitForFunction(() => $('#settings-list').is(':visible'));
     const result = await pollsAfterScan(app.page);
     // The settings stopped the polling, and the end of the scan doesn't start it again there

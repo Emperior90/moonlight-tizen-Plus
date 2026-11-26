@@ -260,7 +260,6 @@ function commitLines(server, dep, commits) {
   return { lines, open: open.length };
 }
 
-// The commits from reviewed_through to head through the compare API, newest first, or a problem with the history
 // The owner/repo of a submodule URL of GitHub (https or ssh, with or without .git), or of a relative URL such as
 // ../enet next to the repository that pins it; null without a URL or for another server
 function submoduleRepo(url, pinnedIn) {
@@ -275,6 +274,7 @@ function submoduleRepo(url, pinnedIn) {
   return match ? match[1] : null;
 }
 
+// The commits from reviewed_through to head through the compare API, newest first, or a problem with the history
 async function compareCommits(client, server, dep, base, head) {
   const comparison = await client.get(`/repos/${dep.repo}/compare/${base}...${head}`);
   const link = `${server}/${dep.repo}/compare/${base}...${head}`;

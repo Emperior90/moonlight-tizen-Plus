@@ -5,8 +5,9 @@
 // change is stored and goes to the stream with its start request; a connected controller gets a mapping of its own,
 // which a reset forgets, and one that reports a timestamp of 0 (Tizen 5.5) joins the open menu once its input changed,
 // with OK still on the marked entry and its first D-pad press reaching the entry it brings; the calibration of its
-// sticks from what they report at rest and at their edge; and the stored switches 'Flip A/B face buttons' and 'Flip X/Y
-// face buttons' of an earlier version as the mapping for every controller.
+// sticks from what they report at rest and at their edge; the stored switches 'Flip A/B face buttons' and 'Flip X/Y
+// face buttons' of an earlier version as the mapping for every controller; and the fade at the bottom of the rows, with
+// the focused entry above it, also when a controller starts to count while Close has the focus.
 
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -592,9 +593,12 @@ test('the rows of the button mapping fade out at the bottom while more follow, t
         assert.deepEqual([state.more, state.fade.content, state.fade.position, state.fade.height, state.fade.opacity],
           [true, '""', 'sticky', 56, '1'], where + ' ' + JSON.stringify(state));
         assert.equal(opacityAtOpen, '1', where);
-        // The row that the panel cuts at the bottom (above its bottom padding of 18 px) is faded out, not cut in half
-        assert.ok(await brightest(page, { x: Math.round(state.left) + 20, y: Math.round(state.bottom) - 26, width: Math.round(state.width) - 40,
-          height: 8 }) < 120, where);
+        // The row that the panel cuts at the bottom is faded out, not cut in half: its text lies mostly in the bottom
+        // padding of 18 px, which the fade covers too, so the band reaches from 26 px to 2 px above the bottom edge (a fade
+        // that ends above the padding left the text there at full brightness)
+        const light = await brightest(page, { x: Math.round(state.left) + 20, y: Math.round(state.bottom) - 26, width: Math.round(state.width) - 40,
+          height: 24 });
+        assert.ok(light < 120, where + ' ' + light);
         // The arrows of all rows start at the same place, every value fits between them, and the right arrows end at the
         // edge of the rows (2.3.4: the left arrows from 1001 to 1207 px in Brazilian Portuguese)
         assert.ok(Math.max(...state.arrows) - Math.min(...state.arrows) <= 1, where + ' ' + JSON.stringify(state.arrows));
@@ -628,5 +632,50 @@ test('the rows of the button mapping fade out at the bottom while more follow, t
     } finally {
       await app.context.close();
     }
+  }
+});
+
+test('a controller with a timestamp of 0 that starts to count while Close has the focus keeps Close above the fade at the end of the rows', async () => {
+  const own = IDENTITY.slice(0, 15).concat([14]);
+  const app = await openApp(harness, {
+    tv: { tv: 's90c', conn: 'wifi' },
+    initScripts: [simulatedGamepads],
+    stored: { controllerMappings: { version: 1, controllers: { [XBOX_STREAM_ID]: { name: 'Xbox Wireless Controller', buttons: own } } } },
+  });
+  try {
+    await app.page.evaluate((id) => {
+      window.__pads[0] = {
+        index: 0, id, mapping: 'standard', connected: true, timestamp: 0, vibrationActuator: null,
+        buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })), axes: [0, 0, 0, 0],
+      };
+    }, XBOX_ID);
+    await openMapping(app.page);
+    await tvKey(app.page, ...RIGHT);
+    await tvKey(app.page, ...UP);
+    await fadeSettled(app.page, '0');
+    let menu = await readMenu(app.page);
+    let state = await panelState(app.page);
+    assert.deepEqual([menu.focus, menu.controller, menu.calibrate, state.more, state.fade.opacity],
+      ['buttonMappingClose', 'Xbox Wireless Controller', false, false, '0'], JSON.stringify(state));
+    // D-pad LEFT on the controller, its first input since the TV listed it, which doesn't move the focus: it makes the
+    // controller count, which shows 'Calibrate the sticks' before Reset and Close and so moves Close down by a row. Close
+    // still shows the end of the panel, and the fade stays away (2.3.5 before the fix: Close mostly under the fade)
+    await app.page.evaluate(() => {
+      window.__pads[0].buttons[14] = { pressed: true, value: 1 };
+    });
+    await app.page.waitForTimeout(60);
+    await app.page.evaluate(() => {
+      window.__pads[0].buttons[14] = { pressed: false, value: 0 };
+    });
+    await app.page.waitForFunction(() => !document.getElementById('buttonMappingCalibrate').hidden, null, { timeout: 2000 }).catch(() => {});
+    await app.page.waitForTimeout(100);
+    await fadeSettled(app.page, '0');
+    menu = await readMenu(app.page);
+    state = await panelState(app.page);
+    assert.deepEqual([menu.focus, menu.calibrate, state.more, state.fade.opacity], ['buttonMappingClose', true, false, '0'], JSON.stringify(state));
+    assert.ok(state.focusBottom <= state.bottom - state.fade.height + 1, JSON.stringify(state));
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
   }
 });

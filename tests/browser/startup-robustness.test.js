@@ -272,33 +272,53 @@ const loadingScreen = (page) => page.evaluate(() => ({
 // The names of all WebAssembly calls, requests to hosts included
 const allWasmCalls = (page) => page.evaluate(() => window.__wasmCalls.map((call) => call.name));
 
-test('a database that can\'t be opened ends the loading screen with the restart text', async () => {
-  // indexedDB.open() answers with an error, as on a TV whose storage of the app is damaged
-  const failOpen = { content: '(' + (() => {
+// The ways indexedDB.open() fails, as on a TV whose storage of the app is damaged: an error event, a throw (e.g. a
+// SecurityError), and a block by another connection (none exists on a TV, whose database stays at version 1). Each open
+// calls back once (fail() in openIndexDB()), and the start shows the restart text of a failed read.
+const OPEN_FAILURES = [
+  ['answers with an error', () => {
     IDBFactory.prototype.open = function() {
       const request = { error: new DOMException('Simulated open error', 'UnknownError') };
       setTimeout(() => request.onerror && request.onerror({ target: request }), 20);
       return request;
     };
-  }).toString() + ')();' };
-  const app = await openApp(harness, {
-    tv: { tv: 's90c', conn: 'wifi' },
-    initScripts: [failOpen],
-    // Up to 2.3.4 the first translation pass never ended, since getData() never called back
-    readySignals: ['Cannot create or access the IndexedDB database', 'Loading system information...'],
-  });
-  try {
-    await app.page.waitForTimeout(500);
-    assert.deepEqual(await loadingScreen(app.page), {
-      text: 'Unable to read the stored pairing data. Please restart Moonlight.', shown: true, failed: true, barShown: false,
+  }, 'UnknownError: Simulated open error'],
+  ['throws', () => {
+    IDBFactory.prototype.open = function() {
+      throw new DOMException('Simulated throw', 'SecurityError');
+    };
+  }, 'SecurityError: Simulated throw'],
+  ['is blocked', () => {
+    IDBFactory.prototype.open = function() {
+      const request = {};
+      setTimeout(() => request.onblocked && request.onblocked({ target: request }), 20);
+      return request;
+    };
+  }, 'the database is blocked by another connection'],
+];
+for (const [how, failOpen, why] of OPEN_FAILURES) {
+  test('a database that can\'t be opened (open() ' + how + ') ends the loading screen with the restart text', async () => {
+    const app = await openApp(harness, {
+      tv: { tv: 's90c', conn: 'wifi' },
+      initScripts: [{ content: '(' + failOpen.toString() + ')();' }],
+      // Up to 2.3.4 the first translation pass never ended, since getData() never called back
+      readySignals: ['Cannot create or access the IndexedDB database', 'Loading system information...'],
     });
-    assert.deepEqual(await allWasmCalls(app.page), [], 'neither a new certificate nor an HTTP start');
-    assert.ok(app.logs.some((line) => line.indexOf('Error: Cannot create or access the IndexedDB database: UnknownError: Simulated open error') >= 0));
-    assert.deepEqual(app.errors, []);
-  } finally {
-    await app.context.close();
-  }
-});
+    try {
+      await app.page.waitForTimeout(500);
+      assert.deepEqual(await loadingScreen(app.page), {
+        text: 'Unable to read the stored pairing data. Please restart Moonlight.', shown: true, failed: true, barShown: false,
+      });
+      assert.deepEqual(await allWasmCalls(app.page), [], 'neither a new certificate nor an HTTP start');
+      // (the reads of the start may open the database more than once before the first failure ends)
+      assert.ok(app.logs.some((line) => line.indexOf('Error: Cannot create or access the IndexedDB database: ' + why) >= 0),
+        app.logs.filter((line) => /IndexedDB/.test(line)).join('\n'));
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.context.close();
+    }
+  });
+}
 
 test('a certificate that can\'t be made ends the loading screen with a message, without httpInit or polls', async () => {
   const app = await openApp(harness, {
@@ -404,6 +424,34 @@ test('a new certificate whose write is aborted (a full flash memory) is logged, 
       app.logs.filter((line) => /IndexedDB/.test(line)).join('\n'));
     assert.equal('cert' in await readStorage(app.page), false);
     // The start went on with the certificate of this start
+    assert.deepEqual(await allWasmCalls(app.page), ['makeCert', 'httpInit']);
+    assert.equal(await app.page.evaluate(() => $('#host-grid').is(':visible')), true);
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.context.close();
+  }
+});
+
+test('the first write of a fresh install that is aborted is logged with its keys, and the start goes on', async () => {
+  // The unique ID and the settings schema of a fresh install go in one transaction (storeMultipleData()), which the
+  // write of the schema, the last one, aborts; only the abort event reaches the transaction, as for a QuotaExceededError
+  const abortFirstWrite = { content: '(' + (() => {
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function(value, key) {
+      const request = put.apply(this, arguments);
+      if (key === 'settingsSchema') {
+        request.addEventListener('error', (event) => event.stopPropagation());
+        this.transaction.abort();
+      }
+      return request;
+    };
+  }).toString() + ')();' };
+  const app = await openApp(harness, { tv: { tv: 's90c', conn: 'wifi' }, initScripts: [abortFirstWrite] });
+  try {
+    await waitForLog(app, 'in IndexedDB was aborted');
+    assert.ok(app.logs.some((line) => line.indexOf('Error: Storing the keys: uniqueid, settingsSchema in IndexedDB was aborted') >= 0),
+      app.logs.filter((line) => /IndexedDB/.test(line)).join('\n'));
+    assert.equal('uniqueid' in await readStorage(app.page), false);
     assert.deepEqual(await allWasmCalls(app.page), ['makeCert', 'httpInit']);
     assert.equal(await app.page.evaluate(() => $('#host-grid').is(':visible')), true);
     assert.deepEqual(app.errors, []);

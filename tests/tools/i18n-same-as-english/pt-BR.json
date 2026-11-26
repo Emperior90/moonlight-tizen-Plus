@@ -56,6 +56,7 @@
     "PCs",
     "Apps",
     "%1$s app",
-    "%1$s apps"
+    "%1$s apps",
+    "%1$s: %2$s"
   ]
 }

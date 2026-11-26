@@ -16,7 +16,9 @@
 // - RETURN to the PC list while the PC answers a press (the server info of a start, the list read once more): the
 //   question to quit and the list built again are dropped (the visit of the app list at the press, appListVisitOf()),
 //   also when the same PC is opened again meanwhile; in testing the list came back over the PC list, whose keys then
-//   went to the hidden grid, and the question opened over the PC list
+//   went to the hidden grid, and the question opened over the PC list. Since 2.3.5 the start itself is dropped as well,
+//   after RETURN, B of a controller or CH+ (the menu of the app); up to 2.3.4 the stream started over the PC list or
+//   under the menu of the app
 // - Yes to a question to quit (OK on another app, "Quit app on the PC"), then RETURN while the PC quits slowly: the
 //   quit ends, but neither the app list after it (stopGame() with the visit of the press) nor the start of the other
 //   app follows; before 2.3.3 the app list replaced the PC list and the other app started
@@ -25,7 +27,7 @@
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { SUNSHINE_HOSTS, startHarness } = require('./harness');
-const { key, menuState, openMenus, selectItem, takeSnackbars } = require('./menu-driver');
+const { PAD, key, menuState, openMenus, padButton, selectItem, takeSnackbars } = require('./menu-driver');
 
 let harness;
 before(async () => {
@@ -37,8 +39,8 @@ after(async () => {
   }
 });
 
-// Open the app with the simulated PC (running currentGame, with the audio backend), and its app list as OK on its card
-// does, once a poll found it online
+// Open the app with the simulated PC (running currentGame, with the audio backend, and with `pad: true` a simulated
+// gamepad), and its app list as OK on its card does, once a poll found it online
 async function openAppList(options) {
   const opts = options || {};
   const stored = { hosts: SUNSHINE_HOSTS };
@@ -49,6 +51,7 @@ async function openAppList(options) {
     moduleScripts: ['sunshine-host.js'],
     stored,
     initScripts: ['window.__sunshineConfig = { currentGame: ' + (opts.currentGame || 0) + ' };'],
+    pad: !!opts.pad,
   });
   await app.page.waitForFunction((game) => typeof hosts !== 'undefined' && hosts.HOST1 && hosts.HOST1.online === true &&
     Number(hosts.HOST1.currentGame) === game, opts.currentGame || 0, { timeout: 10000 });
@@ -360,6 +363,75 @@ test('OK on another app, then RETURN while the PC answers: no question over the 
     await app.context.close();
   }
 });
+
+// Since 2.3.5 a start from the app list is dropped when the user left the list of the press before the server info came
+// (startGame()): RETURN or B of a controller to the PC list, or CH+ to the menu of the app. Up to 2.3.4 the stream
+// started anyway, over the PC list or under the menu of the app; after it, the PC list showed while its keys went to the
+// hidden app list, so that RETURN opened no Exit Moonlight and OK started the app again unseen.
+for (const [how, view, current] of [['RETURN', 'Hosts', 'host-container-HOST1'], ['B', 'Hosts', 'host-container-HOST1'],
+  ['CH+', 'AppMenu', 'appMenuStart']]) {
+  test('OK on an app, then ' + how + ' before the PC answered the server info of the start: no stream, and the keys stay where ' +
+    how + ' put them', async () => {
+    const app = await openAppList({ audioBackend: 'WebAudio', pad: how === 'B' });
+    const { page } = app;
+    // What shows and where the keys are, and whether a stream started or the output of the press is still open
+    const now = async () => {
+      const state = await menuState(page);
+      return page.evaluate((menu) => ({
+        view: menu.view, current: menu.current, dataView: document.body.getAttribute('data-view'),
+        appMenu: $('#appMenuOverlay').css('display') === 'flex', startScreen: $('#loadingSpinner').is(':visible'), isInGame,
+        starts: window.__sunshine.starts.length, isOutputOpen: typeof _audContext !== 'undefined' && !!_audContext,
+      }), state);
+    };
+    try {
+      await selectItem(page, 'Apps', 'game-container-101', 'left', 'right');
+      // The PC holds its answers, so the server info of the start is on its way while the key comes
+      await page.evaluate(() => {
+        window.__sunshine.hold = true;
+      });
+      const pressedAt = Date.now();
+      await key(page, 'ok', 100);
+      if (how === 'B') {
+        await padButton(page, PAD.B, 200);
+      } else {
+        await key(page, how === 'CH+' ? 'chup' : 'back', 200);
+      }
+      const expected = { view, current, dataView: how === 'CH+' ? 'apps' : 'hosts', appMenu: how === 'CH+', startScreen: false,
+        isInGame: false, starts: 0, isOutputOpen: true };
+      assert.deepEqual(await now(), expected);
+      // The answers come: the start ends without a stream and closes the output that its press opened
+      await page.evaluate(() => window.__sunshine.release());
+      const until = Date.now() + 10000;
+      while (Date.now() < until && !app.logs.some((line) => line.indexOf('Not starting app 101, since its app list no longer shows.') >= 0) &&
+        !(await page.evaluate(() => isInGame))) {
+        await page.waitForTimeout(50);
+      }
+      // Time for a stream that would start after the answer (it connects 150 ms after its start request)
+      await page.waitForTimeout(1000);
+      assert.deepEqual(await now(), Object.assign({}, expected, { isOutputOpen: false }));
+      assert.ok(app.logs.some((line) => line.indexOf('Not starting app 101, since its app list no longer shows.') >= 0));
+      // The keys are where the key put them: OK on the PC opens its app list again (RETURN and B), or RETURN closes the
+      // menu of the app (CH+), and OK on the app then starts it. A card of a PC and the tile of an app take a second
+      // click only 2 s after the first (isClickPrevented and lastAppTileClickAt in index.js).
+      await page.waitForTimeout(Math.max(0, pressedAt + 2100 - Date.now()));
+      if (how === 'CH+') {
+        await key(page, 'back');
+      } else {
+        await key(page, 'ok');
+        await page.waitForFunction(() => document.body.getAttribute('data-view') === 'apps' && $('#game-grid .game-container').length > 0 &&
+          !$('#wasmSpinner').is(':visible'), null, { timeout: 5000 });
+        await page.waitForTimeout(800);
+      }
+      assert.deepEqual([(await menuState(page)).view, (await now()).appMenu], ['Apps', false]);
+      await selectItem(page, 'Apps', 'game-container-101', 'left', 'right');
+      await key(page, 'ok');
+      await page.waitForFunction(() => window.__sunshine.starts.length === 1 && isInGame === true, null, { timeout: 5000 });
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.context.close();
+    }
+  });
+}
 
 test('"Quit app on the PC", then RETURN while the list is read once more: no question over the PC list, nor in the next visit', async () => {
   const app = await openAppList({ currentGame: 999 });

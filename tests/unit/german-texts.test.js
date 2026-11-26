@@ -48,6 +48,9 @@ test('the German texts use the terms of the glossary', () => {
   assert.deepEqual(keys.filter((key) => /\b(Rechner|Computer|Maschine)/.test(german[key])).map((key) => german[key]), []);
   // TV for the television (der TV, des TVs), as in the German UI of Samsung
   assert.deepEqual(keys.filter((key) => /Fernseher/.test(german[key])), []);
+  // The web UI of a host is its Weboberfläche, as in the pairing dialog and the empty app list
+  assert.deepEqual(keys.filter((key) => /Web-?UI/i.test(german[key])).map((key) => german[key]), []);
+  assert.deepEqual(keys.filter((key) => /\bweb UI\b/i.test(english[key]) && !/Weboberfläche/.test(german[key])).map((key) => german[key]), []);
   // A typographic ellipsis instead of three dots
   assert.deepEqual(keys.filter((key) => /\.\.\./.test(german[key])), []);
 });
