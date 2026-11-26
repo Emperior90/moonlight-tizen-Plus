@@ -2,8 +2,8 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
-- [2.3.5](#235): pre-release, keys that reach the PC without RETURN, pairing a PC that dropped the TV again, video on a thread of its own and sound that catches up after a stall
-- [2.3.4](#234): pre-release only, its changes come with 2.3.5
+- [2.3.5](#235): pre-release, keys that reach the PC without RETURN, pairing a PC that dropped the TV again, and sound that catches up after a stall
+- [2.3.4](#234): pre-release only, its changes did not come with 2.3.5
 - [2.3.3](#233): pre-release only, its changes come with 2.3.5
 - [2.3.2](#232): 2026-11-20, a tidier Stream Menu with F keys and PC shutdown, finer frame times, how fast frames arrive, more facts in the log and a fix for recovery keyframes
 - [2.3.1](#231): 2026-11-18, lighter sound and statistics, fewer double presses, a switch for sound on Wi-Fi, and fixes from a review and from other Moonlight clients
@@ -23,7 +23,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ## 2.3.5
 
-*Pre-release, in testing.* Keys reach the PC without RETURN, a PC that dropped the TV pairs again, video has its own reading thread and the sound catches up.
+*Pre-release, in testing.* Keys reach the PC without RETURN, a PC that dropped the TV pairs again, and the sound catches up after a stall.
 
 > **Install:** by hand over 2.3.4, 2.3.3, 2.3.2 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >
@@ -32,13 +32,13 @@ What changed in each version of Moonlight Plus, in short, newest first.
 ### New
 
 - B of a controller cancels a stream that is starting; a USB mouse also scrolls sideways (untested on a TV)
-- The diagnostic log tells whether the app or the TV's Wi-Fi limits how fast frames arrive at a high bitrate
+- At a stream's end the diagnostic log gives its average frame receive time and how fast its frames arrived
 
 ### Changed
 
 - In a stream the first arrow, OK or keyboard key gives the stream the keys (not Esc, Shift, Ctrl or Alt)
 - A PC that dropped the TV (e.g. after *Unpair All*) shows *Unpaired*; OK pairs it again, also while it runs a game
-- The picture is read from the network by a thread of its own, and the engine is built with stronger optimizations
+- The engine is built with stronger optimizations; the picture is read from the network as in 2.3.2
 - After a Wi-Fi stall the sound catches up on its own: at most 100 ms behind, 300 ms if stalls come again
 - *Quit app on the PC* in the Stream Menu asks first, and Exit and Restart open on *Cancel*
 - Mouse emulation moves the pointer slowly just past the center, and at shallow angles
@@ -55,7 +55,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ## 2.3.4
 
-*Pre-release only; its changes come with 2.3.5.* The diagnostic log tells whether the app or the TV's Wi-Fi limits how fast a frame arrives at a high bitrate.
+*Pre-release only; its changes did not come with 2.3.5, except one log line.* The log tells whether the app or the Wi-Fi limits how fast a frame arrives.
 
 > **Install:** by hand over 2.3.3, 2.3.2 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >
@@ -64,7 +64,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 ### New
 
 - The diagnostic log shows how the app reads the picture and how fast it could, every minute and at a stream's end
-- It also gives the average frame receive time of the stream and how fast its frames arrived
+- It also gives the average frame receive time of the stream and how fast its frames arrived (kept in 2.3.5)
 
 ### Changed
 

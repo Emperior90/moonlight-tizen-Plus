@@ -53,9 +53,8 @@ static unsigned int firstPacketPresentationTime;
 static bool dropStatePending;
 static bool idrFrameProcessed;
 
-// Serializes the frame state between the processing thread of the video receive (the receive thread up to 2.3.4:
-// queueRtpPacket(), queueRtpPackets(), notifyFrameLost()) and the decoder thread (requestDecoderRefresh()), as upstream
-// e64327c does. Upstream makes idrFrameProcessed atomic; here it is
+// Serializes the frame state between the receive thread (processRtpPayload(), notifyFrameLost()) and the decoder
+// thread (requestDecoderRefresh()), as upstream e64327c does. Upstream makes idrFrameProcessed atomic; here it is
 // written and read with this lock held too, since the C11 atomics are not used with Emscripten 1.39. The lock is
 // never taken twice: a decode unit is submitted with it released, because DR_NEED_IDR leads back into
 // requestDecoderRefresh(). With it held, only the leaf locks of the queues and events are taken (LiRequestIdrFrame(),
@@ -65,8 +64,7 @@ static PLT_MUTEX stateLock;
 // Frames this client dropped itself because the decoder didn't keep up: the decode unit queue overflowed, or the
 // decoder asked for an IDR frame, plus the frames dropped while waiting for the IDR frame after that. They show up
 // as gaps in the frame numbers like frames lost on the network, so they are counted to tell the two apart. Each
-// counter has a single writer: the processing thread of the video receive (the receive thread up to 2.3.4) for the
-// queue overflow and the IDR wait, and the decoder thread
+// counter has a single writer: the receive thread for the queue overflow and the IDR wait, and the decoder thread
 // for the decoder refresh. clientResetPending is written by both threads, with stateLock held.
 static uint32_t clientRecvDroppedFrames;
 static uint32_t clientQueueOverflows;
@@ -358,9 +356,8 @@ void LiCompleteVideoFrame(VIDEO_FRAME_HANDLE handle, int drStatus) {
     }
     else if (drStatus == DR_OK && qdu->decodeUnit.frameType == FRAME_TYPE_IDR) {
         // Remember that the IDR frame was processed. We can now use
-        // reference frame invalidation. (The processing thread of the
-        // video receive reads it with stateLock held; this is never
-        // called with it held.)
+        // reference frame invalidation. (The receive thread reads it
+        // with stateLock held; this is never called with it held.)
         PltLockMutex(&stateLock);
         idrFrameProcessed = true;
         PltUnlockMutex(&stateLock);
@@ -860,7 +857,7 @@ void requestDecoderRefresh(void) {
     clientDecoderRefreshes++;
     clientResetPending = true;
 
-    // If the processing thread of the video receive is currently mid-frame, defer dropping its state
+    // If the receive thread is currently mid-frame, defer dropping its state
     // until the frame boundary so continuation packets aren't invalidated.
     dropStatePending = decodingFrame;
 
@@ -1313,6 +1310,18 @@ corruptFrame:
     discardCorruptFrame(frameIndex);
 }
 
+// Process an RTP Payload
+// The caller will free *existingEntry unless we NULL it
+static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
+                       uint64_t receiveTimeUs, unsigned int presentationTimeMs,
+                       uint32_t arrivalTimeUs, uint32_t arrivalBytes,
+                       PLENTRY_INTERNAL* existingEntry) {
+    PltLockMutex(&stateLock);
+    processRtpPayloadLocked(videoPacket, length, receiveTimeUs, presentationTimeMs, arrivalTimeUs, arrivalBytes,
+                            existingEntry);
+    PltUnlockMutex(&stateLock);
+}
+
 // Called by the video RTP FEC queue to notify us of a lost frame
 // if it determines the frame to be unrecoverable. This lets us
 // avoid having to wait until the next received frame to determine
@@ -1347,8 +1356,8 @@ void notifyFrameLost(unsigned int frameNumber, bool speculative) {
     PltUnlockMutex(&stateLock);
 }
 
-// Add an RTP Packet to the queue, with stateLock held
-static void queueRtpPacketLocked(PRTPV_QUEUE_ENTRY queueEntryPtr) {
+// Add an RTP Packet to the queue
+void queueRtpPacket(PRTPV_QUEUE_ENTRY queueEntryPtr) {
     int dataOffset;
     RTPV_QUEUE_ENTRY queueEntry = *queueEntryPtr;
 
@@ -1370,47 +1379,18 @@ static void queueRtpPacketLocked(PRTPV_QUEUE_ENTRY queueEntryPtr) {
     PLENTRY_INTERNAL existingEntry = (PLENTRY_INTERNAL)queueEntryPtr;
     existingEntry->allocPtr = queueEntry.packet;
 
-    processRtpPayloadLocked((PNV_VIDEO_PACKET)(((char*)queueEntry.packet) + dataOffset),
-                            queueEntry.length - dataOffset,
-                            queueEntry.receiveTimeUs,
-                            queueEntry.presentationTimeMs,
-                            queueEntry.frameArrivalTimeUs,
-                            queueEntry.frameArrivalBytes,
-                            &existingEntry);
+    processRtpPayload((PNV_VIDEO_PACKET)(((char*)queueEntry.packet) + dataOffset),
+                      queueEntry.length - dataOffset,
+                      queueEntry.receiveTimeUs,
+                      queueEntry.presentationTimeMs,
+                      queueEntry.frameArrivalTimeUs,
+                      queueEntry.frameArrivalBytes,
+                      &existingEntry);
 
     if (existingEntry != NULL) {
         // processRtpPayload didn't want this packet, so just free it
         free(existingEntry->allocPtr);
     }
-}
-
-// Add an RTP Packet to the queue
-void queueRtpPacket(PRTPV_QUEUE_ENTRY queueEntryPtr) {
-    PltLockMutex(&stateLock);
-    queueRtpPacketLocked(queueEntryPtr);
-    PltUnlockMutex(&stateLock);
-}
-
-// Moonlight Plus (since 2.3.5): add the packets of a complete frame, linked by their next pointers as the RTP queue
-// hands them over (submitCompletedFrame() of RtpVideoQueue.c), with stateLock taken once for the frame instead of
-// once per packet. The decoder thread then waits for the whole pass over the frame (a decoder refresh, the note of a
-// processed IDR frame) rather than for one packet. A keyframe still gives the lock back after each packet, so that a
-// refresh that comes while it is processed lets it through as before (upstream e64327c, dropStatePending) instead of
-// flushing it from the decode unit queue right after.
-void queueRtpPackets(PRTPV_QUEUE_ENTRY firstEntry) {
-    PltLockMutex(&stateLock);
-    while (firstEntry != NULL) {
-        // The entry becomes an entry of the depacketizer, so its next pointer is read first
-        PRTPV_QUEUE_ENTRY nextEntry = firstEntry->next;
-
-        queueRtpPacketLocked(firstEntry);
-        firstEntry = nextEntry;
-        if (firstEntry != NULL && decodingFrame && frameType == FRAME_TYPE_IDR) {
-            PltUnlockMutex(&stateLock);
-            PltLockMutex(&stateLock);
-        }
-    }
-    PltUnlockMutex(&stateLock);
 }
 
 int LiGetPendingVideoFrames(void) {

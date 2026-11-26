@@ -70,8 +70,8 @@ have_header() {
   printf '#include <%s>\n' "$1" | "$cc" -x c -fsyntax-only - 2>/dev/null
 }
 
-# The thread sanitizer for the C tests that name it (the ring and the two threads of the video receive, the lock of the
-# depacketizer): a data race, which the address sanitizer doesn't see, fails the test. Where the compiler can't build or
+# The thread sanitizer for the C tests that name it (the lock of the depacketizer between the receive thread and the
+# decoder thread): a data race, which the address sanitizer doesn't see, fails the test. Where the compiler can't build or
 # run a program with it, those runs are skipped with a notice, and in CI (where CI is set, as on GitHub) that fails the
 # run instead. A kernel with more address randomization than the sanitizer of the compiler knows stops it at the start
 # ("unexpected memory mapping"); its runs then go through setarch -R, which turns that randomization off for them.

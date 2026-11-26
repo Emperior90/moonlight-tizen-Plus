@@ -58,19 +58,14 @@ test('moonlight-common-c measures the data packets of each FEC block and hands t
   const branches = counting.slice(0, counting.indexOf('uint64_t arrivalEndUs = 0;'));
   assert.match(branches, /receivedDataPackets\+\+[\s\S]*receivedParityPackets\+\+/);
   assert.doesNotMatch(branches, /Arrival/);
-  assert.match(counting, /uint64_t arrivalEndUs = 0;\s+if \(queue->receivedDataPackets \+ queue->receivedParityPackets > 1\) \{\s+queue->blockArrivalBytes \+= \(uint32_t\)length \+ queue->packetOverheadBytes;\s+if \(queue->receivedDataPackets \+ queue->receivedParityPackets >= queue->bufferDataPackets\) \{\s+arrivalEndUs = receiveTimeUs;\s+\}\s+\}\s+if \(reconstructFrame\(queue\) == 0\) \{\s+addFecBlockArrival\(queue, arrivalEndUs\);\s+stageCompleteFecBlock\(queue\);/);
+  assert.match(counting, /uint64_t arrivalEndUs = 0;\s+if \(queue->receivedDataPackets \+ queue->receivedParityPackets > 1\) \{\s+queue->blockArrivalBytes \+= \(uint32_t\)length \+ queue->packetOverheadBytes;\s+if \(queue->receivedDataPackets \+ queue->receivedParityPackets >= queue->bufferDataPackets\) \{\s+arrivalEndUs = PltGetMicroseconds\(\);\s+\}\s+\}\s+if \(reconstructFrame\(queue\) == 0\) \{\s+addFecBlockArrival\(queue, arrivalEndUs\);\s+stageCompleteFecBlock\(queue\);/);
   const add = queue.slice(queue.indexOf('static void addFecBlockArrival('), queue.indexOf('static void submitCompletedFrame('));
   assert.match(add, /if \(queue->receivedDataPackets \+ queue->receivedParityPackets > 1\) \{\s+if \(endUs > queue->bufferFirstRecvTimeUs\) \{\s+queue->frameArrivalTimeUs \+= \(uint32_t\)\(endUs - queue->bufferFirstRecvTimeUs\);/);
   assert.doesNotMatch(add, /PltGetMicroseconds/);
-  // Since 2.3.5 the queue reads no clock for them: the times are those at which the reader thread of VideoStream.c read
-  // the packets, given to RtpvAddPacket() with each one
-  assert.doesNotMatch(queue, /PltGetMicroseconds/);
-  assert.match(queue, /int RtpvAddPacket\(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_QUEUE_ENTRY packetEntry,\s+uint64_t receiveTimeUs\) \{/);
   // The figures of a frame start again at its first block, those of a block at each block
   assert.match(queue, /queue->blockArrivalBytes = 0;\s+if \(fecCurrentBlockNumber == 0\) \{\s+queue->frameArrivalTimeUs = 0;\s+queue->frameArrivalBytes = 0;\s+\}/);
   // Each packet of the frame carries them to the depacketizer, which takes them from the first packet of the frame
-  // (since 2.3.5 the packets of the frame go to it at once, queueRtpPackets())
-  assert.match(queue, /for \(entry = queue->completedFecBlockList\.head; entry != NULL; entry = entry->next\) \{[^}]*entry->frameArrivalTimeUs = queue->frameArrivalTimeUs;\s+entry->frameArrivalBytes = queue->frameArrivalBytes;\s+\}\s+[^}]*queueRtpPackets\(entry\);/);
+  assert.match(queue, /entry->frameArrivalTimeUs = queue->frameArrivalTimeUs;\s+entry->frameArrivalBytes = queue->frameArrivalBytes;\s+removeEntryFromList/);
   const depacketizer = code(read('moonlight-common-c/src/VideoDepacketizer.c'));
   assert.match(depacketizer, /firstPacketReceiveTimeUs = receiveTimeUs;\s+frameArrivalTimeUs = arrivalTimeUs;\s+frameArrivalBytes = arrivalBytes;/);
   assert.match(depacketizer, /qdu->decodeUnit\.arrivalTimeUs = frameArrivalTimeUs;\s+qdu->decodeUnit\.arrivalBytes = frameArrivalBytes;/);

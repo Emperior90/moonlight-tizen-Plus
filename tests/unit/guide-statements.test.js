@@ -54,9 +54,8 @@
 //   another key, and the horizontal wheel
 // - the messages and the overlays of a stream (2.3.3): how long a message shows, and where the Stream Menu and the
 //   messages go beside the statistics
-// - the video receive lines of the diagnostic log (2.3.4): the mode of the receive thread, the lines of a minute and of
-//   the stream with their sample of about every 64th read, the lines of the poll() calls of the samples, the line of
-//   the frame receive time, how to read them against *Frames arrive at*, and where the guide points to them
+// - the line of the frame receive time at the end of a stream in the diagnostic log (2.3.5), with the figures of Last
+//   session, and the troubleshooting row of a long frame receive time that points to it
 // - the keys in the menus (2.3.5): Esc works as RETURN, a held RETURN goes back one level, CH+ once per press and the
 //   same key closes the menu of a PC, RIGHT and LEFT between the list of the sections and a section, the keys of the
 //   address field of Add PC, B on the launch screen, Exit and Restart on Cancel, and the question of Quit app on the PC
@@ -946,12 +945,10 @@ test('the guide describes the frame times, the arrival rate and the log lines of
   const queue = read('moonlight-common-c/src/RtpVideoQueue.c');
   assert.match(queue, /queue->packetOverheadBytes = \(RemoteAddr\.ss_family == AF_INET6 \? 40 : 20\) \+ 8 \+/);
   // A block that needed parity packets counts up to the one that completed it; both ends of a span are times when the
-  // receive thread reads the packets (the first packet of the block, and the packet that can complete it): since 2.3.5
-  // the times that the reader noted and RtpvAddPacket() is given
+  // receive thread reads the packets (the first packet of the block, and the packet that can complete it)
   assert.match(queue, /static void addFecBlockArrival\(PRTP_VIDEO_QUEUE queue, uint64_t endUs\) \{\s+if \(queue->receivedDataPackets \+ queue->receivedParityPackets > 1\) \{/);
-  assert.match(queue, /queue->bufferFirstRecvTimeUs = receiveTimeUs;/);
-  assert.match(queue, /arrivalEndUs = receiveTimeUs;\s+\}\s+\}\s+(\/\/.*\s+)*if \(reconstructFrame\(queue\) == 0\)/);
-  assert.match(read('moonlight-common-c/src/VideoStream.c'), /RtpvAddPacket\(&rtpQueue, packet, length, \(PRTPV_QUEUE_ENTRY\)&packetBuffer\[decryptedSize\],\s+slot->receiveTimeUs\);/);
+  assert.match(queue, /queue->bufferFirstRecvTimeUs = PltGetMicroseconds\(\);/);
+  assert.match(queue, /arrivalEndUs = PltGetMicroseconds\(\);\s+\}\s+\}\s+(\/\/.*\s+)*if \(reconstructFrame\(queue\) == 0\)/);
   const rate = tableRow('Frames arrive at')[1];
   ['for each frame the bytes of its data packets with their IP and UDP headers over the time from its first to its last data packet, summed over the 2 seconds',
     'Parity packets of the error correction don\'t count, unless a frame needed them to replace lost packets: then its time runs to the last parity packet it needed, so a lost packet makes the figure a little lower',
@@ -1252,142 +1249,29 @@ function formatC(format, values) {
   });
 }
 
-test('the guide describes the video receive lines of 2.3.4 as the code makes them', () => {
-  const video = read('moonlight-common-c/src/VideoStream.c');
+test('the guide describes the frame receive line of the diagnostic log as the code makes it (2.3.5)', () => {
   const player = read('wasm/wasmplayer.cpp');
   const log = guideSection('### Diagnostic log');
-  const timeoutMs = Number(/^#define UDP_RECV_POLL_TIMEOUT_MS (\d+)$/m.exec(read('moonlight-common-c/src/Limelight-internal.h'))[1]);
-  const sampleEvery = Number(/^#define VIDEO_RECV_SAMPLE_EVERY (\d+)$/m.exec(video)[1]);
-  const intervalUs = Number(/^#define VIDEO_RECV_LINE_INTERVAL_US (\d+)ULL$/m.exec(video)[1]);
-  assert.equal(timeoutMs, 100);
-  assert.equal(sampleEvery, 64);
-  assert.equal(intervalUs, 60 * 1000 * 1000);
-  // The three modes, as the receive thread logs them
-  const formatOf = (source, pattern) => {
-    const match = pattern.exec(source);
+  const formatOf = (pattern) => {
+    const match = pattern.exec(player);
     assert.ok(match, String(pattern));
     return match[1];
   };
-  const timeoutMode = formatC(formatOf(video, /Limelog\("(Video receive mode: one recvfrom\(\)[^"]*)",\s+UDP_RECV_POLL_TIMEOUT_MS\);/), [timeoutMs]);
-  const noWaitMode = formatC(formatOf(video, /Limelog\("(Video receive mode: no receive timeout, socket that never waits[^"]*)"\);/), []);
-  const pollMode = formatC(formatOf(video, /Limelog\("(Video receive mode: no receive timeout, poll\(\)[^"]*)"\);/), []);
-  assert.equal(timeoutMode, 'Video receive mode: one recvfrom() per packet with a receive timeout of 100 ms; back-to-back reads off (not needed)');
-  assert.ok(log.indexOf('At the start, *' + timeoutMode + '* on a TV whose sockets take a receive timeout') > 0, log);
-  assert.ok(log.indexOf('*' + noWaitMode + '* on a TV whose sockets take none') > 0);
-  const pollEnd = 'poll() before each recvfrom(); back-to-back reads off (no socket that never waits)';
-  assert.ok(pollMode.endsWith(pollEnd), pollMode);
-  assert.ok(log.indexOf('*… ' + pollEnd + '* means that such a socket couldn\'t be made') > 0);
-  // On a TV without a receive timeout the second socket logs its receive buffer and QoS lines too, as bindUdpSocket()
-  // does, since both share one body
-  assert.match(read('moonlight-common-c/src/PlatformSockets.c'), /SOCKET bindUdpSocketNoWait\([^)]*\) \{\n#ifdef SOCK_NONBLOCK\n    return bindUdpSocketOfType\(/);
-  assert.ok(log.indexOf('On such a TV the lines of the receive buffer and the QoS of the video socket come twice: the second set is that of the socket the stream uses') > 0);
-  // The line of a minute and the one of the stream, with the example of the guide built from the format of the code
-  const minute = formatOf(video, /Limelog\("(Video receive, last %u s: [^"]*)",/);
-  assert.ok(log.indexOf('Once a minute while the picture comes, *' + formatC(minute.slice(0, minute.indexOf(': ') + 2), [intervalUs / 1000000]) + '…*') > 0);
-  const stream = formatOf(video, /Limelog\("(Video receive of the stream, %u s: [^"]*)",/);
-  const example = formatC(stream, [312, 4973512, '1.00', '91', '3.2', '28.5', '362', '0.4']);
-  assert.equal(example, 'Video receive of the stream, 312 s: 4973512 packets, 1.00 socket calls each, 91% were waiting; 3.2 us to read a waiting packet, 28.5 us of other work per packet: up to 362 Mbps; clock read 0.4 us');
-  assert.ok(log.indexOf('e.g. *' + example + '* (an example, not a measurement)') > 0);
-  // A pause adds a call per 100 ms, two with back-to-back reads (an empty read and the poll()), and the poll() of a sample
-  // is counted apart
-  const sockets = read('moonlight-common-c/src/PlatformSockets.c');
-  assert.match(video, /figures\.socketCalls \+= \(useSelect && err > 0\) \? 2 : 1;/);
-  assert.match(sockets, /\(\*socketCalls\)\+\+;\s+err = \(int\)recvfrom\(s, buffer, size, 0, NULL, NULL\);/);
-  assert.match(sockets, /\(\*socketCalls\)\+\+;\s+err = pollSockets\(&pfd, 1, timeoutMs\);/);
-  assert.match(video, /figures\.checkPolls\+\+;/);
-  // The gaps of the samples, from VIDEO_RECV_SAMPLE_EVERY - 16 to VIDEO_RECV_SAMPLE_EVERY + 15
-  assert.match(video, /return VIDEO_RECV_SAMPLE_EVERY - 16 \+ \(\*state >> 27\);/);
-  ['the socket calls per packet (each ' + timeoutMs + ' ms without a packet adds one, two with back-to-back reads; the poll() of the check below isn\'t counted)',
-    'The app checks about every ' + sampleEvery + 'th read, at gaps that vary from ' + (sampleEvery - 16) + ' to ' + (sampleEvery + 15) + ' reads so that it doesn\'t keep checking the same packet of frames of one size: it asks the socket with poll() whether a packet is waiting (with back-to-back reads every read tells it) and reads the clock around it, which may count in steps of 0.1 ms',
-    'without the time of the clock reads themselves (*clock read*). *n/a* means there was nothing to measure.',
-    'counted like *Frames arrive at*']
-    .forEach((text) => assert.ok(log.indexOf(text) > 0, text));
-  // The lines of the poll() calls of the samples, only where the socket isn't read back to back
-  const check = formatOf(video, /Limelog\("(Video receive check of the stream: [^"]*)",/);
-  const checkFailed = formatOf(video, /Limelog\("(Video receive check: poll\(\) without a timeout failed: )%d\\n", pollError\);/);
-  assert.match(video, /if \(sampled && receiveMode != VIDEO_RECV_MODE_NO_WAIT\) \{/);
-  assert.ok(log.indexOf('Without back-to-back reads, a last line counts these poll() calls, the only socket calls that the check adds, e.g. *' + formatC(check, [4870, '2.1', 0]) + '*: their time is also what a poll() costs on the TV.') > 0);
-  assert.ok(log.indexOf('If they fail, *' + checkFailed + '…* comes once with the error, and the share of waiting packets shows *n/a*.') > 0);
-  // The line of the frame receive time of the app, with the figures of Last session
-  const frame = formatOf(player, /ClLogMessage\("(Frame receive of the stream: [^"]*frames arrive at %u Mbps)\\n",/);
-  assert.ok(log.indexOf('After it, *' + formatC(frame, [10, '52', 276]) + '*: the *Average frame receive time* and *Frames arrive at* of the stream, as *Last session* in System information gives them') > 0);
+  // The line of the app at the end of a stream with a decoded frame, with the figures of Last session
+  const frame = formatOf(/ClLogMessage\("(Frame receive of the stream: [^"]*frames arrive at %u Mbps)\\n",/);
+  const example = formatC(frame, [10, '52', 276]);
+  assert.equal(example, 'Frame receive of the stream: 10.52 ms on average, frames arrive at 276 Mbps');
+  assert.ok(log.indexOf('- At the end of every stream with a decoded frame, one line gives its *Average frame receive time* and *Frames arrive at* (since 2.3.5), as *Last session* in System information gives them, e.g. *' + example + '*.') >= 0);
+  const fewFrames = formatOf(/ClLogMessage\("Frame receive of the stream: [^"]*(frames arrive at: too few frames to tell)\\n",/);
+  assert.ok(log.indexOf('When too few frames had the figures for a rate, it ends with *' + fewFrames + '*.') > 0);
+  assert.match(player, /if \(totals\.decodedFrames > 0\) \{\s+if \(report\.arrivalMbps > 0\) \{/);
   assert.match(player, /report\.receiveTimeX100 = AverageUsX100\(totals\.totalReassemblyTimeUs, totals\.decodedFrames\);/);
-  // How to read them: the two readings and their thresholds
-  ['To read them, compare *up to* with *Frames arrive at*. Not more than about a quarter above it (or below it), with 80 % or more of the packets waiting: the app reads as fast as it can',
-    'At least twice *Frames arrive at*, or fewer than half of the packets waiting: the app waits for the packets, so the network sets the receive time',
-    'Many waiting packets alone don\'t decide it, since Wi-Fi hands packets over in bursts.',
-    // The parity packets of a block that arrived whole cost the queue little and don't count for the rate of the frames
-    'A high share of error correction (FEC) raises *up to* by up to about that share, since its extra packets cost the app little and *Frames arrive at* leaves them out.']
-    .forEach((text) => assert.ok(log.indexOf(text) > 0, text));
-  // The pointers of the guide to them: above 150 Mbps and in the troubleshooting
-  assert.ok(guideSection('### Above 150 Mbps').indexOf('Whether the app or the Wi-Fi of the TV sets that pace, the lines *Video receive …* of the [diagnostic log](#diagnostic-log) tell after a stream (since 2.3.5).') > 0);
+  // The video is read by one receive thread, as up to 2.3.2: no lines of a reading or a processing thread
+  assert.doesNotMatch(GUIDE, /Video receive mode|Video receive of the stream|Video processing|second thread|reading thread/);
+  // The troubleshooting points to the line
   const trouble = GUIDE.split('\n').find((line) => line.indexOf('- **A long frame receive time at a high bitrate, e.g. 10 ms at 180 Mbps over Wi-Fi:**') === 0);
   assert.ok(trouble, 'the troubleshooting bullet');
-  assert.ok(trouble.indexOf('read *Video receive of the stream* and *Frame receive of the stream* at the end of the [diagnostic log](#diagnostic-log)') > 0);
-  // The texts of the guide are the start of the lines of the code
-  assert.ok(stream.indexOf('Video receive of the stream') === 0 && frame.indexOf('Frame receive of the stream') === 0);
-});
-
-test('the guide describes the two threads of the video receive and the processing lines of 2.3.5 as the code makes them', () => {
-  const video = read('moonlight-common-c/src/VideoStream.c');
-  const ring = read('moonlight-common-c/src/VideoReceiveRing.h');
-  const log = guideSection('### Diagnostic log');
-  const ringPackets = Number(/\n#ifndef VIDEO_RECV_RING_PACKETS\n#define VIDEO_RECV_RING_PACKETS (\d+)\n#endif\n/.exec(video)[1]);
-  assert.equal(ringPackets, 1024);
-  const formatOf = (pattern) => {
-    const match = pattern.exec(video);
-    assert.ok(match, String(pattern));
-    return match[1];
-  };
-  // The reader: its other work is handing the packet over, a wait for room doesn't count, and its rate adds one clock
-  // read per packet for the time it notes (a sampled packet takes it from the clock read of its sample, which its other
-  // work leaves out)
-  assert.match(video, /figures\.workUs \+= nowUs - workStartUs - workWaitedUs;/);
-  assert.match(video, /\* 8 \/\s+\(readUs \+ workUs \+ clockUs\);/);
-  assert.match(video, /workStartUs = clockUs;\s+workSampled = true;\s+stampUs = endUs;/);
-  ['and of everything else the reading thread does for a packet until it reads the next one (it only hands the packet to a second thread and wakes that thread when it waits for packets, and a wait for room between them doesn\'t count here); and from these, with one clock read per packet for noting when it read the packet, the speed at which the reading thread could take packets that are waiting, counted like *Frames arrive at*.']
-    .forEach((text) => assert.ok(log.indexOf(text) > 0, text));
-  // The processing thread: its lines once a minute and at the end, the example built from the format of the code
-  const process = formatOf(/Limelog\("(Video processing of the stream, %u s: [^"]*)\\n",/);
-  const minute = formatOf(/Limelog\("(Video processing, last %u s: [^"]*)\\n",/);
-  assert.ok(minute.indexOf('Video processing, last ') === 0);
-  assert.match(video, /if \(nowUs - windowStartUs >= VIDEO_RECV_LINE_INTERVAL_US\) \{\s+if \(figures\.packets > windowStart\.packets\) \{\s+logVideoProcessFigures\(/);
-  const example = formatC(process, [312, 4973512, '14.2', '77', '809', 212, ringPackets, 0, 0, 2104381]);
-  assert.equal(example, 'Video processing of the stream, 312 s: 4973512 packets, 14.2 us of work each, idle 77%: up to 809 Mbps; ring up to 212 of 1024 packets, full 0 times for 0 ms; 2104381 wakes');
-  // (the example is one stream: 14.2 us of work for each of its packets leave 77 % of its 312 s idle, and the reader
-  // woke the thread for 42 % of its packets, so its wakes read as 'close to half the packets')
-  assert.equal(Math.round(100 - 14.2 * 4973512 / 312e6 * 100), 77);
-  assert.equal(Math.round(2104381 / 4973512 * 100), 42);
-  assert.ok(log.indexOf('A second thread does the work on the packets that the first one reads, with a ring of ' + ringPackets + ' packets between them. Its lines come once a minute and at the end, e.g. *' + example + '* (an example, not a measurement)') > 0);
-  // No packet is dropped: a reader that finds the ring full waits for room
-  assert.match(ring, /while \(ring->head - ring->tail == ring->slotCount && !ring->stopped\) \{\s+ring->readerWaiting = true;\s+PltWaitForConditionVariable\(&ring->roomCond, &ring->mutex\);/);
-  assert.doesNotMatch(ring.replace(/\/\/.*$/gm, ''), /drop/i);
-  // The wakes are those of a waiting processing thread by the reader, for the first packet it publishes after the
-  // thread began to wait
-  assert.match(ring, /if \(ring->processorWaiting\) \{\s+ring->processorWaiting = false;\s+ring->figures\.wakes\+\+;\s+PltSignalConditionVariable\(&ring->packetsCond\);/);
-  // It waits as soon as the ring is empty, asleep: no look again for packets (the test version of 2.3.5 looked for at
-  // least 0.1 ms on the CPU first), so its idle time runs from finding the ring empty to running again after the wake;
-  // it takes up to VRR_BATCH packets at once, which stay in the ring until it gives them back
-  assert.match(ring, /startUs = PltGetMicroseconds\(\);\s+PltLockMutex\(&ring->mutex\);\s+while \(ring->head == ring->tail && !ring->stopped && !ring->closed\) \{\s+ring->processorWaiting = true;\s+PltWaitForConditionVariable\(&ring->packetsCond, &ring->mutex\);/);
-  assert.doesNotMatch(ring.replace(/\/\/.*$/gm, ''), /LINGER|lookUs/);
-  assert.match(video, /figures\.idleUs \+= idleUs;\s+\}/);
-  assert.doesNotMatch(video.replace(/\/\/.*$/gm, ''), /lookUs/);
-  assert.match(ring, /#define VRR_BATCH 32\n/);
-  assert.match(ring, /ring->tail \+= released;/);
-  assert.match(ring, /depth = ring->head - ring->tail;/);
-  ['the packets it took (as many as the reading thread read, unless some were left at the end), its time per packet (error correction, decryption, putting the frame together at its last packet), the share of the time it had nothing to do (*idle*: it waits for the next packet asleep, without keeping a core of the TV busy; the share runs until it runs again after the reading thread woke it, so it also holds the time the TV takes to wake it, which costs some CPU), the speed at which it could take packets, counted like *Frames arrive at*',
-    'then the most packets in the ring at once (counting the up to 32 that the second thread was working on), how often the ring was full and for how long the reading thread waited for room (no packet is dropped: they wait in the receive buffer of the TV), and how often the reading thread had to wake it (it waits as soon as it has nothing to do, and the reading thread wakes it for the next packet: at least about once per frame, and up to once per packet when it is done with each packet before the next one comes).',
-    'With two threads, the slower of the two sets the pace, and the share of waiting packets is that of the reading thread only: compare the lower of the two *up to* with *Frames arrive at*. When the second thread\'s *up to* is the lower one and not more than about a quarter above *Frames arrive at* (or below it), the second thread sets the receive time, whatever the share of waiting packets: it can be the limit within each frame and still be idle between the frames.',
-    'A *ring up to* well above the 32 packets that it takes at once shows it too, and a ring that was *full* shows it at its worst. *Wakes* close to half the packets or more mean that it was often done with a packet before the next one came, so it waited between the packets of a frame; far fewer mean that the packets came in bursts, which it worked through one after the other, or that it was still busy, with a packet or with waking up, when the next one came (compare its *up to* with *Frames arrive at*). Each wake delays its packet a little, by the time the TV takes to wake the thread, and costs the reading thread a little of its *other work per packet*.']
-    .forEach((text) => assert.ok(log.indexOf(text) > 0, text));
-  // The rows of the statistics stay true: the times are still when the app reads the packets (the reader notes them),
-  // and the receive time ends when the second thread has put the frame together, so a slower second thread raises it
-  // without lowering the rate, which comes from the times of the reader
-  assert.ok(tableRow('Frames arrive at')[1].indexOf('The times are when the app reads the packets, not when they reach the TV') >= 0);
-  assert.match(video, /stampUs = PltGetMicroseconds\(\);/);
-  assert.ok(tableRow('Frames arrive at')[1].indexOf('Since 2.3.5 a thread of its own reads the packets: a slower second thread, which puts the frames together, raises the frame receive time without lowering this figure, unless its ring of packets fills (see *Video processing* in the [diagnostic log](#diagnostic-log)).') >= 0);
-  assert.ok(GUIDE.indexOf('the size of a frame divided by this speed is about its receive time (since 2.3.5 longer when the thread of the app that puts the frames together is the slower one, see *Video processing* in the [diagnostic log](#diagnostic-log))') > 0);
-  assert.match(read('moonlight-common-c/src/VideoDepacketizer.c'), /qdu->decodeUnit\.enqueueTimeUs = PltGetMicroseconds\(\);/);
+  assert.ok(trouble.indexOf('*Frame receive of the stream* at the end of the [diagnostic log](#diagnostic-log) gives both figures for the whole stream') > 0);
 });
 
 test('the guide and the controller page describe the keys in the menus of 2.3.5 as the code handles them', () => {

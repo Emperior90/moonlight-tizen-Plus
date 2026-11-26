@@ -8,9 +8,8 @@
 // packet adds nothing, and the time between two blocks (the parity of the first) is left out.
 // The case of the research: at 150 Mbps 4K60 a frame took 8.65 ms from its first to its last packet on an S90C over
 // 5 GHz Wi-Fi, about 42 us per data packet of 1392 bytes, which is about 275 Mbps at IP level.
-// The test feeds packets the way VideoStream.c does (the queue entry behind the packet in the same allocation) with the
-// time at which the reader read each one (since 2.3.5 RtpvAddPacket() takes it, and the queue never reads the
-// microsecond clock itself), with FEC on; a stand-in for the Reed-Solomon recovery fills in the missing data packets.
+// The test feeds packets the way VideoStream.c does (the queue entry behind the packet in the same allocation) on a
+// clock of the test, with FEC on; a stand-in for the Reed-Solomon recovery fills in the missing data packets.
 
 #include "test_support_c.h"
 
@@ -34,11 +33,8 @@ uint32_t EncryptionFeaturesEnabled;
 #define IP_PACKET_BYTES (20 + 8 + RTP_HEADER_SIZE + PACKET_SIZE)
 #define MAX_FRAMES 16
 
-// The clock of the test, which it sets to the arrival time of each packet (unless clockStands), and the calls of
-// PltGetMicroseconds(), which the queue doesn't make since 2.3.5
+// The clock of PltGetMicroseconds(), which the test sets to the arrival time of each packet
 static uint64_t nowUs = 1000000;
-static bool clockStands;
-static int microsecondReads;
 static uint64_t fakeMillis;
 
 // What the depacketizer got: per frame, its packets and the arrival figures of its first packet, and whether all its
@@ -78,15 +74,6 @@ void queueRtpPacket(PRTPV_QUEUE_ENTRY entry) {
   free(entry->packet);
 }
 
-// The packets of a frame, as submitCompletedFrame() hands them over (since 2.3.5)
-void queueRtpPackets(PRTPV_QUEUE_ENTRY entry) {
-  while (entry != NULL) {
-    PRTPV_QUEUE_ENTRY next = entry->next;
-    queueRtpPacket(entry);
-    entry = next;
-  }
-}
-
 void connectionSawFrame(uint32_t frameIndex) {
   (void)frameIndex;
 }
@@ -104,7 +91,6 @@ uint64_t PltGetMillis(void) {
 }
 
 uint64_t PltGetMicroseconds(void) {
-  microsecondReads++;
   return nowUs;
 }
 
@@ -169,10 +155,8 @@ static bool sendPacket(uint32_t frameIndex, int blockNumber, int lastBlockNumber
   nvPacket->multiFecFlags = 0x10;
   nvPacket->multiFecBlocks = (uint8_t)((lastBlockNumber << 6) | (blockNumber << 4));
   nvPacket->fecInfo = ((uint32_t)dataPackets << 22) | ((uint32_t)index << 12) | ((uint32_t)fecPercentage << 4);
-  if (!clockStands) {
-    nowUs = timeUs;
-  }
-  if (RtpvAddPacket(&queue, packet, length, (PRTPV_QUEUE_ENTRY)(buffer + length), timeUs) != RTPF_RET_QUEUED) {
+  nowUs = timeUs;
+  if (RtpvAddPacket(&queue, packet, length, (PRTPV_QUEUE_ENTRY)(buffer + length)) != RTPF_RET_QUEUED) {
     // A rejected packet stays with the caller
     free(buffer);
     return false;
@@ -351,24 +335,6 @@ static void test_the_bytes_include_the_headers_of_the_network(void) {
   CHECK_EQ_INT(sizeof(ENC_VIDEO_HEADER), 32);
 }
 
-// Since 2.3.5 the times are those given with the packets (when the reader read them), not when the processing thread
-// hands them to the queue: a clock that stands still (here: the processing thread got to every packet of the frame at
-// once) gives the frame of the research its 8,652 us all the same, and the queue reads the clock not once
-static void test_the_times_are_those_given_with_the_packets(void) {
-  resetQueue(AF_INET, 0);
-  clockStands = true;
-  nowUs = 9000000;
-  sendBlock(1, 0, 0, 207, 20, 2000000, 42, 0);
-  clockStands = false;
-  CHECK_EQ_INT(frameCount, 1);
-  CHECK_EQ_INT(framePackets[0], 207);
-  CHECK_EQ_INT(frameArrivalUs[0], 206 * 42);
-  CHECK_EQ_INT(frameArrivalBytes[0], 206 * IP_PACKET_BYTES);
-  RtpvCleanupQueue(&queue);
-  // Nor in the other cases of this file, which ran before
-  CHECK_EQ_INT(microsecondReads, 0);
-}
-
 int main(void) {
   RUN_TEST("a 4K60 frame at 150 Mbps (8.65 ms, 42 us per data packet) arrives at about 275 Mbps at IP level",
            test_a_4k60_frame_at_150_mbps_arrives_at_about_275_mbps);
@@ -383,7 +349,5 @@ int main(void) {
            test_out_of_order_packets_and_a_coarse_clock);
   RUN_TEST("the bytes at IP level include the IPv4 or IPv6 header and the header of an encrypted packet",
            test_the_bytes_include_the_headers_of_the_network);
-  RUN_TEST("the times are those given with the packets, and the queue never reads the microsecond clock (2.3.5)",
-           test_the_times_are_those_given_with_the_packets);
   return test_summary();
 }

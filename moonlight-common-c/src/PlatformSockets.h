@@ -108,14 +108,11 @@ SOCKET createSocket(int addressFamily, int socketType, int protocol, bool nonBlo
 SOCKET connectTcpSocket(struct sockaddr_storage* dstaddr, SOCKADDR_LEN addrlen, unsigned short port, int timeoutSec);
 int sendMtuSafe(SOCKET s, char* buffer, int size);
 SOCKET bindUdpSocket(int addressFamily, struct sockaddr_storage* localAddr, SOCKADDR_LEN addrLen, int bufferSize, int socketQosType);
-SOCKET bindUdpSocketNoWait(int addressFamily, struct sockaddr_storage* localAddr, SOCKADDR_LEN addrLen, int bufferSize, int socketQosType);
 void logSocketQos(SOCKET s, int addressFamily, const char* name, int priorityResult);
 int enableNoDelay(SOCKET s);
 int setSocketNonBlocking(SOCKET s, bool enabled);
 int recvUdpSocket(SOCKET s, char* buffer, int size, bool useSelect,
                   struct sockaddr_storage* remoteAddr, SOCKADDR_LEN* addrLen);
-int recvUdpSocketNoWait(SOCKET s, char* buffer, int size, bool* waited, int* socketCalls);
-int wakeUdpSocketReader(SOCKET s);
 void shutdownTcpSocket(SOCKET s);
 int setNonFatalRecvTimeoutMs(SOCKET s, int timeoutMs);
 void closeSocket(SOCKET s);

@@ -17,8 +17,8 @@
 // 2.3.2, the line 'Frames arrive at' gives the rate at which the data packets of the frames of the two windows arrived
 // (wasm/frame_arrival.hpp), from the arrival figures of the decode units, and the report the rate of the stream. Since
 // 2.3.4 the end of a stream with decoded frames also gives both in one line of the diagnostic log ('Frame receive of the
-// stream: ... ms on average, frames arrive at ... Mbps', or 'too few frames to tell' without a rate), next to the video
-// receive lines of moonlight-common-c; a stream without a decoded frame logs none. The
+// stream: ... ms on average, frames arrive at ... Mbps', or 'too few frames to tell' without a rate); a stream without
+// a decoded frame logs none. The
 // functions below stand in for moonlight-common-c and the rest of the module; LiGetMillis() follows a clock of the
 // test, and LiGetMicroseconds() the same clock with the microseconds that a hand-over to the player adds.
 // VidDecSetup() waits for the media pipeline of the TV, so the test sets up the state of a stream the same way instead

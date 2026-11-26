@@ -7,9 +7,7 @@
 // The test includes RtpVideoQueue.c and feeds it packets the way VideoStream.c does (the queue entry sits behind the
 // packet in the same allocation), with RFI enabled and FEC off, so that a missing packet always loses its block.
 // It also checks the receive time that the queue hands over with each packet of a complete FEC block, in microseconds
-// since 2.3.2 (ported from upstream 82ee2d6): the time of the first packet of the block, which since 2.3.5 is the time
-// that the reader thread of VideoStream.c read it and gives RtpvAddPacket() with each packet; the queue never reads the
-// microsecond clock itself.
+// since 2.3.2 (PltGetMicroseconds(), ported from upstream 82ee2d6): the time of the first packet of the block.
 
 #include "test_support_c.h"
 
@@ -39,12 +37,9 @@ static unsigned int submittedFrames[MAX_EVENTS];
 static uint64_t submittedReceiveTimesUs[MAX_EVENTS];
 static int submittedPacketCount;
 static uint64_t fakeMillis;
-// The time at which the reader read each packet, which the test gives RtpvAddPacket(): packetStepUs after the packet
-// before
-static uint64_t packetTimeUs = 1000000;
-static uint64_t packetStepUs = 250;
-// The calls of PltGetMicroseconds(), which the queue doesn't make since 2.3.5
-static int microsecondReads;
+// The clock of PltGetMicroseconds(), which each call advances by fakeMicrosStep
+static uint64_t fakeMicros = 1000000;
+static uint64_t fakeMicrosStep = 250;
 
 void notifyFrameLost(unsigned int frameNumber, bool speculative) {
   if (lostFrameCount < MAX_EVENTS) {
@@ -61,15 +56,6 @@ void queueRtpPacket(PRTPV_QUEUE_ENTRY entry) {
     submittedFrames[submittedPacketCount++] = nvPacket->frameIndex;
   }
   free(entry->packet);
-}
-
-// The packets of a frame, as submitCompletedFrame() hands them over (since 2.3.5)
-void queueRtpPackets(PRTPV_QUEUE_ENTRY entry) {
-  while (entry != NULL) {
-    PRTPV_QUEUE_ENTRY next = entry->next;
-    queueRtpPacket(entry);
-    entry = next;
-  }
 }
 
 void connectionSawFrame(uint32_t frameIndex) {
@@ -89,8 +75,8 @@ uint64_t PltGetMillis(void) {
 }
 
 uint64_t PltGetMicroseconds(void) {
-  microsecondReads++;
-  return 7777777;
+  fakeMicros += fakeMicrosStep;
+  return fakeMicros;
 }
 
 // FEC recovery is never needed with FEC off; a call would mean that the test lost track of the queue
@@ -156,8 +142,7 @@ static void sendBlock(uint32_t frameIndex, int blockNumber, int lastBlockNumber,
     PRTPV_QUEUE_ENTRY entry;
     PRTP_PACKET packet = makePacket(sequenceNumber, frameIndex, blockNumber, lastBlockNumber, i, dataPackets, &entry);
     const int length = (int)(sizeof(RTP_PACKET) + 4 + sizeof(NV_VIDEO_PACKET) + PAYLOAD_SIZE);
-    packetTimeUs += packetStepUs;
-    if (RtpvAddPacket(&queue, packet, length, entry, packetTimeUs) != RTPF_RET_QUEUED) {
+    if (RtpvAddPacket(&queue, packet, length, entry) != RTPF_RET_QUEUED) {
       // A rejected packet stays with the caller
       free(packet);
     }
@@ -242,31 +227,29 @@ static void test_incomplete_block_does_not_hide_the_next_lost_frame(void) {
 }
 
 // Every packet of a complete FEC block reaches the depacketizer with the receive time of the first packet of its block,
-// in microseconds, so that the time from the first to the last packet of a frame is finer than a millisecond. Since
-// 2.3.5 that is the time given with the first packet of the block (when the reader read it), whatever the clock says
-// when the queue gets the packet.
+// in microseconds, so that the time from the first to the last packet of a frame is finer than a millisecond
 static void test_packets_carry_the_receive_time_of_their_block_in_microseconds(void) {
   resetQueue();
-  microsecondReads = 0;
-  packetTimeUs = 5001000;
-  packetStepUs = 300;
-  // Frame 1: one block of 3 packets read at 5,001,300, 5,001,600 and 5,001,900 us; frame 2: two blocks of 2 packets
-  // from 5,002,200 us on
+  fakeMicros = 5000999;
+  fakeMicrosStep = 300;
   sendBlock(1, 0, 0, 3, 0);
+  const uint64_t secondBlockStartUs = fakeMicros + fakeMicrosStep;
   sendBlock(2, 0, 1, 2, 0);
   sendBlock(2, 1, 1, 2, 0);
   CHECK_EQ_INT(submittedPacketCount, 7);
   CHECK_EQ_INT(lostFrameCount, 0);
+  // The queue reads the clock at the first packet of each FEC block, and since 2.3.2 once more when a block of several
+  // data packets is complete, for the arrival figures of its frame (frame_arrival_test.c), so the second block of
+  // frame 2 starts two readings after its first
   for (int i = 0; i < 3; i++) {
-    CHECK_EQ_INT(submittedReceiveTimesUs[i], 5001300);
+    CHECK_EQ_INT(submittedReceiveTimesUs[i], 5001299);
   }
-  CHECK_EQ_INT(submittedReceiveTimesUs[3], 5002200);
-  CHECK_EQ_INT(submittedReceiveTimesUs[4], 5002200);
-  CHECK_EQ_INT(submittedReceiveTimesUs[5], 5002800);
-  CHECK_EQ_INT(submittedReceiveTimesUs[6], 5002800);
-  CHECK_EQ_INT(microsecondReads, 0);
+  CHECK_EQ_INT(submittedReceiveTimesUs[3], secondBlockStartUs);
+  CHECK_EQ_INT(submittedReceiveTimesUs[4], secondBlockStartUs);
+  CHECK_EQ_INT(submittedReceiveTimesUs[5], secondBlockStartUs + 600);
+  CHECK_EQ_INT(submittedReceiveTimesUs[6], secondBlockStartUs + 600);
   RtpvCleanupQueue(&queue);
-  packetStepUs = 250;
+  fakeMicrosStep = 250;
 }
 
 int main(void) {

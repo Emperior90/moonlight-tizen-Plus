@@ -132,7 +132,6 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo);
 void initializeVideoDepacketizer(int pktSize);
 void destroyVideoDepacketizer(void);
 void queueRtpPacket(PRTPV_QUEUE_ENTRY queueEntry);
-void queueRtpPackets(PRTPV_QUEUE_ENTRY firstEntry);
 void stopVideoDepacketizer(void);
 void requestDecoderRefresh(void);
 void notifyFrameLost(unsigned int frameNumber, bool speculative);
