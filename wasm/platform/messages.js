@@ -1076,26 +1076,28 @@ const RUMBLE_SUMMARY_MS = 60000;
 var rumbleLog = {};
 var lateRumbleLogged = false;
 
-// The log state of the rumble of a gamepad in this stream
+// The log state of the rumble of a gamepad in this stream; weakNow and strongNow are the magnitudes it has now
 function rumbleLogOf(gamepadIdx) {
   if (!Object.prototype.hasOwnProperty.call(rumbleLog, gamepadIdx)) {
     rumbleLog[gamepadIdx] = {
-      on: false, firstStartLogged: false, firstStopLogged: false,
+      on: false, firstStartLogged: false, firstStopLogged: false, weakNow: 0, strongNow: 0,
       starts: 0, stops: 0, weakMagnitude: 0, strongMagnitude: 0, sinceMs: 0, timer: null,
     };
   }
   return rumbleLog[gamepadIdx];
 }
 
-// Count a start, a change of strength or a stop of the rumble of a gamepad after its first start and first stop (a
-// change only while a summary is open, from the start before it); the first start or stop that is counted opens the
-// summary, which logRumbleSummary() writes after RUMBLE_SUMMARY_MS
+// Count a start, a change of strength or a stop of the rumble of a gamepad after its first start and first stop. Each
+// of them raises the strongest magnitudes, but only a start or a stop opens a summary, which logRumbleSummary() writes
+// after RUMBLE_SUMMARY_MS: a change comes from a counted rumble that was on when the last line was written, and it
+// counts in the summary that its stop opens
 function countRumble(gamepadIdx, state, kind, weakMagnitude, strongMagnitude) {
-  const open = state.starts !== 0 || state.stops !== 0;
-  if (kind === 'change' && !open) {
+  state.weakMagnitude = Math.max(state.weakMagnitude, weakMagnitude);
+  state.strongMagnitude = Math.max(state.strongMagnitude, strongMagnitude);
+  if (kind === 'change') {
     return;
   }
-  if (!open) {
+  if (state.starts === 0 && state.stops === 0) {
     state.sinceMs = Date.now();
     state.timer = setTimeout(function() {
       logRumbleSummary(gamepadIdx);
@@ -1103,15 +1105,13 @@ function countRumble(gamepadIdx, state, kind, weakMagnitude, strongMagnitude) {
   }
   if (kind === 'start') {
     state.starts++;
-  } else if (kind === 'stop') {
+  } else {
     state.stops++;
   }
-  state.weakMagnitude = Math.max(state.weakMagnitude, weakMagnitude);
-  state.strongMagnitude = Math.max(state.strongMagnitude, strongMagnitude);
 }
 
 // Write the summary of the rumble of a gamepad that countRumble() counted, if anything, and start the next one with the
-// next start or stop
+// next start or stop. A rumble that is still on goes on with its strength into the next summary.
 function logRumbleSummary(gamepadIdx) {
   const state = rumbleLog[gamepadIdx];
   if (!state) {
@@ -1130,8 +1130,8 @@ function logRumbleSummary(gamepadIdx) {
     ' in the last ' + seconds + ' s, strongest weak magnitude ' + state.weakMagnitude + ' and strong magnitude ' + state.strongMagnitude + '.');
   state.starts = 0;
   state.stops = 0;
-  state.weakMagnitude = 0;
-  state.strongMagnitude = 0;
+  state.weakMagnitude = state.on ? state.weakNow : 0;
+  state.strongMagnitude = state.on ? state.strongNow : 0;
 }
 
 // Write the summaries that are still open, when the stream ends
@@ -1149,6 +1149,8 @@ function logRumble(gamepadIdx, weakMagnitude, strongMagnitude) {
   const isOn = weakMagnitude > 0 || strongMagnitude > 0;
   const wasOn = state.on;
   state.on = isOn;
+  state.weakNow = weakMagnitude;
+  state.strongNow = strongMagnitude;
   if (logFrequentMessages) {
     if (isOn) {
       console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Playing rumble on gamepad ' + gamepadIdx + ' with weak magnitude ' + weakMagnitude + ' and strong magnitude ' + strongMagnitude + '...');

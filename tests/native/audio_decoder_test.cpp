@@ -987,8 +987,10 @@ static void TheDecodeOfAnEmssPacketCountsFromItsArrival() {
   decodeTimeUs = 0;
   const uint64_t decodeUs = g_AudioStreamStats.decodeUs.load() - decodeBefore;
   CHECK(decodeUs >= 3000u);
-  // On a test machine the catch-up and the decoder stand-in take a few microseconds per packet (a busy machine more)
-  CHECK(decodeUs < 3000u + 10u * 1000u);
+  // Only a gross bound above, against a start of the decode time that isn't a reading of this packet (e.g. an empty
+  // time point, which counts the whole time since the clock started): where the readings are taken pins case 18, and a
+  // busy test machine can add milliseconds per packet to the real time of the decoder stand-in
+  CHECK(decodeUs < 3000u + 10u * 20000u);
   MoonlightInstance::AudDecCleanup();
 }
 

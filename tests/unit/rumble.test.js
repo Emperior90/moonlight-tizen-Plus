@@ -520,6 +520,66 @@ test('each gamepad has its own summary, a quiet minute writes none, and the debu
   ]);
 });
 
+test('a counted rumble that is still on when its line is written counts with its strength in the next one, and its changes open none', () => {
+  // The first start and the first stop, then a counted start at 0.1 that is still on when its line is written 60 s
+  // later, and that grows to full strength right after the line
+  const rideOn = (rumble) => {
+    rumble.handleMessage('controllerRumble: 0,0.5,0.5');
+    rumble.handleMessage('controllerRumble: 0,0,0');
+    rumble.timers.advance(1000);
+    rumble.handleMessage('controllerRumble: 0,0.1,0.1');
+    rumble.timers.advance(60000);
+    rumble.handleMessage('controllerRumble: 0,1,1');
+  };
+  const summaries = (rumble) => rumble.lines().filter((line) => line.indexOf('Rumble on gamepad') === 0);
+  const first = 'Rumble on gamepad 0: 1 more start and 0 stops in the last 60 s, strongest weak magnitude 0.1 and strong magnitude 0.1.';
+
+  // It stops 1 s later, and the stream ends 2 s after that: the line of the end shows the strength it had
+  const rumble = loadWithGamepad();
+  rideOn(rumble);
+  rumble.timers.advance(1000);
+  rumble.handleMessage('controllerRumble: 0,0,0');
+  rumble.timers.advance(2000);
+  rumble.handleMessage('streamTerminated: 0');
+  assert.deepEqual(summaries(rumble), [
+    first,
+    'Rumble on gamepad 0: 0 more starts and 1 stop in the last 2 s, strongest weak magnitude 1 and strong magnitude 1.',
+  ]);
+  assert.ok(rumble.effects.some((effect) => effect.type === 'dual-rumble' && effect.params.weakMagnitude === 1 && effect.params.strongMagnitude === 1));
+  assert.equal(rumble.timers.pending(), 0);
+
+  // A change of the strength after the line is neither a start nor a stop, so it opens no summary: the stop 39 s later
+  // opens it, and its line comes 60 s after the stop, not 60 s after the change
+  const later = loadWithGamepad();
+  rideOn(later);
+  later.timers.advance(39000);
+  later.handleMessage('controllerRumble: 0,0,0');
+  later.timers.advance(30000);
+  assert.deepEqual(summaries(later), [first]);
+  later.timers.advance(30000);
+  assert.deepEqual(summaries(later), [
+    first,
+    'Rumble on gamepad 0: 0 more starts and 1 stop in the last 60 s, strongest weak magnitude 1 and strong magnitude 1.',
+  ]);
+  later.handleMessage('streamTerminated: 0');
+  assert.equal(summaries(later).length, 2);
+  assert.equal(later.timers.pending(), 0);
+
+  // A counted rumble that is on when its line is written, without a change after it, counts with the strength it has
+  const steady = loadWithGamepad();
+  steady.handleMessage('controllerRumble: 0,0.5,0.5');
+  steady.handleMessage('controllerRumble: 0,0,0');
+  steady.handleMessage('controllerRumble: 0,0.25,0.75');
+  steady.timers.advance(60000);
+  steady.handleMessage('controllerRumble: 0,0,0');
+  steady.timers.advance(1000);
+  steady.handleMessage('streamTerminated: 0');
+  assert.deepEqual(summaries(steady), [
+    'Rumble on gamepad 0: 1 more start and 0 stops in the last 60 s, strongest weak magnitude 0.25 and strong magnitude 0.75.',
+    'Rumble on gamepad 0: 0 more starts and 1 stop in the last 1 s, strongest weak magnitude 0.25 and strong magnitude 0.75.',
+  ]);
+});
+
 test('the rumbles that arrive after the end of a stream are logged once, and the debug switch logs every message again', () => {
   const rumble = loadWithGamepad();
   rumble.handleMessage('streamTerminated: 0');
