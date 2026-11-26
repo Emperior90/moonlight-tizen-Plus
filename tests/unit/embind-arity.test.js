@@ -23,8 +23,9 @@ const STUB = fs.readFileSync(path.join(REPO_ROOT, 'tests', 'browser', 'mocks', '
 test('the functions of the module take the numbers of arguments of their C++ functions', () => {
   assert.deepEqual(readEmbindArity(REPO_ROOT), {
     makeCert: 0, httpInit: 3, openUrl: 4, sendKeyboardEvent: 3, sendText: 1,
-    startStream: 34, stopStream: 0, cancelRequest: 0, toggleStats: 0, setStreamMenuOpen: 1, toggleMouseEmulation: 0,
-    requestIdrFrame: 0, getAudioChannelCount: 0, takeDiagnosticLog: 0, stun: 1, pair: 7, wakeOnLan: 3,
+    startStream: 34, stopStream: 0, cancelRequest: 0, toggleStats: 0, setStreamMenuOpen: 1, setAppHidden: 1,
+    toggleMouseEmulation: 0, requestIdrFrame: 0, getAudioChannelCount: 0, takeDiagnosticLog: 0, stun: 1, pair: 7,
+    wakeOnLan: 3,
   });
 });
 

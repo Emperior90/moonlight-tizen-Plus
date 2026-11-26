@@ -3,7 +3,8 @@
 // the combo, a Back or Start pressed with another button (passed on at once, together with that button), the other
 // combos next to it, and the input while the menu is open and after it closed (setStreamMenuOpen()): the host gets the
 // controllers released, and the buttons that chose an entry don't reach the game. The mouse emulation entry of the menu
-// (toggleMouseEmulation()) works without the setting that allows the hold of Start.
+// (toggleMouseEmulation()) works without the setting that allows the hold of Start. While Moonlight is hidden during the
+// stream (setAppHidden(), since 2.3.5), the host gets the same as while the menu is open.
 
 #include "gamepad_harness.h"
 #include "test_support.h"
@@ -20,6 +21,7 @@ static constexpr int kButtonB = 1;
 static constexpr int kButtonX = 2;
 static constexpr int kButtonLB = 4;
 static constexpr int kButtonRB = 5;
+static constexpr int kButtonRT = 7;
 static constexpr int kButtonBack = 8;
 static constexpr int kButtonStart = 9;
 static constexpr int kButtonUp = 12;
@@ -336,9 +338,10 @@ static void TestInputWhileMenuOpen() {
   CHECK_EQ(harness::stopStreamCalls, 0);
   CHECK(harness::postedToJs.empty());
 
-  // A controller that connects while the menu is open is announced and gets a released state too
+  // A controller that connects while the menu is open is announced at the next read of the slots and gets a released
+  // state too
   Connect(1);
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   CHECK_EQ(harness::arrivals.size(), 2u);
   CHECK(!padPackets.empty() && padPackets.back().controller == 1 && padPackets.back().buttons == 0);
 }
@@ -392,6 +395,89 @@ static void TestButtonsHeldWhenMenuCloses() {
   setStreamMenuOpen(false);
   PollFor(300);
   CHECK(!AnyPacketHas(pending, PLAY_FLAG));
+}
+
+static void TestInputWhileHidden() {
+  // A held, the left stick and RT pressed when Moonlight is hidden (Home): the host gets them released once, and nothing
+  // else for as long as it stays hidden, also no refresh
+  StartWithController();
+  SetButton(0, kButtonA, true);
+  harness::slots[0].axis[0] = 0.8;
+  harness::slots[0].analogButton[kButtonRT] = 1.0;
+  Poll();
+  CHECK(!padPackets.empty() && padPackets.back().buttons == A_FLAG && padPackets.back().rightTrigger == 255);
+  setAppHidden(true);
+  const size_t before = padPackets.size();
+  PollFor(60000);
+  CHECK_EQ(padPackets.size(), before + 1);
+  const harness::PadPacket* neutral = padPackets.empty() ? nullptr : &padPackets.back();
+  CHECK(neutral && neutral->buttons == 0 && neutral->leftStickX == 0 && neutral->rightTrigger == 0);
+  const size_t hidden = padPackets.size();
+
+  // What the browser reports meanwhile (the last state, or the presses in Smart Hub) runs no combo: the stop combo held
+  // for 2 seconds doesn't end the stream, and Back + Start held for 1.5 seconds doesn't open the Stream Menu
+  SetButton(0, kButtonA, false);
+  for (int button : { kButtonLB, kButtonRB, kButtonBack, kButtonStart }) {
+    SetButton(0, button, true);
+  }
+  PollFor(2000);
+  CHECK_EQ(harness::stopStreamCalls, 0);
+  SetButton(0, kButtonLB, false);
+  SetButton(0, kButtonRB, false);
+  PollFor(1500);
+  SetButton(0, kButtonBack, false);
+  SetButton(0, kButtonStart, false);
+  PollFor(500);
+  CHECK_EQ(CountPosted("streamMenuRequested"), 0);
+  CHECK_EQ(padPackets.size(), hidden);
+
+  // The Stream Menu opened and closed while still hidden changes nothing
+  setStreamMenuOpen(true);
+  PollFor(100);
+  setStreamMenuOpen(false);
+  PollFor(100);
+  CHECK_EQ(padPackets.size(), hidden);
+
+  // Shown again with A, the stick and RT held: the stick and RT reach the game at once, A once released and pressed again
+  SetButton(0, kButtonA, true);
+  PollFor(100);
+  setAppHidden(false);
+  Poll();
+  CHECK(padPackets.size() == hidden + 1 && padPackets.back().buttons == 0 &&
+        padPackets.back().leftStickX == static_cast<short>(0.8 * 32767) && padPackets.back().rightTrigger == 255);
+  SetButton(0, kButtonA, false);
+  Poll();
+  SetButton(0, kButtonA, true);
+  Poll();
+  CHECK_EQ(LastButtons(), A_FLAG);
+
+  // A new stream starts shown, whatever the stream before was left with
+  setAppHidden(true);
+  Poll();
+  CHECK_EQ(LastButtons(), 0);
+  harness::Instance()->HandleGamepadInputState(false, false, harness::FaceButtonSwapMapping(false, false), LI_CTYPE_UNKNOWN);
+  Poll();
+  CHECK_EQ(LastButtons(), A_FLAG);
+
+  // In mouse mode: the held mouse button is released once, and the pointer doesn't move while hidden
+  StartWithController(true);
+  toggleMouseEmulation();
+  Poll();
+  SetButton(0, kButtonA, true);
+  Poll();
+  CHECK(!harness::mouseButtons.empty() && harness::mouseButtons.back().action == BUTTON_ACTION_PRESS);
+  harness::mouseButtons.clear();
+  harness::mouseMoves.clear();
+  setAppHidden(true);
+  harness::slots[0].axis[0] = 1.0;
+  PollFor(1000);
+  CHECK(harness::mouseButtons.size() == 1 && harness::mouseButtons[0].action == BUTTON_ACTION_RELEASE);
+  CHECK(harness::mouseMoves.empty());
+  CHECK(harness::scrolls.empty());
+  setAppHidden(false);
+  Poll();
+  CHECK(mouseEmulationActive);
+  CHECK(harness::mouseMoves.size() == 1 && harness::mouseMoves[0] == std::make_pair(10, 0));
 }
 
 static void TestMouseModeAndMenu() {
@@ -454,5 +540,7 @@ int main() {
   test_support::RunTest("while the Stream Menu is open the host gets the controllers released and nothing else", TestInputWhileMenuOpen);
   test_support::RunTest("buttons held when the Stream Menu closes reach the game only when pressed again", TestButtonsHeldWhenMenuCloses);
   test_support::RunTest("the mouse emulation entry and the Stream Menu in mouse mode", TestMouseModeAndMenu);
+  test_support::RunTest("while Moonlight is hidden the host gets the controllers released once and nothing else, and "
+                        "buttons held when it shows again need a new press", TestInputWhileHidden);
   return test_support::Summary();
 }

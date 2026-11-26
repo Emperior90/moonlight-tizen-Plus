@@ -27,11 +27,16 @@
 // audio_lead_test.cpp checks) with the lead that auddec.cpp keeps, while the Web Audio backend measures nothing. Each
 // start begins it afresh, and the end of a stream logs it and leaves its figures for the report of the session.
 //
+// After a stall (since 2.3.5, wasm/audio_catch_up.hpp, whose rule audio_catch_up_test.cpp checks), the sound that piled
+// up beyond 100 ms is skipped also with 'Limit audio delay' off, counted and logged apart from its drops, and summed at
+// the end of the stream, while packets in real time after a pause of the host are all appended.
+//
 // auddec.cpp has an EM_ASM block without arguments, whose stub takes the GNU form of __VA_ARGS__ (run.sh):
 // Build with: -std=gnu++17
 
 #include "../../wasm/auddec.cpp"
 
+#include "diagnostic_log.hpp"
 #include "test_support.h"
 
 #include <cmath>
@@ -39,6 +44,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <string>
+#include <thread>
 #include <vector>
 
 MoonlightInstance* g_Instance = nullptr;
@@ -742,6 +748,90 @@ static void TheEndOfTheStreamLogsTheLeadAndKeepsItForTheReport() {
   MoonlightInstance::AudDecCleanup();
 }
 
+// Feed packets in real time, one every 5 ms or a little more
+static void FeedInRealTime(int count) {
+  for (int i = 0; i < count; i++) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    Feed(1);
+  }
+}
+
+static void TheSoundThatPiledUpAfterAStallIsSkipped() {
+  // One packet, then 150 ms without any (the player runs dry), then the 100 packets that queued up meanwhile, back to
+  // back: the first 100 ms of them play, the rest is skipped, although 'Limit audio delay' is off. Before 2.3.5 all
+  // of them were appended, and the sound stayed 150 ms behind the picture for the rest of the stream. The burst takes
+  // well under a millisecond here, so 22 are appended; the range leaves room for a test machine that stalls in it.
+  StartAudio(AudioBackend::Emss, 2, 240, false);
+  Feed(1);
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  Feed(100);
+  CHECK(appended.size() >= 21 && appended.size() <= 40);
+  CHECK_EQ(decodeCalls, (int)appended.size());
+  // Every packet still counts for the lead of the sound, and the skips are logged apart from the drops of the switch
+  CHECK_EQ(s_AudioLead.packets, 101u);
+  CHECK_EQ(s_AudioCatchUp.stalls, 1u);
+  CHECK_EQ(s_AudioCatchUp.skipped, 101u - (uint32_t)appended.size());
+  CHECK_EQ(CountLogs("Skipping the sound that piled up after a stall: 1 packets of this stream (1 stalls), PTS="), 1);
+  CHECK_EQ(CountLogs("Skipping the sound that piled up after a stall"), 1);
+  CHECK(FindLog("Skipping the sound").size() < DiagnosticLogRing::kLineBytes);
+  CHECK_EQ(CountLogs("Dropping audio packets to avoid overflow"), 0);
+  // Packets in real time afterwards are all appended
+  const size_t afterBurst = appended.size();
+  FeedInRealTime(20);
+  CHECK_EQ(appended.size(), afterBurst + 20);
+  // The end of the stream sums the skips up
+  const uint32_t skipped = s_AudioCatchUp.skipped;
+  logs.clear();
+  MoonlightInstance::AudDecCleanup();
+  const std::string summary = FindLog("Skipped ");
+  unsigned int count = 0;
+  unsigned int ms = 0;
+  unsigned int stalls = 0;
+  CHECK_EQ(sscanf(summary.c_str(), "Skipped %u audio packets (%u ms of sound) that piled up after %u stalls of this "
+                  "stream\n", &count, &ms, &stalls), 3);
+  CHECK(count == skipped && count >= 61 && count <= 80);
+  CHECK_EQ(ms, count * 5);
+  CHECK_EQ(stalls, 1u);
+  CHECK(summary.size() < DiagnosticLogRing::kLineBytes);
+  CHECK_EQ(s_AudioCatchUp.skipped, 0u);
+
+  // A pause of the host (a silent desktop) also empties the player, but the packets after it come in real time, so
+  // nothing is skipped
+  StartAudio(AudioBackend::Emss, 2, 240, false);
+  Feed(1);
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  FeedInRealTime(20);
+  CHECK_EQ(appended.size(), (size_t)21);
+  CHECK_EQ(s_AudioCatchUp.skipped, 0u);
+  logs.clear();
+  MoonlightInstance::AudDecCleanup();
+  CHECK_EQ(CountLogs("Skipped "), 0);
+
+  // With 'Limit audio delay' on, its own drops do the same, with its own line
+  StartAudio(AudioBackend::Emss, 2, 240, true);
+  Feed(1);
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  Feed(100);
+  CHECK(appended.size() >= 21 && appended.size() <= 40);
+  CHECK_EQ(CountLogs("Dropping audio packets to avoid overflow"), 1);
+  CHECK_EQ(CountLogs("Skipping the sound that piled up after a stall"), 0);
+  CHECK_EQ(s_AudioCatchUp.skipped, 0u);
+
+  // A start begins the catch-up afresh, also after a stream that ended without its cleanup
+  StartAudio(AudioBackend::Emss, 2, 240, false);
+  Feed(1);
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  Feed(100);
+  CHECK(s_AudioCatchUp.skipped > 0u);
+  StartAudio(AudioBackend::Emss, 2, 240, false);
+  CHECK(!s_AudioCatchUp.running);
+  CHECK_EQ(s_AudioCatchUp.stalls, 0u);
+  CHECK_EQ(s_AudioCatchUp.skipped, 0u);
+  Feed(30);
+  CHECK_EQ(s_AudioCatchUp.skipped, 0u);
+  MoonlightInstance::AudDecCleanup();
+}
+
 int main() {
   test_support::RunTest("the decode buffer of the EMSS backend holds one negotiated frame, in samples",
                         DecodeBufferHoldsOneFrameInSamples);
@@ -771,5 +861,7 @@ int main() {
                         EveryPacketOfTheEmssPathReachesTheLeadOfTheSound);
   test_support::RunTest("the end of the stream logs the lead of the sound and keeps it for the report",
                         TheEndOfTheStreamLogsTheLeadAndKeepsItForTheReport);
+  test_support::RunTest("after a stall, the sound that piled up beyond 100 ms is skipped, also with Limit audio delay "
+                        "off, and counted apart from its drops", TheSoundThatPiledUpAfterAStallIsSkipped);
   return test_support::Summary();
 }

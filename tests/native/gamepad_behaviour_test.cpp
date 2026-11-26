@@ -1,11 +1,13 @@
 // Pins the controller behaviour of wasm/gamepad.cpp during a stream: the controller type and buttons announced to the
 // host (also the type of the setting "Controller type sent to the PC"), the face button swaps, button 17, the button
 // combos, the capabilities and the mouse emulation (its toggle, the controller state it leaves on the host, the mouse
-// buttons of several controllers, scrolling and the reset for a new stream). The type detection itself has its own
+// buttons of several controllers, scrolling, the speed of the pointer and the reset for a new stream). The type detection itself has its own
 // tests in controller_type_test.cpp.
 
 #include "gamepad_harness.h"
 #include "test_support.h"
+
+#include <cmath>
 
 using harness::Connect;
 using harness::Poll;
@@ -665,6 +667,117 @@ static void TestScroll() {
   CHECK(Sum(harness::scrolls) >= 540 && Sum(harness::scrolls) <= 620);
 }
 
+// Start a stream in mouse mode (the entry of the Stream Menu) with one controller at rest, with no move recorded yet
+static void StartInMouseMode() {
+  harness::Reset(false, true);
+  Connect(0);
+  Poll();
+  toggleMouseEmulation();
+  Poll();
+  CHECK(mouseEmulationActive);
+  harness::mouseMoves.clear();
+}
+
+// The sum of the moves of the pointer on one axis
+static int SumMoves(bool vertical) {
+  int sum = 0;
+  for (const auto& move : harness::mouseMoves) {
+    sum += vertical ? move.second : move.first;
+  }
+  return sum;
+}
+
+// Since 2.3.5: a rest zone of 0.15, then a quadratic curve up to 10 pixels per 5 ms, for the time of the poll, with the
+// fractions kept. Before, each poll dropped its fraction per axis, so x 0.25 never moved, and x 0.6 with y 0.15 moved
+// only sideways.
+static void TestPointerSpeed() {
+  // Within the rest zone nothing moves
+  StartInMouseMode();
+  harness::slots[0].axis[0] = 0.14;
+  PollFor(2000);
+  CHECK(harness::mouseMoves.empty());
+
+  // Just past it the pointer moves slowly: 0.14 pixels per poll, so the 8th poll moves one pixel, about 27 per second
+  StartInMouseMode();
+  harness::slots[0].axis[0] = 0.25;
+  PollFor(35);
+  CHECK(harness::mouseMoves.empty());
+  Poll();
+  CHECK(harness::mouseMoves.size() == 1 && harness::mouseMoves[0] == std::make_pair(1, 0));
+  harness::mouseMoves.clear();
+  PollFor(1000);
+  CHECK(SumMoves(false) >= 26 && SumMoves(false) <= 28);
+  CHECK_EQ(SumMoves(true), 0);
+
+  // A shallow angle keeps its angle (moved only sideways before)
+  StartInMouseMode();
+  harness::slots[0].axis[0] = 0.6;
+  harness::slots[0].axis[1] = 0.15;
+  PollFor(1000);
+  CHECK(SumMoves(true) > 0);
+  CHECK(SumMoves(false) > 0 && std::fabs(static_cast<double>(SumMoves(true)) / SumMoves(false) - 0.25) <= 0.02);
+
+  // The curve: about 340 pixels per second at half deflection, 840 at 0.7, the same to the left
+  StartInMouseMode();
+  harness::slots[0].axis[0] = 0.5;
+  PollFor(1000);
+  CHECK(SumMoves(false) >= 335 && SumMoves(false) <= 342);
+  harness::mouseMoves.clear();
+  harness::slots[0].axis[0] = 0.7;
+  PollFor(1000);
+  const int right = SumMoves(false);
+  CHECK(right >= 832 && right <= 840);
+  harness::mouseMoves.clear();
+  harness::slots[0].axis[0] = -0.7;
+  PollFor(1000);
+  CHECK(std::abs(SumMoves(false) + right) <= 1);
+
+  // Full deflection: 10 pixels per poll of 5 ms, for the time since the poll before, at most 50 ms after a stall
+  StartInMouseMode();
+  harness::slots[0].axis[0] = 1.0;
+  Poll();
+  CHECK(harness::mouseMoves.size() == 1 && harness::mouseMoves[0] == std::make_pair(10, 0));
+  Poll(20);
+  CHECK(harness::mouseMoves.size() == 2 && harness::mouseMoves[1] == std::make_pair(40, 0));
+  Poll(500);
+  CHECK(harness::mouseMoves.size() == 3 && harness::mouseMoves[2] == std::make_pair(100, 0));
+
+  // The sticks of two controllers add up to one move per poll: one pixel after 4 polls at x 0.25 each
+  harness::Reset(false, true);
+  Connect(0);
+  Connect(1);
+  Poll();
+  toggleMouseEmulation();
+  Poll();
+  harness::mouseMoves.clear();
+  harness::slots[0].axis[0] = 0.25;
+  harness::slots[1].axis[0] = 0.25;
+  PollFor(15);
+  CHECK(harness::mouseMoves.empty());
+  Poll();
+  CHECK(harness::mouseMoves.size() == 1 && harness::mouseMoves[0] == std::make_pair(1, 0));
+
+  // A stick back at rest drops the fraction of a pixel, so it doesn't add to the next move
+  StartInMouseMode();
+  harness::slots[0].axis[0] = 0.25;
+  PollFor(35);
+  harness::slots[0].axis[0] = 0.0;
+  Poll();
+  harness::slots[0].axis[0] = 0.25;
+  Poll();
+  CHECK(harness::mouseMoves.empty());
+
+  // So does the Stream Menu
+  StartInMouseMode();
+  harness::slots[0].axis[0] = 0.25;
+  PollFor(35);
+  setStreamMenuOpen(true);
+  Poll();
+  setStreamMenuOpen(false);
+  Poll();
+  CHECK(harness::mouseMoves.empty());
+}
+
 int main() {
   harness::Install();
   test_support::RunTest("arrival: type, buttons, analog triggers and rumble only when usable", TestArrival);
@@ -680,5 +793,7 @@ int main() {
   test_support::RunTest("a new stream starts without the mouse emulation of the previous one", TestMouseEmulationResetForNewStream);
   test_support::RunTest("mouse buttons are sent only when they change, across controllers", TestMouseButtonsOnlyOnChange);
   test_support::RunTest("the right stick scrolls at partial deflection, with a rest zone and a curve", TestScroll);
+  test_support::RunTest("the left stick moves the pointer slowly past a rest zone, keeps its angle and follows the time "
+                        "of the polls", TestPointerSpeed);
   return test_support::Summary();
 }

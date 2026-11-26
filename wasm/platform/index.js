@@ -8729,7 +8729,8 @@ window.onload = onWindowLoad;
 //   hidden) ends at once, since the TV took the video away from it,
 // - any other stream ends once the app stayed hidden for BACKGROUND_STREAM_STOP_DELAY_MS.
 // The game keeps running on the host, so selecting it again resumes it. The overlay counts how often the app was hidden
-// during the stream and how often the TV closed its video, so a test can show what the quick settings do.
+// during the stream and how often the TV closed its video, so a test can show what the quick settings do. While hidden,
+// the controllers are paused for the PC as in the Stream Menu.
 var BACKGROUND_STREAM_STOP_DELAY_MS = 60000;
 var EMSS_CLOSE_REASON_SOURCE_SUSPENDED = 3;
 var pageHiddenSince = 0;
@@ -8790,6 +8791,19 @@ function getBackgroundStatsLine() {
     String(streamHiddenCount), String(streamVideoTrackCloseCount), String(streamVideoTrackCloseReason));
 }
 
+// Tell the WebAssembly module whether the page is hidden during a stream, so that the controllers stay away from the PC
+// meanwhile, whatever the browser reports for them in a hidden page (setAppHidden() in wasm/gamepad.cpp). Each stream
+// starts with the page shown.
+function setStreamControllersHidden(hidden) {
+  try {
+    if (typeof Module !== 'undefined' && typeof Module.setAppHidden === 'function') {
+      Module.setAppHidden(hidden);
+    }
+  } catch (error) {
+    console.error('%c[index.js, setStreamControllersHidden]', 'color: green;', 'Error: Failed to tell the module that the page is ' + (hidden ? 'hidden' : 'shown') + ': ' + error);
+  }
+}
+
 document.addEventListener('visibilitychange', function() {
   var details = 'The page is now ' + document.visibilityState + ' (stream active: ' + isInGame + ')';
   if (document.visibilityState === 'hidden') {
@@ -8811,6 +8825,7 @@ document.addEventListener('visibilitychange', function() {
     }
   } else if (document.visibilityState === 'hidden') {
     streamHiddenCount++;
+    setStreamControllersHidden(true);
     if (!wasmSessionStarted || !isStreamConnected) {
       endStreamInBackground('the stream was still starting');
     } else if (isStreamVideoTrackClosed && streamVideoTrackCloseReason !== EMSS_CLOSE_REASON_SOURCE_SUSPENDED) {
@@ -8824,6 +8839,7 @@ document.addEventListener('visibilitychange', function() {
   } else if (document.visibilityState === 'visible') {
     clearTimeout(backgroundStreamStopTimer);
     backgroundStreamStopTimer = null;
+    setStreamControllersHidden(false);
     if (isStreamStoppedInBackground) {
       isStreamStoppedInBackground = false;
       snackbarLogLong('The stream was ended because Moonlight went to the background. Select the game to resume it.');

@@ -1,7 +1,9 @@
 // Pins how PollGamepads() (wasm/gamepad.cpp) reads the controllers during a stream and what it sends to the host:
 // one batched main-thread call per poll (or the single Emscripten calls when its helper is missing), an arrival per
 // controller, the controller state only when it changes plus a refresh every 100 ms, a retry after a dropped packet,
-// and the controller mask when controllers come and go.
+// and the controller mask when controllers come and go. Since 2.3.5 the slots are read only once per 50 ms while no
+// slot counts as a controller or while the input stays paused (the Stream Menu, the hidden app), on every poll
+// otherwise.
 
 #include "gamepad_harness.h"
 #include "test_support.h"
@@ -108,7 +110,7 @@ static void TestPlaceholderSlots() {
   CHECK_EQ(harness::arrivals.size(), 0u);
   CHECK_EQ(padPackets.size(), 0u);
   harness::slots[0].timestamp = 250.0;
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   CHECK_EQ(harness::arrivals.size(), 1u);
   CHECK_EQ(padPackets.size(), 1u);
   // Once seen, the same controller stays real even if its timestamp reads zero again
@@ -140,8 +142,8 @@ static void TestFailedRead() {
   CHECK_EQ(padPackets.size(), 0u);
 }
 
-// A read that throws on the main thread, every 5 ms for the whole stream, is logged only by the JavaScript code, which
-// does so the first and every 1000th time: the poll must not log it again each time
+// A read that throws on the main thread, on every read for the whole stream, is logged only by the JavaScript code,
+// which does so the first and every 1000th time: the poll must not log it again each time
 static void TestThrowingReadIsNotLoggedEachPoll() {
   harness::Reset();
   Connect(0);
@@ -153,14 +155,103 @@ static void TestThrowingReadIsNotLoggedEachPoll() {
 
   // A read that fails without an exception (no Gamepad API) is still logged here
   harness::batchedReadResult = -1;
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   CHECK_EQ(harness::logMessages.size(), 1u);
   CHECK(!harness::logMessages.empty() && harness::logMessages[0] == "Failed to sample gamepad data!\n");
 
   // Once the read works again, the controller arrives
   harness::batchedReadResult = 0;
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   CHECK_EQ(harness::arrivals.size(), 1u);
+}
+
+// The reads of the slots in one second of polls every 5 ms, from the counter of the harness
+static int ReadsInOneSecond() {
+  const int before = harness::slotReads;
+  harness::PollFor(1000);
+  return harness::slotReads - before;
+}
+
+// Each read is a round trip to the main thread that the input thread waits for: while no slot counts as a controller
+// (none, or a placeholder of Tizen) or while the input stays paused, the slots are read once per 50 ms; with a
+// controller every 5 ms; a pause that starts or ends, and the first poll of a stream, read at once
+static void RunIdleReads(bool fallback) {
+  harness::Reset();
+  harness::useFallbackPath = fallback;
+
+  // No slot: 20 reads per second instead of 200, and the first poll of the stream reads
+  Poll();
+  CHECK_EQ(harness::slotReads, 1);
+  int reads = ReadsInOneSecond();
+  CHECK(reads >= 20 && reads <= 21);
+
+  // A placeholder slot of Tizen (connected, timestamp 0, no input) doesn't count either
+  Connect(0);
+  harness::slots[0].timestamp = 0.0;
+  reads = ReadsInOneSecond();
+  CHECK(reads >= 20 && reads <= 21);
+  CHECK_EQ(harness::arrivals.size(), 0u);
+  Disconnect(0);
+
+  // A controller that connects is announced within 50 ms, and from then on every poll reads
+  Connect(0);
+  harness::PollFor(static_cast<int>(kIdleSlotReadIntervalMs));
+  CHECK_EQ(harness::arrivals.size(), 1u);
+  CHECK_EQ(ReadsInOneSecond(), 200);
+
+  // The Stream Menu: its opening is read at once and sends the released state; then 20 reads per second, and its close
+  // is read at once again
+  harness::SetButton(0, 0, true);
+  Poll();
+  CHECK(!padPackets.empty() && (padPackets.back().buttons & A_FLAG));
+  setStreamMenuOpen(true);
+  int before = harness::slotReads;
+  Poll();
+  CHECK_EQ(harness::slotReads, before + 1);
+  CHECK(!padPackets.empty() && padPackets.back().buttons == 0);
+  reads = ReadsInOneSecond();
+  CHECK(reads >= 20 && reads <= 21);
+  setStreamMenuOpen(false);
+  before = harness::slotReads;
+  Poll();
+  CHECK_EQ(harness::slotReads, before + 1);
+  CHECK_EQ(ReadsInOneSecond(), 200);
+
+  // The same while Moonlight is hidden
+  setAppHidden(true);
+  before = harness::slotReads;
+  Poll();
+  CHECK_EQ(harness::slotReads, before + 1);
+  reads = ReadsInOneSecond();
+  CHECK(reads >= 20 && reads <= 21);
+  setAppHidden(false);
+  before = harness::slotReads;
+  Poll();
+  CHECK_EQ(harness::slotReads, before + 1);
+  CHECK_EQ(ReadsInOneSecond(), 200);
+
+  // The removal of the last controller is sent at the next read, and then the reads slow down again
+  Disconnect(0);
+  const size_t packetsBefore = padPackets.size();
+  Poll();
+  CHECK(padPackets.size() == packetsBefore + 1 && padPackets.back().activeMask == 0 && padPackets.back().buttons == 0);
+  reads = ReadsInOneSecond();
+  CHECK(reads >= 20 && reads <= 21);
+
+  // A new stream reads on its first poll, even 5 ms after the last read
+  Poll(kIdleSlotReadIntervalMs);
+  harness::Instance()->HandleGamepadInputState(false, false, "", LI_CTYPE_UNKNOWN);
+  before = harness::slotReads;
+  Poll();
+  CHECK_EQ(harness::slotReads, before + 1);
+}
+
+static void TestIdleReads() {
+  RunIdleReads(false);
+}
+
+static void TestIdleReadsOfTheFallbackPath() {
+  RunIdleReads(true);
 }
 
 int main() {
@@ -171,5 +262,8 @@ int main() {
   test_support::RunTest("a controller replaced in the same slot is removed and announced again", TestReplacedController);
   test_support::RunTest("no slots: nothing is announced or sent", TestFailedRead);
   test_support::RunTest("a read that throws is not logged again by every poll", TestThrowingReadIsNotLoggedEachPoll);
+  test_support::RunTest("the slots are read once per 50 ms while no controller counts or the input stays paused, on "
+                        "every poll otherwise", TestIdleReads);
+  test_support::RunTest("the fallback path reads the slots by the same rule", TestIdleReadsOfTheFallbackPath);
   return test_support::Summary();
 }

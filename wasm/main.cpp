@@ -360,6 +360,9 @@ void* MoonlightInstance::ConnectionThreadFunc(void* context) {
   return NULL;
 }
 
+// A wait of StartStream() for the threads of the stream before that is logged (see there)
+static constexpr uint64_t kLongStartWaitMs = 50;
+
 static void HexStringToBytes(const char* str, char* output) {
   for (size_t i = 0; i < strlen(str); i += 2) {
     sscanf(&str[i], "%2hhx", &output[i / 2]);
@@ -376,10 +379,15 @@ MessageResult MoonlightInstance::StartStream(std::string host, int httpPort, std
   // Wait for the teardown of the stream before (its stop thread), and join the connection thread of a start that
   // failed on its own, which no stop thread joined: until then it keeps its stack and its worker (stream_threads.hpp).
   // That thread posted its termination without waiting for the front end and returned, so this only waits for a
-  // thread that is returning. Before the state below is reset, which that thread read.
+  // thread that is returning. Before the state below is reset, which that thread read. The main thread waits here, so a
+  // wait of kLongStartWaitMs or more for the teardown of the stream before, e.g. one whose host or media source answered
+  // late (its stop thread logs those timeouts), is logged as well: the UI doesn't answer meanwhile.
   const uint64_t joinStartMs = LiGetMillis();
   if (m_StreamThreads.BeginStart()) {
     ClLogMessage("Joined the connection thread of the earlier start, which had failed on its own (%d ms)\n",
+      (int)(LiGetMillis() - joinStartMs));
+  } else if (LiGetMillis() - joinStartMs >= kLongStartWaitMs) {
+    ClLogMessage("The start waited %d ms on the main thread for the teardown of the stream before\n",
       (int)(LiGetMillis() - joinStartMs));
   }
   m_ConnectionCancelled = false;
@@ -917,6 +925,7 @@ EMSCRIPTEN_BINDINGS(handle_message) {
   emscripten::function("cancelRequest", &cancelRequest);
   emscripten::function("toggleStats", &toggleStats);
   emscripten::function("setStreamMenuOpen", &setStreamMenuOpen);
+  emscripten::function("setAppHidden", &setAppHidden);
   emscripten::function("toggleMouseEmulation", &toggleMouseEmulation);
   emscripten::function("requestIdrFrame", &requestIdrFrame);
   emscripten::function("getAudioChannelCount", &getAudioChannelCount);

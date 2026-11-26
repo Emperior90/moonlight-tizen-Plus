@@ -11,7 +11,7 @@
 // checks every read against the end of the buffer. The fourth: the connection thread and the stop thread of a stream
 // are created and joined through wasm/stream_threads.hpp only, which joins each of them once
 // (native/stream_threads_test.cpp runs the rule; wasm/main.cpp, which calls it, is built by no native test, so the
-// places and the order of its calls are pinned here). The same header tells an answer of the media source of the TV
+// places and the order of its calls are pinned here, and the log line of a long wait of the start for them, 2.3.5). The same header tells an answer of the media source of the TV
 // to its close that comes after the next start from one in time (the last three tests of that native test), and the
 // last test here pins that CloseMediaSource() of main.cpp releases the tracks through that rule only.
 
@@ -125,6 +125,11 @@ test('the connection thread and the stop thread of a stream are created and join
   assert.ok(begin > 0 && begin < start.indexOf('m_ConnectionCancelled = false;'), 'BeginStart() comes before the reset');
   assert.ok(begin < start.indexOf('PostToJs('), 'BeginStart() comes before the first message of the new stream');
   assert.equal(start.split('m_StreamThreads.BeginStart()').length - 1, 1);
+  // The main thread waits there, so a wait of 50 ms or more for the teardown of the stream before is logged too (2.3.5),
+  // apart from the join of a start that failed on its own
+  assert.match(main, /static constexpr uint64_t kLongStartWaitMs = 50;/);
+  assert.match(start, /const uint64_t joinStartMs = LiGetMillis\(\);\s+if \(m_StreamThreads\.BeginStart\(\)\) \{/);
+  assert.match(start, /\} else if \(LiGetMillis\(\) - joinStartMs >= kLongStartWaitMs\) \{\s+ClLogMessage\("The start waited %d ms on the main thread for the teardown of the stream before\\n",/);
   assert.match(start, /if \(!m_StreamThreads\.StartConnectionThread\(MoonlightInstance::ConnectionThreadFunc, this\)\) \{[^}]*OnConnectionStopped\(0\);\s+\}/);
   assert.equal(main.split('m_StreamThreads.StartConnectionThread(').length - 1, 1);
 

@@ -59,6 +59,9 @@
   Module.setStreamMenuOpen = function() {
     record('setStreamMenuOpen', arguments);
   };
+  Module.setAppHidden = function() {
+    record('setAppHidden', arguments);
+  };
   Module.toggleMouseEmulation = function() {
     record('toggleMouseEmulation', arguments);
   };

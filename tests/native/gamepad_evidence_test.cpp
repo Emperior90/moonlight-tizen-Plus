@@ -4,7 +4,9 @@
 // podrezov). The frames of tests/fixtures/gamepad-evidence.tsv are checked here and against Controller.isRealGamepad()
 // of wasm/platform/gamepad.js (tests/unit/gamepad-js.test.js), so the menus count the controllers that the stream
 // announces. The other tests check that the input which made a controller count reaches the host on the same poll,
-// that the button combos work with it, and that the evidence stays for the next stream.
+// that the button combos work with it, and that the evidence stays for the next stream. Each poll here is one read of
+// the slots, kIdleSlotReadIntervalMs (50 ms) after the one before, as on the TV while no slot counts as a controller
+// (since 2.3.5 the slots are read only that often then).
 
 #include "gamepad_harness.h"
 #include "test_support.h"
@@ -138,7 +140,7 @@ static void TestFixtureFrames() {
     std::string actual;
     for (const std::string& frame : entry.frames) {
       test_support::Check(SetFrame(frame), "frame " + frame + " of \"" + entry.name + "\"", "", __FILE__, __LINE__);
-      Poll();
+      Poll(kIdleSlotReadIntervalMs);
       // The slot counts once the host got its arrival
       actual += slotState[0].announced ? '1' : '0';
     }
@@ -158,7 +160,7 @@ static void TestFirstPressReachesTheHost() {
   CHECK_EQ(padPackets.size(), 0u);
 
   SetButton(0, kButtonA, true);
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   CHECK_EQ(harness::arrivals.size(), 1u);
   CHECK(!harness::arrivals.empty() && harness::arrivals[0].controller == 0 && harness::arrivals[0].type == LI_CTYPE_XBOX);
   CHECK_EQ(padPackets.size(), 1u);
@@ -170,7 +172,7 @@ static void TestFirstPressReachesTheHost() {
 
   // From now on its input is sent like that of any controller, and it isn't logged again
   SetButton(0, kButtonA, false);
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   CHECK(padPackets.size() == 2 && padPackets[1].buttons == 0);
   PollFor(200);
   CHECK_EQ(CountLogs(kTimestampLog), 1);
@@ -178,7 +180,7 @@ static void TestFirstPressReachesTheHost() {
 
   // A controller with a positive timestamp next to it is announced at once, without that log line
   Connect(1, "DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)");
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   CHECK_EQ(harness::arrivals.size(), 2u);
   CHECK_EQ(CountLogs(kTimestampLog), 1);
 }
@@ -188,9 +190,9 @@ static void TestLogNamesTheTimestamp() {
   harness::Reset();
   ConnectWithoutTimestamp(0);
   harness::slots[0].timestamp = -1.0;
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   SetButton(0, kButtonA, true);
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   CHECK_EQ(harness::arrivals.size(), 1u);
   CHECK_EQ(CountLogs("Controller 0 reports a timestamp of -1 and counts as a controller since its input changed"), 1);
   CHECK_EQ(CountLogs(kTimestampLog), 0);
@@ -202,24 +204,24 @@ static void TestStickMoveAndJitter() {
   harness::Reset();
   ConnectWithoutTimestamp(0);
   harness::slots[0].axis[0] = 0.3;
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   for (int i = 0; i < 1000; ++i) {
     harness::slots[0].axis[0] = (i % 2) ? 0.309 : 0.291;
-    Poll();
+    Poll(kIdleSlotReadIntervalMs);
   }
   CHECK_EQ(harness::arrivals.size(), 0u);
   CHECK_EQ(padPackets.size(), 0u);
   harness::slots[0].axis[0] = 0.289;
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   CHECK_EQ(harness::arrivals.size(), 1u);
   CHECK(padPackets.size() == 1 && padPackets[0].leftStickX == static_cast<short>(0.289 * 32767));
 
   // A move of the right stick from its first value counts the same way
   harness::Reset();
   ConnectWithoutTimestamp(0);
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   harness::slots[0].axis[3] = -0.5;
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   CHECK_EQ(harness::arrivals.size(), 1u);
   CHECK(padPackets.size() == 1 && padPackets[0].rightStickY == static_cast<short>(0.5 * 32767));
 }
@@ -233,7 +235,7 @@ static void TestHeldButtonCountsOnRelease() {
   PollFor(100);
   CHECK_EQ(harness::arrivals.size(), 0u);
   SetButton(0, kButtonA, false);
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   CHECK_EQ(harness::arrivals.size(), 1u);
   CHECK(padPackets.size() == 1 && padPackets[0].buttons == 0);
 }
@@ -249,7 +251,7 @@ static void TestValueThatIsNotANumber() {
   CHECK_EQ(harness::arrivals.size(), 0u);
   CHECK(slotState[0].hasBaseline && slotState[0].baseline.analogButton[6] == 0.4);
   harness::slots[0].analogButton[6] = 0.6;
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   CHECK_EQ(harness::arrivals.size(), 1u);
   CHECK(padPackets.size() == 1 && padPackets[0].leftTrigger == static_cast<unsigned char>(0.6 * 255));
 }
@@ -259,23 +261,23 @@ static void TestValueThatIsNotANumber() {
 static void TestCombosAsFirstInput() {
   harness::Reset();
   ConnectWithoutTimestamp(0);
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   SetButton(0, kButtonBack, true);
   SetButton(0, kButtonStart, true);
   SetButton(0, kButtonLB, true);
   SetButton(0, kButtonRB, true);
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   CHECK_EQ(harness::stopStreamCalls, 1);
   CHECK_EQ(harness::arrivals.size(), 1u);
 
   harness::Reset();
   ConnectWithoutTimestamp(0);
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   SetButton(0, kButtonBack, true);
   SetButton(0, kButtonLB, true);
   SetButton(0, kButtonRB, true);
   SetButton(0, 2, true); // X
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   CHECK_EQ(harness::toggleStatsCalls, 1);
 }
 
@@ -283,21 +285,21 @@ static void TestCombosAsFirstInput() {
 static void TestDisconnectAndReplacement() {
   harness::Reset();
   ConnectWithoutTimestamp(0);
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   SetButton(0, kButtonA, true);
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   CHECK_EQ(harness::arrivals.size(), 1u);
 
   // Unplugged: the host gets a zeroed state without the controller, and it comes back without evidence
   Disconnect(0);
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   CHECK(!padPackets.empty() && padPackets.back().activeMask == 0 && padPackets.back().buttons == 0);
   CHECK(!slotState[0].validated && !slotState[0].hasBaseline);
   ConnectWithoutTimestamp(0);
   PollFor(100);
   CHECK_EQ(harness::arrivals.size(), 1u);
   SetButton(0, kButtonA, true);
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   CHECK_EQ(harness::arrivals.size(), 2u);
 
   // Another controller with the same layout and a held button: removed, then not counted, with its baseline taken at
@@ -305,12 +307,12 @@ static void TestDisconnectAndReplacement() {
   const size_t packetsBefore = padPackets.size();
   ConnectWithoutTimestamp(0, "DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)");
   SetButton(0, kButtonA, true);
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   CHECK(padPackets.size() == packetsBefore + 1 && padPackets.back().activeMask == 0);
   CHECK_EQ(harness::arrivals.size(), 2u);
   CHECK(slotState[0].hasBaseline && !slotState[0].validated && slotState[0].baseline.digitalButton[kButtonA] == EM_TRUE);
   SetButton(0, kButtonA, false);
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   CHECK_EQ(harness::arrivals.size(), 3u);
   CHECK(harness::arrivals.size() == 3 && harness::arrivals[2].type == LI_CTYPE_PS);
 }
@@ -320,11 +322,11 @@ static void TestDisconnectAndReplacement() {
 static void TestNextStreamAnnouncesAtOnce() {
   harness::Reset();
   ConnectWithoutTimestamp(0);
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   SetButton(0, kButtonA, true);
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   SetButton(0, kButtonA, false);
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   CHECK_EQ(harness::arrivals.size(), 1u);
 
   // What main.cpp does at the start of the next stream
@@ -332,7 +334,7 @@ static void TestNextStreamAnnouncesAtOnce() {
   harness::arrivals.clear();
   padPackets.clear();
   harness::logMessages.clear();
-  Poll();
+  Poll(kIdleSlotReadIntervalMs);
   CHECK_EQ(harness::arrivals.size(), 1u);
   CHECK_EQ(padPackets.size(), 1u);
   CHECK(slotState[0].validated);

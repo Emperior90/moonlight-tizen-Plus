@@ -64,6 +64,9 @@ bool useFallbackPath = false; // answer the batched read with -2, so gamepad.cpp
 int batchedReadResult = 0; // when not 0, the batched read fails with this result, e.g. -3 for an exception in it
 bool hasRumbleActuator = false; // what the rumble probe of the arrival reports
 int numSlots = 4; // number of gamepad slots the browser exposes
+// The reads of the slots (ReadGamepadSlots()), each a round trip to the main thread on the TV: counted at the batched
+// read, which every read starts with, also one that fails or answers -2 for the fallback path
+int slotReads = 0;
 EmscriptenGamepadEvent slots[kMaxControllers];
 bool slotPresent[kMaxControllers];
 
@@ -97,6 +100,7 @@ inline void ResetWithMapping(bool rumbleFeedback, bool mouseEmulation, const std
   batchedReadResult = 0;
   hasRumbleActuator = false;
   numSlots = 4;
+  slotReads = 0;
   std::memset(slots, 0, sizeof(slots));
   std::memset(slotPresent, 0, sizeof(slotPresent));
   for (auto& slot : slotState) {
@@ -177,6 +181,7 @@ inline void PollFor(int milliseconds) {
 // Answer the main-thread EM_ASM blocks of gamepad.cpp: the batched read of all slots and the rumble probe
 inline int AnswerEmAsm(const char* code, va_list args) {
   if (std::strstr(code, "__fillGamepadEventData")) {
+    slotReads++;
     if (useFallbackPath) {
       return -2;
     }

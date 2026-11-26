@@ -1,8 +1,9 @@
 // Checks how far the sound of the TV media player runs ahead of the clock of the TV over a session, and the drift of
 // that lead in milliseconds per hour (wasm/audio_lead.hpp), on simulated streams: the PC sends a packet of 5 ms every
 // 5 ms of its own clock, which runs as fast as the one of the TV, faster or slower, each packet arrives after a delay of
-// the network and never before the one before it, the lead follows the rule of auddec.cpp (s_estimatedAudioEnd), and
-// each packet goes to the tracker as auddec.cpp hands it over. The tolerances of the drift: 0.5 ms per hour for a clean
+// the network and never before the one before it, the lead follows the rule of auddec.cpp (s_estimatedAudioEnd), with
+// its catch-up after the player ran dry (audio_catch_up.hpp, since 2.3.5: the packets of the second after it are
+// skipped while more than 100 ms of sound wait), and each packet goes to the tracker as auddec.cpp hands it over. The tolerances of the drift: 0.5 ms per hour for a clean
 // network, 2 ms per hour with jitter (also over 5 hours), 3 ms per hour with jitter, a pause of the PC and a stall of
 // the network in one session, and also 3 ms per hour for the shortest session with a drift.
 // - The same clocks give a drift of about 0, with and without jitter and stalls of the network, while the late packets
@@ -10,7 +11,8 @@
 //   delays, as in auddec.cpp.
 // - A PC whose clock runs 50 ms per hour faster gives about 50, also with jitter, with a pause of the PC too short for
 //   a gap, with a pause of the PC in the middle (which empties the player) and with a stall of the network of more
-//   than 100 ms (two gaps). A busier network for a while doesn't make a drift either.
+//   than 100 ms (two gaps), whose backlog the catch-up of auddec.cpp skips beyond 100 ms, so that the lead ends at
+//   about 100 ms. A busier network for a while doesn't make a drift either, and the stalls of 60 ms skip nothing.
 // - A PC whose clock runs slower gives a negative drift, while the lead stays at its lowest (the player runs short).
 // - The first minute is not measured: a start whose network delay falls from 150 ms to 2 ms leaves a lead of about
 //   150 ms after it, which is the lead after the first minute and the highest one.
@@ -21,6 +23,7 @@
 // - The line of the diagnostic log, with and without a drift and without a measurement, fits a line of the log.
 // auddec.cpp hands its packets to the tracker and keeps its figures for the report (audio_decoder_test.cpp).
 
+#include "audio_catch_up.hpp"
 #include "audio_lead.hpp"
 #include "diagnostic_log.hpp"
 #include "test_support.h"
@@ -56,6 +59,7 @@ struct Stream {
   double end = 0.0;  // s_estimatedAudioEnd of auddec.cpp, in seconds since the first packet
   double stallUntil = -1.0;  // packets sent before this arrive at it
   double lowestLead = 1e9;  // the lowest lead after the first minute, on the clock of the TV
+  AudioCatchUp catchUp;  // the catch-up of auddec.cpp after the player ran dry
 };
 
 // Start a stream whose PC clock runs the given milliseconds per hour faster than the TV's (slower when negative)
@@ -90,6 +94,13 @@ static void Send(Stream& stream, double seconds, Delay delay) {
     arrival = std::max(arrival, stream.lastArrival);
     stream.lastArrival = arrival;
     const double now = arrival - stream.firstArrival;
+    // auddec.cpp skips a packet of the catch-up while more than 100 ms (kAudioBufferMargin) wait, which still counts
+    if (stream.catchUp.Update(now, stream.end) && now + 0.1 < stream.end) {
+      stream.catchUp.CountSkipped();
+      tracker.AddPacket(now, stream.end - now);
+      stream.sendTime += kPacket * stream.rate;
+      continue;
+    }
     stream.end = std::max(stream.end, now) + kPacket;
     tracker.AddPacket(now, stream.end - now);
     if (now >= kAudioLeadSettleSeconds) {
@@ -137,6 +148,7 @@ static void SameClocksGiveNoDrift() {
   CHECK(summary.hasDrift);
   CHECK_NEAR(summary.driftMsPerHour, 0.0, 2.0);
   CHECK_EQ(summary.gaps, 0u);
+  CHECK_EQ(stream.catchUp.skipped, 0u);
   CHECK(summary.startMs > 30.0);
   CHECK_NEAR(summary.endMs, summary.startMs, 5.0);
   CHECK(summary.maxMs >= summary.endMs);
@@ -196,11 +208,14 @@ static void FasterPcGivesItsDrift() {
   CHECK_NEAR(summary.driftMsPerHour, 50.0, 3.0);
   // The time of the sound without the first minute and the 10 s after each gap
   CHECK_NEAR(summary.measuredSeconds, 3600.0 - 60.0 - 2 * 10.0, 2.0);
-  // The pause emptied the player, so the lead started again from a packet, and the stall raised it by the time the
-  // player ran dry, which the drift doesn't count
+  // The pause emptied the player, so the lead started again from a packet, and the stall raised it to the 100 ms of the
+  // catch-up and no further (before 2.3.5 by the time the player ran dry, more than 275 ms), which the drift doesn't
+  // count; the packets beyond were skipped, in one stall
   CHECK(leadBeforePause > 35.0);
   CHECK(stream.lowestLead < 0.010);
-  CHECK(summary.endMs > leadBeforePause + 200.0);
+  CHECK(summary.endMs >= 95.0 && summary.endMs <= 115.0);
+  CHECK_EQ(stream.catchUp.stalls, 1u);
+  CHECK(stream.catchUp.skipped >= 30u);
   CHECK_EQ(summary.maxMs, summary.endMs);
 }
 
@@ -233,6 +248,8 @@ static void TheFirstMinuteIsNotMeasured() {
   Send(stream, 60.0, [](double sent) { return 0.002 + 0.148 * (1.0 - sent / 60.0); });
   Send(stream, 840.0, NoJitter);
   const AudioLeadSummary summary = tracker.Finish();
+  // A ramp at the start is no dry-out, so the catch-up skips none of it
+  CHECK_EQ(stream.catchUp.skipped, 0u);
   CHECK_NEAR(summary.startMs, 153.0, 1.0);
   CHECK_NEAR(summary.endMs, 153.0, 1.0);
   CHECK_NEAR(summary.maxMs, 153.0, 1.0);

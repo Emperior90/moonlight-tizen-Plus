@@ -6,7 +6,11 @@
 // backend has returned, with every packet that reached it (also those that 'Limit audio delay' skips); each start
 // begins it afresh and its end hands the figures to the report through the statistics of the audio stream, which
 // VidDecCleanup() takes before the message is built; the front end gives the hint the state of 'Limit audio delay'.
+// Since 2.3.5 the catch-up after a stall (wasm/audio_catch_up.hpp), a pure header as well, skips the sound that piled
+// up beyond 100 ms after the player ran dry with the same test as 'Limit audio delay', whatever the switch says; each
+// start resets it, and the end of a stream logs and resets it.
 // The behaviour itself is run by tests/native/audio_lead_test.cpp (the estimator on simulated streams),
+// audio_catch_up_test.cpp (the catch-up),
 // audio_decoder_test.cpp (auddec.cpp), session_report_test.cpp and stats_overlay_test.cpp (the report), and
 // tests/unit/diagnostics.test.js with the browser test diagnostics.test.js (the line and the hint).
 
@@ -41,19 +45,42 @@ test('the tracker is a pure header without a lock, which only the audio thread f
   assert.equal(feeds, 2);
   assert.equal(decoder.split('s_AudioLead.AddPacket(').length - 1, 2, 'nowhere else');
   const webAudioReturn = play.indexOf('CheckAudioLoad();\n    return;\n  }');
-  const skipped = play.indexOf('if (s_AudioSyncEnabled && ntp + kAudioBufferMargin < s_estimatedAudioEnd) {');
+  const catchUp = play.indexOf('const bool catchingUp = s_AudioCatchUp.Update(ntp.count(), s_estimatedAudioEnd.count());');
+  const skipped = play.indexOf('if ((s_AudioSyncEnabled || catchingUp) && ntp + kAudioBufferMargin < s_estimatedAudioEnd) {');
   const update = play.indexOf('s_estimatedAudioEnd = std::max(s_estimatedAudioEnd, ntp) + s_frameDuration;');
   const feedSkipped = play.indexOf('s_AudioLead.AddPacket(');
   const feedOther = play.lastIndexOf('s_AudioLead.AddPacket(');
-  assert.ok(webAudioReturn > 0 && skipped > webAudioReturn && feedSkipped > skipped, 'the skipped packet counts');
+  assert.ok(webAudioReturn > 0 && catchUp > webAudioReturn && skipped > catchUp, 'the catch-up is updated before the skip');
+  assert.ok(feedSkipped > skipped, 'the skipped packet counts');
   assert.ok(play.indexOf('return;', feedSkipped) < update && feedOther > update, 'the others count after the update');
   // Each start begins afresh, before the disabled output returns, and only the TV media player is measured
   const init = functionBody(decoder, 'int MoonlightInstance::AudDecInit(');
   assert.ok(init.indexOf('s_AudioLead.Reset(s_AudioBackend == AudioBackend::Emss ?') > 0);
   assert.ok(init.indexOf('s_AudioLead.Reset(') < init.indexOf('if (s_AudioBackend == AudioBackend::Disabled) {'));
-  // The end of the stream logs it and keeps its figures, then starts it again empty
+  // The end of the stream logs it and keeps its figures, then starts it again empty, and so the catch-up after it
   const cleanup = functionBody(decoder, 'void MoonlightInstance::AudDecCleanup(void) {');
-  assert.match(cleanup, /const AudioLeadSummary lead = s_AudioLead\.Finish\(\);[\s\S]*FormatAudioLeadLog\(lead, line, sizeof\(line\)\)[\s\S]*g_AudioStreamStats\.hasDrift = lead\.hasDrift;[\s\S]*s_AudioLead\.Reset\(0\.0\);\n\}/);
+  assert.match(cleanup, /const AudioLeadSummary lead = s_AudioLead\.Finish\(\);[\s\S]*FormatAudioLeadLog\(lead, line, sizeof\(line\)\)[\s\S]*g_AudioStreamStats\.hasDrift = lead\.hasDrift;[\s\S]*s_AudioLead\.Reset\(0\.0\);\n[\s\S]*if \(s_AudioCatchUp\.skipped != 0\) \{\s+ClLogMessage\("Skipped %u audio packets \(%\.0f ms of sound\) that piled up after %u stalls of this stream\\n",[\s\S]*\}\n  s_AudioCatchUp\.Reset\(\);\n\}/);
+});
+
+test('the catch-up after a stall is a pure header that the audio thread runs with the test of Limit audio delay', () => {
+  const header = read('wasm/audio_catch_up.hpp');
+  assert.deepEqual(header.match(/^#include .*$/gm), ['#include <cstdint>']);
+  assert.doesNotMatch(header.replace(/\/\/.*$/gm, ''), /mutex|atomic|PLT_|lock\(|new |malloc/);
+  assert.match(header, /constexpr double kAudioCatchUpSeconds = 1\.0;/);
+  const decoder = read('wasm/auddec.cpp');
+  assert.match(decoder, /#include "audio_catch_up\.hpp"/);
+  assert.match(decoder, /static constexpr TimeStamp kAudioBufferMargin = 100ms;/);
+  assert.match(decoder, /\nstatic AudioCatchUp s_AudioCatchUp;\n/);
+  // Each start resets it with the end of the appended sound, which its first packet reads
+  const init = functionBody(decoder, 'int MoonlightInstance::AudDecInit(');
+  assert.match(init, /\n  s_estimatedAudioEnd = 0s;\n  s_AudioCatchUp\.Reset\(\);\n/);
+  // The skip of a catch-up is counted and logged apart from the drops of the switch, and the packet still counts for
+  // the lead and returns before it is decoded
+  const play = functionBody(decoder, 'void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLength) {');
+  const branch = play.slice(play.indexOf('if ((s_AudioSyncEnabled || catchingUp)'), play.indexOf('DecodeAndAppendPacket('));
+  assert.match(branch, /if \(s_AudioSyncEnabled\) \{[\s\S]*\+\+s_DroppedPackets % 100 == 1[\s\S]*\} else \{\s+\/\/[^\n]*\n\s+s_AudioCatchUp\.CountSkipped\(\);\s+if \(s_AudioCatchUp\.skipped % 100 == 1\) \{\s+ClLogMessage\("Skipping the sound that piled up after a stall: %u packets of this stream \(%u stalls\), "/);
+  assert.match(branch, /s_AudioLead\.AddPacket\(ntp\.count\(\), \(s_estimatedAudioEnd - ntp\)\.count\(\)\);\s+return;\s+\}\n\n\s+\/\/ Decode and append the audio packet to the audio track\n\s+const bool appended = $/);
+  assert.equal(decoder.split('s_AudioCatchUp.Update(').length - 1, 1);
 });
 
 test('the report takes the figures that the audio stream left, and the hint knows whether Limit audio delay was on', () => {

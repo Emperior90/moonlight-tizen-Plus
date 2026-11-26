@@ -150,6 +150,18 @@ static SentControllerState sentState[kMaxControllers];
 // Interval to resend an unchanged controller state, so the host is refreshed while idle
 static constexpr uint64_t kControllerRefreshIntervalMs = 100;
 
+// While no slot counted as a controller at the last read (no controller, or only the placeholders of Tizen and
+// controllers with a timestamp of 0 that sent no input yet), or while the input stays paused (the Stream Menu is open or
+// Moonlight is hidden), the slots are read only once per kIdleSlotReadIntervalMs instead of on every poll: each read is
+// a round trip to the main thread that the input thread waits for (ReadGamepadSlots()), 200 per second in a stream
+// played with the remote or a keyboard. The input thread still runs every 5 ms for the mouse (ReportMouseMovement() in
+// input.cpp), and a pause that starts or ends is read at once. A controller that connects is announced within 50 ms,
+// and a controller with a timestamp of 0 counts from an input that a read sees: a tap shorter than 50 ms before its
+// first counted input can go unseen.
+static constexpr uint64_t kIdleSlotReadIntervalMs = 50;
+static bool hadController = false; // a slot counted as a controller at the last read
+static uint64_t lastSlotReadMs = 0; // when the slots were last read, 0 for a read on the next poll
+
 // Mouse emulation: holding Start for kMouseEmulationHoldMs turns it on or off. While it is on, the left sticks move the
 // mouse, the right sticks scroll and the face buttons and bumpers hold the mouse buttons, and the host gets no
 // controller states.
@@ -202,8 +214,13 @@ static StreamMenuCombo streamMenuCombo[kMaxControllers];
 // released, no mouse input and no button combos, while the menus of the UI read the controllers. The buttons that are
 // held when it closes, e.g. the one that chose Resume, reach the host only once they were released and pressed again.
 static std::atomic<bool> streamMenuOpen{false};
-static bool inputPaused = false; // the state of streamMenuOpen that the input thread follows
-static int heldSinceMenu[kMaxControllers]; // buttons, as the host gets them, held since the Stream Menu closed
+// Moonlight is hidden during the stream (setAppHidden(), called by the UI on the main thread when the page is hidden
+// or shown again): the host gets the same as while the Stream Menu is open, whatever the browser reports for the
+// controllers of a hidden page (the last state, the live input of Smart Hub, or nothing)
+static std::atomic<bool> appHidden{false};
+static bool inputPaused = false; // the state of streamMenuOpen and appHidden that the input thread follows
+// The buttons, as the host gets them, held since the Stream Menu closed or Moonlight showed again
+static int heldSinceMenu[kMaxControllers];
 
 // The Stream Menu asked to turn the mouse emulation on or off (toggleMouseEmulation()), which the next poll does
 static std::atomic<bool> mouseEmulationToggleRequested{false};
@@ -229,6 +246,17 @@ static constexpr uint64_t kMaxScrollIntervalMs = 50;
 static double pendingScrollX = 0.0;
 static double pendingScrollY = 0.0;
 static uint64_t lastScrollMs = 0; // 0 until the first poll in mouse mode
+
+// Moving the pointer with the left stick in the mouse emulation. A stick within kPointerRestZone of its centre (measured
+// radially) doesn't move it; past it, the speed follows a quadratic curve in the direction of the stick, up to
+// kMaxPointerPixelsPerPoll per kPollIntervalMs at full deflection (2000 pixels per second, as before). The movement adds
+// up across polls with its fractions, and only whole pixels are sent, so a slightly deflected stick moves slowly and a
+// shallow angle keeps its angle. Before 2.3.5 each poll dropped its fraction per axis: nothing moved below about a third
+// of the deflection, the first step was 200 pixels per second, and an axis below a pixel per poll never moved.
+static constexpr double kPointerRestZone = kScrollRestZone;
+static constexpr double kMaxPointerPixelsPerPoll = 10.0;
+static double pendingPointerX = 0.0;
+static double pendingPointerY = 0.0;
 
 // Flag that the host gets for a button of the standard layout. The extra button 17 is the touchpad button for a
 // PlayStation controller, which Sunshine passes on to its emulated DualShock 4, and the misc button (Share or Capture)
@@ -456,6 +484,8 @@ static void SetMouseEmulationActive(bool active) {
   pendingScrollX = 0.0;
   pendingScrollY = 0.0;
   lastScrollMs = 0;
+  pendingPointerX = 0.0;
+  pendingPointerY = 0.0;
   if (!active) {
     for (auto& state : sentState) {
       state.valid = false;
@@ -569,6 +599,11 @@ void setStreamMenuOpen(bool open) {
   streamMenuOpen.store(open);
 }
 
+// Called by the UI on the main thread when the page is hidden or shown again during a stream (bound in main.cpp)
+void setAppHidden(bool hidden) {
+  appHidden.store(hidden);
+}
+
 // Called by the UI on the main thread for the mouse emulation entry of the Stream Menu, which works whatever the
 // setting "Mouse emulation" (that setting only allows the hold of Start). The input thread toggles it on its next poll.
 void toggleMouseEmulation() {
@@ -664,22 +699,67 @@ static void AddScroll(double* pending, double speed, double seconds, int (*sendS
   }
 }
 
-// Scroll with the summed right sticks of all controllers for the time since the previous poll in mouse mode, at most
-// kMaxScrollIntervalMs after a stall. The high-resolution scroll events carry fractions of a notch, which the
-// LiSendScrollEvent() and LiSendHScrollEvent() of moonlight-common-c can't, so a partly deflected stick can scroll.
-static void SendScroll(double speedX, double speedY, uint64_t nowMs) {
+// The time that this poll in mouse mode moves the pointer and scrolls for: since the previous poll in mouse mode, at
+// most kMaxScrollIntervalMs after a stall, and kPollIntervalMs for the first one
+static uint64_t TakeMouseModeInterval(uint64_t nowMs) {
   const uint64_t elapsedMs = lastScrollMs == 0 ? kPollIntervalMs : std::min(nowMs - lastScrollMs, kMaxScrollIntervalMs);
   lastScrollMs = nowMs;
+  return elapsedMs;
+}
+
+// Scroll with the summed right sticks of all controllers for the time of this poll (TakeMouseModeInterval()). The
+// high-resolution scroll events carry fractions of a notch, which the LiSendScrollEvent() and LiSendHScrollEvent() of
+// moonlight-common-c can't, so a partly deflected stick can scroll.
+static void SendScroll(double speedX, double speedY, uint64_t elapsedMs) {
   const double seconds = static_cast<double>(elapsedMs) / 1000.0;
   AddScroll(&pendingScrollX, speedX, seconds, LiSendHighResHScrollEvent);
   AddScroll(&pendingScrollY, speedY, seconds, LiSendHighResScrollEvent);
 }
 
+// The pointer speed of a left stick (x and y from -1 to 1, y down) in pixels per kPollIntervalMs, added to speedX and
+// speedY: nothing within the rest zone, then the curve, in the direction of the stick
+static void AddPointerSpeed(double x, double y, double* speedX, double* speedY) {
+  const double magnitude = std::sqrt(x * x + y * y);
+  if (magnitude <= kPointerRestZone) {
+    return;
+  }
+  const double deflection = std::min(1.0, (magnitude - kPointerRestZone) / (1.0 - kPointerRestZone));
+  const double speed = deflection * deflection * kMaxPointerPixelsPerPoll;
+  *speedX += speed * x / magnitude;
+  *speedY += speed * y / magnitude;
+}
+
+// Move the pointer by the summed speed of the left sticks for the time of this poll, in whole pixels; the fractions stay
+// for the next poll. Sticks back at rest drop what is left, so it doesn't add to the next move, and a move that couldn't
+// be queued is dropped instead of adding up.
+static void SendPointerMove(double speedX, double speedY, uint64_t elapsedMs) {
+  if (speedX == 0.0 && speedY == 0.0) {
+    pendingPointerX = 0.0;
+    pendingPointerY = 0.0;
+    return;
+  }
+  const double polls = static_cast<double>(elapsedMs) / static_cast<double>(kPollIntervalMs);
+  pendingPointerX += speedX * polls;
+  pendingPointerY += speedY * polls;
+  const short moveX = static_cast<short>(pendingPointerX);
+  const short moveY = static_cast<short>(pendingPointerY);
+  if (moveX == 0 && moveY == 0) {
+    return;
+  }
+  pendingPointerX -= moveX;
+  pendingPointerY -= moveY;
+  if (LiSendMouseMoveEvent(moveX, moveY) != 0) {
+    pendingPointerX = 0.0;
+    pendingPointerY = 0.0;
+  }
+}
+
 // Called at the start of every stream with its gamepad settings, before the input polling starts (the native tests also
 // call it to change a setting). It clears the announced flags so arrival is re-sent with updated data, and starts the
-// stream without the mouse emulation, held combos and mouse buttons of the previous stream. The evidence that a slot
-// holds a controller stays, so a controller with a timestamp of 0 is announced at once in the next stream. The button
-// mapping comes as the text of controller_mapping.hpp.
+// stream without the mouse emulation, held combos and mouse buttons of the previous stream, shown (not hidden), and
+// with a read of the slots on its first poll. The evidence that a slot holds a controller stays, so a controller with a
+// timestamp of 0 is announced at once in the next stream. The button mapping comes as the text of
+// controller_mapping.hpp.
 void MoonlightInstance::HandleGamepadInputState(bool rumbleFeedback, bool mouseEmulation, const std::string& buttonMappings,
                                                 uint8_t controllerType) {
   // Force re-announce on next poll so the host gets the updated button map / capabilities
@@ -692,11 +772,15 @@ void MoonlightInstance::HandleGamepadInputState(bool rumbleFeedback, bool mouseE
   }
 
   // A stream that ended in mouse mode must not start the next one in mouse mode, where the controllers would seem dead.
-  // The host of a new stream holds no mouse buttons. A Stream Menu of the previous stream is closed.
+  // The host of a new stream holds no mouse buttons. A Stream Menu of the previous stream is closed, and every stream
+  // starts shown (index.js cancels a start while the page is hidden).
   SetMouseEmulationActive(false);
   sentMouseButtons = 0;
   streamMenuOpen.store(false);
+  appHidden.store(false);
   inputPaused = false;
+  hadController = false;
+  lastSlotReadMs = 0;
   mouseEmulationToggleRequested.store(false);
 
   // Store the new settings for use during polling
@@ -714,6 +798,15 @@ void MoonlightInstance::PollGamepads() {
 
   // See the matching rule of isRealGamepad() in wasm/platform/gamepad.js, which getConnectedGamepadMask() in utils.js
   // uses too – these must stay in sync (tests/fixtures/gamepad-evidence.tsv)!
+
+  // Without a controller at the last read, or while the input stays paused, read the slots only once per
+  // kIdleSlotReadIntervalMs (see there); a pause that starts or ends is read at once
+  const uint64_t readMs = LiGetMillis();
+  const bool stillPaused = inputPaused && (streamMenuOpen.load() || appHidden.load());
+  if ((!hadController || stillPaused) && lastSlotReadMs != 0 && readMs - lastSlotReadMs < kIdleSlotReadIntervalMs) {
+    return;
+  }
+  lastSlotReadMs = readMs;
 
   // Read every browser slot once so later logic can work from a stable snapshot
   const int limit = ReadGamepadSlots(events, slotPresent);
@@ -793,6 +886,9 @@ void MoonlightInstance::PollGamepads() {
     }
   }
 
+  // Whether the next polls read the slots each time (a failed read above keeps the value of the read before)
+  hadController = activeGamepadMask != 0;
+
   // Send zeroed events for removed / replaced controllers so the host cleans up, and forget their held Start and combos
   for (int i : removed) {
     LiSendMultiControllerEvent(i, activeGamepadMask & ~(1 << i), 0, 0, 0, 0, 0, 0, 0);
@@ -866,10 +962,10 @@ void MoonlightInstance::PollGamepads() {
 
   const uint64_t nowMs = LiGetMillis();
 
-  // Follow the Stream Menu of the UI. When it opens, the combos and holds of Start that are in progress end, since the
-  // host gets nothing while it is open; when it closes, the buttons that are held stay away from the host until they
-  // are released.
-  const bool paused = streamMenuOpen.load();
+  // Follow the Stream Menu of the UI and the hidden page. When the input pauses, the combos and holds of Start that are
+  // in progress end, since the host gets nothing meanwhile; when it resumes, the buttons that are held stay away from
+  // the host until they are released.
+  const bool paused = streamMenuOpen.load() || appHidden.load();
   const bool resumed = inputPaused && !paused;
   if (paused && !inputPaused) {
     for (int i = 0; i < kMaxControllers; ++i) {
@@ -879,6 +975,8 @@ void MoonlightInstance::PollGamepads() {
     pendingScrollX = 0.0;
     pendingScrollY = 0.0;
     lastScrollMs = 0;
+    pendingPointerX = 0.0;
+    pendingPointerY = 0.0;
   }
   inputPaused = paused;
 
@@ -900,14 +998,16 @@ void MoonlightInstance::PollGamepads() {
 
     // Process input for active gamepad
     hasInput[gamepadID] = true;
-    // While the Stream Menu is open, its buttons belong to the menus of the UI, and the host gets nothing of them
+    // While the Stream Menu is open, its buttons belong to the menus of the UI, and while Moonlight is hidden to the
+    // TV; the host gets nothing of them
     if (paused) {
       continue;
     }
     const EmscriptenGamepadEvent& event = events[gamepadID];
     const int physicalFlags = GetButtonFlags(event, slotState[gamepadID].type);
 
-    // The buttons that were held when the Stream Menu closed reach the host once they were released and pressed again
+    // The buttons that were held when the Stream Menu closed or Moonlight showed again reach the host once they were
+    // released and pressed again
     if (resumed) {
       heldSinceMenu[gamepadID] = physicalFlags;
     }
@@ -948,7 +1048,8 @@ void MoonlightInstance::PollGamepads() {
   }
 
   if (paused) {
-    // The Stream Menu is open: release the controllers and the mouse buttons on the host once, and send nothing else
+    // The Stream Menu is open or Moonlight is hidden: release the controllers and the mouse buttons on the host once,
+    // and send nothing else
     for (int gamepadID = 0; gamepadID < limit; ++gamepadID) {
       if (hasInput[gamepadID]) {
         SendNeutralState(gamepadID, activeGamepadMask, nowMs);
@@ -961,6 +1062,8 @@ void MoonlightInstance::PollGamepads() {
   if (mouseEmulationActive) {
     // If mouse emulation is active, then send mouse input to the desired handler (acts as a mouse)
     int mouseButtons = 0;
+    double pointerSpeedX = 0.0;
+    double pointerSpeedY = 0.0;
     double scrollSpeedX = 0.0;
     double scrollSpeedY = 0.0;
     for (int gamepadID = 0; gamepadID < limit; ++gamepadID) {
@@ -972,15 +1075,9 @@ void MoonlightInstance::PollGamepads() {
       // Release the buttons and sticks of the controller on the host once
       SendNeutralState(gamepadID, activeGamepadMask, nowMs);
 
-      // Left Stick values are mapped to horizontal and vertical mouse movements
-      const float baseMouseSpeed = 10.0f;
-      const float leftStickMagnitude = std::sqrt(input.leftStickX * input.leftStickX + input.leftStickY * input.leftStickY) / std::numeric_limits<short>::max();
-      const float mouseSpeed = baseMouseSpeed * leftStickMagnitude;
-      const float mouseXDelta = static_cast<float>(input.leftStickX) / std::numeric_limits<short>::max() * mouseSpeed;
-      const float mouseYDelta = -static_cast<float>(input.leftStickY) / std::numeric_limits<short>::max() * mouseSpeed;
-
-      // Send a mouse move event with the specified delta values for both horizontal (X-axis) and vertical (Y-axis) coordinates
-      LiSendMouseMoveEvent(static_cast<int>(mouseXDelta), static_cast<int>(mouseYDelta));
+      // Left Stick values are mapped to horizontal and vertical mouse movements, summed over the controllers (y down)
+      AddPointerSpeed(input.leftStickX / std::numeric_limits<short>::max(),
+                      -input.leftStickY / std::numeric_limits<short>::max(), &pointerSpeedX, &pointerSpeedY);
 
       // Right Stick values are mapped to horizontal and vertical mouse scrolls, summed over the controllers
       scrollSpeedX += GetScrollSpeed(input.rightStickX / std::numeric_limits<short>::max());
@@ -989,7 +1086,10 @@ void MoonlightInstance::PollGamepads() {
       // Face Buttons values are mapped to control mouse buttons, combined over the controllers
       mouseButtons |= GetMouseButtons(input.buttonFlags);
     }
-    SendScroll(scrollSpeedX, scrollSpeedY, nowMs);
+    // One move and one scroll per poll for all controllers, for the time since the previous poll in mouse mode
+    const uint64_t elapsedMs = TakeMouseModeInterval(nowMs);
+    SendPointerMove(pointerSpeedX, pointerSpeedY, elapsedMs);
+    SendScroll(scrollSpeedX, scrollSpeedY, elapsedMs);
     SendMouseButtons(mouseButtons);
   } else {
     // Release the mouse buttons that the mouse emulation left held on the host

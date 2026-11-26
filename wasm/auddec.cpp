@@ -1,4 +1,5 @@
 #include "moonlight_wasm.hpp"
+#include "audio_catch_up.hpp"
 #include "audio_lead.hpp"
 #include "audio_load.hpp"
 #include "audio_stream_stats.hpp"
@@ -52,6 +53,9 @@ static AudioLoadMonitor s_AudioLoad;
 // How far the sound of the TV media player runs ahead of the clock of the TV over the stream, and its drift
 // (audio_lead.hpp). Only touched on the audio thread, and before it starts and after it ended, like the load above.
 static AudioLeadTracker s_AudioLead;
+
+// The catch-up of the EMSS backend after the player ran dry (audio_catch_up.hpp), touched like the lead above
+static AudioCatchUp s_AudioCatchUp;
 
 static TimeStamp s_frameDuration;
 static TimeStamp s_pktPts;
@@ -387,8 +391,9 @@ int MoonlightInstance::AudDecInit(int audioConfiguration, POPUS_MULTISTREAM_CONF
     return rc != OPUS_OK ? rc : -1;
   }
 
-  // Initialize the estimated audio end time
+  // Initialize the estimated audio end time, and the catch-up after a stall that follows it
   s_estimatedAudioEnd = 0s;
+  s_AudioCatchUp.Reset();
 
   // Flag indicating whether this is the first frame of audio to be decoded
   s_hasFirstFrame = false;
@@ -489,6 +494,13 @@ void MoonlightInstance::AudDecCleanup(void) {
     }
   }
   s_AudioLead.Reset(0.0);
+
+  // Log what the catch-up after stalls skipped in this stream, if anything
+  if (s_AudioCatchUp.skipped != 0) {
+    ClLogMessage("Skipped %u audio packets (%.0f ms of sound) that piled up after %u stalls of this stream\n",
+      s_AudioCatchUp.skipped, s_AudioCatchUp.skipped * s_frameDuration.count() * 1000.0, s_AudioCatchUp.stalls);
+  }
+  s_AudioCatchUp.Reset();
 }
 
 void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLength) {
@@ -527,12 +539,25 @@ void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLe
   auto now = std::chrono::steady_clock::now();
   TimeStamp ntp = now - s_firstAppend;
 
-  // Check if audio synchronization is enabled and if packet dropping is necessary to avoid overflow
-  if (s_AudioSyncEnabled && ntp + kAudioBufferMargin < s_estimatedAudioEnd) {
-    // Report the dropped packets in batches (the first and every 100th), see s_DroppedPackets
-    if (++s_DroppedPackets % 100 == 1) {
-      ClLogMessage("Dropping audio packets to avoid overflow: %d packets of this stream, PTS=%.03f NTP=%.03f\n",
-        s_DroppedPackets, s_pktPts.count(), ntp.count());
+  // After the player ran dry, e.g. after a stall of the Wi-Fi, the sound that piled up beyond the margin is skipped
+  // whatever 'Limit audio delay' says (audio_catch_up.hpp)
+  const bool catchingUp = s_AudioCatchUp.Update(ntp.count(), s_estimatedAudioEnd.count());
+
+  // Check if audio synchronization is enabled or the catch-up runs, and if packet dropping is necessary to avoid overflow
+  if ((s_AudioSyncEnabled || catchingUp) && ntp + kAudioBufferMargin < s_estimatedAudioEnd) {
+    if (s_AudioSyncEnabled) {
+      // Report the dropped packets in batches (the first and every 100th), see s_DroppedPackets
+      if (++s_DroppedPackets % 100 == 1) {
+        ClLogMessage("Dropping audio packets to avoid overflow: %d packets of this stream, PTS=%.03f NTP=%.03f\n",
+          s_DroppedPackets, s_pktPts.count(), ntp.count());
+      }
+    } else {
+      // Counted apart from the drops of 'Limit audio delay', in batches like them
+      s_AudioCatchUp.CountSkipped();
+      if (s_AudioCatchUp.skipped % 100 == 1) {
+        ClLogMessage("Skipping the sound that piled up after a stall: %u packets of this stream (%u stalls), "
+          "PTS=%.03f NTP=%.03f\n", s_AudioCatchUp.skipped, s_AudioCatchUp.stalls, s_pktPts.count(), ntp.count());
+      }
     }
     // The host sent this sound all the same, so it counts for the drift
     s_AudioLead.AddPacket(ntp.count(), (s_estimatedAudioEnd - ntp).count());

@@ -36,6 +36,12 @@ What changed in each version of Moonlight Plus, in short, newest first.
 - The picture is read from the network by a thread of its own, so the packets of a frame are taken as they come
 - The streaming engine is built with stronger compiler optimizations
 - Diagnostic log: two new lines show how busy the second thread is and whether its ring of packets filled up
+- After a Wi-Fi stall the sound catches up with the picture on its own (at most 100 ms behind)
+- Mouse emulation moves the pointer slowly just past the centre, and at shallow angles
+
+### Fixed
+
+- Controllers no longer act on the PC while Moonlight is in the background
 
 ### Also in this version
 
