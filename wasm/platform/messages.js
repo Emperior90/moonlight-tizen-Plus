@@ -1064,23 +1064,116 @@ const FREQUENT_MESSAGE = /^(?:StatMsg|StatCompactMsg|controllerRumble): /;
 // For a debugging session: set to true in the console of the debugger, every message of the module gets its console
 // line again, and so does every change of a rumble
 var logFrequentMessages = false;
-// The gamepads whose rumble the host has on, by index, to log a rumble when it starts and when it stops instead of
-// with each change of its strength, and whether the rumble that arrived after the end of the stream was logged. The end
-// of a stream resets both.
-var rumbleLoggedOn = {};
+// The rumble of the stream in the log, by gamepad index (rumbleLogOf()): whether the host has it on, whether the first
+// start and the first stop of the stream were logged, and what came after them. A game can start and stop a rumble
+// several times per second (4 to 8 times while riding a horse), which gave the log two lines each and pushed every
+// other line out of it. So the first start and the first stop of a gamepad get their lines, and the starts and stops
+// after them are counted with the strongest magnitudes and summed up in one line per gamepad at most once a minute
+// while they go on (RUMBLE_SUMMARY_MS after the first one that was counted), and in a last line when the stream ends
+// (flushRumbleSummaries()). The rumble itself is played as before (Rumble.play() in gamepad.js). The end of a stream
+// resets them, and whether the rumble that arrived after the end of the stream was logged.
+const RUMBLE_SUMMARY_MS = 60000;
+var rumbleLog = {};
 var lateRumbleLogged = false;
 
-// Log the rumble that the host sent for a gamepad: the first strength above 0 and the 0 that ends it. The changes in
-// between are left out (see FREQUENT_MESSAGE), unless logFrequentMessages asks for them.
+// The log state of the rumble of a gamepad in this stream
+function rumbleLogOf(gamepadIdx) {
+  if (!Object.prototype.hasOwnProperty.call(rumbleLog, gamepadIdx)) {
+    rumbleLog[gamepadIdx] = {
+      on: false, firstStartLogged: false, firstStopLogged: false,
+      starts: 0, stops: 0, weakMagnitude: 0, strongMagnitude: 0, sinceMs: 0, timer: null,
+    };
+  }
+  return rumbleLog[gamepadIdx];
+}
+
+// Count a start, a change of strength or a stop of the rumble of a gamepad after its first start and first stop (a
+// change only while a summary is open, from the start before it); the first start or stop that is counted opens the
+// summary, which logRumbleSummary() writes after RUMBLE_SUMMARY_MS
+function countRumble(gamepadIdx, state, kind, weakMagnitude, strongMagnitude) {
+  const open = state.starts !== 0 || state.stops !== 0;
+  if (kind === 'change' && !open) {
+    return;
+  }
+  if (!open) {
+    state.sinceMs = Date.now();
+    state.timer = setTimeout(function() {
+      logRumbleSummary(gamepadIdx);
+    }, RUMBLE_SUMMARY_MS);
+  }
+  if (kind === 'start') {
+    state.starts++;
+  } else if (kind === 'stop') {
+    state.stops++;
+  }
+  state.weakMagnitude = Math.max(state.weakMagnitude, weakMagnitude);
+  state.strongMagnitude = Math.max(state.strongMagnitude, strongMagnitude);
+}
+
+// Write the summary of the rumble of a gamepad that countRumble() counted, if anything, and start the next one with the
+// next start or stop
+function logRumbleSummary(gamepadIdx) {
+  const state = rumbleLog[gamepadIdx];
+  if (!state) {
+    return;
+  }
+  if (state.timer !== null) {
+    clearTimeout(state.timer);
+    state.timer = null;
+  }
+  if (state.starts === 0 && state.stops === 0) {
+    return;
+  }
+  const seconds = Math.max(1, Math.round((Date.now() - state.sinceMs) / 1000));
+  console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Rumble on gamepad ' + gamepadIdx + ': ' +
+    state.starts + ' more ' + (state.starts === 1 ? 'start' : 'starts') + ' and ' + state.stops + ' ' + (state.stops === 1 ? 'stop' : 'stops') +
+    ' in the last ' + seconds + ' s, strongest weak magnitude ' + state.weakMagnitude + ' and strong magnitude ' + state.strongMagnitude + '.');
+  state.starts = 0;
+  state.stops = 0;
+  state.weakMagnitude = 0;
+  state.strongMagnitude = 0;
+}
+
+// Write the summaries that are still open, when the stream ends
+function flushRumbleSummaries() {
+  Object.keys(rumbleLog).forEach(function(gamepadIdx) {
+    logRumbleSummary(gamepadIdx);
+  });
+}
+
+// Log the rumble that the host sent for a gamepad: the first strength above 0 of the stream and the 0 that ends it,
+// then a summary of the further starts and stops (see rumbleLog). The changes of the strength are left out (see
+// FREQUENT_MESSAGE), unless logFrequentMessages asks for them, which logs every message of the rumble instead.
 function logRumble(gamepadIdx, weakMagnitude, strongMagnitude) {
+  const state = rumbleLogOf(gamepadIdx);
   const isOn = weakMagnitude > 0 || strongMagnitude > 0;
-  const wasOn = rumbleLoggedOn[gamepadIdx] === true;
-  rumbleLoggedOn[gamepadIdx] = isOn;
-  if (isOn && (!wasOn || logFrequentMessages)) {
-    console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Playing rumble on gamepad ' + gamepadIdx + ' with weak magnitude ' + weakMagnitude + ' and strong magnitude ' + strongMagnitude +
-      (logFrequentMessages ? '...' : ' (the changes of its strength are not logged until it stops)...'));
-  } else if (!isOn && (wasOn || logFrequentMessages)) {
-    console.log('%c[messages.js, handleMessage]', 'color: gray;', 'The host stopped the rumble on gamepad ' + gamepadIdx + '.');
+  const wasOn = state.on;
+  state.on = isOn;
+  if (logFrequentMessages) {
+    if (isOn) {
+      console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Playing rumble on gamepad ' + gamepadIdx + ' with weak magnitude ' + weakMagnitude + ' and strong magnitude ' + strongMagnitude + '...');
+    } else {
+      console.log('%c[messages.js, handleMessage]', 'color: gray;', 'The host stopped the rumble on gamepad ' + gamepadIdx + '.');
+    }
+  } else if (isOn && !wasOn) {
+    if (!state.firstStartLogged) {
+      state.firstStartLogged = true;
+      console.log('%c[messages.js, handleMessage]', 'color: gray;', 'Playing rumble on gamepad ' + gamepadIdx + ' with weak magnitude ' + weakMagnitude + ' and strong magnitude ' + strongMagnitude +
+        ' (the changes of its strength are not logged until it stops)...');
+    } else {
+      countRumble(gamepadIdx, state, 'start', weakMagnitude, strongMagnitude);
+    }
+  } else if (isOn) {
+    if (state.firstStopLogged) {
+      countRumble(gamepadIdx, state, 'change', weakMagnitude, strongMagnitude);
+    }
+  } else if (wasOn) {
+    if (!state.firstStopLogged) {
+      state.firstStopLogged = true;
+      console.log('%c[messages.js, handleMessage]', 'color: gray;', 'The host stopped the rumble on gamepad ' + gamepadIdx + '.');
+    } else {
+      countRumble(gamepadIdx, state, 'stop', 0, 0);
+    }
   }
 }
 
@@ -1110,8 +1203,10 @@ function dispatchMessage(msg) {
     var quitApp = quitAppAfterStream;
     quitAppAfterStream = false;
     streamMouseEmulationActive = false;
-    // The log of the next rumble starts anew (logRumble())
-    rumbleLoggedOn = {};
+    // The summaries of the rumble of this stream that are still open, and the log of the next one starts anew
+    // (logRumble())
+    runGuarded('flushRumbleSummaries', flushRumbleSummaries);
+    rumbleLog = {};
     lateRumbleLogged = false;
     // A start that the host accepted and whose stream never connected may still be held by the host, which would drop
     // the next start meanwhile (rememberEndedStreamStart() in index.js)

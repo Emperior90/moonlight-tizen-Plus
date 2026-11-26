@@ -5,7 +5,7 @@ All notable changes to Moonlight Plus, by version, newest first. Each version li
 ## 2.3.6 (unreleased)
 
 ### Changed
-- Changed the version to 2.3.6, a test version for users of 2.3.5 (`res/config.xml`, the tests that pin the version, the patch notes and the release notes).
+- Changed the lines of the rumble in the diagnostic log to the first start and the first stop of each controller in a stream, as before, and a summary of the starts and stops after them: *Rumble on gamepad 0: 412 more starts and 412 stops in the last 60 s, strongest weak magnitude 1 and strong magnitude 0.5.*, one line per controller at most once a minute while they go on (`RUMBLE_SUMMARY_MS` after the first one that was counted) and a last one for what is left when the stream ends (`flushRumbleSummaries()` at *streamTerminated*). A game that starts and stops the rumble 4 to 8 times per second, e.g. while riding a horse, wrote two lines each time (`logRumble()` in `wasm/platform/messages.js`), which pushed every other line out of the 600 lines of a session. The rumble itself is played as before, with the same effects at the same moments (`Rumble.play()` in `gamepad.js` is unchanged), the warnings about a controller that can't rumble stay as they are, and `logFrequentMessages` of a debugging session still logs every message. `tests/unit/rumble.test.js` checks 150 s of 6 rumbles per second (the lines, the counts and the strongest magnitudes of each minute and of the end, and every effect at its moment), two controllers with a summary each, a quiet minute without a line and the debug switch.
 
 ## 2.3.5 (2026-11-26)
 
