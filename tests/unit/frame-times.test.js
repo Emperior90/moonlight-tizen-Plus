@@ -69,15 +69,16 @@ test('the app times the stages of a frame on the microsecond clock and keeps the
   const player = read('wasm/wasmplayer.cpp');
   const submit = player.slice(player.indexOf('int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {'),
     player.indexOf('void MoonlightInstance::AddVideoStats('));
-  // The pacer and the timestamps still read the times in milliseconds
-  assert.match(submit, /const uint64_t dequeueMs = LiGetMillis\(\);\s+const uint64_t dequeueUs = LiGetMicroseconds\(\);/);
+  // The pacer and the timestamps still read the times in milliseconds, since 2.3.6 from the reading in microseconds
+  // (tests/native/frame_pacer_test.cpp counts the readings of a frame)
+  assert.match(submit, /const uint64_t dequeueUs = LiGetMicroseconds\(\);\s+const uint64_t dequeueMs = dequeueUs \/ 1000;/);
   assert.match(submit, /const uint64_t queuedMs = dequeueMs > decodeUnit->enqueueTimeMs \? dequeueMs - decodeUnit->enqueueTimeMs : 0;/);
   // Every stage of the statistics on the microsecond clock, with its longest frame
   assert.equal((submit.match(/AddFrameTime\(/g) || []).length, 4);
   assert.match(submit, /AddFrameTime\(m_ActiveWndVideoStats\.totalReassemblyTimeUs, m_ActiveWndVideoStats\.maxReassemblyTimeUs,\s+decodeUnit->receiveTimeUs, decodeUnit->enqueueTimeUs\);/);
   assert.match(submit, /AddFrameTime\(m_ActiveWndVideoStats\.totalDecodeTimeUs, m_ActiveWndVideoStats\.maxDecodeTimeUs,\s+decodeUnit->enqueueTimeUs, dequeueUs\);/);
   assert.match(submit, /AddFrameTime\(m_ActiveWndVideoStats\.totalPacerTimeUs, m_ActiveWndVideoStats\.maxPacerTimeUs,\s+pacingStartUs, pacingEndUs\);/);
-  assert.match(submit, /AddFrameTime\(m_ActiveWndVideoStats\.totalRenderTimeUs, m_ActiveWndVideoStats\.maxRenderTimeUs, beforeRenderUs,\s+LiGetMicroseconds\(\)\);/);
+  assert.match(submit, /const uint64_t handedOverUs = LiGetMicroseconds\(\);[\s\S]*AddFrameTime\(m_ActiveWndVideoStats\.totalRenderTimeUs, m_ActiveWndVideoStats\.maxRenderTimeUs, beforeRenderUs,\s+handedOverUs\);/);
   // No stage is timed in milliseconds any more
   assert.doesNotMatch(submit, /pacingStart = LiGetMillis|beforeRender = LiGetMillis|afterRender = LiGetMillis/);
   // The native line matches the pattern that the front end translates

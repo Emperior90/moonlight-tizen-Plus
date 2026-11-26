@@ -18,6 +18,21 @@ using std::chrono_literals::operator""s;
 using std::chrono_literals::operator""ms;
 using TimeStamp = samsung::wasm::Seconds;
 
+// A reading of the monotonic clock on the audio thread, each a call into JavaScript of about 6 us on the TV. A packet
+// reads it 3 times since 2.3.6 (4 before): the EMSS backend at its arrival, which also starts its decode, at the end
+// of the decode and after the hand-over; the Web Audio backend before and after the decode, whose end also marks its
+// arrival, and after the post. tests/native/audio_decoder_test.cpp counts the readings.
+#ifndef AUDDEC_CLOCK_NOW
+#define AUDDEC_CLOCK_NOW() std::chrono::steady_clock::now()
+#endif
+
+// The clock of the packets of the EMSS backend, which the lead and the catch-up after a stall are measured on: the time
+// of a reading of the clock above. tests/native/audio_decoder_test.cpp replaces it with a clock of its own, so that a
+// test machine that pauses between two packets doesn't look like a stall of the network.
+#ifndef AUDDEC_PACKET_TIME
+#define AUDDEC_PACKET_TIME(reading) (reading)
+#endif
+
 #define MAX_CHANNEL_COUNT 8
 #define FRAME_SIZE 240
 
@@ -122,13 +137,14 @@ static inline uint32_t ElapsedUs(std::chrono::steady_clock::time_point start, st
   return us <= 0 ? 0 : (uint32_t)std::min<long long>(us, UINT32_MAX);
 }
 
-// Decode a packet with the Opus decoder into the given buffer, and count the time it took and the samples per channel
-// it decoded for the performance stats. The end of the decode is returned, where the hand-over to the player starts.
+// Decode a packet with the Opus decoder into the given buffer, and count the time it took from decodeStart, a reading
+// of the clock right before it, and the samples per channel it decoded for the performance stats. The end of the decode
+// is returned, where the hand-over to the player starts.
 static int DecodeTimed(OpusMSDecoder* decoder, const unsigned char* sampleData, int sampleLength, opus_int16* pcm,
-                       int frameSize, std::chrono::steady_clock::time_point* decodeEnd) {
-  const auto decodeStart = std::chrono::steady_clock::now();
+                       int frameSize, std::chrono::steady_clock::time_point decodeStart,
+                       std::chrono::steady_clock::time_point* decodeEnd) {
   const int decodeLen = opus_multistream_decode(decoder, sampleData, sampleLength, pcm, frameSize, 0);
-  *decodeEnd = std::chrono::steady_clock::now();
+  *decodeEnd = AUDDEC_CLOCK_NOW();
   g_AudioStreamStats.CountDecode(ElapsedUs(decodeStart, *decodeEnd), decodeLen);
   return decodeLen;
 }
@@ -168,9 +184,11 @@ static void ReleaseDecoder(OpusMSDecoder*& decoder) {
   s_DecodeBuffer.shrink_to_fit();
 }
 
-// Returns whether the packet was appended to the audio track, i.e. whether the player of the TV got its audio
+// Returns whether the packet was appended to the audio track, i.e. whether the player of the TV got its audio. Its
+// decode counts from decodeStart, the reading of the clock at the arrival of the packet (AudDecDecodeAndPlaySample()).
 static bool DecodeAndAppendPacket(samsung::wasm::ElementaryMediaTrack* track, samsung::wasm::SessionId session_id,
-  OpusMSDecoder* decoder, const unsigned char* sampleData, int sampleLength) {
+  OpusMSDecoder* decoder, const unsigned char* sampleData, int sampleLength,
+  std::chrono::steady_clock::time_point decodeStart) {
   // Nothing to decode with: a stream has no decoder before AudDecInit() and after AudDecCleanup()
   if (!decoder) {
     return false;
@@ -180,7 +198,7 @@ static bool DecodeAndAppendPacket(samsung::wasm::ElementaryMediaTrack* track, sa
   // the decode buffer holds (AudDecInit()).
   std::chrono::steady_clock::time_point decodeEnd;
   const int decodeLen = DecodeTimed(decoder, sampleData, sampleLength, s_DecodeBuffer.data(), (int)s_samplesPerFrame,
-    &decodeEnd);
+    decodeStart, &decodeEnd);
 
   // Check if audio decoding failed. Nothing is appended for the packet then, and the next packet that is appended
   // carries only the samples that its own decode wrote, so there is nothing to clear in the buffer.
@@ -207,7 +225,7 @@ static bool DecodeAndAppendPacket(samsung::wasm::ElementaryMediaTrack* track, sa
   // Attempt to append the packet to the audio track for rendering. Its time counts from the end of the decode, since
   // the packet description in between costs next to nothing, which saves a reading of the clock.
   const bool appended = (bool)track->AppendPacket(pkt);
-  g_AudioStreamStats.CountOutput(ElapsedUs(decodeEnd, std::chrono::steady_clock::now()));
+  g_AudioStreamStats.CountOutput(ElapsedUs(decodeEnd, AUDDEC_CLOCK_NOW()));
   if (appended) {
     // If successful, update the presentation timestamp for the next packet
     s_pktPts += s_frameDuration;
@@ -237,7 +255,7 @@ static void DecodeAndScheduleFrame(OpusMSDecoder* decoder, const unsigned char* 
   const bool concealLoss = (sampleData == nullptr || sampleLength <= 0);
   const int frameSize = concealLoss ? (int)std::min<size_t>(s_samplesPerFrame, kAudioSlotStride) : (int)kAudioSlotStride;
   std::chrono::steady_clock::time_point decodeEnd;
-  int decodeLen = DecodeTimed(decoder, sampleData, sampleLength, s_AudioPcm, frameSize, &decodeEnd);
+  int decodeLen = DecodeTimed(decoder, sampleData, sampleLength, s_AudioPcm, frameSize, AUDDEC_CLOCK_NOW(), &decodeEnd);
 
   // Check if audio decoding failed
   if (decodeLen <= 0) {
@@ -270,10 +288,14 @@ static void DecodeAndScheduleFrame(OpusMSDecoder* decoder, const unsigned char* 
   // Number this frame so the scheduler can report the ones that never reached the main thread
   int sequence = s_AudioSequence++;
 
-  // Measure the time since the previous packet with audio data (0 for the first one and for concealed losses)
+  // Measure the time since the previous packet with audio data (0 for the first one and for concealed losses), at the
+  // end of its decode. Up to 2.3.5 a reading of its own after the conversion to the slot above took it, which takes
+  // about as long for every packet of a stream, so the time between two packets is the same up to the variation of
+  // that conversion; it is counted in whole milliseconds, and audio.js compares it with hundreds of them (a pause of
+  // the host)
   int arrivalGapMs = 0;
   if (!concealLoss) {
-    const auto now = std::chrono::steady_clock::now();
+    const auto now = decodeEnd;
     if (s_HasLastAudioDataTime) {
       arrivalGapMs = (int)std::min<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(now - s_LastAudioDataTime).count(), 3600000LL);
     }
@@ -301,7 +323,7 @@ static void DecodeAndScheduleFrame(OpusMSDecoder* decoder, const unsigned char* 
 
   // The hand-over to the player is the conversion to the slot and the post to the main thread, from the end of the
   // decode
-  g_AudioStreamStats.CountOutput(ElapsedUs(decodeEnd, std::chrono::steady_clock::now()));
+  g_AudioStreamStats.CountOutput(ElapsedUs(decodeEnd, AUDDEC_CLOCK_NOW()));
 }
 
 int MoonlightInstance::AudDecInit(int audioConfiguration, POPUS_MULTISTREAM_CONFIGURATION opusConfig, void* context, int arFlags) {
@@ -504,13 +526,6 @@ void MoonlightInstance::AudDecCleanup(void) {
   s_AudioCatchUp.Reset();
 }
 
-// The clock of the packets of the EMSS backend: the time of the first one and of each one after it, which the lead and
-// the catch-up after a stall are measured on. tests/native/audio_decoder_test.cpp replaces it with a clock of its own,
-// so that a test machine that pauses between two packets doesn't look like a stall of the network.
-#ifndef AUDDEC_NOW
-#define AUDDEC_NOW() std::chrono::steady_clock::now()
-#endif
-
 void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLength) {
   // Discard the audio packet without decoding it when the audio output is disabled
   if (s_AudioBackend == AudioBackend::Disabled) {
@@ -538,13 +553,16 @@ void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLe
   // Check if this is the first audio frame
   if (!s_hasFirstFrame) {
     // Record the time of the first frame
-    s_firstAppend = AUDDEC_NOW();
+    s_firstAppend = AUDDEC_PACKET_TIME(AUDDEC_CLOCK_NOW());
     // Update the flag to indicate that the first frame has been processed
     s_hasFirstFrame = true;
   }
 
-  // Get the current time and calculate the time elapsed since the first frame
-  auto now = AUDDEC_NOW();
+  // Get the current time and calculate the time elapsed since the first frame. The same reading starts the decode of
+  // the packet below, since only the arithmetic of the catch-up comes between them, unless a line is logged there.
+  const auto arrival = AUDDEC_CLOCK_NOW();
+  bool lineLogged = false;
+  auto now = AUDDEC_PACKET_TIME(arrival);
   TimeStamp ntp = now - s_firstAppend;
 
   // After the player ran dry, e.g. after a stall of the Wi-Fi, the sound that piled up beyond the target of the
@@ -564,6 +582,7 @@ void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLe
       ClLogMessage("Another stall within %u minutes: the sound kept after a stall rises from %.0f to %.0f ms, "
         "PTS=%.03f NTP=%.03f\n", (unsigned)(kAudioCatchUpRepeatSeconds / 60.0), targetBefore * 1000.0,
         s_AudioCatchUp.target * 1000.0, s_pktPts.count(), ntp.count());
+      lineLogged = true;
     }
   }
   if (skip) {
@@ -586,10 +605,11 @@ void MoonlightInstance::AudDecDecodeAndPlaySample(char* sampleData, int sampleLe
     return;
   }
 
-  // Decode and append the audio packet to the audio track
+  // Decode and append the audio packet to the audio track, from the reading of its arrival, or after a line of the
+  // log above, which is work of its own (the diagnostic log and the console through JavaScript), from a reading after it
   const bool appended = DecodeAndAppendPacket(&g_Instance->m_AudioTrack,
     g_Instance->m_AudioSessionId.load(), g_Instance->m_OpusDecoder,
-    reinterpret_cast<unsigned char*>(sampleData), sampleLength
+    reinterpret_cast<unsigned char*>(sampleData), sampleLength, lineLogged ? AUDDEC_CLOCK_NOW() : arrival
   );
   CheckAudioLoad();
 

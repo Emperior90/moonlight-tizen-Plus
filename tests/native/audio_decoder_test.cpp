@@ -32,9 +32,11 @@
 // the end of the stream, while packets in real time after a pause of the host are all appended; a stall that comes
 // again soon after raises what the catch-up keeps, with a line of its own, and each start begins again at 100 ms.
 //
-// The packets of the EMSS backend arrive on a clock of the test (AUDDEC_NOW() of auddec.cpp), which stands still until
-// a test moves it on: the tests feed their packets at the times they choose, most of them all at once, much faster than
-// in real time, and a test machine that pauses between two packets can't make a stall that the catch-up acts on.
+// The packets of the EMSS backend arrive on a clock of the test (AUDDEC_PACKET_TIME() of auddec.cpp), which stands still
+// until a test moves it on: the tests feed their packets at the times they choose, most of them all at once, much faster
+// than in real time, and a test machine that pauses between two packets can't make a stall that the catch-up acts on.
+// The readings of the monotonic clock themselves (AUDDEC_CLOCK_NOW()) are real ones, which the test counts: since 2.3.6
+// a packet takes 3 of them with either backend, each a call into JavaScript of about 6 us on the TV.
 //
 // auddec.cpp has an EM_ASM block without arguments, whose stub takes the GNU form of __VA_ARGS__ (run.sh):
 // Build with: -std=gnu++17
@@ -42,7 +44,13 @@
 #include <chrono>
 
 static std::chrono::steady_clock::time_point s_AudioNow{std::chrono::hours(1)};
-#define AUDDEC_NOW() s_AudioNow
+#define AUDDEC_PACKET_TIME(reading) ((void)(reading), s_AudioNow)
+static int clockReadings = 0;
+static std::chrono::steady_clock::time_point CountedClockReading() {
+  clockReadings++;
+  return std::chrono::steady_clock::now();
+}
+#define AUDDEC_CLOCK_NOW() CountedClockReading()
 
 #include "../../wasm/auddec.cpp"
 
@@ -906,6 +914,84 @@ static void AStallThatComesAgainKeepsMoreOfItsSound() {
   MoonlightInstance::AudDecCleanup();
 }
 
+// The readings of the clock per packet (since 2.3.6, 4 before for a packet with data): with the EMSS backend the arrival,
+// which also starts the decode, the end of the decode and the end of the hand-over; with Web Audio before and after the
+// decode, whose end also marks the arrival, and after the post
+static void EachPacketReadsTheClockThreeTimes() {
+  StartAudio(AudioBackend::Emss, 2, 240, false);
+  // The first packet starts the clock of the packets with a reading of its own
+  clockReadings = 0;
+  Feed(1);
+  CHECK_EQ(clockReadings, 4);
+  clockReadings = 0;
+  Feed(10);
+  CHECK_EQ(clockReadings, 30);
+  // A packet that the decoder rejects is not handed over
+  decodeResult = OPUS_INVALID_PACKET;
+  clockReadings = 0;
+  Feed(1);
+  CHECK_EQ(clockReadings, 2);
+  decodeResult = 0;
+  // After a stall, a packet that the catch-up skips is not decoded: its arrival only
+  AdvanceClock(150);
+  const size_t appendedBefore = appended.size();
+  const uint32_t skippedBefore = s_AudioCatchUp.skipped;
+  clockReadings = 0;
+  Feed(100);
+  const int played = (int)(appended.size() - appendedBefore);
+  const int skipped = (int)(s_AudioCatchUp.skipped - skippedBefore);
+  CHECK(played >= 20 && skipped >= 70 && played + skipped == 100);
+  CHECK_EQ(clockReadings, 3 * played + skipped);
+  // A line about a stall that came again is work of its own between the arrival and the decode: the decode starts with
+  // a reading after it, so the time of the line doesn't count as decoding
+  FeedInRealTime(20);
+  AdvanceClock(150);
+  CHECK_EQ(CountLogs("Another stall within"), 0);
+  // The packets of the stall come back to back; the one beyond the old target raises it, logs the line and is kept
+  int packets = 0;
+  while (CountLogs("Another stall within") == 0 && packets < 40) {
+    const size_t before = appended.size();
+    clockReadings = 0;
+    Feed(1);
+    packets++;
+    if (CountLogs("Another stall within") == 0) {
+      CHECK_EQ(clockReadings, 3);
+    } else {
+      CHECK_EQ(appended.size(), before + 1);
+      CHECK_EQ(clockReadings, 4);
+    }
+  }
+  CHECK_EQ(CountLogs("Another stall within"), 1);
+  CHECK(packets > 15 && packets < 40);
+  MoonlightInstance::AudDecCleanup();
+
+  StartAudio(AudioBackend::WebAudio, 2, 240, false);
+  clockReadings = 0;
+  Feed(10);
+  CHECK_EQ(clockReadings, 30);
+  // A lost packet is decoded too (concealed), without an arrival
+  clockReadings = 0;
+  MoonlightInstance::AudDecDecodeAndPlaySample(nullptr, 0);
+  CHECK_EQ(clockReadings, 3);
+  MoonlightInstance::AudDecCleanup();
+}
+
+// The decode of an EMSS packet counts from its arrival, where nothing but the arithmetic of the catch-up comes before the
+// decoder: a decoder that takes 300 us counts 300 us and a little more, not the time of a reading of the clock less
+static void TheDecodeOfAnEmssPacketCountsFromItsArrival() {
+  StartAudio(AudioBackend::Emss, 2, 240, false);
+  Feed(1);
+  const uint64_t decodeBefore = g_AudioStreamStats.decodeUs.load();
+  decodeTimeUs = 300;
+  Feed(10);
+  decodeTimeUs = 0;
+  const uint64_t decodeUs = g_AudioStreamStats.decodeUs.load() - decodeBefore;
+  CHECK(decodeUs >= 3000u);
+  // On a test machine the catch-up and the decoder stand-in take a few microseconds per packet (a busy machine more)
+  CHECK(decodeUs < 3000u + 10u * 1000u);
+  MoonlightInstance::AudDecCleanup();
+}
+
 int main() {
   test_support::RunTest("the decode buffer of the EMSS backend holds one negotiated frame, in samples",
                         DecodeBufferHoldsOneFrameInSamples);
@@ -939,5 +1025,8 @@ int main() {
                         "off, and counted apart from its drops", TheSoundThatPiledUpAfterAStallIsSkipped);
   test_support::RunTest("a stall that comes again soon after keeps more of its sound, with a line of its own, and each "
                         "start begins again at 100 ms", AStallThatComesAgainKeepsMoreOfItsSound);
+  test_support::RunTest("each packet reads the clock 3 times with either backend, a skipped one once",
+                        EachPacketReadsTheClockThreeTimes);
+  test_support::RunTest("the decode of an EMSS packet counts from its arrival", TheDecodeOfAnEmssPacketCountsFromItsArrival);
   return test_support::Summary();
 }

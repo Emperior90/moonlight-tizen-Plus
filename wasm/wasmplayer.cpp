@@ -912,6 +912,17 @@ static void AddFrameTime(uint64_t& totalUs, uint32_t& maxUs, uint64_t fromUs, ui
   maxUs = std::max(maxUs, timeUs);
 }
 
+// A reading of the steady clock on the clock of LiGetMicroseconds(). In this build both read clock_gettime() with
+// CLOCK_MONOTONIC, from the same epoch: PltGetMicroseconds() and PltGetMillis() of moonlight-common-c/src/Platform.c,
+// and steady_clock::now() of the libc++ of Emscripten 1.39 (system/lib/libcxx/chrono.cpp), whose clock_gettime() reads
+// emscripten_get_now(), performance.now() of the thread lined up with the main thread. And LiGetMillis() is
+// LiGetMicroseconds() / 1000 at the same moment (seconds * 1000 + nanoseconds / 1000000 either way). So one reading
+// gives the others at its moment: VidDecSubmitDecodeUnit() reads the clock 4 times for a frame that the pacer doesn't
+// hold instead of 10, each reading a call into JavaScript of about 6 us on the TV (since 2.3.6).
+static uint64_t SteadyUs(std::chrono::steady_clock::time_point time) {
+  return (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(time.time_since_epoch()).count();
+}
+
 // Name of a result of AppendPacket for the log, from EmssCommon.Result of the EMSS glue
 static const char* AppendResultName(int code) {
   switch (code) {
@@ -1682,9 +1693,10 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
   }
 
   // Record when this thread picked up the frame, which is the end of its wait in the decode unit queue: in milliseconds
-  // for the timestamps, the pacer and the keyframe rules below, as before, and in microseconds for the statistics
-  const uint64_t dequeueMs = LiGetMillis();
+  // for the timestamps, the pacer and the keyframe rules below, as before, and in microseconds for the statistics. One
+  // reading gives both: LiGetMillis() at this moment is LiGetMicroseconds() / 1000 (see SteadyUs())
   const uint64_t dequeueUs = LiGetMicroseconds();
+  const uint64_t dequeueMs = dequeueUs / 1000;
 
   // Declare variables for entry data, offset, and total length
   PLENTRY entry;
@@ -1839,8 +1851,12 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     s_HostReportsLatency && decodeUnit->frameHostProcessingLatency == 0, decodeUnit->frameType == FRAME_TYPE_IDR);
 
   // The start of the time the frame pacing holds the frame, for the statistics (the pacer itself follows the steady
-  // clock and the times in milliseconds above)
-  const uint64_t pacingStartUs = LiGetMicroseconds();
+  // clock and the times in milliseconds above): the reading of the steady clock above, since only the bookkeeping of
+  // the keyframes and the timestamp of the frame came after it (see SteadyUs())
+  const uint64_t pacingStartUs = SteadyUs(now);
+  // Whether the pacer started a new time window after its last reading of the clock, the one computation of its own
+  // that goes over a list (the arrival times of the window)
+  bool pacingWindowEnded = false;
 
   // Check if the frame pacing is enabled. The video player of the TV shows a frame as soon as it is appended, in both
   // latency modes that the app uses: Samsung's elementary_media_stream_source.h says of kLow that packets "are rendered
@@ -1939,11 +1955,14 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
       }
       s_lastWindowOffset = windowOffset;
       s_PacingLateness.clear();
+      pacingWindowEnded = true;
     }
   }
 
-  // The end of that time, which counts in the stats window of the frame with its other times (below)
-  const uint64_t pacingEndUs = LiGetMicroseconds();
+  // The end of that time, which counts in the stats window of the frame with its other times (below): the last reading
+  // of the steady clock (the one above, or the one after the last wait of the pacer), unless the pacer started a new
+  // time window after it, which ends with a reading of its own
+  const uint64_t pacingEndUs = pacingWindowEnded ? LiGetMicroseconds() : SteadyUs(now);
 
   // Update the timestamp of the last packet append
   s_lastTime = now;
@@ -1988,11 +2007,15 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
   // that builds up and is flushed in between
   s_PendingFramesMax = std::max(s_PendingFramesMax, LiGetPendingVideoFrames());
 
-  // Get the current time in milliseconds to check whether the stats window has elapsed
-  uint32_t nowMs = LiGetMillis();
+  // Get the current time in milliseconds to check whether the stats window has elapsed (LiGetMillis() at this moment,
+  // see SteadyUs()), which also starts the hand-over to the player below unless the stats window ends here
+  const uint64_t statsUs = LiGetMicroseconds();
+  uint32_t nowMs = (uint32_t)(statsUs / 1000);
+  bool statsWindowEnded = false;
 
   // Flip performance stats window roughly every second
   if (m_ActiveWndVideoStats.measurementStartTimestamp + 1000 < nowMs) {
+    statsWindowEnded = true;
     // Accumulate active window stats into global stats for overall tracking, before the statistics are written, so that
     // their session totals include the window that just ended, like their figures of the last two windows
     AddVideoStats(m_ActiveWndVideoStats, m_GlobalVideoStats);
@@ -2103,8 +2126,9 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
     m_ActiveWndVideoStats.arrivalFrames++;
   }
 
-  // Calculate time before rendering
-  const uint64_t beforeRenderUs = LiGetMicroseconds();
+  // Calculate time before rendering: the reading of the stats window above, since only the counters of the frame came
+  // after it, unless the stats window ended there (its statistics and messages take a reading of their own)
+  const uint64_t beforeRenderUs = statsWindowEnded ? LiGetMicroseconds() : statsUs;
 
   // Attempt to append the packet to the video track for rendering
   auto appendPacket = [&pkt]() {
@@ -2132,15 +2156,17 @@ int MoonlightInstance::VidDecSubmitDecodeUnit(PDECODE_UNIT decodeUnit) {
   }
 
   if (appendResult == kAppendSuccess) {
+    // The moment the player took the frame: one reading for the time of the hand-over, the interval of the player and
+    // the last append (in milliseconds, LiGetMillis() at this moment, see SteadyUs())
+    const uint64_t handedOverUs = LiGetMicroseconds();
     // Track the time of the hand-over (the retries of a full buffer included) with the longest of the window, and
     // count rendered frames
     AddFrameTime(m_ActiveWndVideoStats.totalRenderTimeUs, m_ActiveWndVideoStats.maxRenderTimeUs, beforeRenderUs,
-      LiGetMicroseconds());
+      handedOverUs);
     m_ActiveWndVideoStats.renderedFrames++;
     // Record the interval at which the frames reach the video player
-    RecordPlayerFrameInterval(s_PlayerIntervalClock, s_PlayerIntervals[s_FrameIntervalWindow],
-      (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
-    s_LastAppendSuccessMs = LiGetMillis();
+    RecordPlayerFrameInterval(s_PlayerIntervalClock, s_PlayerIntervals[s_FrameIntervalWindow], handedOverUs);
+    s_LastAppendSuccessMs = handedOverUs / 1000;
     s_RejectedModeFailures = 0;
     s_AnyAppendSucceeded = true;
     return DR_OK;

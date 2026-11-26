@@ -9,8 +9,9 @@
 // Since 2.3.5 the catch-up after a stall (wasm/audio_catch_up.hpp), a pure header as well, skips the sound that piled
 // up beyond its target after the player ran dry, while 'Limit audio delay' is off: 100 ms at first, the margin of the
 // switch, and up to 300 ms for stalls that come again within 2 minutes; each start resets it, and the end of a stream
-// logs and resets it. The packets of the EMSS path are timed by AUDDEC_NOW(), the monotonic clock unless the native
-// test of auddec.cpp replaces it, so no native test runs that default.
+// logs and resets it. The packets of the EMSS path are timed by AUDDEC_PACKET_TIME() from a reading of the monotonic
+// clock (AUDDEC_CLOCK_NOW(), which since 2.3.6 also starts the decode of the packet), the reading itself unless the
+// native test of auddec.cpp replaces it, so no native test runs that default.
 // The behaviour itself is run by tests/native/audio_lead_test.cpp (the estimator on simulated streams),
 // audio_catch_up_test.cpp (the catch-up),
 // audio_decoder_test.cpp (auddec.cpp), session_report_test.cpp and stats_overlay_test.cpp (the report), and
@@ -89,14 +90,18 @@ test('the catch-up after a stall is a pure header that the audio thread runs whi
   assert.match(decision, /^  bool skip;\n  if \(s_AudioSyncEnabled\) \{\n    skip = ntp \+ kAudioBufferMargin < s_estimatedAudioEnd;\n  \} else \{\n    const double targetBefore = s_AudioCatchUp\.target;\n    skip = catchingUp && s_AudioCatchUp\.Skips\(ntp\.count\(\), s_estimatedAudioEnd\.count\(\)\);\n[\s\S]*if \(s_AudioCatchUp\.target != targetBefore\) \{\s+ClLogMessage\("Another stall within %u minutes: the sound kept after a stall rises from %\.0f to %\.0f ms, "/);
   const branch = play.slice(play.indexOf('\n  if (skip) {\n'), play.indexOf('DecodeAndAppendPacket('));
   assert.match(branch, /if \(s_AudioSyncEnabled\) \{[\s\S]*\+\+s_DroppedPackets % 100 == 1[\s\S]*\} else \{\s+\/\/[^\n]*\n\s+if \(s_AudioCatchUp\.skipped % 100 == 1\) \{\s+ClLogMessage\("Skipping the sound that piled up after a stall beyond %\.0f ms: %u packets of this stream, "\s+"stalls: %u, /);
-  assert.match(branch, /s_AudioLead\.AddPacket\(ntp\.count\(\), \(s_estimatedAudioEnd - ntp\)\.count\(\)\);\s+return;\s+\}\n\n\s+\/\/ Decode and append the audio packet to the audio track\n\s+const bool appended = $/);
+  assert.match(branch, /s_AudioLead\.AddPacket\(ntp\.count\(\), \(s_estimatedAudioEnd - ntp\)\.count\(\)\);\s+return;\s+\}\n\n\s+\/\/ Decode and append the audio packet to the audio track[^\n]*\n(?:\s+\/\/[^\n]*\n)*\s+const bool appended = $/);
   assert.equal(decoder.split('s_AudioCatchUp.Update(').length - 1, 1);
   assert.equal(decoder.split('s_AudioCatchUp.Skips(').length - 1, 1);
-  // The clock of the packets: the monotonic clock of the TV, which only the native test of auddec.cpp replaces
-  assert.match(decoder, /\n#ifndef AUDDEC_NOW\n#define AUDDEC_NOW\(\) std::chrono::steady_clock::now\(\)\n#endif\n\nvoid MoonlightInstance::AudDecDecodeAndPlaySample\(/);
-  assert.match(play, /\n    s_firstAppend = AUDDEC_NOW\(\);\n/);
-  assert.match(play, /\n  auto now = AUDDEC_NOW\(\);\n  TimeStamp ntp = now - s_firstAppend;\n/);
-  assert.equal(decoder.split('AUDDEC_NOW').length - 1, 4, 'the definition and the two times of the EMSS path only');
+  // The clock of the packets: the monotonic clock of the TV, which only the native test of auddec.cpp replaces, read
+  // once per packet (since 2.3.6 the same reading starts its decode, see tests/native/audio_decoder_test.cpp)
+  assert.match(decoder, /\n#ifndef AUDDEC_CLOCK_NOW\n#define AUDDEC_CLOCK_NOW\(\) std::chrono::steady_clock::now\(\)\n#endif\n/);
+  assert.match(decoder, /\n#ifndef AUDDEC_PACKET_TIME\n#define AUDDEC_PACKET_TIME\(reading\) \(reading\)\n#endif\n/);
+  assert.match(play, /\n    s_firstAppend = AUDDEC_PACKET_TIME\(AUDDEC_CLOCK_NOW\(\)\);\n/);
+  assert.match(play, /\n  const auto arrival = AUDDEC_CLOCK_NOW\(\);\n  bool lineLogged = false;\n  auto now = AUDDEC_PACKET_TIME\(arrival\);\n  TimeStamp ntp = now - s_firstAppend;\n/);
+  assert.equal(decoder.split('AUDDEC_PACKET_TIME').length - 1, 4, 'the definition and the two times of the EMSS path only');
+  // Every reading of the clock of the audio thread goes through the seam
+  assert.equal(decoder.split('steady_clock::now()').length - 1, 1, 'only in the definition of AUDDEC_CLOCK_NOW()');
 });
 
 test('the report takes the figures that the audio stream left, and the hint knows whether Limit audio delay was on', () => {

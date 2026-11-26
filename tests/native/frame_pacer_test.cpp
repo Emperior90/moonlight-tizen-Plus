@@ -15,7 +15,9 @@
 // VidDecSetup() waits for the media pipeline of the TV, so the test sets up the state of a stream the way it does
 // (StartStream() below), with its ResetFramePacer().
 // It also checks what the statistics report of the pacer and of the hand-over to the player since 2.3.2: their times in
-// microseconds (LiGetMicroseconds(), which follows the clock of the test), the average per frame and the longest.
+// microseconds (LiGetMicroseconds(), which follows the clock of the test), the average per frame and the longest; and
+// since 2.3.6 how often a frame reads the clock: the steady clock, LiGetMicroseconds() and LiGetMillis() read the clock
+// of the test with the same epoch, as they read clock_gettime(CLOCK_MONOTONIC) on the TV, and each reading is counted.
 
 // The standard headers that wasm/wasmplayer.cpp and its headers use come first, so that the two macros below rename the
 // clock and usleep() only in the code of the app
@@ -46,9 +48,19 @@
 #include <pthread.h>
 #include <unistd.h>
 
-// The simulated clock, in seconds. Each reading of the clock takes 1 microsecond, so that the final spin of the pacer
-// moves on, and a sleep wakes up 50 microseconds late.
+// The simulated clock, in seconds. Each reading of the steady clock takes 1 microsecond, so that the final spin of the
+// pacer moves on, and a sleep wakes up 50 microseconds late. All clocks of the file read it in whole nanoseconds from an
+// epoch 100 s before its 0 (SimNs()), so that a time of one clock is the time of the others at that moment, as on the TV
+// (SteadyUs() of wasmplayer.cpp). The readings are counted.
 static double simNow = 0.0;
+static int steadyReadings = 0;
+static int libReadings = 0;
+static int64_t NsAt(double seconds) {
+  return 100000000000LL + std::llround(seconds * 1e9);
+}
+static int64_t SimNs() {
+  return NsAt(simNow);
+}
 
 namespace std {
 namespace chrono {
@@ -61,9 +73,10 @@ struct TestSteadyClock {
   using time_point = std::chrono::time_point<TestSteadyClock, duration>;
   static constexpr bool is_steady = true;
   static time_point now() noexcept {
-    const double now = simNow;
+    const int64_t now = SimNs();
     simNow += 1e-6;
-    return time_point(duration((rep)std::llround(now * 1e9)));
+    steadyReadings++;
+    return time_point(duration((rep)now));
   }
 };
 }  // namespace chrono
@@ -149,10 +162,12 @@ static int appendCalls = 0;
 static std::function<int()> appendResult;
 
 uint64_t LiGetMillis(void) {
-  return (uint64_t)(100000.0 + simNow * 1000.0);
+  libReadings++;
+  return (uint64_t)(SimNs() / 1000000);
 }
 uint64_t LiGetMicroseconds(void) {
-  return (uint64_t)(100000000.0 + simNow * 1e6);
+  libReadings++;
+  return (uint64_t)(SimNs() / 1000);
 }
 void LiRequestIdrFrame(void) {}
 bool LiGetHdrMetadata(PSS_HDR_METADATA) {
@@ -273,9 +288,9 @@ static int Submit(int number, bool idr, uint32_t hostTimeMs, double arrival, boo
   unit.frameType = idr ? FRAME_TYPE_IDR : FRAME_TYPE_PFRAME;
   unit.frameHostProcessingLatency = duplicate ? 0 : 40;
   unit.presentationTimeMs = hostTimeMs;
-  unit.enqueueTimeMs = (uint64_t)(100000.0 + arrival * 1000.0);
+  unit.enqueueTimeMs = (uint64_t)(NsAt(arrival) / 1000000);
   unit.receiveTimeMs = unit.enqueueTimeMs - 3;
-  unit.enqueueTimeUs = (uint64_t)(100000000.0 + arrival * 1e6);
+  unit.enqueueTimeUs = (uint64_t)(NsAt(arrival) / 1000);
   unit.receiveTimeUs = unit.enqueueTimeUs - 3000;
   unit.fullLength = sizeof(data);
   unit.bufferList = &entry;
@@ -1836,6 +1851,85 @@ static void PacerAndHandOverTimesAreMeasuredInMicroseconds() {
                       withRejections, __FILE__, __LINE__);
 }
 
+// The readings of the clock of one frame, and what took more of them
+struct FrameReadings {
+  int lib;          // LiGetMicroseconds() and LiGetMillis()
+  int steady;       // the steady clock of the pacer
+  bool first;       // the first frame of the stream (a keyframe)
+  bool keyframe;
+  bool statsWindow; // the frame ended the stats window of about a second
+  bool pacerWindow; // the pacer started a new time window with it
+};
+
+// Run the frames of a scenario like Run() and count the readings of the clock of each frame
+static std::vector<FrameReadings> CountReadings(int fps, const std::vector<Frame>& frames, bool pacing) {
+  simNow = frames.front().arrival;
+  StartStream(fps, pacing);
+  runningFrames = &frames;
+  std::vector<FrameReadings> readings;
+  double threadFree = simNow;
+  for (runningIndex = 0; runningIndex < frames.size(); runningIndex++) {
+    const Frame& frame = frames[runningIndex];
+    simNow = std::max(frame.arrival, threadFree);
+    const uint32_t statsStart = m_ActiveWndVideoStats.measurementStartTimestamp;
+    const double pacerWindow = s_lastSec.count();
+    libReadings = 0;
+    steadyReadings = 0;
+    const bool keyframe = runningIndex == 0 || frame.keyframe;
+    Submit(frame.number, keyframe, frame.hostTimeMs, frame.arrival, frame.duplicate);
+    // A new time window of the pacer starts with an empty list of arrival times (a fall of the latency that it follows
+    // keeps the arrival time of its frame in it)
+    readings.push_back({libReadings, steadyReadings, runningIndex == 0, keyframe,
+                        runningIndex != 0 && m_ActiveWndVideoStats.measurementStartTimestamp != statsStart,
+                        s_lastSec.count() != pacerWindow && s_PacingLateness.empty()});
+    threadFree = simNow;
+  }
+  runningFrames = nullptr;
+  samsung::wasm::TestAppendPacketHook() = nullptr;
+  return readings;
+}
+
+// Since 2.3.6 a frame reads the clock 4 times when the pacer doesn't hold it (2.3.5: 10, 8 of them LiGetMicroseconds()
+// and LiGetMillis()): when the thread takes it (in microseconds, which gives the milliseconds too), the steady clock of
+// the pacer (which also starts and ends the time of the pacing), the stats window (which also starts the hand-over to
+// the player) and the end of the hand-over (which also gives the interval of the player and the time of the last
+// append). The pacer reads the steady clock once more after each wait, as before. More readings take: the first frame
+// (the start of the clock of the pacer and of the stats window), a keyframe (its rules in milliseconds), a frame that
+// ends the stats window (its statistics) and one that starts a new time window of the pacer (the end of the pacing).
+static void EachFrameReadsTheClockFourTimes() {
+  for (bool pacing : {false, true}) {
+    const int fps = 60;
+    std::vector<Frame> frames = Host(5, [](int k) { return 1000.37 + k * 1000.0 / 60; });
+    Arrive(frames, fps, 6.0, 7);
+    frames[100].keyframe = true;
+    const std::vector<FrameReadings> readings = CountReadings(fps, frames, pacing);
+    int plain = 0;
+    int held = 0;
+    int statsWindows = 0;
+    int pacerWindows = 0;
+    for (size_t i = 0; i < readings.size(); i++) {
+      const FrameReadings& r = readings[i];
+      const int lib = 3 + (r.first ? 2 : 0) + (r.keyframe && !r.first ? 1 : 0) + (r.statsWindow ? 3 : 0) + (r.pacerWindow ? 1 : 0);
+      const int steady = 1 + (r.first ? 1 : 0);
+      if (r.lib != lib || r.steady < steady || (!pacing && r.steady != steady)) {
+        std::printf("  # pacing %d, frame %zu: %d and %d readings, expected %d and %d%s\n", pacing ? 1 : 0, i, r.lib, r.steady,
+                    lib, steady, pacing ? " or more" : "");
+      }
+      CHECK_EQ(r.lib, lib);
+      CHECK(r.steady >= steady);
+      plain += r.lib == 3 && r.steady == 1 ? 1 : 0;
+      held += r.steady > steady ? 1 : 0;
+      statsWindows += r.statsWindow ? 1 : 0;
+      pacerWindows += r.pacerWindow ? 1 : 0;
+    }
+    // Most frames take 4 readings; with the pacer, it holds some of them and reads the clock after each wait
+    CHECK(plain > (int)readings.size() / (pacing ? 4 : 2));
+    CHECK(statsWindows >= 4);
+    CHECK_EQ(held > 0, pacing);
+    CHECK_EQ(pacerWindows >= 3, pacing);
+  }
+}
+
 int main() {
   test_support::RunTest("a steady host keeps the timestamps and the pace of before", SteadyHostKeepsTheTimestampsAndThePace);
   test_support::RunTest("a host display off the grid of the stream rate keeps the pace",
@@ -1876,5 +1970,7 @@ int main() {
                         RetryStopsWhenTheTrackCloses);
   test_support::RunTest("the times of the pacer and of the hand-over are measured in microseconds",
                         PacerAndHandOverTimesAreMeasuredInMicroseconds);
+  test_support::RunTest("a frame reads the clock 4 times when the pacer doesn't hold it, and once more after each wait",
+                        EachFrameReadsTheClockFourTimes);
   return test_support::Summary();
 }
