@@ -157,7 +157,7 @@ describe('a 2026 TV on Tizen 10.0 in detail', () => {
     assert.ok(r.dialog.text.indexOf('The Ultra low latency mode stays off on Tizen 10.0, so install the ForceGM variant for the lowest latency.') >= 0, r.dialog.text);
     assert.ok(r.dialog.text.indexOf('Ultra low latency mode on') < 0, r.dialog.text);
     assert.equal(r.dialog.title, 'Optimal settings for this TV (QE65Q80HAT)');
-    for (const line of ['App Version: Moonlight Plus v2.3.5', 'Platform Version: Tizen 10.0', 'TV Firmware Version: T-INFOLINK2026-1000',
+    for (const line of ['App Version: Moonlight Plus v2.3.6', 'Platform Version: Tizen 10.0', 'TV Firmware Version: T-INFOLINK2026-1000',
       'TV Model Series: 26_PONTUSM_QTV', 'TV Model Name: QE65Q80HAT', 'TV Model Group: 26_PONTUSM (model year 2026)', 'Panel: 4K',
       'HDR Support: Yes', 'Tested Profile: None']) {
       assert.ok(r.systemInfo.indexOf(line) >= 0, line + '\n' + r.systemInfo.join('\n'));
@@ -170,7 +170,7 @@ describe('a 2026 TV on Tizen 10.0 in detail', () => {
 
   test('ForceGM variant: System information and the dialog name it', async () => {
     const r = await observe(Object.assign({ conn: 'wifi', tizen: '10.0', forceGM: 1 }, TV_2026));
-    assert.ok(r.systemInfo.indexOf('App Version: Moonlight Plus-ForceGM v2.3.5') >= 0, r.systemInfo.join('\n'));
+    assert.ok(r.systemInfo.indexOf('App Version: Moonlight Plus-ForceGM v2.3.6') >= 0, r.systemInfo.join('\n'));
     assert.ok(r.dialog.text.indexOf('ForceGM variant detected: the app asks the TV for its Game Mode') >= 0, r.dialog.text);
     assert.equal(r.stream.request.gameMode, 0, 'the ForceGM variant streams in the Low Latency mode');
   });

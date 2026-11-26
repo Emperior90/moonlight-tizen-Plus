@@ -2,6 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
+- [2.3.6](#236): pre-release, a sound decoder in floating point to test, fewer clock readings and rumble summed up in the log
 - [2.3.5](#235): 2026-11-26, keys that reach the PC without RETURN, pairing a PC that dropped the TV again, and sound that catches up after a stall
 - [2.3.4](#234): pre-release only, its changes did not come with 2.3.5
 - [2.3.3](#233): pre-release only, its changes come with 2.3.5
@@ -20,6 +21,20 @@ What changed in each version of Moonlight Plus, in short, newest first.
 **Which file?** `Moonlight-ForceGM.wgt` on Tizen 9 and newer, `Moonlight.wgt` on Tizen 5.5 to 8.
 
 **TV refuses an update?** If the author certificate doesn't match, uninstall the old app first; this loses its settings and pairing.
+
+## 2.3.6
+
+*Pre-release, in testing.* A sound decoder in floating point to test on a TV, fewer clock readings per frame, and a diagnostic log that sums up rumble.
+
+> **Install:** by hand over 2.3.5 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
+>
+> **Tested:** with simulated TVs and hosts only; whether the sound decoder is lighter shows on a TV in *Audio CPU* of the statistics.
+
+### Changed
+
+- The sound is decoded in floating point instead of whole numbers, as a test: *Audio CPU* shows if it is lighter
+- The picture and the sound read the clock fewer times per frame and per packet, which saves the TV some work
+- While a game rumbles a controller often, the diagnostic log sums it up once a minute instead of two lines each
 
 ## 2.3.5
 

@@ -2,6 +2,11 @@
 
 All notable changes to Moonlight Plus, by version, newest first. Each version lists what is new since the version before it; the [patch notes](docs/PATCH_NOTES.md) sum them up for users.
 
+## 2.3.6 (unreleased)
+
+### Changed
+- Changed the version to 2.3.6, a test version for users of 2.3.5 (`res/config.xml`, the tests that pin the version, the patch notes and the release notes).
+
 ## 2.3.5 (2026-11-26)
 
 Includes the pre-releases 2.3.3 and 2.3.4, which have no full release of their own. The video receive of 2.3.4 and of the test builds of 2.3.5 is not part of it: video is received as in 2.3.2 (see Changed).
