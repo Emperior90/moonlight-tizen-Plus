@@ -2,7 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
-- [2.3.5](#235): pre-release, keys that reach the PC without RETURN, pairing a PC that dropped the TV again, and sound that catches up after a stall
+- [2.3.5](#235): 2026-11-26, keys that reach the PC without RETURN, pairing a PC that dropped the TV again, and sound that catches up after a stall
 - [2.3.4](#234): pre-release only, its changes did not come with 2.3.5
 - [2.3.3](#233): pre-release only, its changes come with 2.3.5
 - [2.3.2](#232): 2026-11-20, a tidier Stream Menu with F keys and PC shutdown, finer frame times, how fast frames arrive, more facts in the log and a fix for recovery keyframes
@@ -23,7 +23,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ## 2.3.5
 
-*Pre-release, in testing.* Keys reach the PC without RETURN, a PC that dropped the TV pairs again, and the sound catches up after a stall.
+*2026-11-26.* Keys reach the PC without RETURN, a PC that dropped the TV pairs again, and the sound catches up after a stall.
 
 > **Install:** by hand over 2.3.4, 2.3.3, 2.3.2 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >
