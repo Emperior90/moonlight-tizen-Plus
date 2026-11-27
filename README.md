@@ -17,7 +17,7 @@ Moonlight Plus is an unofficial fork of [Moonlight Tizen](https://github.com/bri
 - **Stream Menu** on Play/Pause or Select + Start: change the bitrate in a game, type text, send shortcuts and F1 to F12 to the PC, or shut it down ([Stream Menu](docs/GUIDE.md#stream-menu-and-app-menu)).
 - **Statistics and diagnostics** that show whether the host, the network or the TV causes a problem ([statistics](docs/GUIDE.md#performance-statistics)).
 - **Controllers:** Select and Start in the menus, rumble, mouse emulation, a button mapping and an input test ([controllers](docs/CONTROLLERS.md)).
-- **Audio and languages:** surround sound with a lighter mode for the TV and a check of what reaches your soundbar (5.1 from the app is still untested on a TV), and English, German, Spanish, French or Brazilian Portuguese ([audio](docs/GUIDE.md#audio), [soundbar](docs/GUIDE.md#surround-sound-with-a-soundbar), [languages](docs/GUIDE.md#language)).
+- **Audio and languages:** surround sound with a lighter mode for the TV and a check of what reaches your soundbar (5.1 from the app plays on a Samsung S90C with the lighter mode; whether a soundbar gets all six channels one by one is still untested), and English, German, Spanish, French or Brazilian Portuguese ([audio](docs/GUIDE.md#audio), [soundbar](docs/GUIDE.md#surround-sound-with-a-soundbar), [languages](docs/GUIDE.md#language)).
 
 What changed in each version, in short: [patch notes](docs/PATCH_NOTES.md). Every detail: [changelog](CHANGELOG.md).
 

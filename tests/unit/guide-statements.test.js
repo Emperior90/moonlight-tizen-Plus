@@ -62,8 +62,10 @@
 //   in the Stream Menu
 // - the first start of the guide (2.3.5): the scan of the /24 network on port 47989, Add PC with its number fields or
 //   its text field, the pairing with a PIN of four digits, the troubleshooting rows of the failed pairings and of an
-//   app list that couldn't be read, No sound at all; and the README, which claims no tested surround output and, like
-//   the guide, names the separate fork for Tizen 5.0
+//   app list that couldn't be read, No sound at all; and the README, which claims no tested surround output through a
+//   soundbar (since 2.3.6 it says that 5.1 plays on the S90C) and, like the guide, names the separate fork for Tizen 5.0
+// - the host settings of 2.3.6: no refresh rate of the app for Sunshine, the encryption that the app asks for and the
+//   line that a host that requires it causes, the packet size of the FEC note and the labels of the frame delivery
 // The release notes of a release (docs/RELEASE_NOTES.md) only give the essentials, so the statements that they
 // carried until 1.19.100 are checked in the guide and the patch notes (docs/PATCH_NOTES.md), where they are now.
 
@@ -1404,13 +1406,15 @@ test('the guide describes the first start, the failed pairings, an unreadable ap
   assert.ok(troubleshooting.indexOf('*Creating the Opus decoder failed* before "audio stream establishment failed"') > 0);
 });
 
-test('the README claims no tested surround output, and the README and the guide point owners of Tizen 5.0 TVs elsewhere (2.3.5)', () => {
+test('the README claims no tested surround output through a soundbar, and the README and the guide point owners of Tizen 5.0 TVs elsewhere (2.3.5)', () => {
   const readme = read('README.md');
   const improvements = readme.slice(readme.indexOf('## Main improvements'), readme.indexOf('## Requirements'));
   // The guide says that nobody has confirmed discrete 5.1 from the app on a TV (pinned above), so the README doesn't
-  // list it as working, and it promises no 7.1, which the guide calls experimental
-  assert.doesNotMatch(improvements, /5\.1 through a soundbar|7\.1/);
-  assert.match(improvements, /a check of what reaches your soundbar \(5\.1 from the app is still untested on a TV\)/);
+  // list it as working, and it promises no 7.1, which the guide calls experimental. Since 2.3.6 it says that 5.1 plays
+  // on the S90C, where it was measured with Efficient, the lighter mode of the same bullet
+  assert.doesNotMatch(improvements, /5\.1 through a soundbar|7\.1|5\.1 from the app is still untested on a TV/);
+  assert.match(improvements, /surround sound with a lighter mode for the TV and a check of what reaches your soundbar \(5\.1 from the app plays on a Samsung S90C with the lighter mode; whether a soundbar gets all six channels one by one is still untested\)/);
+  assert.match(guideSection('### Surround sound with a soundbar'), /Untested: nobody has confirmed discrete 5\.1 from the app on a TV yet, also not on the S90C\./);
   assert.ok(improvements.indexOf('(docs/GUIDE.md#surround-sound-with-a-soundbar)') > 0);
   // The package needs Tizen 5.5 (res/config.xml); a separate community fork exists for Tizen 5.0, which this fork names
   // as such without vouching for it
@@ -1418,4 +1422,34 @@ test('the README claims no tested surround output, and the README and the guide 
   for (const [file, text] of [['README.md', readme], ['docs/GUIDE.md', GUIDE]]) {
     assert.ok(text.indexOf('For the TVs of 2019 with Tizen 5.0, Moonlight Tizen points to [moonlight-tizen50](https://github.com/WMP/moonlight-tizen50), a separate community fork that Moonlight Plus has not tried.') > 0, file);
   }
+});
+
+test('the host settings of the guide say what the app sends to Sunshine and what the log shows (2.3.6)', () => {
+  const host = guideSection('## Host settings (Sunshine)');
+  const main = read('wasm/main.cpp');
+  // The app sends no refresh rate of its own: the stream configuration starts zeroed and the app never sets
+  // clientRefreshRateX100, which moonlight-common-c sends to the host as it is
+  assert.match(read('moonlight-common-c/src/Misc.c'), /void LiInitializeStreamConfiguration\(PSTREAM_CONFIGURATION streamConfig\) \{\s+memset\(streamConfig, 0, sizeof\(\*streamConfig\)\);/);
+  assert.match(main, /LiInitializeStreamConfiguration\(&m_StreamConfig\);/);
+  assert.doesNotMatch(main, /clientRefreshRateX100/);
+  assert.match(read('moonlight-common-c/src/SdpGenerator.c'), /"x-nv-video\[0\]\.clientRefreshRateX100", payloadStr/);
+  assert.ok(host.indexOf('At 59.94 Hz, Sunshine on Windows captures only 59.94 frames per second, since the app sends no refresh rate of its own (the Sunshine log then shows `Adjusted capture rate to …fps to better match display`), and the TV shows a short stutter about every 17 seconds.') > 0);
+  // The app asks for the encryption of the sound only with Decrypt host audio and never for that of the video; a host
+  // that requires it gets it anyway, with a line in the log, and each video packet loses the size of its header
+  assert.match(main, /m_StreamConfig\.encryptionFlags = decryptHostAudio \? ENCFLG_AUDIO : ENCFLG_NONE;/);
+  const sdp = read('moonlight-common-c/src/SdpGenerator.c');
+  assert.ok(sdp.indexOf('Limelog("Enabling video encryption by host request despite client opt-out. Performance may suffer!");') > 0);
+  assert.ok(sdp.indexOf('Limelog("Enabling audio encryption by host request despite client opt-out. Audio quality may suffer!");') > 0);
+  assert.match(sdp, /StreamConfig\.packetSize -= sizeof\(ENC_VIDEO_HEADER\);/);
+  assert.match(read('moonlight-common-c/src/Video.h'), /typedef struct _ENC_VIDEO_HEADER \{\s+uint8_t iv\[12\];\s+uint32_t frameNumber;\s+uint8_t tag\[16\];\s+\}/);
+  assert.equal(12 + 4 + 16, 32);
+  assert.ok(host.indexOf('- `lan_encryption_mode` (*LAN Encryption Mode*, default 0): leave it at 0. Moonlight Plus doesn\'t ask for video encryption, so 1 (*Enabled for supported clients*) changes nothing.') > 0);
+  assert.ok(host.indexOf('each video packet carries 32 bytes less video; the log of the app then shows *Enabling video encryption by host request despite client opt-out. Performance may suffer!* (and a similar line for the sound when *Decrypt host audio* is off).') > 0);
+  // The packet size of the app, which the FEC blocks of the note on nvenc_vbv_increase are counted in
+  assert.match(main, /m_StreamConfig\.packetSize = 1392;/);
+  assert.ok(host.indexOf('with FEC 5 an increase of 10 already splits the largest frames of a 60 FPS stream into two FEC blocks from a bitrate of about 154 Mbps on') > 0);
+  // The labels of the statistics that the guide names for the frame delivery of the game
+  assert.match(read('wasm/platform/diagnostics.js'), /t\('Host frame rate \(lowest 30 s\): %1\$s FPS, below %2\$s FPS in %3\$s of %4\$s half minutes'/);
+  assert.match(read('wasm/platform/messages.js'), /'Host': t\('Host frame intervals:'\)/);
+  assert.ok(host.indexOf('*Host frame rate (lowest 30 s)* in *Last session* should stay at about 59 FPS or more') > 0);
 });
