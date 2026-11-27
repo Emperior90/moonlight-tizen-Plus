@@ -86,7 +86,11 @@ This repository includes several third-party dependencies required for applicati
 
   The following file currently requires manual updates to preserve Tizen-specific functionality:
   - `moonlight-common-c/enet/unix.c`
-- `opus` — **manual modifications are not allowed**; updates should only come from the official [upstream repository](https://github.com/xiph/opus) and be performed by the maintainer. The app only decodes, so `CMakeLists.txt` builds only the files that the decoder links; after an update of Opus, `npm test --prefix tests` (`tests/native/run.sh`) builds that list and decodes with it.
+- `opus` — **manual modifications are not allowed**, apart from the local patches listed below; updates should only come from the official [upstream repository](https://github.com/xiph/opus) and be performed by the maintainer. The app only decodes, so `CMakeLists.txt` builds only the files that the decoder links; after an update of Opus, `npm test --prefix tests` (`tests/native/run.sh`) builds that list and decodes with it.
+
+  The following files carry local patches of Moonlight Plus, which an update of Opus has to keep (`tests/unit/vendored-opus-patch.test.js` checks them, `.github/dependency-baselines.json` records them):
+  - `opus/celt/arch.h` (`OPUS_FAST_INT64` also for WebAssembly)
+  - `opus/celt/float_cast.h` (`float2int()` with one float addition in WebAssembly)
 
 ### Dependency Guidelines
 

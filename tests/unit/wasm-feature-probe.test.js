@@ -15,9 +15,11 @@
 // - the app logs the line once per start, from moduleDidLoad() of index.js or, for a module that failed before, from
 //   onNativeModuleFailure(), and the redaction of the diagnostic log leaves it as it is;
 // - since 2.3.6 a second line about the browser engine follows it (probeDivisionTime(), probeWebEngine() and
-//   describeWebEngine()): the division module computes as JavaScript does, the probe gives a ratio within about 15 ms
-//   with a clock of 0.1 ms and none with clocks that are too coarse, missing and throwing APIs give 'unknown', and
-//   everything before the user agent stays within a line of the log.
+//   describeWebEngine()): the division module computes as JavaScript does, with i32.div_s in export 'a' and i64.div_s
+//   in export 'b'; the probe gives a ratio with a clock of 0.1 ms and none with clocks that are too coarse; on a fake
+//   engine with a fake clock it warms both loops up first, stops within 15 ms, takes at most 6 runs of each loop and
+//   calls the ratio clear only from 3 runs on; missing and throwing APIs give 'unknown', everything before the user
+//   agent stays within a line of the log, and the redaction of the log leaves the line as it is.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -281,7 +283,7 @@ test('logWebAssemblyFeatures() logs its two lines once per start and never throw
     'sign extension unknown; supportedInstructions of the TV: failed (Simulated failure of every property); socket host bindings: unknown');
 });
 
-test('the line reaches the diagnostic log once and its redaction leaves it as it is', () => {
+test('both lines reach the diagnostic log once and their redaction leaves them as they are', () => {
   const page = loadPlatformScripts(['wasm/platform/diagnostics.js', 'wasm/platform/tv_profile.js'], {
     globals: { Date, tizentvwasm: { supportedInstructions: () => ['neon'], SocketsHostBindings: hostBindings(SDK_HOST_BINDINGS) } },
   });
@@ -304,6 +306,30 @@ test('the line reaches the diagnostic log once and its redaction leaves it as it
       'supportedInstructions of the TV: ' + value + '; socket host bindings: ' + value;
     assert.equal(redact(text), text);
   });
+  // The line about the browser engine comes once as well, and the redaction leaves it as it is, with every form of the
+  // division time and the user agents of Tizen 5.5 and 7.0, whose version numbers look a little like addresses
+  const engineLines = all.filter((text) => text.indexOf('Web engine: ') >= 0);
+  assert.equal(engineLines.length, 1, all.join('\n'));
+  const logged = engineLines[0].slice(engineLines[0].indexOf('Web engine: '));
+  assert.equal(redact(logged), logged);
+  const describe = page.get('describeWebEngine');
+  const divisions = [
+    { ratio: 1.12, runs: 6, clear: true, stepMs: 0.1, error: null },
+    { ratio: 4.2, runs: 2, clear: false, stepMs: 0.005, error: null },
+    { ratio: null, runs: 0, clear: false, stepMs: 1, error: 'clock too coarse' },
+    { ratio: null, runs: 0, clear: false, stepMs: 0.1, error: 'no run long enough' },
+    { ratio: null, runs: 0, clear: false, stepMs: null, error: 'unavailable' },
+  ];
+  [
+    { userAgent: 'Mozilla/5.0 (SMART-TV; LINUX; Tizen 5.5) AppleWebKit/537.36 (KHTML, like Gecko) 69.0.3497.106.1/5.5 TV Safari/537.36',
+      cores: '4', platform: 'Linux armv7l', cpuArch: 'armv7' },
+    { userAgent: 'Mozilla/5.0 (SMART-TV; LINUX; Tizen 7.0) AppleWebKit/537.36 (KHTML, like Gecko) 94.0.4606.31/7.0 TV Safari/537.36',
+      cores: '8', platform: 'Linux aarch64', cpuArch: 'aarch64' },
+    { userAgent: 'unknown', cores: 'unknown', platform: 'unknown', cpuArch: 'unknown' },
+  ].forEach((engine) => divisions.forEach((division) => {
+    const text = describe(Object.assign({ division }, engine));
+    assert.equal(redact(text), text);
+  }));
 });
 
 test('the app logs the line from moduleDidLoad(), once the runtime of the module is up, or when the module failed, and nowhere else', () => {
@@ -328,6 +354,46 @@ function fakeClock(stepMs) {
   return { now: () => Math.floor(performance.now() / stepMs) * stepMs };
 }
 
+// The sections of a WebAssembly module by their id, each as its bytes (every size in the division module fits in one
+// byte of LEB128)
+function moduleSections(bytes) {
+  const sections = {};
+  for (let at = 8; at < bytes.length; at += 2 + bytes[at + 1]) {
+    assert.ok(bytes[at + 1] < 128, 'size of section ' + bytes[at]);
+    sections[bytes[at]] = bytes.slice(at + 2, at + 2 + bytes[at + 1]);
+  }
+  return sections;
+}
+
+// probeDivisionTime() on a fake engine with a fake clock of 0.1 ms steps: a call of loop 'a' or 'b' moves the clock by
+// n times its cost per loop (perLoop) plus its cost per call (perCall), the first call of 0.8 ms or more also by its
+// stall (another process that takes the CPU meanwhile), and each reading of the clock by 1 µs. Returns the result and
+// the calls ({ name, n, k, from, to }, in ms of the fake clock).
+function fakeEngineProbe(costs) {
+  let now = 100;
+  const calls = [];
+  const stalled = {};
+  const loop = (name) => (n, k) => {
+    const from = now;
+    now += n * (costs[name].perLoop || 0) + (costs[name].perCall || 0);
+    if (costs[name].stall && !stalled[name] && now - from >= 0.8) {
+      stalled[name] = true;
+      now += costs[name].stall;
+    }
+    calls.push({ name, n, k, from, to: now });
+    return 0;
+  };
+  const exportsOf = { a: loop('a'), b: loop('b') };
+  const webAssembly = { Module: function() {}, Instance: function() {
+    this.exports = exportsOf;
+  } };
+  const clock = { now: () => {
+    now += 0.001;
+    return Math.floor(now / 0.1) * 0.1;
+  } };
+  return { probe: profile.probeDivisionTime({ webAssembly, performance: clock }), calls };
+}
+
 test('the division module is valid and both loops compute the same as JavaScript', () => {
   const bytes = new Uint8Array(profile.DIVISION_PROBE_BYTES);
   assert.equal(WebAssembly.validate(bytes), true);
@@ -342,26 +408,89 @@ test('the division module is valid and both loops compute the same as JavaScript
     assert.equal(loops.a(n, k), a32 | 0);
     assert.equal(loops.b(n, k), Number(BigInt.asIntN(32, a64)));
   }));
-  // i32.div_s (0x6D) only in the first function, i64.div_s (0x7F) and i64.extend_i32_s (0xAC) only in the second
-  assert.deepEqual([109, 127].map((op) => bytes.indexOf(op) >= 0), [true, true]);
+  // Every value stays within 32 bits, so both loops give the same results, and only the bytes of the module show which
+  // division each export runs. One function type (i32, i32) -> i32 for both functions, with no i64 in it
+  const sections = moduleSections(Array.from(bytes));
+  assert.deepEqual(Object.keys(sections), ['1', '3', '7', '10']);
+  assert.deepEqual(sections[1], [1, 96, 2, 127, 127, 1, 127]);
+  assert.deepEqual(sections[3], [2, 0, 0]);
+  // Export 'a' is the first function and 'b' the second
+  assert.deepEqual(sections[7], [2, 1, 97, 0, 0, 1, 98, 0, 1]);
+  const code = sections[10];
+  assert.equal(code[0], 2);
+  const bodyA = code.slice(2, 2 + code[1]);
+  const bodyB = code.slice(3 + code[1], 3 + code[1] + code[2 + code[1]]);
+  assert.equal(3 + bodyA.length + bodyB.length, code.length);
+  const has = (body, sequence) => body.some((_, at) => sequence.every((byte, k) => body[at + k] === byte));
+  // 'a': one more i32 local, and a / k with i32.div_s (local.get 2, local.get 1, 0x6D)
+  assert.deepEqual(bodyA.slice(0, 3), [1, 1, 127]);
+  assert.ok(has(bodyA, [32, 2, 32, 1, 109]), bodyA.join(','));
+  // 'b': two i64 locals, k widened with i64.extend_i32_s (local.get 1, 0xAC, local.set 3), a / k with i64.div_s
+  // (local.get 2, local.get 3, 0x7F), and the low 32 bits of a returned with i32.wrap_i64 (local.get 2, 0xA7, end)
+  assert.deepEqual(bodyB.slice(0, 3), [1, 2, 126]);
+  assert.ok(has(bodyB, [32, 1, 172, 33, 3]), bodyB.join(','));
+  assert.ok(has(bodyB, [32, 2, 32, 3, 127]), bodyB.join(','));
+  assert.deepEqual(bodyB.slice(-4), [32, 2, 167, 11]);
 });
 
-test('the division probe gives a ratio within about 15 ms, and no ratio with a clock that is too coarse', () => {
-  const started = performance.now();
-  const probe = profile.probeDivisionTime({ webAssembly: WebAssembly, performance: fakeClock(0.1) });
-  const took = performance.now() - started;
-  assert.equal(probe.error, null);
+test('the division probe gives a ratio with the WebAssembly of the tests, and no ratio with a clock that is too coarse', () => {
+  // A busy machine can hold up a run of the i32 loop for so long that the time is up before the i64 loop had a run
+  // that counts ('no run long enough', which the line shows as unknown, as on a busy TV), so the probe gets up to 3
+  // tries here. Its time limit and its runs are pinned on the fake engine below, since a busy machine stretches the
+  // time of the real one.
+  let probe = null;
+  for (let attempt = 0; attempt < 3 && !(probe && probe.error === null); attempt++) {
+    probe = profile.probeDivisionTime({ webAssembly: WebAssembly, performance: fakeClock(0.1) });
+  }
+  assert.equal(probe.error, null, JSON.stringify(probe));
   assert.ok(probe.runs >= 1 && probe.runs <= 6, JSON.stringify(probe));
   assert.equal(probe.clear, probe.runs >= 3);
   // A 64-bit engine (the one of the tests) divides both with one instruction. A busy machine may leave too few runs
   // for a clear ratio, and then the ratio may be anything.
   assert.ok(!probe.clear || (probe.ratio > 0.5 && probe.ratio < 2), JSON.stringify(probe));
   assert.ok(Math.abs(probe.stepMs - 0.1) < 1e-9, JSON.stringify(probe));
-  assert.ok(took < 60, took + ' ms');
   [{ now: () => 5 }, fakeClock(1), fakeClock(16)].forEach((clock) => {
     const coarse = profile.probeDivisionTime({ webAssembly: WebAssembly, performance: clock });
     assert.deepEqual([coarse.ratio, coarse.runs, coarse.error], [null, 0, 'clock too coarse']);
   });
+});
+
+test('on a fake engine the probe warms both loops up, stops within 15 ms and calls the ratio clear only from 3 runs on', () => {
+  // Loops of 0.01 and 0.02 µs per division: both warmed up with 1000 divisions by 3 before the clock starts, then up to
+  // 6 runs of each that count (from 0.8 ms on, about 1 ms each), all done within 15 ms of the start
+  const fast = fakeEngineProbe({ a: { perLoop: 1e-5 }, b: { perLoop: 2e-5 } });
+  assert.deepEqual(fast.calls.slice(0, 2).map((call) => [call.name, call.n, call.k]), [['a', 1000, 3], ['b', 1000, 3]]);
+  assert.ok(fast.calls.every((call) => call.k === 3));
+  assert.deepEqual([fast.probe.runs, fast.probe.clear, fast.probe.error], [6, true, null]);
+  assert.ok(fast.probe.ratio > 1.7 && fast.probe.ratio < 2.3, JSON.stringify(fast.probe));
+  const start = fast.calls[1].to;
+  // (within one step of the clock, which reads the time a little early)
+  assert.ok(fast.calls[fast.calls.length - 1].to <= start + 15 + 0.1, JSON.stringify(fast.calls));
+  // (a run that counts reads at least 0.8 ms on the clock of 0.1 ms steps, so it took more than 0.8 ms)
+  const long = (name) => fast.calls.filter((call) => call.name === name && call.to - call.from >= 0.9);
+  assert.deepEqual([long('a').length, long('b').length], [6, 6], JSON.stringify(fast.calls));
+  assert.ok(long('a').concat(long('b')).every((call) => call.to - call.from <= 1.2), JSON.stringify(fast.calls));
+  // Runs of 0.95 ms whatever their length: 6 of each, and then the probe stops, well within 15 ms
+  const capped = fakeEngineProbe({ a: { perCall: 0.95 }, b: { perCall: 0.95 } });
+  assert.deepEqual([capped.probe.runs, capped.probe.clear, capped.calls.length], [6, true, 2 + 12]);
+  // (each run reads 0.9 or 1.0 ms on the clock)
+  assert.ok(capped.probe.ratio >= 0.9 / 1.0 && capped.probe.ratio <= 1.0 / 0.9 + 1e-9, JSON.stringify(capped.probe));
+  // An i64 loop of 3 ms per run leaves time for only 2 runs of the i32 loop, and no run starts that would end after
+  // 15 ms: a ratio, but not a clear one. With 2 ms per run there are 3, which is enough.
+  const slow = fakeEngineProbe({ a: { perLoop: 1e-5 }, b: { perCall: 3 } });
+  assert.deepEqual([slow.probe.runs, slow.probe.clear, slow.probe.error], [2, false, null]);
+  assert.ok(slow.probe.ratio > 100, JSON.stringify(slow.probe));
+  assert.ok(slow.calls[slow.calls.length - 1].to <= slow.calls[1].to + 15 + 0.1, JSON.stringify(slow.calls));
+  const slower = fakeEngineProbe({ a: { perLoop: 1e-5 }, b: { perCall: 2 } });
+  assert.deepEqual([slower.probe.runs, slower.probe.clear, slower.probe.error], [3, true, null]);
+  // A first run of the i32 loop that another process holds up for 14 ms uses up the time before the i64 loop had a
+  // run that counts
+  const held = fakeEngineProbe({ a: { perLoop: 1e-5, stall: 14 }, b: { perLoop: 1e-5 } });
+  assert.deepEqual([held.probe.ratio, held.probe.runs, held.probe.clear, held.probe.error], [null, 0, false, 'no run long enough']);
+  // Loops that never take 0.8 ms stop at 2^21 divisions per run
+  const tiny = fakeEngineProbe({ a: { perCall: 0.01 }, b: { perCall: 0.01 } });
+  assert.deepEqual([tiny.probe.ratio, tiny.probe.runs, tiny.probe.error], [null, 0, 'no run long enough']);
+  assert.equal(Math.max.apply(null, tiny.calls.map((call) => call.n)), 1 << 21);
 });
 
 test('the line about the browser engine names what the TV says, and unknown for what is missing or throws', () => {

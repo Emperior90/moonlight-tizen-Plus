@@ -2,7 +2,7 @@
 
 What changed in each version of Moonlight Plus, in short, newest first.
 
-- [2.3.6](#236): pre-release, a sound decoder in floating point to test, fewer clock readings and rumble summed up in the log
+- [2.3.6](#236): pre-release, a sound decoder in floating point to test, fewer clock readings, rumble summed up and two more lines in the log
 - [2.3.5](#235): 2026-11-26, keys that reach the PC without RETURN, pairing a PC that dropped the TV again, and sound that catches up after a stall
 - [2.3.4](#234): pre-release only, its changes did not come with 2.3.5
 - [2.3.3](#233): pre-release only, its changes come with 2.3.5
@@ -24,7 +24,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ## 2.3.6
 
-*Pre-release, in testing.* A sound decoder in floating point to test on a TV, fewer clock readings per frame, and a diagnostic log that sums up rumble.
+*Pre-release, in testing.* A sound decoder in floating point to test on a TV, fewer clock readings, and a log that sums up rumble and tells more about the TV.
 
 > **Install:** by hand over 2.3.5 or earlier, which normally keeps settings and pairing, or next to the regular Moonlight app (pair the PC once).
 >
@@ -32,7 +32,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ### New
 
-- At the start, the diagnostic log tells whether the TV's browser is a 32- or 64-bit one, with cores and version
+- At the start, the diagnostic log hints whether the TV's browser is a 32- or 64-bit one, with cores and version
 - At the end of each stream, the diagnostic log tells how many frames the video element of the TV's browser counted
 
 ### Changed

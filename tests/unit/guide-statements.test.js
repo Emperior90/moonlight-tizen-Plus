@@ -48,7 +48,9 @@
 // - the statistics and the log of 2.3.2: the times of a frame from the microsecond clock with their steps of about
 //   0.1 ms on the TV, the longest frame times, the arrival rate of the frames (at IP level, data packets only, with its
 //   minimum, neither the bitrate nor the Wi-Fi link rate) in the full statistics and Last session, the QoS line of each
-//   socket of a stream and the WebAssembly line at the start of the app
+//   socket of a stream and the WebAssembly line at the start of the app (since 2.3.6 with the line about the browser
+//   engine after it, how to read it and the limits of its probe, and the line of the frames of the video element at
+//   the end of a stream)
 // - the keys of a stream (2.3.3): the first key of a PC keyboard only gives the stream the keys (not Esc or a modifier
 //   key), RETURN sends Esc, the keys of a TV never reach the PC, Ctrl + Alt + Shift with Q, S (once per press) or
 //   another key, and the horizontal wheel
@@ -1003,7 +1005,16 @@ test('the guide describes the frame times, the arrival rate and the log lines of
   assert.ok(log.indexOf('e.g. *' + engine + '*') > 0, engine);
   const coarse = profile.probeDivisionTime({ webAssembly: WebAssembly, performance: { now: () => 5 } });
   assert.equal(coarse.error, 'clock too coarse');
-  ['*unclear*', '*unknown*', 'about 15 ms once at its start', 'above 3.5 on a 32-bit engine'].forEach((text) => assert.ok(log.indexOf(text) > 0, text));
+  ['*unclear*', '*unknown*', 'about 15 ms once at its start', 'below 2 on a 64-bit engine', 'above 3.5 on a 32-bit engine',
+    'from 2 to 3.5 it doesn\'t tell', '*unknown (' + coarse.error + ' …)*', '*unknown (no run long enough …)*']
+    .forEach((text) => assert.ok(log.indexOf(text) > 0, text));
+  // The limits that the guide names, as probeDivisionTime() has them: the step of the clock, the runs for a clear figure
+  // and the time of the probe
+  const tvProfile = read('wasm/platform/tv_profile.js');
+  assert.match(tvProfile, /const DIVISION_PROBE_MAX_STEP_MS = 0\.15;/);
+  assert.match(tvProfile, /const DIVISION_PROBE_CLEAR_RUNS = 3;/);
+  assert.match(tvProfile, /const DIVISION_PROBE_BUDGET_MS = 15;/);
+  ['steps of more than 0.15 ms', 'fewer than 3 runs of each fitted in that time'].forEach((text) => assert.ok(log.indexOf(text) > 0, text));
   // The line about the frames of the video element at the end of a stream, as keepSessionReport() of index.js writes it
   const frames = loadPlatformScripts(['wasm/platform/tv_profile.js', 'wasm/platform/diagnostics.js', 'wasm/platform/index.js'],
     { tv: { tv: 's90c', conn: 'wifi' } });
@@ -1441,8 +1452,11 @@ test('the host settings of the guide say what the app sends to Sunshine and what
   assert.ok(sdp.indexOf('Limelog("Enabling video encryption by host request despite client opt-out. Performance may suffer!");') > 0);
   assert.ok(sdp.indexOf('Limelog("Enabling audio encryption by host request despite client opt-out. Audio quality may suffer!");') > 0);
   assert.match(sdp, /StreamConfig\.packetSize -= sizeof\(ENC_VIDEO_HEADER\);/);
-  assert.match(read('moonlight-common-c/src/Video.h'), /typedef struct _ENC_VIDEO_HEADER \{\s+uint8_t iv\[12\];\s+uint32_t frameNumber;\s+uint8_t tag\[16\];\s+\}/);
-  assert.equal(12 + 4 + 16, 32);
+  // (the IV, the 4 bytes of the frame number and the tag, packed without padding)
+  const encHeader = /#pragma pack\(push, 1\)[\s\S]*?typedef struct _ENC_VIDEO_HEADER \{\s+uint8_t iv\[(\d+)\];\s+uint32_t frameNumber;\s+uint8_t tag\[(\d+)\];\s+\}/
+    .exec(read('moonlight-common-c/src/Video.h'));
+  assert.ok(encHeader, 'ENC_VIDEO_HEADER of Video.h');
+  assert.equal(Number(encHeader[1]) + 4 + Number(encHeader[2]), 32);
   assert.ok(host.indexOf('- `lan_encryption_mode` (*LAN Encryption Mode*, default 0): leave it at 0. Moonlight Plus doesn\'t ask for video encryption, so 1 (*Enabled for supported clients*) changes nothing.') > 0);
   assert.ok(host.indexOf('each video packet carries 32 bytes less video; the log of the app then shows *Enabling video encryption by host request despite client opt-out. Performance may suffer!* (and a similar line for the sound when *Decrypt host audio* is off).') > 0);
   // The packet size of the app, which the FEC blocks of the note on nvenc_vbv_increase are counted in
