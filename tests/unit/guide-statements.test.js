@@ -995,6 +995,27 @@ test('the guide describes the frame times, the arrival rate and the log lines of
   ['*used*', '*not used*', '*offered by the TV*', '*not offered by the TV*', '*not offered*', '*unknown*', '*failed*',
     'the app already uses threads', 'e.g. when it failed to start (the line then comes with its error)']
     .forEach((text) => assert.ok(log.indexOf(text) > 0, text));
+  // The line about the browser engine after it, as tv_profile.js writes it
+  const engine = profile.describeWebEngine({ userAgent: 'Mozilla/5.0 (SMART-TV; LINUX; Tizen 9.0) …', cores: '4',
+    platform: 'Linux armv7l', cpuArch: 'armv7', division: { ratio: 1.12, runs: 6, clear: true, stepMs: 0.1, error: null } });
+  assert.ok(log.indexOf('e.g. *' + engine + '*') > 0, engine);
+  const coarse = profile.probeDivisionTime({ webAssembly: WebAssembly, performance: { now: () => 5 } });
+  assert.equal(coarse.error, 'clock too coarse');
+  ['*unclear*', '*unknown*', 'about 15 ms once at its start', 'above 3.5 on a 32-bit engine'].forEach((text) => assert.ok(log.indexOf(text) > 0, text));
+  // The line about the frames of the video element at the end of a stream, as keepSessionReport() of index.js writes it
+  const frames = loadPlatformScripts(['wasm/platform/tv_profile.js', 'wasm/platform/diagnostics.js', 'wasm/platform/index.js'],
+    { tv: { tv: 's90c', conn: 'wifi' } });
+  frames.context.$ = () => ({ parent: () => ({ hasClass: () => false }) });
+  frames.context.document.getElementById = (id) => (id === 'wasm_module' ? {
+    getVideoPlaybackQuality: () => ({ totalVideoFrames: 3590, droppedVideoFrames: 7 }),
+    webkitDecodedFrameCount: 3591, webkitDroppedFrameCount: 6 } : null);
+  frames.get('keepSessionReport')(JSON.stringify({ durationMs: 60000, codec: 'AV1 Main10', width: 3840, height: 2160, fps: 60,
+    frames: 3600 }));
+  const framesLine = frames.consoleMessages.map((message) => message.text).find((text) => /Frames of the video element/.test(text));
+  assert.ok(framesLine, 'the line of the video element');
+  const framesText = framesLine.slice(framesLine.indexOf('Frames of the video element'));
+  assert.ok(log.indexOf('e.g. *' + framesText + '*') > 0, framesText);
+  ['*no counters*', '*getVideoPlaybackQuality()*', 'nothing in the app depends on it'].forEach((text) => assert.ok(log.indexOf(text) > 0, text));
   // The QoS lines tell nothing about the marking of what the PC sends
   assert.ok(log.indexOf('The marking of what the PC sends, the picture and the sound, is set by the PC and doesn\'t show in these lines (*Prioritize sound on Wi-Fi* changes that marking, not these lines)') > 0);
 });

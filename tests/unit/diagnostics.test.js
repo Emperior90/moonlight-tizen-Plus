@@ -18,7 +18,9 @@
 // start that the app ended during it (not for a stream in the background), that the native lines come from the ring
 // that every log line of the module enters, that the module sets the listener that logs the errors of the media
 // element, that every setup call of the video player whose refusal would end the start with -200 logs that refusal,
-// and that each stream starts the host figures of its report from zero.
+// that each stream starts the host figures of its report from zero, and the line with the frames that the video element
+// counted, once per report at the end of a stream, next to the frames of the report (both kinds of counters, the older
+// webkit ones alone, an element without counters, no element, and a call that throws).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -1274,4 +1276,47 @@ test('a session report that can\'t be read is logged with the reason, its length
   assert.equal(parts.map((part) => part.text).join(''), JSON.stringify(broken));
   assert.match(parts[0].text, /\\u0001/);
   assert.equal(app.get('lastSessionReport'), null);
+});
+
+// keepSessionReport() of a readable report with the video element that document.getElementById('wasm_module') gives:
+// the lines about the frames of the video element that it logged, and the context of the app
+function frameCounterLines(element) {
+  const app = loadPlatformScripts(['wasm/platform/tv_profile.js', 'wasm/platform/diagnostics.js', 'wasm/platform/index.js'],
+    { tv: { tv: 's90c', conn: 'wifi' } });
+  // The switches that the hints of the report read
+  app.context.$ = () => ({ parent: () => ({ hasClass: () => false }) });
+  app.context.document.getElementById = (id) => (id === 'wasm_module' ? element : null);
+  const before = app.consoleMessages.length;
+  app.get('keepSessionReport')(JSON.stringify({ durationMs: 60000, codec: 'AV1 Main10', width: 3840, height: 2160,
+    fps: 60, frames: 3600 }));
+  const lines = app.consoleMessages.slice(before).map((message) => message.level + ' ' + message.text)
+    .filter((text) => /video element/.test(text));
+  return { lines, app };
+}
+
+test('the end of a stream logs the frames that the video element counted, both kinds in one line, next to those of the report', () => {
+  const { lines } = frameCounterLines({ getVideoPlaybackQuality: () => ({ totalVideoFrames: 3590, droppedVideoFrames: 7 }),
+    webkitDecodedFrameCount: 3591, webkitDroppedFrameCount: 6 });
+  assert.equal(lines.length, 1, JSON.stringify(lines));
+  assert.match(lines[0], /^log .*Frames of the video element: total 3590, dropped 7; webkit decoded 3591, dropped 6; frames of the stream: 3600$/);
+});
+
+test('the line of the video element names the older webkit counters alone where the engine has only those', () => {
+  const { lines } = frameCounterLines({ webkitDecodedFrameCount: 0, webkitDroppedFrameCount: 0 });
+  assert.equal(lines.length, 1, JSON.stringify(lines));
+  assert.match(lines[0], /^log .*Frames of the video element: webkit decoded 0, dropped 0; frames of the stream: 3600$/);
+});
+
+test('the line of the video element says so for an element without counters and for no element', () => {
+  assert.match(frameCounterLines({}).lines[0], /^log .*Frames of the video element: no counters; frames of the stream: 3600$/);
+  assert.match(frameCounterLines(null).lines[0], /^log .*Frames of the video element: no element; frames of the stream: 3600$/);
+});
+
+test('a call of the video element that throws only gives a warning, and the report is still kept', () => {
+  const { lines, app } = frameCounterLines({ getVideoPlaybackQuality: () => {
+    throw new Error('Simulated failure of getVideoPlaybackQuality');
+  } });
+  assert.equal(lines.length, 1, JSON.stringify(lines));
+  assert.match(lines[0], /^warn .*Warning: Failed to read the frames of the video element: Error: Simulated failure of getVideoPlaybackQuality$/);
+  assert.equal(app.get('lastSessionReport').frames, 3600);
 });

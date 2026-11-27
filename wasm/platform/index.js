@@ -7712,6 +7712,28 @@ function keepSessionReport(json) {
     surroundQuality: streamSurroundQuality, audioSync: $('#audioSyncSwitch').parent().hasClass('is-checked') };
   console.log('%c[index.js, keepSessionReport]', 'color: green;', 'Hints of the session report: ' +
     getSessionReportHints(report, lastSessionReportOptions).join(', '));
+  // Once per stream, what the video element of the stream counted (getVideoPlaybackQuality() from Chromium 80 on, and
+  // the older webkit counters), next to the frames of the stream in its report. Only logged, to learn whether the TV
+  // fills these counters for its media player at all. The module posts the report before it closes the media source
+  // (VidDecCleanup() in wasmplayer.cpp, then CloseMediaSource() in main.cpp), but the message reaches this page on its
+  // own time, so the source may be closed by now; each stream sets the source anew.
+  try {
+    const video = document.getElementById('wasm_module');
+    const counters = [];
+    if (video && typeof video.getVideoPlaybackQuality === 'function') {
+      const quality = video.getVideoPlaybackQuality();
+      counters.push('total ' + quality.totalVideoFrames + ', dropped ' + quality.droppedVideoFrames);
+    }
+    if (video && typeof video.webkitDecodedFrameCount === 'number') {
+      counters.push('webkit decoded ' + video.webkitDecodedFrameCount + ', dropped ' + video.webkitDroppedFrameCount);
+    }
+    console.log('%c[index.js, keepSessionReport]', 'color: green;', 'Frames of the video element: ' +
+      (counters.length > 0 ? counters.join('; ') : (video ? 'no counters' : 'no element')) + '; frames of the stream: ' +
+      report.frames);
+  } catch (error) {
+    console.warn('%c[index.js, keepSessionReport]', 'color: green;',
+      'Warning: Failed to read the frames of the video element: ' + error);
+  }
   // The lines that the module logged at the end of the stream belong to its session
   DiagnosticLog.takeNative();
 }

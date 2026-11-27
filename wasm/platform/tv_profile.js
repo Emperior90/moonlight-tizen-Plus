@@ -537,7 +537,167 @@ function logWebAssemblyFeatures(apis) {
   } catch (error) {
     // probeWebAssemblyFeatures() guards every call of an API, so only a broken console gets here
   }
+  try {
+    console.log('%c[tv_profile.js, logWebAssemblyFeatures]', 'color: purple;', describeWebEngine(probeWebEngine(apis)));
+  } catch (error) {
+    // probeWebEngine() guards every call of an API, so only a broken console gets here
+  }
   return true;
+}
+
+// The module of the division probe (probeDivisionTime()): one function type (i32, i32) -> i32 and two exported
+// functions that run n times a = (a / k) ^ 0x55555555 from a = 123456789 and return the low 32 bits of a: 'a' with
+// i32.div_s, 'b' with i64.div_s. The divisor k comes from the caller, so that no compiler turns the division into a
+// multiplication, and the result goes back, so that no compiler leaves the loop out. A 64-bit V8 divides both with one
+// instruction; a 32-bit V8 calls a C function for i64.div_s in both of its compilers (Liftoff and TurboFan).
+const DIVISION_PROBE_BYTES = Object.freeze([0, 97, 115, 109, 1, 0, 0, 0, 1, 7, 1, 96, 2, 127, 127, 1, 127, 3, 3, 2, 0, 0,
+  7, 9, 2, 1, 97, 0, 0, 1, 98, 0, 1, 10, 87, 2,
+  39, 1, 1, 127, 65, 149, 154, 239, 58, 33, 2, 3, 64, 32, 2, 32, 1, 109, 65, 213, 170, 213, 170, 5, 115, 33, 2, 32, 0,
+  65, 1, 107, 34, 0, 13, 0, 11, 32, 2, 11,
+  45, 1, 2, 126, 32, 1, 172, 33, 3, 66, 149, 154, 239, 58, 33, 2, 3, 64, 32, 2, 32, 3, 127, 66, 213, 170, 213, 170, 5,
+  133, 33, 2, 32, 0, 65, 1, 107, 34, 0, 13, 0, 11, 32, 2, 167, 11]);
+
+// The probe needs a clock with steps of at most 0.15 ms (Chromium: 0.1 ms for a page that isn't cross-origin isolated).
+// A run counts from 0.8 ms on, the next run aims at 1 ms, the fastest of up to 6 runs of each loop counts, the ratio is
+// clear only with at least 3 runs of each (short runs, so that some of them fall between the time slices of other
+// processes), no run starts that would end after 15 ms, and no run has more than 2^21 loops.
+const DIVISION_PROBE_MAX_STEP_MS = 0.15;
+const DIVISION_PROBE_MIN_MS = 0.8;
+const DIVISION_PROBE_TARGET_MS = 1;
+const DIVISION_PROBE_RUNS = 6;
+const DIVISION_PROBE_CLEAR_RUNS = 3;
+const DIVISION_PROBE_BUDGET_MS = 15;
+const DIVISION_PROBE_MAX_LOOPS = 1 << 21;
+
+// How much longer i64.div_s takes than i32.div_s in WebAssembly, which tells a 32-bit from a 64-bit engine, for the
+// diagnostic log (logWebAssemblyFeatures()). It takes at most about 15 ms of the main thread, once per start of the
+// app. The objects can be passed in for the tests ({ webAssembly, performance }). Returns { ratio, runs, clear, stepMs,
+// error }: the time of i64.div_s over that of i32.div_s, or null when it couldn't tell, how many runs of each loop
+// counted, whether they were enough for a clear ratio, the step of the clock in ms (null before it was read), and why
+// there's no ratio (null when there is one).
+function probeDivisionTime(apis) {
+  const given = apis || {};
+  const result = { ratio: null, runs: 0, clear: false, stepMs: null, error: null };
+  try {
+    const webAssembly = given.webAssembly !== undefined ? given.webAssembly : getTvGlobal('WebAssembly');
+    const clock = given.performance !== undefined ? given.performance : getTvGlobal('performance');
+    if (!webAssembly || typeof webAssembly.Module !== 'function' || typeof webAssembly.Instance !== 'function' ||
+        !clock || typeof clock.now !== 'function') {
+      result.error = 'unavailable';
+      return result;
+    }
+    // The step of the clock: the smallest change of now() over 3 changes, within at most 20000 reads
+    let step = Infinity;
+    let last = clock.now();
+    for (let read = 0, changes = 0; read < 20000 && changes < 3; read++) {
+      const now = clock.now();
+      if (now !== last) {
+        step = Math.min(step, now - last);
+        last = now;
+        changes++;
+      }
+    }
+    result.stepMs = step < Infinity ? step : null;
+    if (!(step > 0 && step <= DIVISION_PROBE_MAX_STEP_MS)) {
+      result.error = 'clock too coarse';
+      return result;
+    }
+    const exports = new webAssembly.Instance(new webAssembly.Module(new Uint8Array(DIVISION_PROBE_BYTES)), {}).exports;
+    const loops = [exports.a, exports.b];
+    const counts = [512, 512];
+    const best = [Infinity, Infinity];
+    const runs = [0, 0];
+    // One call of each loop before the clock starts, so that no run times the compilation of its function
+    loops[0](1000, 3);
+    loops[1](1000, 3);
+    const start = clock.now();
+    for (let turn = 0; turn < 64 && (runs[0] < DIVISION_PROBE_RUNS || runs[1] < DIVISION_PROBE_RUNS); turn++) {
+      const which = turn % 2;
+      if (runs[which] >= DIVISION_PROBE_RUNS) {
+        continue;
+      }
+      if (clock.now() + (runs[which] > 0 ? best[which] * counts[which] : 0) > start + DIVISION_PROBE_BUDGET_MS) {
+        break;
+      }
+      const before = clock.now();
+      loops[which](counts[which], 3);
+      const took = clock.now() - before;
+      if (took >= DIVISION_PROBE_MIN_MS) {
+        runs[which]++;
+        best[which] = Math.min(best[which], took / counts[which]);
+      } else if (counts[which] >= DIVISION_PROBE_MAX_LOOPS) {
+        break;
+      } else {
+        counts[which] = Math.min(DIVISION_PROBE_MAX_LOOPS,
+          took >= 0.2 ? Math.ceil(counts[which] * DIVISION_PROBE_TARGET_MS / took) : counts[which] * 8);
+      }
+    }
+    result.runs = Math.min(runs[0], runs[1]);
+    if (result.runs > 0) {
+      result.ratio = best[1] / best[0];
+      result.clear = result.runs >= DIVISION_PROBE_CLEAR_RUNS;
+    } else {
+      result.error = 'no run long enough';
+    }
+  } catch (error) {
+    result.error = shortErrorText(error);
+  }
+  return result;
+}
+
+// What the browser engine of the TV says about itself, for the diagnostic log (logWebAssemblyFeatures()). The objects
+// can be passed in for the tests ({ navigator, tizen, webAssembly, performance }). Returns { userAgent, cores, platform,
+// cpuArch, division }: navigator.userAgent, navigator.hardwareConcurrency, navigator.platform, the CPU architecture that
+// the Tizen platform names (tizen.systeminfo), each 'unknown' where it can't be read, and probeDivisionTime().
+function probeWebEngine(apis) {
+  const given = apis || {};
+  const read = function(key, name, maxLength, get) {
+    try {
+      const value = get(given[key] !== undefined ? given[key] : getTvGlobal(name));
+      if (typeof value === 'number' && isFinite(value)) {
+        return String(value);
+      }
+      return typeof value === 'string' && value.trim() ? value.replace(/\s+/g, ' ').trim().slice(0, maxLength) : 'unknown';
+    } catch (error) {
+      return 'unknown';
+    }
+  };
+  return {
+    userAgent: read('navigator', 'navigator', 200, function(nav) {
+      return nav.userAgent;
+    }),
+    cores: read('navigator', 'navigator', 40, function(nav) {
+      return nav.hardwareConcurrency;
+    }),
+    platform: read('navigator', 'navigator', 40, function(nav) {
+      return nav.platform;
+    }),
+    cpuArch: read('tizen', 'tizen', 40, function(tizenApi) {
+      return tizenApi.systeminfo.getCapability('http://tizen.org/feature/platform.core.cpu.arch');
+    }),
+    division: probeDivisionTime(apis),
+  };
+}
+
+// The line of the diagnostic log about the browser engine (probeWebEngine()), e.g. 'Web engine: i64/i32 division time
+// 1.12 (6 runs, clock step 0.10 ms); cores 4; platform Linux armv7l; Tizen CPU architecture armv7; user agent
+// Mozilla/5.0 (SMART-TV; LINUX; Tizen 9.0) AppleWebKit/537.36 (KHTML, like Gecko) 120.0.6099.5/9.0 TV Safari/537.36'.
+// The user agent comes last, so that a line that the diagnostic log cuts at 400 characters loses only its end. It names
+// no address, host or ID.
+function describeWebEngine(engine) {
+  const probe = engine.division;
+  const step = probe.stepMs !== null ? ', clock step ' + probe.stepMs.toFixed(probe.stepMs >= 0.01 ? 2 : 3) + ' ms' : '';
+  const runs = probe.runs + (probe.runs === 1 ? ' run' : ' runs');
+  let division;
+  if (probe.ratio === null) {
+    division = 'unknown (' + probe.error + step + ')';
+  } else if (probe.clear) {
+    division = probe.ratio.toFixed(2) + ' (' + runs + step + ')';
+  } else {
+    division = 'unclear (' + probe.ratio.toFixed(2) + ' from only ' + runs + step + ')';
+  }
+  return 'Web engine: i64/i32 division time ' + division + '; cores ' + engine.cores + '; platform ' + engine.platform +
+    '; Tizen CPU architecture ' + engine.cpuArch + '; user agent ' + engine.userAgent;
 }
 
 // The firmware version of the TV, so that System information and the diagnostic log tie a report to a software update
@@ -1291,6 +1451,10 @@ if (typeof module === 'object' && module && module.exports) {
     probeWebAssemblyFeatures: probeWebAssemblyFeatures,
     describeWebAssemblyFeatures: describeWebAssemblyFeatures,
     logWebAssemblyFeatures: logWebAssemblyFeatures,
+    DIVISION_PROBE_BYTES: DIVISION_PROBE_BYTES,
+    probeDivisionTime: probeDivisionTime,
+    probeWebEngine: probeWebEngine,
+    describeWebEngine: describeWebEngine,
     detectFirmwareVersion: detectFirmwareVersion,
     probeVideoDecoders: probeVideoDecoders,
     getVideoDecoderSupport: getVideoDecoderSupport,

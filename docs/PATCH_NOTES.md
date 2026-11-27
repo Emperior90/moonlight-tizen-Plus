@@ -30,6 +30,11 @@ What changed in each version of Moonlight Plus, in short, newest first.
 >
 > **Tested:** with simulated TVs and hosts only; whether the sound decoder is lighter shows on a TV in *Audio CPU* of the statistics.
 
+### New
+
+- At the start, the diagnostic log tells whether the TV's browser is a 32- or 64-bit one, with cores and version
+- At the end of each stream, the diagnostic log tells how many frames the video element of the TV's browser counted
+
 ### Changed
 
 - The sound is decoded in floating point, as a test, with a faster rounding: *Audio CPU* shows if it is lighter

@@ -13,7 +13,11 @@
 // - the line keeps its end (the socket host bindings) within the length of a line of the diagnostic log, however long
 //   the list of the TV is;
 // - the app logs the line once per start, from moduleDidLoad() of index.js or, for a module that failed before, from
-//   onNativeModuleFailure(), and the redaction of the diagnostic log leaves it as it is.
+//   onNativeModuleFailure(), and the redaction of the diagnostic log leaves it as it is;
+// - since 2.3.6 a second line about the browser engine follows it (probeDivisionTime(), probeWebEngine() and
+//   describeWebEngine()): the division module computes as JavaScript does, the probe gives a ratio within about 15 ms
+//   with a clock of 0.1 ms and none with clocks that are too coarse, missing and throwing APIs give 'unknown', and
+//   everything before the user agent stays within a line of the log.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -240,7 +244,7 @@ test('the socket host bindings follow the flag of the glue code, a top-level let
     /^WebAssembly features: SIMD 128 yes, bulk memory yes, threads yes, sign extension yes;/);
 });
 
-test('logWebAssemblyFeatures() logs one line once per start and never throws', () => {
+test('logWebAssemblyFeatures() logs its two lines once per start and never throws', () => {
   const fresh = freshProfile();
   const logged = [];
   const originalLog = console.log;
@@ -252,8 +256,11 @@ test('logWebAssemblyFeatures() logs one line once per start and never throws', (
   } finally {
     console.log = originalLog;
   }
-  assert.deepEqual(logged, ['%c[tv_profile.js, logWebAssemblyFeatures] color: purple; WebAssembly features: SIMD 128 yes, ' +
-    'bulk memory yes, threads yes, sign extension yes; supportedInstructions of the TV: not offered; socket host bindings: used']);
+  // The line about WebAssembly, then the line about the browser engine (tested below)
+  assert.equal(logged.length, 2, logged.join('\n'));
+  assert.equal(logged[0], '%c[tv_profile.js, logWebAssemblyFeatures] color: purple; WebAssembly features: SIMD 128 yes, ' +
+    'bulk memory yes, threads yes, sign extension yes; supportedInstructions of the TV: not offered; socket host bindings: used');
+  assert.ok(logged[1].startsWith('%c[tv_profile.js, logWebAssemblyFeatures] color: purple; Web engine: '), logged[1]);
 
   // Everything throws: WebAssembly, tizentvwasm and even the console
   const broken = freshProfile();
@@ -314,4 +321,80 @@ test('the app logs the line from moduleDidLoad(), once the runtime of the module
   assert.equal(calls.reduce((sum, count) => sum + count, 0), 2);
   // common.js calls moduleDidLoad() from onRuntimeInitialized of the module, once per start of the page
   assert.match(read('wasm/platform/common.js'), /onRuntimeInitialized: \(\) => \{[\s\S]*?window\.moduleDidLoad\(\);/);
+});
+
+// The line about the browser engine, since 2.3.6 (probeDivisionTime(), probeWebEngine() and describeWebEngine())
+function fakeClock(stepMs) {
+  return { now: () => Math.floor(performance.now() / stepMs) * stepMs };
+}
+
+test('the division module is valid and both loops compute the same as JavaScript', () => {
+  const bytes = new Uint8Array(profile.DIVISION_PROBE_BYTES);
+  assert.equal(WebAssembly.validate(bytes), true);
+  const loops = new WebAssembly.Instance(new WebAssembly.Module(bytes), {}).exports;
+  [1, 2, 7, 1000].forEach((n) => [3, 7].forEach((k) => {
+    let a32 = 123456789;
+    let a64 = 123456789n;
+    for (let i = 0; i < n; i++) {
+      a32 = ((a32 / k) | 0) ^ 0x55555555;
+      a64 = (a64 / BigInt(k)) ^ 0x55555555n;
+    }
+    assert.equal(loops.a(n, k), a32 | 0);
+    assert.equal(loops.b(n, k), Number(BigInt.asIntN(32, a64)));
+  }));
+  // i32.div_s (0x6D) only in the first function, i64.div_s (0x7F) and i64.extend_i32_s (0xAC) only in the second
+  assert.deepEqual([109, 127].map((op) => bytes.indexOf(op) >= 0), [true, true]);
+});
+
+test('the division probe gives a ratio within about 15 ms, and no ratio with a clock that is too coarse', () => {
+  const started = performance.now();
+  const probe = profile.probeDivisionTime({ webAssembly: WebAssembly, performance: fakeClock(0.1) });
+  const took = performance.now() - started;
+  assert.equal(probe.error, null);
+  assert.ok(probe.runs >= 1 && probe.runs <= 6, JSON.stringify(probe));
+  assert.equal(probe.clear, probe.runs >= 3);
+  // A 64-bit engine (the one of the tests) divides both with one instruction. A busy machine may leave too few runs
+  // for a clear ratio, and then the ratio may be anything.
+  assert.ok(!probe.clear || (probe.ratio > 0.5 && probe.ratio < 2), JSON.stringify(probe));
+  assert.ok(Math.abs(probe.stepMs - 0.1) < 1e-9, JSON.stringify(probe));
+  assert.ok(took < 60, took + ' ms');
+  [{ now: () => 5 }, fakeClock(1), fakeClock(16)].forEach((clock) => {
+    const coarse = profile.probeDivisionTime({ webAssembly: WebAssembly, performance: clock });
+    assert.deepEqual([coarse.ratio, coarse.runs, coarse.error], [null, 0, 'clock too coarse']);
+  });
+});
+
+test('the line about the browser engine names what the TV says, and unknown for what is missing or throws', () => {
+  const tv = {
+    navigator: { userAgent: 'Mozilla/5.0 (SMART-TV; LINUX; Tizen 9.0) AppleWebKit/537.36 (KHTML, like Gecko) 120.0.6099.5/9.0 TV Safari/537.36',
+      hardwareConcurrency: 4, platform: 'Linux armv7l' },
+    tizen: { systeminfo: { getCapability: (key) => (key === 'http://tizen.org/feature/platform.core.cpu.arch' ? 'armv7' : null) } },
+    webAssembly: null,
+  };
+  assert.equal(profile.describeWebEngine(profile.probeWebEngine(tv)), 'Web engine: i64/i32 division time unknown (unavailable); ' +
+    'cores 4; platform Linux armv7l; Tizen CPU architecture armv7; user agent Mozilla/5.0 (SMART-TV; LINUX; Tizen 9.0) ' +
+    'AppleWebKit/537.36 (KHTML, like Gecko) 120.0.6099.5/9.0 TV Safari/537.36');
+  const division = (ratio, runs, stepMs, error) => profile.describeWebEngine({ userAgent: 'u', cores: '4', platform: 'p',
+    cpuArch: 'a', division: { ratio: ratio, runs: runs, clear: runs >= 3, stepMs: stepMs, error: error } });
+  assert.equal(division(6.25, 3, 0.1, null),
+    'Web engine: i64/i32 division time 6.25 (3 runs, clock step 0.10 ms); cores 4; platform p; Tizen CPU architecture a; user agent u');
+  assert.equal(division(7.312, 1, 0.1, null).split(';')[0], 'Web engine: i64/i32 division time unclear (7.31 from only 1 run, clock step 0.10 ms)');
+  assert.equal(division(null, 0, 1, 'clock too coarse').split(';')[0], 'Web engine: i64/i32 division time unknown (clock too coarse, clock step 1.00 ms)');
+  assert.equal(division(1.1, 6, 0.005, null).split(';')[0], 'Web engine: i64/i32 division time 1.10 (6 runs, clock step 0.005 ms)');
+  const throwing = new Proxy({}, { get() {
+    throw new Error('Simulated failure of every property');
+  } });
+  assert.equal(profile.describeWebEngine(profile.probeWebEngine({ navigator: throwing, tizen: throwing, webAssembly: throwing })),
+    'Web engine: i64/i32 division time unknown (Simulated failure of every property); cores unknown; platform unknown; ' +
+    'Tizen CPU architecture unknown; user agent unknown');
+  // Everything before the user agent stays within a line of the diagnostic log, whatever the TV answers
+  const maxLineLength = Number(/const MAX_LINE_LENGTH = (\d+);/.exec(read('wasm/platform/diagnostics.js'))[1]);
+  const long = profile.describeWebEngine(profile.probeWebEngine({ navigator: { userAgent: 'u'.repeat(500),
+    hardwareConcurrency: 'c'.repeat(500), platform: 'p'.repeat(500) },
+  tizen: { systeminfo: { getCapability: () => 'a'.repeat(500) } }, webAssembly: { Module: function() {
+    throw new Error('x'.repeat(500));
+  }, Instance: function() {} }, performance: fakeClock(0.1) }));
+  const tag = '[tv_profile.js, logWebAssemblyFeatures] ';
+  assert.ok((tag + long.slice(0, long.indexOf('; user agent '))).length <= maxLineLength - 60, long);
+  assert.ok(long.endsWith('; user agent ' + 'u'.repeat(200)), long);
 });
