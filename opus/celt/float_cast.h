@@ -99,6 +99,22 @@ static OPUS_INLINE opus_int32 float2int(float x) {return _mm_cvt_ss2si(_mm_set_s
                 return intgr ;
         }
 
+#elif defined(__EMSCRIPTEN__) && !defined(FIXED_POINT)
+
+/* Moonlight Plus: round to nearest even with one float addition in WebAssembly. Emscripten 1.39 fastcomp builds
+   lrintf() as the rintf() of its library (a floor, a comparison and a call of round() per sample) instead of one
+   instruction. Adding 1.5 * 2^23 leaves the rounded value in the low bits of the sum, exactly as lrintf() rounds,
+   for every float with |x| < 2^22; FLOAT2INT16() clamps to [-32768, 32767] first, and a NaN becomes -32768 there.
+   tests/unit/vendored-opus-patch.test.js pins this branch and tests/native/run.sh checks it against lrintf(); keep
+   it when the vendored Opus is updated. */
+#include <math.h>
+static OPUS_INLINE opus_int32 float2int(float x)
+{
+   union { float f; opus_int32 i; } u;
+   u.f = x + 12582912.0f;
+   return u.i - 0x4B400000;
+}
+
 #elif defined(HAVE_LRINTF) && defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
 
 /*      These defines enable functionality introduced with the 1999 ISO C

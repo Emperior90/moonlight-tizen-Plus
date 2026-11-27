@@ -86,8 +86,12 @@ set_target_properties(libgamestream
 # Since 2.3.6 it is the floating-point build of libopus, as a test of whether it decodes with less CPU time on the TV
 # than the fixed-point build (FIXED_POINT and opus/silk/fixed up to 2.3.5); the line "Audio CPU: decode" of the full
 # statistics shows it. The same files link in both builds: the SILK decoder computes in integers in both, and the files
-# of opus/silk/float belong to the encoder. No -ffast-math and no FLOAT_APPROX: libopus relies on exact float
-# arithmetic in places. The app still decodes to 16-bit samples (opus_multistream_decode()).
+# of opus/silk/float belong to the encoder. FLOAT_APPROX is the option of libopus (on by default in its own autotools
+# build for x86 and ARM, off in its CMake and meson builds) that computes celt_exp2() with a short polynomial instead
+# of exp(), so the decoder makes no call of the import of Math.exp(); the samples move by at most 2 of 65536 steps.
+# Still no -ffast-math.
+# opus/celt/float_cast.h rounds the samples with one float addition in WebAssembly (local patch,
+# tests/unit/vendored-opus-patch.test.js). The app still decodes to 16-bit samples (opus_multistream_decode()).
 add_library(opus STATIC
     opus/celt/bands.c
     opus/celt/celt.c
@@ -165,7 +169,8 @@ target_compile_definitions(opus PUBLIC
      USE_ALLOCA
      HAVE_LRINT
      HAVE_LRINTF
-     OPUS_BUILD)
+     OPUS_BUILD
+     FLOAT_APPROX)
 
 add_executable(moonlight-wasm
     wasm/libchelper.c

@@ -61,14 +61,14 @@ test('CMakeLists.txt builds the decoder of Opus without its encoder', () => {
 
 test('CMakeLists.txt builds Opus in floating point, without fast math, and the native tests build it the same way', () => {
   // The definitions and include directories of the target: no FIXED_POINT, the float directory of SILK instead of the
-  // fixed one (also for the module), and none of the definitions or flags that would trade exactness for speed
+  // fixed one (also for the module), FLOAT_APPROX of libopus (celt_exp2() as a polynomial), and no fast math
   const definitions = /target_compile_definitions\(opus PUBLIC([^)]*)\)/.exec(cmake());
   assert.ok(definitions);
-  assert.deepEqual(definitions[1].trim().split(/\s+/), ['USE_ALLOCA', 'HAVE_LRINT', 'HAVE_LRINTF', 'OPUS_BUILD']);
+  assert.deepEqual(definitions[1].trim().split(/\s+/), ['USE_ALLOCA', 'HAVE_LRINT', 'HAVE_LRINTF', 'OPUS_BUILD', 'FLOAT_APPROX']);
   const includes = (target) => new RegExp('target_include_directories\\(' + target + ' PUBLIC([^)]*)\\)').exec(cmake())[1].trim().split(/\s+/);
   assert.deepEqual(includes('opus'), ['opus/include', 'opus/src', 'opus/silk', 'opus/celt', 'opus/silk/float']);
   assert.ok(includes('moonlight-wasm').indexOf('opus/silk/float') >= 0);
-  assert.doesNotMatch(cmake(), /FIXED_POINT|silk\/fixed|FLOAT_APPROX|fast-math|ffast|OPUS_FAST_MATH/);
+  assert.doesNotMatch(cmake(), /FIXED_POINT|silk\/fixed|fast-math|ffast|OPUS_FAST_MATH/);
   // The decode API of the app is unchanged: 16-bit samples
   const auddec = read('wasm/auddec.cpp');
   assert.ok(auddec.indexOf('opus_multistream_decode(decoder,') > 0);

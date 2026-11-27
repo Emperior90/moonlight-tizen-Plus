@@ -32,7 +32,7 @@ What changed in each version of Moonlight Plus, in short, newest first.
 
 ### Changed
 
-- The sound is decoded in floating point instead of whole numbers, as a test: *Audio CPU* shows if it is lighter
+- The sound is decoded in floating point, as a test, with a faster rounding: *Audio CPU* shows if it is lighter
 - The picture and the sound read the clock fewer times per frame and per packet, which saves the TV some work
 - While a game rumbles a controller often, the diagnostic log sums it up once a minute, not two lines per rumble
 

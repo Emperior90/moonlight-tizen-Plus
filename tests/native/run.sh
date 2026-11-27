@@ -208,6 +208,16 @@ if [ "$(opus_fast_int64 -D__EMSCRIPTEN__)" != "1" ] || [ "$(opus_fast_int64)" !=
   failed=1
 fi
 
+# The local patch of opus/celt/float_cast.h: float2int() of the WebAssembly build against lrintf(). This machine takes
+# the __SSE__ branch of the header, so the test is built with -D__EMSCRIPTEN__ -U__SSE__ and the definitions of the
+# target to reach the branch of the release build.
+echo "# Running opus_decoder/float2int.c"
+if ! "$cc" -std=gnu99 -O1 -w -D__EMSCRIPTEN__ -U__SSE__ "${opus_defines[@]}" -I"$repo/opus/include" -I"$repo/opus/celt" \
+    -o "$opus_out/float2int" "$here/opus_decoder/float2int.c" -lm || ! "$opus_out/float2int"; then
+  echo "# float2int() of opus/celt/float_cast.h for WebAssembly does not round as lrintf()"
+  failed=1
+fi
+
 # Compile every source file of the WebAssembly module without linking (-fsyntax-only), with the same stubs, so that an
 # error that only the release build would see (e.g. a private member used outside its class) fails here: most of
 # these files are in no test. wasm/http.cpp needs the headers of curl and OpenSSL and is checked when they exist.
